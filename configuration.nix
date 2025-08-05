@@ -33,6 +33,7 @@
     ./services/baikal-podman.nix
     ./services/cryptpad-podman.nix
     ./services/forgejo-podman.nix
+    ./services/freshrss-podman.nix
     ./services/frigate-podman.nix
     ./services/grocy-podman.nix
     ./services/home-assistant-podman.nix
@@ -44,6 +45,7 @@
     ./services/linkwarden-podman.nix
     ./services/logseq-podman.nix
     ./services/lidarr-podman.nix
+    ./services/mediawiki-podman.nix
     # ./services/mongo-podman.nix
     ./services/nzbget-podman.nix
     ./services/ollama-podman.nix
@@ -59,9 +61,6 @@
     # ./services/authentik.nix
     ./services/matrix.nix
     ./services/nextcloud.nix
-
-    ## Temporary fixes
-    ./provisional/hypothesis.nix
   ];
 
   # --------------------------------------------------------------------------------------

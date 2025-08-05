@@ -1,4 +1,4 @@
-{ config, homefree-inputs, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   # @TODO: How to determine interface names?
@@ -8,6 +8,12 @@ let
   vlan-lan-id = 200;
   vlan-iot-id = 201;
   vlan-guest-id = 202;
+  static-ip-config = config.homefree.network.static-ips;
+  blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
+  blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
+    iifname ${wan-interface} saddr ${entry.ip} drop
+    iifname ${wan-interface} daddr ${entry.ip} drop
+  '') blocked-ips);
 in
 {
 
@@ -178,6 +184,8 @@ in
           chain input {
             type filter hook input priority 0; policy drop;
 
+            ${blocked-ip-rules}
+
             ## Allow for ipv6 route advertisements
             icmpv6 type { echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, nd-redirect, ind-neighbor-solicit, ind-neighbor-advert, router-renumbering, mld-listener-query, mld-listener-report, mld-listener-done, mld-listener-reduction, mld2-listener-report } accept;
             meta l4proto ipv6-icmp accept comment "Accept ICMPv6"
@@ -218,11 +226,14 @@ in
             ## Logging is interesting but fills up dmesg. @TODO: log to another file, with reverse IP lookup and geoip
             # iifname "${wan-interface}" counter log prefix "WAN_DROP: " drop comment "Drop all other unsolicited traffic from wan"
             iifname "${wan-interface}" counter drop comment "Drop all other unsolicited traffic from wan"
+
           }
 
           ## allow packets from LAN to WAN, and WAN to LAN if LAN initiated the connection
           chain forward {
             type filter hook forward priority 0; policy drop;
+
+            ${blocked-ip-rules}
 
             ## LAN-WAN
             iifname { "${lan-interface}" } oifname { "${wan-interface}" } accept comment "Allow trusted LAN to WAN"

@@ -95,6 +95,7 @@ in
     };
   };
 
+  ## @TODO: Figure out how to automatically approve exit node without using the web UI
   services.tailscale = {
     enable = true;
     authKeyFile = config.homefree.services.headscale.secrets.tailscale-key;
@@ -106,11 +107,13 @@ in
     extraUpFlags = [
       # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
       "--advertise-routes=10.0.0.0/24"
+      "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
     extraSetFlags = [
       # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
       "--advertise-routes=10.0.0.0/24"
+      "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
   };

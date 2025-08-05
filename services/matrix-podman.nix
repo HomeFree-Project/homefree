@@ -13,22 +13,6 @@ let
 
   SYNAPSE_CONFIG_DIR = "/data";
 
-  preStart = ''
-    mkdir -p ${containerDataPath}
-  '';
-
-  postStart = (if config.homefree.services.matrix.admin-account != null then ''
-    ${pkgs.podman}/bin/podman exec \
-    -it ${image}:${version} \
-    -v "${SYNAPSE_CONFIG_DIR}/data/admin-account-password-file:${config.homefree.services.matrix.secrets.admin-account-password}" \
-    register_new_matrix_user http://localhost:${toString port} \
-    -c /data/homeserver.yaml \
-    --exists-ok \
-    --admin \
-    --user ${config.homefree.services.matrix.admin-account} \
-    --password-file /data/admin-account-password-file
-  '' else "");
-
   registration-shared-secret-path = config.homefree.services.matrix.secrets.registration-shared-secret;
 
   settings = {
@@ -36,6 +20,8 @@ let
     server_name = config.homefree.system.domain;
     public_baseurl = "https://matrix.${config.homefree.system.domain}";
     serve_server_wellknown = true;
+    ## Set empty whitelist if federation is disabled
+    federation_domain_whitelist = if config.homefree.services.matrix.enable-federation == false then [] else config.homefree.services.matrix.federation-domain-whitelist;
     extra_well_known_server_content = {
       m.homeserver = {
         base_url = "https://matrix.${config.homefree.system.domain}";
@@ -77,22 +63,72 @@ let
       reject_limit = 50;
       concurrent = 3;
     };
+
+    # Compress state automatically
+    compress_state_on_startup = true;
+    retention = {
+      enabled = true;
+      default_policy = {
+        min_lifetime = "1d";
+        max_lifetime = "365d";
+      };
+    };
   };
 
   config-yaml = (pkgs.formats.yaml {}).generate "homserver.yaml" settings;
+
+  preStart = ''
+    mkdir -p ${containerDataPath}
+
+    mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.admin-account-password}"
+    mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.registration-shared-secret}"
+
+    ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
+      DO
+      \$do\$
+      BEGIN
+         IF EXISTS (
+            SELECT FROM pg_catalog.pg_roles
+            WHERE  rolname = 'matrix-synapse') THEN
+
+            RAISE NOTICE 'Role "matrix-synapse" already exists. Skipping.';
+         ELSE
+            BEGIN   -- nested block
+               CREATE ROLE "matrix-synapse" WITH LOGIN PASSWORD 'changeme';
+            EXCEPTION
+               WHEN duplicate_object THEN
+                  RAISE NOTICE 'Role "matrix-synapse" was just created by a concurrent transaction. Skipping.';
+            END;
+         END IF;
+      END
+      \$do\$;
+    EOF
+
+    ${pkgs.postgresql}/bin/psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'matrix-synapse'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -U postgres -c "CREATE DATABASE \"matrix-synapse\" WITH OWNER \"matrix-synapse\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+
+    ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
+      DO
+      \$do\$
+      BEGIN
+        GRANT ALL PRIVILEGES ON DATABASE "matrix-synapse" to "matrix-synapse";
+      END
+      \$do\$;
+    EOF
+  '';
+
+  postStart = (if config.homefree.services.matrix.admin-account != null then ''
+    ${pkgs.podman}/bin/podman exec \
+    -it ${image}:${version} \
+    -v "${SYNAPSE_CONFIG_DIR}/data/admin-account-password-file:${config.homefree.services.matrix.secrets.admin-account-password}" \
+    register_new_matrix_user http://localhost:${toString port} \
+    -c /data/homeserver.yaml \
+    --exists-ok \
+    --admin \
+    --user ${config.homefree.services.matrix.admin-account} \
+    --password-file /data/admin-account-password-file
+  '' else "");
 in
 {
-  services.postgresql = if config.homefree.services.matrix.enable then {
-    enable = true;
-    ensureDatabases = [ database-name ];
-    ensureUsers = [
-      {
-        name = database-user;
-        ensureDBOwnership = true;
-        ensureClauses.login = true;
-      }
-    ];
-  } else {};
 
   virtualisation.oci-containers.containers = if config.homefree.services.matrix.enable then {
     matrix-synapse = {
@@ -130,9 +166,9 @@ in
       ];
     };
 
-    matrix-discord = {
-      image = ":${}
-    }
+    # matrix-discord = {
+    #   image = ":${}"
+    # }
   } else {};
 
   systemd.services.podman-matrix-synapse = {
@@ -140,7 +176,9 @@ in
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}" ];
+      ExecStartPre = [
+        "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}"
+      ];
       ExecStartPost = [ "!${pkgs.writeShellScript "matrix-synapse-poststart" postStart}" ];
     };
   };

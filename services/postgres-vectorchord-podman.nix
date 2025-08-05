@@ -2,8 +2,10 @@
 let
   # image = "postgres";
   # version = "16.9";
-  image = "tensorchord/vchord-postgres";
-  version = "pg16-v0.4.2";
+  # image = "tensorchord/vchord-postgres";
+  # version = "pg16-v0.3.0";
+  image = "ghcr.io/immich-app/postgres";
+  version = "16-vectorchord0.4.2-pgvectors0.3.0";
   port = 6432;
   containerDataPath = "/var/lib/postgres-vectorchord-podman";
   containerDataPathInternal = "/var/lib/postgresql/data";
@@ -21,6 +23,7 @@ let
     host  all      all     10.88.0.0/16   trust
     # ipv6
     host all       all     ::1/128        trust
+    host all       all     fd00::/8       trust
     # Allow replication connections from localhost, by a user with the
     # replication privilege.
     local   replication     all                                     trust
@@ -28,6 +31,7 @@ let
     host    replication     all             10.0.0.0/16             trust
     host    replication     all             10.88.0.0/16            trust
     host    replication     all             ::1/128                 trust
+    host    replication     all             fd00::/8                 trust
   '';
 
   config-file = pkgs.writeText "postgres.conf" ''
@@ -105,7 +109,7 @@ in
       };
       backup = {
         paths = [
-        #  containerDataPath
+          containerDataPath
         ];
       };
     }

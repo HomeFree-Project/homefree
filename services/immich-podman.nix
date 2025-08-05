@@ -19,7 +19,7 @@
 ## update person set "thumbnailPath" = replace("thumbnailPath", '/var/lib/immich', '/usr/src/app/upload');
 { config, lib, pkgs, ... }:
 let
-  version = "v1.132.3";
+  version = "v1.136.0";
   version-redis = "6.2-alpine";
   containerDataPath = "/var/lib/immich";
   # Seems to be hard coded in docker container, so can't override
@@ -44,31 +44,64 @@ in
 {
   ## @TODO: Move to scripts run from containers
   environment.systemPackages = if config.homefree.services.immich.enable then [
-    pkgs.immich-cli
-    pkgs.immich-go
+    pkgs.unstable.immich-cli
+    pkgs.unstable.immich-go
   ] else [];
 
-  ## Copied from nixpkgs
-  services.postgresql = if config.homefree.services.immich.enable then {
-    enable = true;
-    ensureDatabases = [ database-name ];
-    ensureUsers = [
-      {
-        name = database-user;
-        ensureDBOwnership = true;
-        ensureClauses.login = true;
-      }
-    ];
-    extensions = ps: with ps; [ pgvecto-rs ];
-    settings = {
-      shared_preload_libraries = [ "vectors.so" ];
-      search_path = "\"$user\", public, vectors";
-    };
-  } else {};
+  # ## Copied from nixpkgs
+  # services.postgresql = if config.homefree.services.immich.enable then {
+  #   enable = true;
+  #   ensureDatabases = [ database-name ];
+  #   ensureUsers = [
+  #     {
+  #       name = database-user;
+  #       ensureDBOwnership = true;
+  #       ensureClauses.login = true;
+  #     }
+  #   ];
+  #   extensions = ps: with ps; [ pgvecto-rs ];
+  #   settings = {
+  #     shared_preload_libraries = [ "vectors.so" ];
+  #     search_path = "\"$user\", public, vectors";
+  #   };
+  # } else {};
 
-  ## Copied from nixpkgs
-  systemd.services.postgresql.serviceConfig.ExecStartPost = if config.homefree.services.immich.enable then
+  ## @TODO: Currently disabled - try fresh install to see if it's even needed
+  systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost = if false && config.homefree.services.immich.enable then
   let
+    preStart = ''
+      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres << EOF
+        DO
+        \$do\$
+        BEGIN
+           IF EXISTS (
+              SELECT FROM pg_catalog.pg_roles
+              WHERE  rolname = '${database-user}') THEN
+
+              RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
+           ELSE
+              BEGIN   -- nested block
+                 CREATE ROLE "imich" WITH LOGIN PASSWORD 'changeme';
+              EXCEPTION
+                 WHEN duplicate_object THEN
+                    RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
+              END;
+           END IF;
+        END
+        \$do\$;
+      EOF
+
+      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+
+      ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
+        DO
+        \$do\$
+        BEGIN
+          GRANT ALL PRIVILEGES ON DATABASE "${database-name}" to "${database-user}";
+        END
+        \$do\$;
+      EOF
+    '';
     sqlFile = pkgs.writeText "immich-pgvectors-setup.sql" ''
       CREATE EXTENSION IF NOT EXISTS unaccent;
       CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -85,9 +118,8 @@ in
     '';
   in
   [
-    ''
-      ${lib.getExe' config.services.postgresql.package "psql"} -d "${database-name}" -f "${sqlFile}"
-    ''
+    preStart
+    '' ${lib.getExe' config.services.postgresql.package "psql"} -d "${database-name}" -f "${sqlFile}" ''
   ] else [];
 
   virtualisation.oci-containers.containers = if config.homefree.services.immich.enable then {
@@ -119,8 +151,10 @@ in
         ENCODED_VIDEO_LOCATION = "${uploadLocation}/encoded-video";
         PROFILE_LOCATION = "${uploadLocation}/profile";
         BACKUP_LOCATION = "${uploadLocation}/backups";
-        DB_HOSTNAME = "/run/postgresql";
-        DB_PORT = "5432";
+        # DB_HOSTNAME = "/run/postgresql";
+        # DB_PORT = "5432";
+        DB_HOSTNAME = "postgres-vectorchord";
+        DB_PORT = "6432";
         DB_DATABASE_NAME = database-name;
         DB_USERNAME = database-user;
         REDIS_HOSTNAME = "immich-redis";
@@ -218,7 +252,7 @@ in
         "podman-immich-server"
         "podman-immich-machine-learning"
         "podman-immich-redis"
-        "postgresql"
+        "podman-postgresql-vectorchord"
       ];
       reverse-proxy = {
         enable = true;
@@ -233,9 +267,9 @@ in
         paths = [
           containerDataPath
         ];
-        postgres-databases = [
-          database-name
-        ];
+        # postgres-databases = [
+        #   database-name
+        # ];
       };
     }
   ] else [];

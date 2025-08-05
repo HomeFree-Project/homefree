@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "version-2025.3.0";
+  version = "version-2025.6.0";
   containerDataPath = "/var/lib/cryptpad-podman";
 
   port = 3004;

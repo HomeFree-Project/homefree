@@ -1,7 +1,9 @@
 { config, lib, pkgs, ... }:
 let
-  version = "0.15.1";
-  configVersion = "0.15-1";
+  # version = "0.15.1";
+  version = "0.16.0-beta2";
+  # configVersion = "0.15-1";
+  configVersion = "0.16-1";
   containerDataPath = "/var/lib/frigate";
   mediaPath = config.homefree.services.frigate.media-path or "${containerDataPath}/media";
   cameras-filtered = lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras;
@@ -15,6 +17,10 @@ let
         device = "usb";
         # num_threads = 3;
       };
+    };
+
+    detect = {
+      enabled = true;
     };
 
     ffmpeg = {

@@ -60,6 +60,8 @@
       server_name = config.homefree.system.domain;
       public_baseurl = "https://matrix.${config.homefree.system.domain}";
       serve_server_wellknown = true;
+      ## Set empty whitelist if federation is disabled
+      federation_domain_whitelist = if config.homefree.services.matrix.enable-federation == false then [] else config.homefree.services.matrix.federation-domain-whitelist;
       extra_well_known_server_content = {
         m.homeserver = {
           base_url = "https://matrix.${config.homefree.system.domain}";
@@ -103,19 +105,18 @@
       federation_rc_sleep_delay = 500;
       federation_rc_reject_limit = 50;
       federation_rc_concurrent = 3;
+
+      # Compress state automatically
+      compress_state_on_startup = true;
+      retention = {
+        enabled = true;
+        default_policy = {
+          min_lifetime = "1d";
+          max_lifetime = "365d";
+        };
+      };
     };
   };
-
-  ## These are blocked by adguardhome
-  services.adguardhome.settings.user_rules = [
-    # "@@||_matrix._tcp.bchn.foo^"
-    # "@@||_matrix-fed._tcp.bchn.foo^"
-    # "@@||_matrix._tcp.mastersh.pro^"
-    # "@@||_matrix-fed._tcp.mastersh.pro^"
-    # "@@||_matrix._tcp.dea.monster^"
-    # "@@||_matrix-fed._tcp.dea.monster^"
-    # "@@||dea.monster^"
-  ];
 
   services.matrix-appservice-discord = {
     enable = config.homefree.services.matrix.enable;
@@ -218,6 +219,7 @@
           # Matrix Synapse settings
           respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
           reverse_proxy /_matrix/* 10.0.0.1:8008
+          reverse_proxy /_synapse/admin/* 10.0.0.1:8008
           reverse_proxy /_synapse/client/* 10.0.0.1:8008
         '';
       };

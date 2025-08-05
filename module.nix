@@ -156,6 +156,12 @@
               type = lib.types.str;
               description = "IP Address";
             };
+
+            wan-access = lib.mkOption {
+              type = lib.types.bool;
+              description = "Whether to allow IP access to WAN";
+              default = true;
+            };
           };
         });
       };
@@ -347,6 +353,20 @@
           type = lib.types.bool;
           default = true;
           description = "Disable user registration";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
+      freshrss = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable FreshRSS news reader API";
         };
 
         public = lib.mkOption {
@@ -649,6 +669,22 @@
           description = "enable Matrix chat service";
         };
 
+        enable-federation = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Matrix federation";
+        };
+
+        federation-domain-whitelist = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [
+            "matrix.org"
+            "nixos.org"
+            "homefree.host"
+            "rycee.net" # home-manager room
+          ];
+        };
+
         public = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -669,6 +705,35 @@
           admin-account-password = lib.mkOption {
             type = lib.types.path;
             description = "Location of admin account password. Should not be a file included in your source repo.";
+          };
+        };
+      };
+
+      mediawiki = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Snipe-IT inventory management service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+
+        secrets = {
+          mysql-password = lib.mkOption {
+            type = lib.types.path;
+            description = "Location of MediaWiki mysql password file. Should not be a file included in your source repo.";
+          };
+          wgSecretKey = lib.mkOption {
+            type = lib.types.path;
+            description = "Location of MediaWiki wgSecretKey file. Should not be a file included in your source repo.";
+          };
+          env = lib.mkOption {
+            type = lib.types.path;
+            description = "Location of MediaWiki env file. Contains DB_PASSWORD";
           };
         };
       };

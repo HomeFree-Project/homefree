@@ -9,9 +9,9 @@ let
 
     ## @TODO: reduce privileges here. snipeit shouldn't be admin
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost IDENTIFIED BY '$MYSQL_PASSWORD'";
+    ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
     ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "CREATE USER 'snipeit'@'%'"
+    ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
     ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
     ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'%'"
   '';
