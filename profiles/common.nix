@@ -108,6 +108,17 @@
     hashedPassword = config.homefree.system.adminHashedPassword;
   };
 
+  users.users.www-data = {
+    uid = 33;
+    group = "www-data";
+    isSystemUser = true;
+    shell = pkgs.shadow;  # or pkgs.bash if you need shell access
+  };
+
+  users.groups.www-data = {
+    gid = 33;
+  };
+
   security.sudo.extraRules = [
     {
       groups = [ "wheel" ];

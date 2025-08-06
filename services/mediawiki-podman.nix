@@ -86,7 +86,7 @@ let
 
     ## To enable image uploads, make sure the 'images' directory
     ## is writable, then set this to true:
-    $wgEnableUploads = false;
+    $wgEnableUploads = true;
     $wgUseImageMagick = true;
     $wgImageMagickConvertCommand = "/usr/bin/convert";
 
@@ -352,7 +352,8 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
         ## Site specific
         mkdir -p ${containerDataPath}/cache
         mkdir -p ${containerDataPath}/html/images
-        mkdir -p ${containerDataPath}/html/images
+        chgrp -R www-data ${containerDataPath}
+        chmod -R 770 ${containerDataPath}
 
         ${pkgs.gnused}/bin/sed -e "s/{{MYSQL_PASSWORD}}/$MYSQL_PASSWORD/g" \
           -e "s/{{WG_SECRET_KEY}}/$WG_SECRET_KEY/g" \
