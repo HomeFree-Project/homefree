@@ -716,45 +716,65 @@
           description = "enable Snipe-IT inventory management service";
         };
 
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
+        sites = lib.mkOption {
+          description = "Wiki site config";
+          default = [];
+          type = with lib.types; listOf (submodule {
+            options = {
+              public = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Open to public on WAN port";
+              };
 
-        logo-path = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of MediaWiki logo file";
-        };
+              subdomain = lib.mkOption {
+                type = lib.types.str;
+                default = "wiki";
+                description = "Subdomain for wiki (must be unique)";
+              };
 
-        readonly = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "No one can edit wiki";
-        };
+              name = lib.mkOption {
+                type = lib.types.str;
+                default = "Wiki";
+                description = "Name for site";
+              };
 
-        disable-anonymous-editing = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Only users can edit wiki";
-        };
+              logo-path = lib.mkOption {
+                type = lib.types.path;
+                description = "Location of MediaWiki logo file";
+              };
 
-        disable-anonymous-viewing = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Only users can view wiki";
-        };
+              readonly = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "No one can edit wiki";
+              };
 
-        disable-user-editing = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Only admins can edit wiki";
-        };
+              disable-anonymous-editing = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Only users can edit wiki";
+              };
 
-        disable-user-registration = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Only admins can register users";
+              disable-anonymous-viewing = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Only users can view wiki";
+              };
+
+              disable-user-editing = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Only admins can edit wiki";
+              };
+
+              disable-user-registration = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Only admins can register users";
+              };
+            };
+          });
         };
 
         secrets = {
