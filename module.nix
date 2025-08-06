@@ -727,6 +727,36 @@
           description = "Location of MediaWiki logo file";
         };
 
+        readonly = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "No one can edit wiki";
+        };
+
+        disable-anonymous-editing = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Only users can edit wiki";
+        };
+
+        disable-anonymous-viewing = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Only users can view wiki";
+        };
+
+        disable-user-editing = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Only admins can edit wiki";
+        };
+
+        disable-user-registration = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Only admins can register users";
+        };
+
         secrets = {
           mysql-password = lib.mkOption {
             type = lib.types.path;

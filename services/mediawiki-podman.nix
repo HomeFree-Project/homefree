@@ -10,11 +10,11 @@ let
     ServerName 127.0.0.1
   '';
 
-  READ_ONLY = false;
-  DISABLE_ANONYMOUS_EDITING = true;
-  DISABLE_ANONYMOUS_VIEWING = true;
-  DISABLE_USER_EDITING = false;
-  DISABLE_USER_REGISTRATION = true;
+  readonly = config.homefree.services.mediawiki.readonly;
+  disable-anonymous-editing = config.homefree.services.mediawiki.disable-anonymous-editing;
+  disable-anonymous-viewing = config.homefree.services.mediawiki.disable-anonymous-viewing;
+  disable-user-editing = config.homefree.services.mediawiki.disable-user-editing;
+  disable-user-registration = config.homefree.services.mediawiki.disable-user-registration;
 
   logo-raw = config.homefree.services.mediawiki.logo-path;
 
@@ -30,12 +30,15 @@ let
 
   logo-ext = if hasExtension then builtins.elemAt parts (builtins.length parts - 1) else "";
 
-  logo-1x = if logo-raw != null then (pkgs.runCommand "resize-image" {
+  resize-logo = width: height: if logo-raw != null then (pkgs.runCommand "resize-image" {
     src = logo-raw;
     buildInputs = [ pkgs.imagemagick ];
   } ''
-    convert "$src" -resize '135x155>' $out
+    convert "$src" -resize '${toString width}x${toString height}>' $out
   '') else null;
+
+  logo-icon = resize-logo 100 100;
+  logo-1x = resize-logo 135 155;
 
   local-settings = pkgs.writeText "LocalSettings.php.template" (''
     <?php
@@ -168,19 +171,19 @@ let
     # End of automatically generated settings.
     # Add more configuration options below.
   ''
-  + (if READ_ONLY || DISABLE_ANONYMOUS_EDITING then ''
+  + (if readonly || disable-user-editing || disable-anonymous-editing then ''
     $wgGroupPermissions['*']['edit'] = false;
   '' else "")
-  + (if READ_ONLY || DISABLE_USER_EDITING  then ''
+  + (if readonly || disable-user-editing  then ''
     $wgGroupPermissions['user']['edit'] = false;
   '' else "")
-  + (if READ_ONLY then ''
+  + (if readonly then ''
     $wgGroupPermissions['sysop']['edit'] = false;
   '' else "")
-  + (if DISABLE_ANONYMOUS_VIEWING then ''
+  + (if disable-anonymous-viewing then ''
     $wgGroupPermissions['*']['read'] = false;
   '' else "")
-  + (if DISABLE_USER_REGISTRATION then ''
+  + (if disable-user-registration then ''
     $wgGroupPermissions['*']['createaccount'] = false;
     $wgGroupPermissions['sysop']['createaccount'] = true;
   '' else "")
@@ -191,7 +194,8 @@ let
     ];
   '' else ''
     $wgLogos = [
-      '1x' => "{$wgScriptPath}/images/${logo-basename-no-ext}-1x.${logo-ext}",
+        '1x' => "{$wgScriptPath}/images/${logo-basename-no-ext}-1x.${logo-ext}",
+        'icon' => "{$wgScriptPath}/images/${logo-basename-no-ext}-icon.${logo-ext}",
     ];
     '')
   );
@@ -260,6 +264,7 @@ in
       ] ++ (if logo-raw != null then [
         "${config.homefree.services.mediawiki.logo-path}:/var/www/html/images/${logo-basename}"
         "${logo-1x}:/var/www/html/images/${logo-basename-no-ext}-1x.${logo-ext}"
+        "${logo-icon}:/var/www/html/images/${logo-basename-no-ext}-icon.${logo-ext}"
       ] else []);
 
       ## @TODO: this shouldn't need to be exposed to user config
