@@ -722,6 +722,11 @@
           description = "Open to public on WAN port";
         };
 
+        logo-path = lib.mkOption {
+          type = lib.types.path;
+          description = "Location of MediaWiki logo file";
+        };
+
         secrets = {
           mysql-password = lib.mkOption {
             type = lib.types.path;
