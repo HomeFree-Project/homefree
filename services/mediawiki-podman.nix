@@ -1,5 +1,6 @@
 { config, lib, pkgs, ... }:
 let
+  ## Update extension versions below when this is updated
   version = "1.44.0";
 
   databases = lib.map (site: "mediawiki_${site.subdomain}") config.homefree.services.mediawiki.sites;
@@ -24,6 +25,30 @@ let
   } ''
     convert "$src" -define icon:auto-resize=16,32,48,64,128,256 $out
   '') else null;
+
+  extensions = pkgs.stdenv.mkDerivation {
+    name = "mediawiki-extensions";
+
+    srcs = [
+      ## MobileFrontend extension no longer needed, but left here
+      ## as reference on how to add external extensions
+      (pkgs.fetchFromGitHub {
+        name = "MobileFrontend";
+        owner = "wikimedia";
+        repo = "mediawiki-extensions-MobileFrontend";
+        rev = "REL1_44";
+        sha256 = "sha256-qaz8QRBTGFQkE1Y2k7BCxz5AkE2qNO5ya/63DrKDSQw=";
+      })
+    ];
+
+    sourceRoot = ".";
+
+    installPhase = ''
+      mkdir -p $out
+      # Copy each source to the output with the proper name
+      cp -r MobileFrontend $out/
+    '';
+  };
 
   local-settings-base = ''
     <?php
@@ -135,10 +160,7 @@ let
 
     # Path to the GNU diff3 utility. Used for conflict resolution.
     $wgDiff3 = "/usr/bin/diff3";
-
-    ## Default skin: you can change the default skin. Use the internal symbolic
-    ## names, e.g. 'vector' or 'monobook':
-    $wgDefaultSkin = "monobook";
+    $wgFavicon = "{$wgScriptPath}/images/favicon.ico";
 
     # Enabled skins.
     # The following skins were automatically enabled:
@@ -147,7 +169,9 @@ let
     wfLoadSkin( 'Timeless' );
     wfLoadSkin( 'Vector' );
 
-    $wgFavicon = "{$wgScriptPath}/images/favicon.ico";
+    ## Default skin: you can change the default skin. Use the internal symbolic
+    ## names, e.g. 'vector' or 'monobook':
+    $wgDefaultSkin = "monobook";
 
     # End of automatically generated settings.
     # Add more configuration options below.
@@ -188,12 +212,17 @@ let
     wfLoadExtension( 'Math' );
     wfLoadExtension( 'SyntaxHighlight_GeSHi' );
     wfLoadExtension( 'WikiEditor' );
+    $wgDefaultUserOptions['usebetatoolbar'] = 1; // user option provided by WikiEditor extension
     wfLoadExtension( 'Poem' );
     wfLoadExtension( 'PdfHandler' );
     wfLoadExtension( 'PageImages' );
     wfLoadExtension( 'ImageMap' );
     wfLoadExtension( 'CodeEditor' );
-    $wgDefaultUserOptions['usebetatoolbar'] = 1; // user option provided by WikiEditor extension
+
+    ## No longer needed - mobile has first class support
+    # wfLoadExtension( 'MobileFrontend' );
+    # $wgMFAutodetectMobileView = true;
+    # $wgMFDefaultSkinClass = 'SkinMinerva';
 
     ## Requires missing binary
     # wfLoadExtension( 'DiscussionTools' );
@@ -258,6 +287,7 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
           "${containerDataPath}/cache:/var/cache"
           "${containerDataPath}/LocalSettings.php:/var/www/html/LocalSettings.php"
           "${containerDataPath}/html/images:/var/www/html/images"
+          "${extensions}/MobileFrontend:/var/www/html/extensions/MobileFrontend:ro"
           "${extra-apache-conf}:/etc/apache2/conf-enabled/extra.conf"
         ] ++ (if logo-raw != null then [
           "${site.logo-path}:/var/www/html/images/${logo-basename}"
