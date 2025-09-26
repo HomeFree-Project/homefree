@@ -1,9 +1,13 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 in
 {
+  nixpkgs.overlays = [
+    (import ../overlays/caddy-with-plugins.nix)
+  ];
+
   systemd.services.caddy = {
     wants = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
@@ -24,6 +28,8 @@ in
 
   services.caddy = {
     enable = true;
+
+    package = pkgs.caddy-with-plugins;
 
     ## reload config while running instead of restarting. true by default.
     enableReload = true;

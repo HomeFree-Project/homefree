@@ -312,7 +312,7 @@
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
-          description = "enable Baikal WebDAV/CalDAV/CardDAV service";
+          description = "enable Baikal CalDAV/CardDAV service";
         };
 
         public = lib.mkOption {
@@ -401,6 +401,12 @@
           description = "Whether to backup records";
         };
 
+        retain = lib.mkOption {
+          type = lib.types.nullOr lib.types.int;
+          default = null;
+          description = "If specified, how long in DAYS to keep files before deleting. This applies to ALL files: clips, recordings, exports, etc.";
+        };
+
         cameras = lib.mkOption {
           description = "list of cameras";
           type = with lib.types; listOf (submodule {
@@ -431,6 +437,12 @@
                 type = lib.types.int;
                 default = 1080;
                 description = "Height in pixels";
+              };
+
+              direct-stream = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Don't use go2rtc by default. Addresses certain issues, such as audio delay in recordings";
               };
             };
           });
@@ -863,7 +875,7 @@
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
-          description = "enable Radicale WebDAV/CalDAV/CardDAV service";
+          description = "enable Radicale CalDAV/CardDAV service";
         };
 
         public = lib.mkOption {
@@ -917,6 +929,20 @@
           type = lib.types.bool;
           default = false;
           description = "enable Vaultwarden Bitwarden password manager backend";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
+      webdav = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable WebDAV service";
         };
 
         public = lib.mkOption {

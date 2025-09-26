@@ -28,7 +28,7 @@
       ];
       reverse-proxy = {
         enable = true;
-        subdomains = [ "radicale" "dav" "webdav" "caldav" "carddav" ];
+        subdomains = [ "radicale" "dav" "caldav" "carddav" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = "10.0.0.1";

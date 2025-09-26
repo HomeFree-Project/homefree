@@ -54,6 +54,7 @@
     ./services/snipe-it-podman.nix
     ./services/unifi-podman.nix
     ./services/vaultwarden-podman.nix
+    ./services/webdav-podman.nix
     ./services/zitadel-podman.nix
 
     ## @TODO: Move to podman

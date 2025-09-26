@@ -214,8 +214,8 @@ let
     wfLoadExtension( 'WikiEditor' );
     $wgDefaultUserOptions['usebetatoolbar'] = 1; // user option provided by WikiEditor extension
     wfLoadExtension( 'Poem' );
-    wfLoadExtension( 'PdfHandler' );
     wfLoadExtension( 'PageImages' );
+    wfLoadExtension( 'PdfHandler' );
     wfLoadExtension( 'ImageMap' );
     wfLoadExtension( 'CodeEditor' );
 

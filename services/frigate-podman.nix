@@ -1,12 +1,12 @@
 { config, lib, pkgs, ... }:
 let
-  # version = "0.15.1";
-  version = "0.16.0-beta2";
-  # configVersion = "0.15-1";
+  version = "0.16.0";
   configVersion = "0.16-1";
   containerDataPath = "/var/lib/frigate";
   mediaPath = config.homefree.services.frigate.media-path or "${containerDataPath}/media";
   cameras-filtered = lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras;
+  cameras-go2rtc = lib.filter (camera: camera.direct-stream == false) cameras-filtered;
+  retain = config.homefree.services.frigate.retain;
 
   frigate-config = {
     version = configVersion;
@@ -99,14 +99,31 @@ let
       mode = "continuous";
     };
 
+    ## Re-encode using go2rtc. Some cameras output to old formats that
+    ## record empty video data.
+    ## See: https://github.com/blakeblackshear/frigate/discussions/19513
+    go2rtc.streams = lib.listToAttrs (lib.map (camera: {
+      name = camera.name;
+      value = [
+        "ffmpeg:${camera.path}#video=h264#audio=copy#audio=aac#hardware"
+      ];
+    }) cameras-go2rtc);
+
     cameras = lib.listToAttrs (lib.map (camera: {
       name = camera.name;
       value = {
         enabled = camera.enable;
         ffmpeg = {
+          output_args = {
+            record = "preset-record-generic-audio-aac";
+          };
           inputs = [
             {
-              path = camera.path;
+              input_args = "preset-rtsp-restream";
+              path = if camera.direct-stream == true then
+                camera.path
+              else
+                "rtsp://127.0.0.1:8554/${camera.name}";
               roles = [
                 "audio"
                 "detect"
@@ -130,6 +147,7 @@ let
     mkdir -p ${containerDataPath}/config
     mkdir -p ${mediaPath}
 
+    ## @TODO: just mount this directly as readonly, no need to copy
     cp ${config-yaml} ${containerDataPath}/config/config.yaml
   '';
 in
@@ -186,6 +204,33 @@ in
       ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
     };
   };
+
+  systemd.services.frigate-cleanup-old-data = if retain != null && retain > 0 then {
+    wantedBy = [];  # Only ever start with timer
+    description = "Clean up Frigate files older than ${toString retain} days";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";  # Change if you need different permissions
+      # ExecStart = ''${pkgs.findutils}/bin/find "${mediaPath}" -type f -mtime +${toString retain} -delete'';
+      ExecStart = ''${pkgs.bash}/bin/bash -c "${pkgs.findutils}/bin/find \"${mediaPath}\" -type f -mtime +30 -print -delete | ${pkgs.coreutils}/bin/wc -l | ${pkgs.findutils}/bin/xargs -I {} echo \"Deleted files: {}\""'';
+    };
+    # Optional: Add some safety and logging
+    serviceConfig.StandardOutput = "journal";
+    serviceConfig.StandardError = "journal";
+  } else {};
+
+  systemd.timers.frigate-cleanup-old-data = if retain != null && retain > 0 then {
+    enable = true;
+    description = "Timer for cleaning up old Frigate files";
+    timerConfig = {
+      OnCalendar = "daily";
+      # Alternative specific time format:
+      # OnCalendar = "*-*-* 03:00:00";
+      Persistent = true;  # Run missed timers on boot
+      RandomizedDelaySec = "30min";  # Optional: add some randomization
+    };
+    wantedBy = [ "timers.target" ];
+  } else {};
 
   # systemd.services.podman-create-frigate-network = {
   #   serviceConfig.Type = "oneshot";

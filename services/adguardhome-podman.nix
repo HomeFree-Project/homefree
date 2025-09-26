@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "v0.107.61";
+  version = "v0.107.64";
   image = "adguard/adguardhome:${version}";
   containerDataPath = "/var/lib/adguardhome-podman";
   port = 3000;
