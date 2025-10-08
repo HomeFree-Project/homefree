@@ -63,11 +63,7 @@ in
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
             }
-          '' + (if reverse-proxy-config.basic-auth == true then ''
-            basic_auth {
-              # <username> <hash created with "caddy hash-password">
-            }
-          '' else "")
+          ''
           + (if reverse-proxy-config.public == false then ''
             bind 10.0.0.1
           '' else "")
@@ -136,17 +132,80 @@ in
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
             }
-          '' else (''
-            reverse_proxy ${if reverse-proxy-config.ssl == true then "https" else "http"}://${reverse-proxy-config.host}:${toString reverse-proxy-config.port} {
+          '' else (
+          (if reverse-proxy-config.oauth2 == true then ''
+            # Simple approach: check for cookie, redirect if missing
+            @no_auth {
+              not header Cookie *oauth2_proxy*
+            }
+
+            # Redirect unauthenticated users to OAuth2-Proxy
+            handle @no_auth {
+              redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
+            }
+          '' else "")
+          +
+          (if reverse-proxy-config.basic-auth == true then ''
+            # Route WebDAV+Basic Auth requests to Python proxy
+            @webdav_with_basic {
+              header Authorization "Basic *"
+            }
+
+            @webdav_methods {
+              method PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK
+            }
+
+            # Handle WebDAV with Basic Auth
+            route @webdav_with_basic {
+              reverse_proxy 10.0.0.1:8764 {
+                # Pass the original host header
+                header_up Host {host}
+                header_up X-Forwarded-Host {host}
+                header_up X-Forwarded-Proto {scheme}
+              }
+            }
+
+            # Handle WebDAV-specific methods even without Basic Auth
+            route @webdav_methods {
+              reverse_proxy 10.0.0.1:8764 {
+                header_up Host {host}
+                header_up X-Forwarded-Host {host}
+                header_up X-Forwarded-Proto {scheme}
+              }
+            }
+          '' else "")
+          +
+          ''
+            handle {
+              reverse_proxy ${if reverse-proxy-config.ssl == true then "https" else "http"}://${reverse-proxy-config.host}:${toString reverse-proxy-config.port} {
           ''
           + (if reverse-proxy-config.ssl == true && reverse-proxy-config.ssl-no-verify then ''
-            transport http {
-              tls
-              tls_insecure_skip_verify
+                transport http {
+                  tls
+                  tls_insecure_skip_verify
+                }
+          '' else "")
+          + (if reverse-proxy-config.oauth2 == true then ''
+                header_up Host {host}
+                header_up X-Real-IP {remote}
+                # header_up X-Forwarded-For {remote}
+                # header_up X-Forwarded-Proto {scheme}
+          '' else "")
+          +
+          ''
+              }
+          ''
+          + (if reverse-proxy-config.oauth2 == true then ''
+              forward_auth http://10.0.0.1:4180 {
+                uri /oauth2/auth
+                copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
               }
           '' else "")
           + (if reverse-proxy-config.basic-auth == true then ''
-            header_up X-remote-user {http.auth.user.id}
+              forward_auth 10.0.0.1:3241 {
+                uri /oauth/v2/introspect
+                copy_headers Authorization
+              }
           '' else "")
           +
           ''

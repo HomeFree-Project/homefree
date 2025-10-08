@@ -48,6 +48,7 @@
     ./services/mediawiki-podman.nix
     # ./services/mongo-podman.nix
     ./services/nzbget-podman.nix
+    ./services/oauth2-proxy-podman.nix
     ./services/ollama-podman.nix
     ./services/postgres-vectorchord-podman.nix
     ./services/radicale-podman.nix
@@ -56,6 +57,7 @@
     ./services/vaultwarden-podman.nix
     ./services/webdav-podman.nix
     ./services/zitadel-podman.nix
+    # ./services/zitadel-podman-oauth.nix
 
     ## @TODO: Move to podman
     ## Otherwise entire system needs to be upgraded to upgrade individual app

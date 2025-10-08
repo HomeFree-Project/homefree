@@ -694,6 +694,7 @@
             "nixos.org"
             "homefree.host"
             "rycee.net" # home-manager room
+            "gnome.org"
           ];
         };
 
@@ -1119,6 +1120,12 @@
               type = lib.types.bool;
               default = false;
               description = "Whether to enable basic auth headers";
+            };
+
+            oauth2 = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Whether to enable Oauth2";
             };
 
             extraCaddyConfig = lib.mkOption {

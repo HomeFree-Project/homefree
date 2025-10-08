@@ -4,7 +4,7 @@
 ## Default password: Password1!
 
 let
-  version = "v2.67.5";
+  version = "v4.3.1";
   containerDataPath = "/var/lib/zitadel";
   port = 3241;
 
@@ -76,14 +76,14 @@ in
   homefree.service-config = if config.homefree.services.zitadel.enable == true then [
     {
       label = "zitadel";
-      name = "Auth/SSO";
+      name = "Single Sign-on (SSO)";
       project-name = "Zitadel";
       systemd-service-names = [
         "podman-zitadel"
       ];
       reverse-proxy = {
         enable = true;
-        subdomains = [ "sso" "auth" "zitadel" ];
+        subdomains = [ "sso" "zitadel" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = "10.0.0.1";

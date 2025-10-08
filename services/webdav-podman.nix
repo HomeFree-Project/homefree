@@ -173,6 +173,7 @@ in
         host = "10.0.0.1";
         port = port;
         public = config.homefree.services.webdav.public;
+        oauth2 = true;
         # basic-auth = true;
       };
       backup = {

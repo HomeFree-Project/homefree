@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "12.0.1";
+  version = "12.0.4";
   containerDataPath = "/var/lib/forgejo";
   port = 3201;
   ssh-port = 3022;
