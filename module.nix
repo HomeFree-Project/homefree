@@ -825,6 +825,17 @@
             description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
           };
 
+          env = lib.mkOption {
+            type = lib.types.path;
+            description = ''
+              Location of docker env file. Contains:
+
+              NEXTCLOUD_ADMIN_PASSWORD=<password>
+
+              Should not be a file included in your source repo.
+            '';
+          };
+
           secret-file = lib.mkOption {
             type = lib.types.path;
             description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";

@@ -47,6 +47,7 @@
     ./services/lidarr-podman.nix
     ./services/mediawiki-podman.nix
     # ./services/mongo-podman.nix
+    ./services/nextcloud-podman.nix
     ./services/nzbget-podman.nix
     ./services/oauth2-proxy-podman.nix
     ./services/ollama-podman.nix
@@ -63,7 +64,7 @@
     ## Otherwise entire system needs to be upgraded to upgrade individual app
     # ./services/authentik.nix
     ./services/matrix.nix
-    ./services/nextcloud.nix
+    # ./services/nextcloud.nix
   ];
 
   # --------------------------------------------------------------------------------------
