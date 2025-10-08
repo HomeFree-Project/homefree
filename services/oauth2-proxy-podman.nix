@@ -44,6 +44,11 @@ in
         OAUTH2_PROXY_PASS_USER_HEADERS = "true";
         OAUTH2_PROXY_SET_AUTHORIZATION_HEADER = "true";
       };
+
+      ## @TODO: this shouldn't need to be exposed to user config
+      environmentFiles = [
+        config.homefree.services.oauth2-proxy.secrets.env
+      ];
     };
   } else {};
 

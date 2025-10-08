@@ -858,6 +858,23 @@
         };
       };
 
+      oauth2-proxy = {
+        secrets = {
+          env = lib.mkOption {
+            type = lib.types.path;
+            description = ''
+              Location of oauth2-proxy env file. Contains:
+
+              OAUTH_PROXY_CLIENT_ID=<id>
+              OAUTH_PROXY_CLIENT_SECRET=<client secret>
+              OAUTH_PROXY_COOKIE_SECRET=<cookie secret>
+
+              Should not be a file included in your source repo.
+            '';
+          };
+        };
+      };
+
       ollama = {
         enable = lib.mkOption {
           type = lib.types.bool;
