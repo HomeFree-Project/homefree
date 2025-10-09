@@ -20,9 +20,76 @@ let
   postgres-port = if use-postgres-vectorchord then "6432" else "5432";
 
   # Nextcloud configuration file
-  nextcloud-config = pkgs.writeText "nextcloud-config.php" ''
+  nextcloud-config = pkgs.writeText "override.config.php" ''
     <?php
     $CONFIG = array (
+      'apps_paths' =>
+      array (
+        0 =>
+        array (
+          'path' => '/var/www/html/apps',
+          'url' => '/apps',
+          'writable' => false,
+        ),
+        1 =>
+        array (
+          'path' => '/var/www/html/custom_apps',
+          'url' => '/custom_apps',
+          'writable' => true,
+        ),
+      ),
+      'app_install_overwrite' =>
+      array (
+        0 => 'tasks',
+      ),
+      'appstoreenabled' => true,
+      'csrf' =>
+      array (
+        'optout' =>
+        array (
+          0 => '/Nextcloud-android/',
+        ),
+      ),
+      'csrf.optout' =>
+      array (
+        '/Nextcloud-android/',
+      ),
+      'datadirectory' => '/var/www/html/data',
+      'dbhost' => '/run/postgresql',
+      'dbname' => 'nextcloud',
+      'dbpassword' => "",
+      'dbport' => "",
+      'dbtableprefix' => 'oc_',
+      'dbtype' => 'pgsql',
+      'dbuser' => 'nextcloud',
+      'default_phone_region' => '${if phoneRegion != null then phoneRegion else "US"}',
+      'forwarded_for_headers' => array('HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP'),
+      'htaccess' =>
+      array (
+        'RewriteBase' => "",
+      ),
+      'htaccess.RewriteBase' => '/',
+      'log_type' => 'file',
+      'loglevel' => 1,
+      'memcache.local' => '\\OC\\Memcache\\APCu',
+      'memcache.distributed' => '\\OC\\Memcache\\Redis',
+      'memcache.locking' => '\\OC\\Memcache\\Redis',
+      'oidc_login_auto_redirect' => true,
+      'overwrite.cli.url' => 'https://${host}/',
+      'overwritecondaddr' => '^10\\.0\\.0\\..*$',
+      'overwritehost' => '${host}',
+      'overwriteprotocol' => 'https',
+      'overwritewebroot' => "",
+      'maintenance_window_start' => 2,
+      'profile.enabled' => true,
+      'redis' =>
+      array (
+        'host' => 'nextcloud-redis',
+        'port' => ${toString port-redis},
+        'timeout' => 0.0,
+      ),
+      'skeletondirectory' => "",
+      'social_login_auto_redirect' => true,
       'trusted_domains' =>
       array (
         0 => 'localhost',
@@ -34,47 +101,26 @@ let
         0 => '10.0.0.0/16',
         1 => '10.88.0.0/16',
       ),
-      'overwriteprotocol' => 'https',
-      'overwritehost' => '${host}',
-      'overwritewebroot' => "",
-      'htaccess.RewriteBase' => '/',
-      'overwrite.cli.url' => 'https://${host}/',
-      'default_phone_region' => '${if phoneRegion != null then phoneRegion else "US"}',
-      'csrf.optout' =>
-      array (
-        '/Nextcloud-android/',
-      ),
-      'maintenance_window_start' => 2,
-      'redis' =>
-      array (
-        'host' => 'nextcloud-redis',
-        'port' => ${toString port-redis},
-        'timeout' => 0.0,
-      ),
-      'memcache.local' => '\\OC\\Memcache\\APCu',
-      'memcache.distributed' => '\\OC\\Memcache\\Redis',
-      'memcache.locking' => '\\OC\\Memcache\\Redis',
     );
   '';
 
   preStart = ''
     mkdir -p ${containerDataPath}/html
 
-    # Copy config if needed
-    if [ ! -f ${containerDataPath}/html/config/override.config.php ]; then
-      cp ${nextcloud-config} ${containerDataPath}/html/config/override.config.php
-    fi
+    # Copy override config
+    cp -f ${nextcloud-config} ${containerDataPath}/config/override.config.php
 
     # Ensure proper permissions for www-data (uid 33)
     chown -R 33:33 ${containerDataPath}/data || true
     chown -R 33:33 ${containerDataPath}/config || true
-    chown -R 33:33 ${containerDataPath}/custom_apps || true
-    chown -R 33:33 ${containerDataPath}/themes || true
 
     chmod o+rx ${containerDataPath}
 
+    ## Create shared secret for AppApi proxy
     HARP_PASSWORD=$(${pkgs.coreutils}/bin/dd if=/dev/urandom bs=12 count=1 2>/dev/null | ${pkgs.coreutils}/bin/base64 | ${pkgs.coreutils}/bin/tr -d -- '\n' | ${pkgs.coreutils}/bin/tr -- '+/' '-_' ; echo)
+    ## Password file used by postStart
     echo "$HARP_PASSWORD" > ${containerDataPath}/harp-pw.txt
+    ## Env file used by app-api proxy docker container
     echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
 
     # Database initialization for postgres-vectorchord if needed
@@ -134,18 +180,16 @@ let
 
     # Install/enable apps
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
-    # ... rest of your existing postStart commands
 
-    # Install/enable apps
-    ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable news || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable contacts || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable calendar || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable tasks || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable deck || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable logreader || true
 
-    # Disable logreader app that causes issues
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app:disable logreader || true
+    ## Disable logreader app that causes issues
+    ## ${pkgs.podman}/bin/podman exec nextcloud php occ app:disable logreader || true
 
     # Run maintenance tasks
     ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:repair --include-expensive || true
@@ -179,7 +223,8 @@ in
         "/etc/localtime:/etc/localtime:ro"
         "/run/postgresql:/run/postgresql"
         "${containerDataPath}/html:/var/www/html"
-        "${nextcloud-config}:/var/www/html/config/override.config.php:ro"
+        "${containerDataPath}/config:/var/www/html/config"
+        "${containerDataPath}/data:/var/www/html/data"
       ];
 
       environment = {
@@ -268,7 +313,8 @@ in
         "/etc/localtime:/etc/localtime:ro"
         "/run/postgresql:/run/postgresql"
         "${containerDataPath}/html:/var/www/html"
-        "${nextcloud-config}:/var/www/html/config/override.config.php:ro"
+        "${containerDataPath}/config:/var/www/html/config"
+        "${containerDataPath}/data:/var/www/html/data"
       ];
 
       environment = {
@@ -358,6 +404,7 @@ in
         extraCaddyConfig = ''
           # Nextcloud specific headers
           header {
+            # HTTP response headers borrowed from Nextcloud `.htaccess`
             Strict-Transport-Security "max-age=31536000; includeSubDomains"
             X-Content-Type-Options "nosniff"
             X-Frame-Options "SAMEORIGIN"
@@ -365,17 +412,63 @@ in
             X-XSS-Protection "1; mode=block"
             X-Permitted-Cross-Domain-Policies "none"
             X-Robots-Tag "noindex,nofollow"
+            X-Download-Options "noopen"
+            Permissions-Policy "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), camera=(), cross-origin-isolated=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), navigation-override=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()"
           }
 
-          # CalDAV and CardDAV redirects
-          redir /.well-known/carddav /remote.php/dav 301
-          redir /.well-known/caldav /remote.php/dav 301
+          request_body {
+            max_size 10G
+          }
 
-          # Security headers for DAV
-          handle_path /remote.php/* {
-            header {
-              -X-Robots-Tag
+          # Enable gzip but do not remove ETag headers
+          encode {
+            zstd
+            gzip 4
+
+            minimum_length 256
+
+            match {
+              header Content-Type application/atom+xml
+              header Content-Type application/javascript
+              header Content-Type application/json
+              header Content-Type application/ld+json
+              header Content-Type application/manifest+json
+              header Content-Type application/rss+xml
+              header Content-Type application/vnd.geo+json
+              header Content-Type application/vnd.ms-fontobject
+              header Content-Type application/wasm
+              header Content-Type application/x-font-ttf
+              header Content-Type application/x-web-app-manifest+json
+              header Content-Type application/xhtml+xml
+              header Content-Type application/xml
+              header Content-Type font/opentype
+              header Content-Type image/bmp
+              header Content-Type image/svg+xml
+              header Content-Type image/x-icon
+              header Content-Type text/cache-manifest
+              header Content-Type text/css
+              header Content-Type text/plain
+              header Content-Type text/vcard
+              header Content-Type text/vnd.rim.location.xloc
+              header Content-Type text/vtt
+              header Content-Type text/x-component
+              header Content-Type text/x-cross-domain-policy
             }
+          }
+
+          route /.well-known/* {
+            redir /.well-known/carddav /remote.php/dav/ permanent
+            redir /.well-known/caldav /remote.php/dav/ permanent
+            redir /.well-known/webfinger /index.php/.well-known/webfinger permanent
+
+            @well-known-static path \
+              /.well-known/acme-challenge /.well-known/acme-challenge/* \
+              /.well-known/pki-validation /.well-known/pki-validation/*
+            route @well-known-static {
+              try_files {path} {path}/ =404
+            }
+
+            redir * /index.php{path} permanent
           }
         '';
       };
