@@ -1,7 +1,8 @@
 { config, lib, pkgs, ... }:
 let
-  version = "31.0.9";
+  version = "32.0.0";
   version-redis = "7-alpine";
+  version-appapi-harp = "v0.2.0";
   containerDataPath = "/var/lib/nextcloud-podman";
 
   port = 3010;
@@ -35,6 +36,8 @@ let
       ),
       'overwriteprotocol' => 'https',
       'overwritehost' => '${host}',
+      'overwritewebroot' => "",
+      'htaccess.RewriteBase' => '/',
       'overwrite.cli.url' => 'https://${host}/',
       'default_phone_region' => '${if phoneRegion != null then phoneRegion else "US"}',
       'csrf.optout' =>
@@ -56,14 +59,10 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/html
-    mkdir -p ${containerDataPath}/data
-    mkdir -p ${containerDataPath}/config
-    mkdir -p ${containerDataPath}/custom_apps
-    mkdir -p ${containerDataPath}/themes
 
     # Copy config if needed
-    if [ ! -f ${containerDataPath}/config/override.config.php ]; then
-      cp ${nextcloud-config} ${containerDataPath}/config/override.config.php
+    if [ ! -f ${containerDataPath}/html/config/override.config.php ]; then
+      cp ${nextcloud-config} ${containerDataPath}/html/config/override.config.php
     fi
 
     # Ensure proper permissions for www-data (uid 33)
@@ -71,6 +70,12 @@ let
     chown -R 33:33 ${containerDataPath}/config || true
     chown -R 33:33 ${containerDataPath}/custom_apps || true
     chown -R 33:33 ${containerDataPath}/themes || true
+
+    chmod o+rx ${containerDataPath}
+
+    HARP_PASSWORD=$(${pkgs.coreutils}/bin/dd if=/dev/urandom bs=12 count=1 2>/dev/null | ${pkgs.coreutils}/bin/base64 | ${pkgs.coreutils}/bin/tr -d -- '\n' | ${pkgs.coreutils}/bin/tr -- '+/' '-_' ; echo)
+    echo "$HARP_PASSWORD" > ${containerDataPath}/harp-pw.txt
+    echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
 
     # Database initialization for postgres-vectorchord if needed
     ${lib.optionalString use-postgres-vectorchord ''
@@ -112,6 +117,25 @@ let
     # Wait for container to be ready
     sleep 10
 
+    # Enable pretty URLs (remove /index.php from URLs)
+    ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set htaccess.RewriteBase --value='/'
+    ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:update:htaccess
+
+    HARP_PASSWORD=$(cat ${containerDataPath}/harp-pw.txt)
+
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:unregister harp_proxy_host
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:register \
+      harp_proxy_host "HaRP Proxy (Host)" "docker-install" "http" \
+      "nextcloud-appapi-harp:8780" "http://nextcloud" \
+      --harp \
+      --harp_frp_address "nextcloud-appapi-harp:8782" \
+      --harp_shared_key "$HARP_PASSWORD" \
+      --set-default
+
+    # Install/enable apps
+    ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
+    # ... rest of your existing postStart commands
+
     # Install/enable apps
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable news || true
@@ -125,6 +149,7 @@ let
 
     # Run maintenance tasks
     ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:repair --include-expensive || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ db:add-missing-indices
   '';
 in
 {
@@ -146,10 +171,6 @@ in
 
       autoStart = true;
 
-      extraOptions = [
-        # "--pull=always"
-      ];
-
       ports = [
         "0.0.0.0:${toString port}:80"
       ];
@@ -158,10 +179,6 @@ in
         "/etc/localtime:/etc/localtime:ro"
         "/run/postgresql:/run/postgresql"
         "${containerDataPath}/html:/var/www/html"
-        # "${containerDataPath}/data:/var/www/html/data"
-        # "${containerDataPath}/config:/var/www/html/config"
-        # "${containerDataPath}/custom_apps:/var/www/html/custom_apps"
-        # "${containerDataPath}/themes:/var/www/html/themes"
         "${nextcloud-config}:/var/www/html/config/override.config.php:ro"
       ];
 
@@ -219,6 +236,26 @@ in
       };
     };
 
+    nextcloud-appapi-harp = {
+      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
+
+      autoStart = true;
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "/run/podman/podman.sock:/var/run/docker.sock"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        NC_INSTANCE_URL = "http://nextcloud";
+      };
+
+      environmentFiles = [
+        "${containerDataPath}/harp-env.txt"
+      ];
+    };
+
     # Cron container for background jobs
     nextcloud-cron = {
       image = "nextcloud:${version}-apache";
@@ -229,11 +266,9 @@ in
 
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
+        "/run/postgresql:/run/postgresql"
         "${containerDataPath}/html:/var/www/html"
-        # "${containerDataPath}/data:/var/www/html/data"
-        # "${containerDataPath}/config:/var/www/html/config"
-        # "${containerDataPath}/custom_apps:/var/www/html/custom_apps"
-        # "${containerDataPath}/themes:/var/www/html/themes"
+        "${nextcloud-config}:/var/www/html/config/override.config.php:ro"
       ];
 
       environment = {
@@ -248,6 +283,18 @@ in
         # Redis configuration
         REDIS_HOST = "nextcloud-redis";
         REDIS_HOST_PORT = toString port-redis;
+
+        # Nextcloud configuration
+        NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
+        NEXTCLOUD_TRUSTED_DOMAINS = "${host} 10.0.0.1";
+        NEXTCLOUD_UPDATE = "0"; # Disable auto-update
+        OVERWRITEPROTOCOL = "https";
+        OVERWRITEHOST = host;
+        OVERWRITE_CLI_URL = "https://${host}";
+
+        # PHP configuration
+        PHP_MEMORY_LIMIT = "1024M";
+        PHP_UPLOAD_LIMIT = "1024M";
       };
     };
   } else {};
@@ -271,11 +318,18 @@ in
     partOf = [ "nftables.service" ];
   };
 
+  systemd.services.podman-nextcloud-appapi-harp = {
+    after = [ "podman-nextcloud.service" ];
+    requires = [ "podman-nextcloud.service" ];
+    partOf = [ "podman-nextcloud.service" ];
+  };
+
   systemd.services.podman-nextcloud-cron = {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "nftables.service" ];
   };
+
 
   homefree.service-config = if config.homefree.services.nextcloud.enable == true then [
     {
@@ -289,6 +343,7 @@ in
       systemd-service-names = [
         "podman-nextcloud"
         "podman-nextcloud-redis"
+        "podman-nextcloud-appapi-harp"
         "podman-nextcloud-cron"
       ] ++ lib.optional (!use-postgres-vectorchord) "postgresql"
         ++ lib.optional use-postgres-vectorchord "podman-postgres-vectorchord";
@@ -309,7 +364,7 @@ in
             Referrer-Policy "no-referrer"
             X-XSS-Protection "1; mode=block"
             X-Permitted-Cross-Domain-Policies "none"
-            X-Robots-Tag "none"
+            X-Robots-Tag "noindex,nofollow"
           }
 
           # CalDAV and CardDAV redirects
@@ -326,9 +381,8 @@ in
       };
       backup = {
         paths = [
-          "${containerDataPath}/data"
-          "${containerDataPath}/config"
-          "${containerDataPath}/custom_apps"
+          "${containerDataPath}/html/data"
+          "${containerDataPath}/html/config"
         ];
         postgres-databases = if (!use-postgres-vectorchord) then [
           database-name
