@@ -181,12 +181,13 @@ let
     # Install/enable apps
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
 
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable news || true
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable contacts || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable calendar || true
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable tasks || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable contacts || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable deck || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable logreader || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable news || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable sociallogin || true
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable tasks || true
 
     ## Disable logreader app that causes issues
     ## ${pkgs.podman}/bin/podman exec nextcloud php occ app:disable logreader || true
