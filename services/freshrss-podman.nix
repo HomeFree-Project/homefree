@@ -9,7 +9,7 @@ let
 
   # image = "lscr.io/linuxserver/freshrss";
   image = "freshrss/freshrss";
-  version = "1.26.3";
+  version = "1.27.1";
 
   port = 3028;
 

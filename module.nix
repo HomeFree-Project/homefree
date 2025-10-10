@@ -914,6 +914,20 @@
         };
       };
 
+      screeenly = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Screeenly preview generation service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       snipe-it = {
         enable = lib.mkOption {
           type = lib.types.bool;
