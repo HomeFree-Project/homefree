@@ -2,6 +2,11 @@
 let
   lan-interface = config.homefree.network.lan-interface;
   wan-interface = config.homefree.network.wan-interface;
+  lan-address = config.homefree.network.lan-address;
+  lan-netmask = config.homefree.network.lan-netmask;
+  dhcp-range-start = config.homefree.network.dhcp-range-start;
+  dhcp-range-end = config.homefree.network.dhcp-range-end;
+  dhcp-lease-time = config.homefree.network.dhcp-lease-time;
   localDomain = config.homefree.system.localDomain;
   dhcp-script = pkgs.writeShellScript "dhcp-script" ''
     # $1 = action (add, del, old)
@@ -52,8 +57,7 @@ in
        ra-param = "${lan-interface},10,7200";
 
       ## DNS servers to pass to clients
-      ## @TODO: Make this based on configured gateway IP
-      server = [ "10.0.0.1" ];
+      server = [ lan-address ];
 
       ## Which interfaces to bind to
       interface = [
@@ -73,8 +77,8 @@ in
         ## "slaac" specifies how addresses are allocated. In this case, it tells clients to create
         ## their own address by using the advertised prefix + MAC address, and then the clients send
         ## a message to validate that it's not a duplicate with another address.
-        "tag:${lan-interface},::1,constructor:${lan-interface},ra-names,slaac,12h"    # ipv6
-        "${lan-interface},10.0.0.100,10.0.0.254,255.255.255.0,8h"                     # ipv4
+        "tag:${lan-interface},::1,constructor:${lan-interface},ra-names,slaac,12h"                        # ipv6
+        "${lan-interface},${dhcp-range-start},${dhcp-range-end},${lan-netmask},${dhcp-lease-time}"       # ipv4
       ];
 
       ## Disable DNS, since Unbound is handling DNS
@@ -85,7 +89,7 @@ in
       ## Additional DHCP options
       dhcp-option = [
         "option6:dns-server,[::]"  # @TODO: point this at Unbound when ipv6 is setup
-        "option:dns-server,10.0.0.1"
+        "option:dns-server,${lan-address}"
       ];
 
       dhcp-host = lib.map (ip-config:

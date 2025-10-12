@@ -44,6 +44,9 @@ let
       sudo --preserve-env=RESTIC_REPOSITORY --preserve-env=RESTIC_PASSWORD restic ls latest
     done
   '';
+  restore-cli = pkgs.writeShellScriptBin "restore-cli" ''
+    exec ${pkgs.bash}/bin/bash ${../scripts/restore.sh} "$@"
+  '';
   backup-mysql-script =
   let
     cfg = config.services.mysqlBackup;
@@ -71,6 +74,8 @@ in
     pkgs.restic
     pkgs.rclone
     backup-cli
+    restore-cli
+    pkgs.jq
   ];
 
   # --------------------------------------------------------------------------------------

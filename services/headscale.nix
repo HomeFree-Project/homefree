@@ -1,17 +1,20 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.homefree;
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
+  lan-subnet-prefix = lib.head (lib.splitString "/" lan-subnet);  # Extract "10.0.0.0" from "10.0.0.0/24"
   search-domains = [ cfg.system.domain cfg.system.localDomain ] ++ cfg.system.additionalDomains;
   ## See: https://headscale.net/stable/ref/acls/
   ## @TODO: Doesn't seem to work, may even block all traffic not explicitly approved.
   policy = pkgs.writeText "headscale-policy.json" ''
     {
       "hosts": {
-        "homefree.lan": "10.0.0.1/32"
+        "homefree.lan": "${lan-address}/32"
       },
       "autoApprovers": {
         "routes": {
-          "10.0.0.0/24": [
+          "${lan-subnet}": [
             "homefree.lan"
           ]
         }
@@ -28,15 +31,15 @@ let
   '';
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.headscale.enable [
     pkgs.headscale
     pkgs.tailscale
   ];
 
-  services.headscale = {
-    enable = config.homefree.services.headscale.enable;
+  services.headscale = lib.optionalAttrs config.homefree.services.headscale.enable {
+    enable = true ;
     port = 8087;
-    address = "10.0.0.1";
+    address = lan-address;
     settings = {
       server_url = "https://headscale.${cfg.system.domain}:443";
       # policy.path = policy;
@@ -49,11 +52,11 @@ in
         ## Add
         nameservers.global = [
           ## @TODO: It appears that these servers are round-robinned.
-          ##        Can 10.0.0.1 be set as default, and the rest as backups?
+          ##        Can ${lan-address} be set as default, and the rest as backups?
           ##        Would be useful to support ad blocking over tailscale.
 
           ## Internal DNS, has local domain names
-          # "10.0.0.1"
+          # "${lan-address}"
 
           ## Backup in case internal DNS not accessible due to connectivity issues
           "9.9.9.10"
@@ -65,7 +68,7 @@ in
           {
             name = domain;
             value = [
-              "10.0.0.1"
+              lan-address
             ];
           }
         ) search-domains);
@@ -96,7 +99,7 @@ in
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
-  services.tailscale = {
+  services.tailscale = lib.optionalAttrs config.homefree.services.headscale.enable {
     enable = true;
     authKeyFile = config.homefree.services.headscale.secrets.tailscale-key;
     authKeyParameters = {
@@ -105,20 +108,20 @@ in
     };
     useRoutingFeatures = "server";
     extraUpFlags = [
-      # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
-      "--advertise-routes=10.0.0.0/24"
+      # "--advertise-routes=${lan-subnet},100.64.0.0/24"
+      "--advertise-routes=${lan-subnet}"
       "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
     extraSetFlags = [
-      # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
-      "--advertise-routes=10.0.0.0/24"
+      # "--advertise-routes=${lan-subnet},100.64.0.0/24"
+      "--advertise-routes=${lan-subnet}"
       "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
   };
 
-  systemd.services.headscale-enable-routes = {
+  systemd.services.headscale-enable-routes = lib.optionalAttrs config.homefree.services.headscale.enable {
     after = [ "network.target" "network-online.target" "tailscale.service" ];
     requires = [ "network-online.target" "tailscaled.service" "tailscaled-set.service" "tailscaled-autoconnect.service" ];
     enable = true;
@@ -130,11 +133,11 @@ in
       HEADSCALE=${pkgs.headscale}/bin/headscale
       GREP=${pkgs.gnugrep}/bin/grep
       AWK=${pkgs.gawk}/bin/awk
-      $HEADSCALE routes enable -r $($HEADSCALE routes list | $GREP homefree | $GREP "10.0.0.0" | $AWK '{ print $1 }')
+      $HEADSCALE routes enable -r $($HEADSCALE routes list | $GREP homefree | $GREP "${lan-subnet-prefix}" | $AWK '{ print $1 }')
     '';
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.headscale.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.headscale.enable {
     headplane = {
       image = "ghcr.io/tale/headplane:${headplane-version}";
 
@@ -183,9 +186,9 @@ in
         config.homefree.services.headscale.secrets.headplane-env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-headplane = {
+  systemd.services.podman-headplane = lib.optionalAttrs config.homefree.services.headscale.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -194,7 +197,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.headscale.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.headscale.enable [
     {
       label = "headscale";
       name = "VPN";
@@ -212,11 +215,11 @@ in
         subdomains = [ "vpn" "headscale" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = lan-address;
         port = config.services.headscale.port;
         public = true;
         extraCaddyConfig = ''
-          reverse_proxy /admin* http://10.0.0.1:3009
+          reverse_proxy /admin* http://${lan-address}:3009
         '';
       };
       firewall = {
@@ -239,5 +242,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

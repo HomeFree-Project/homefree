@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/baikal";
 
@@ -10,7 +10,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.baikal.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.baikal.enable {
     baikal = {
       image = "ckulka/baikal:nginx";
 
@@ -34,9 +34,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-baikal = {
+  systemd.services.podman-baikal = lib.optionalAttrs config.homefree.services.baikal.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -45,7 +45,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.baikal.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.baikal.enable [
     {
       label = "baikal";
       name = "Baikal CalDAV/CardDAV";
@@ -58,7 +58,7 @@ in
         subdomains = [ "baikal" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.baikal.public;
       };
@@ -69,6 +69,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

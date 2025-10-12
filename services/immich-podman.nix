@@ -43,10 +43,10 @@ let
 in
 {
   ## @TODO: Move to scripts run from containers
-  environment.systemPackages = if config.homefree.services.immich.enable then [
+  environment.systemPackages = lib.optionals config.homefree.services.immich.enable [
     pkgs.unstable.immich-cli
     pkgs.unstable.immich-go
-  ] else [];
+  ];
 
   # ## Copied from nixpkgs
   # services.postgresql = if config.homefree.services.immich.enable then {
@@ -67,7 +67,7 @@ in
   # } else {};
 
   ## @TODO: Currently disabled - try fresh install to see if it's even needed
-  systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost = if false && config.homefree.services.immich.enable then
+  systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost =
   let
     preStart = ''
       ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres << EOF
@@ -117,12 +117,13 @@ in
       ALTER EXTENSION vectors UPDATE;
     '';
   in
+  lib.optionals config.homefree.services.immich.enable
   [
     preStart
     '' ${lib.getExe' config.services.postgresql.package "psql"} -d "${database-name}" -f "${sqlFile}" ''
-  ] else [];
+  ];
 
-  virtualisation.oci-containers.containers = if config.homefree.services.immich.enable then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.immich.enable {
     immich-server = {
       image = "ghcr.io/immich-app/immich-server:${version}";
 
@@ -216,9 +217,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-immich-server = {
+  systemd.services.podman-immich-server = lib.optionalAttrs config.homefree.services.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -227,19 +228,19 @@ in
     };
   };
 
-  systemd.services.podman-immich-machine-learning = {
+  systemd.services.podman-immich-machine-learning = lib.optionalAttrs config.homefree.services.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  systemd.services.podman-immich-redis = {
+  systemd.services.podman-immich-redis = lib.optionalAttrs config.homefree.services.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = if config.homefree.services.immich.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.immich.enable [
     {
       label = "immich";
       name = "Photos";
@@ -259,7 +260,7 @@ in
         subdomains = [ "photos" "immich" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = config.services.immich.port;
         public = config.homefree.services.immich.public;
       };
@@ -272,5 +273,5 @@ in
         # ];
       };
     }
-  ] else [];
+  ];
 }

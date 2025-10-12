@@ -1,8 +1,12 @@
-{ config, lib, ... }:
+{ config, homefree-inputs, lib, ... }:
+let
+  defaultLocale = config.homefree.system.defaultLocale;
+in
 {
   imports = [
     ./profiles/acme.nix
     ./profiles/bash.nix
+    ./profiles/boot-branding.nix
     ./profiles/common.nix
     ./profiles/config-editor.nix
     ./profiles/git.nix
@@ -69,21 +73,56 @@
     # ./services/nextcloud.nix
   ];
 
+  nix = {
+    nixPath = [ "nixpkgs=${homefree-inputs.nixpkgs}" ];
+  };
+
+  # Only create admin user on installed systems (not in live installer)
+  users.users."${config.homefree.system.adminUsername}" = lib.mkIf (config.system.nixos.variant_id or "" != "installer") {
+    isNormalUser  = true;
+    home  = "/home/${config.homefree.system.adminUsername}";
+    description = config.homefree.system.adminDescription;
+    extraGroups = [ "wheel" "docker" ];
+    openssh.authorizedKeys.keys = config.homefree.system.authorizedKeys;
+    initialHashedPassword = "";  # Empty password - should be set on first login or via SSH
+  };
+
+  # --------------------------------------------------------------------------------------
+  # i18n
+  # --------------------------------------------------------------------------------------
+
+  # @TODO: Make this UI configurable
+  i18n.defaultLocale = defaultLocale;
+
+  i18n.extraLocaleSettings = {
+    LC_ADDRESS = defaultLocale;
+    LC_IDENTIFICATION = defaultLocale;
+    LC_MEASUREMENT = defaultLocale;
+    LC_MONETARY = defaultLocale;
+    LC_NAME = defaultLocale;
+    LC_NUMERIC = defaultLocale;
+    LC_PAPER = defaultLocale;
+    LC_TELEPHONE = defaultLocale;
+    LC_TIME = defaultLocale;
+  };
+
+  console.keyMap = config.homefree.system.keyMap;
+
   # --------------------------------------------------------------------------------------
   # Boot
   # --------------------------------------------------------------------------------------
 
-  boot.loader = {
-    systemd-boot = {
-      enable = true;
-      configurationLimit = 10;
-      # Use maximum resolution in systemd-boot for hidpi
-      consoleMode = "max";
-    };
-    efi = {
-      canTouchEfiVariables = true;
-    };
-  };
+  # boot.loader = {
+  #   systemd-boot = {
+  #     enable = true;
+  #     configurationLimit = 10;
+  #     # Use maximum resolution in systemd-boot for hidpi
+  #     consoleMode = "max";
+  #   };
+  #   efi = {
+  #     canTouchEfiVariables = true;
+  #   };
+  # };
 
   # --------------------------------------------------------------------------------------
   # Network
@@ -91,6 +130,24 @@
 
   # Prevent hanging when waiting for network to be up
   systemd.network.wait-online.anyInterface = true;
+
+  networking.search = [ config.homefree.system.localDomain ];
+
+  # --------------------------------------------------------------------------------------
+  # Base Packages
+  # --------------------------------------------------------------------------------------
+
+  nixvim-config = {
+    enable = true;
+    startify-header = let header-space = "   "; in [
+     ''${header-space}  ___ ___                      ___________''
+     ''${header-space} /   |   \  ____   _____   ____\_   _____/______   ____   ____''
+     ''${header-space}/    ~    \/  _ \ /     \_/ __ \|    __) \_  __ \_/ __ \_/ __ \''
+     ''${header-space}\    Y    (  <_> )  Y Y  \  ___/|     \   |  | \/\  ___/\  ___/''
+     ''${header-space} \___|_  / \____/|__|_|  /\___  >___  /   |__|    \___  >\___  >''
+     ''${header-space}       \/              \/     \/    \/                \/     \/''
+    ];
+  };
 
   # --------------------------------------------------------------------------------------
   # Device specific

@@ -1,0 +1,133 @@
+# HomeFree Plymouth Theme Script
+# Dark/monochrome theme with animated spinner
+
+# Set background to black
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+# Create HomeFree logo text
+logo.image = Image.Text("HomeFree", 1.0, 1.0, 1.0, 1.0, "Sans 48");
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
+logo.sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - 100);
+logo.sprite.SetOpacity(1.0);
+
+# Create subtitle text
+subtitle.image = Image.Text("All-in-One Home Server", 0.7, 0.7, 0.7, 1.0, "Sans 16");
+subtitle.sprite = Sprite(subtitle.image);
+subtitle.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - subtitle.image.GetWidth() / 2);
+subtitle.sprite.SetY(logo.sprite.GetY() + logo.image.GetHeight() + 10);
+subtitle.sprite.SetOpacity(1.0);
+
+# Spinner animation using dots
+spinner_angle = 0;
+spinner_radius = 20;
+spinner_x = Window.GetX() + Window.GetWidth() / 2;
+spinner_y = subtitle.sprite.GetY() + 60;
+
+# Create 8 spinner dots
+for (i = 0; i < 8; i++) {
+    spinner_dot[i].sprite = Sprite();
+    spinner_dot[i].sprite.SetOpacity(0);
+}
+
+# Animate spinner
+fun refresh_callback() {
+    spinner_angle = spinner_angle + 0.1;
+
+    # Update each dot position and opacity
+    for (i = 0; i < 8; i++) {
+        angle = spinner_angle + (i * 3.14159 * 2 / 8);
+        x = spinner_x + Math.Cos(angle) * spinner_radius;
+        y = spinner_y + Math.Sin(angle) * spinner_radius;
+
+        # Create dot as a circle approximation using text
+        opacity = 0.3 + (i / 8.0) * 0.7;
+        spinner_dot[i].image = Image.Text("●", opacity, opacity, opacity, 1.0, "Sans 12");
+        spinner_dot[i].sprite.SetImage(spinner_dot[i].image);
+        spinner_dot[i].sprite.SetX(x - spinner_dot[i].image.GetWidth() / 2);
+        spinner_dot[i].sprite.SetY(y - spinner_dot[i].image.GetHeight() / 2);
+        spinner_dot[i].sprite.SetOpacity(1.0);
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# Progress bar - text-based
+progress_bar.sprite = Sprite();
+progress_bar.x = Window.GetX() + Window.GetWidth() / 2;
+progress_bar.y = spinner_y + 50;
+
+# Progress bar fill
+fun progress_callback(duration, progress) {
+    # Create text-based progress indicator
+    progress_text = "";
+    filled = Math.Int(progress * 40);
+    empty = 40 - filled;
+
+    # Build progress bar: [=====>     ]
+    for (i = 0; i < filled; i++) {
+        progress_text += "━";
+    }
+    for (i = 0; i < empty; i++) {
+        progress_text += "─";
+    }
+
+    # Create and display progress bar
+    progress_bar.image = Image.Text(progress_text, 0.8, 0.8, 0.8, 1.0, "Mono 10");
+    progress_bar.sprite.SetImage(progress_bar.image);
+    progress_bar.sprite.SetX(progress_bar.x - progress_bar.image.GetWidth() / 2);
+    progress_bar.sprite.SetY(progress_bar.y);
+    progress_bar.sprite.SetOpacity(1.0);
+}
+
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# Message display
+message_sprite = Sprite();
+message_sprite.SetPosition(Window.GetX() + 10, Window.GetY() + Window.GetHeight() - 30, 10000);
+
+fun message_callback(text) {
+    message_image = Image.Text(text, 0.6, 0.6, 0.6, 1.0, "Sans 12");
+    message_sprite.SetImage(message_image);
+    message_sprite.SetOpacity(1.0);
+}
+
+Plymouth.SetMessageFunction(message_callback);
+
+# Display message function
+fun display_normal_callback() {
+    message_sprite.SetOpacity(1.0);
+}
+
+fun display_password_callback(prompt, bullets) {
+    # For password prompts during boot
+    prompt_image = Image.Text(prompt, 1.0, 1.0, 1.0, 1.0, "Sans 14");
+    prompt_sprite = Sprite(prompt_image);
+    prompt_sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - prompt_image.GetWidth() / 2);
+    prompt_sprite.SetY(Window.GetY() + Window.GetHeight() / 2 + 50);
+
+    # Display bullets for password
+    bullets_text = "";
+    for (i = 0; i < bullets; i++) {
+        bullets_text += "• ";
+    }
+    bullets_image = Image.Text(bullets_text, 1.0, 1.0, 1.0, 1.0, "Sans 14");
+    bullets_sprite = Sprite(bullets_image);
+    bullets_sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - bullets_image.GetWidth() / 2);
+    bullets_sprite.SetY(prompt_sprite.GetY() + 30);
+}
+
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+# Quit callback
+fun quit_callback() {
+    logo.sprite.SetOpacity(0);
+    subtitle.sprite.SetOpacity(0);
+    for (i = 0; i < 8; i++) {
+        spinner_dot[i].sprite.SetOpacity(0);
+    }
+}
+
+Plymouth.SetQuitFunction(quit_callback);

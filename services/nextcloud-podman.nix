@@ -14,10 +14,8 @@ let
   countryCode = config.homefree.system.countryCode;
   phoneRegion = if countryCode != null then (lib.toUpper countryCode) else null;
 
-  # Database configuration - prefer postgres-vectorchord if available
-  use-postgres-vectorchord = false; # Set to true to use postgres-vectorchord instead of local postgres
-  postgres-host = if use-postgres-vectorchord then "postgres-vectorchord" else "/run/postgresql";
-  postgres-port = if use-postgres-vectorchord then "6432" else "5432";
+  postgres-host = "/run/postgresql";
+  postgres-port = 5432;
 
   # Nextcloud configuration file
   nextcloud-config = pkgs.writeText "override.config.php" ''
@@ -93,7 +91,7 @@ let
       'trusted_domains' =>
       array (
         0 => 'localhost',
-        1 => '10.0.0.1:${toString port}',
+        1 => '${config.homefree.network.lan-address}:${toString port}',
         2 => '${host}',
       ),
       'trusted_proxies' =>
@@ -124,8 +122,8 @@ let
     echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
 
     # Database initialization for postgres-vectorchord if needed
-    ${lib.optionalString use-postgres-vectorchord ''
-      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -U postgres << EOF
+    ${''
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -146,9 +144,9 @@ let
         \$do\$;
       EOF
 
-      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
-      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -X -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -X -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -200,7 +198,7 @@ let
 in
 {
   # Database setup - only if using local postgres (not podman postgres)
-  services.postgresql = if config.homefree.services.nextcloud.enable && !use-postgres-vectorchord then {
+  services.postgresql = lib.optionalAttrs config.homefree.services.nextcloud.enable {
     ensureDatabases = [ database-name ];
     ensureUsers = [
       {
@@ -209,9 +207,9 @@ in
         ensureClauses.login = true;
       }
     ];
-  } else {};
+  };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.nextcloud.enable then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.nextcloud.enable {
     nextcloud = {
       image = "nextcloud:${version}-apache";
 
@@ -244,7 +242,7 @@ in
 
         # Nextcloud configuration
         NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} 10.0.0.1";
+        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
         NEXTCLOUD_UPDATE = "0"; # Disable auto-update
         OVERWRITEPROTOCOL = "https";
         OVERWRITEHOST = host;
@@ -334,7 +332,7 @@ in
 
         # Nextcloud configuration
         NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} 10.0.0.1";
+        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
         NEXTCLOUD_UPDATE = "0"; # Disable auto-update
         OVERWRITEPROTOCOL = "https";
         OVERWRITEHOST = host;
@@ -345,14 +343,12 @@ in
         PHP_UPLOAD_LIMIT = "1024M";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-nextcloud = {
-    after = [ "dns-ready.service" ] ++ lib.optional (!use-postgres-vectorchord) "postgresql.service"
-                                      ++ lib.optional use-postgres-vectorchord "podman-postgres-vectorchord.service";
+  systemd.services.podman-nextcloud = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+    after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
-    wants = lib.optional (!use-postgres-vectorchord) "postgresql.service"
-            ++ lib.optional use-postgres-vectorchord "podman-postgres-vectorchord.service";
+    wants = [ "postgresql.service" ];
     partOf = [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nextcloud-prestart" preStart}" ];
@@ -360,26 +356,25 @@ in
     };
   };
 
-  systemd.services.podman-nextcloud-redis = {
+  systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.services.nextcloud.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf = [ "nftables.service" ];
   };
 
-  systemd.services.podman-nextcloud-appapi-harp = {
+  systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.services.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "podman-nextcloud.service" ];
   };
 
-  systemd.services.podman-nextcloud-cron = {
+  systemd.services.podman-nextcloud-cron = lib.optionalAttrs config.homefree.services.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "nftables.service" ];
   };
 
-
-  homefree.service-config = if config.homefree.services.nextcloud.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.nextcloud.enable [
     {
       label = "nextcloud";
       name = "Nextcloud";
@@ -393,14 +388,14 @@ in
         "podman-nextcloud-redis"
         "podman-nextcloud-appapi-harp"
         "podman-nextcloud-cron"
-      ] ++ lib.optional (!use-postgres-vectorchord) "postgresql"
-        ++ lib.optional use-postgres-vectorchord "podman-postgres-vectorchord";
+        "postgresql"
+      ];
       reverse-proxy = {
         enable = true;
         subdomains = [ "nextcloud" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.nextcloud.public;
         extraCaddyConfig = ''
@@ -479,11 +474,11 @@ in
           "${containerDataPath}/html/data"
           "${containerDataPath}/html/config"
         ];
-        postgres-databases = if (!use-postgres-vectorchord) then [
+        postgres-databases = [
           database-name
-        ] else [];
+        ];
       };
     }
-  ] else [];
+  ];
 }
 

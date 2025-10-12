@@ -73,7 +73,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.cryptpad.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.cryptpad.enable {
     cryptpad = {
       image = "cryptpad/cryptpad:${version}";
 
@@ -111,9 +111,9 @@ in
         CPAD_CONF = "/cryptpad/config/config.js";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-cryptpad = {
+  systemd.services.podman-cryptpad = lib.optionalAttrs config.homefree.services.cryptpad.enable {
     after = [ "dns-ready.service" ];
     requires =[ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -122,7 +122,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.cryptpad.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.cryptpad.enable [
     {
       label = "cryptpad";
       name = "Docs/Office Suite";
@@ -135,7 +135,7 @@ in
         subdomains = [ "docs" "docs-sandbox" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.cryptpad.public;
       };
@@ -145,5 +145,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

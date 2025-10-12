@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 ## Default username: zitadel-admin@zitadel.${config.homefree.system.domain}
 ## Default password: Password1!
@@ -13,7 +13,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.zitadel.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     zitadel = {
       image = "ghcr.io/zitadel/zitadel:${version}";
 
@@ -40,7 +40,7 @@ in
       environment = {
         TZ = config.homefree.system.timeZone;
 
-        ZITADEL_DATABASE_POSTGRES_HOST = "10.0.0.1";
+        ZITADEL_DATABASE_POSTGRES_HOST = config.homefree.network.lan-address;
         ZITADEL_DATABASE_POSTGRES_PORT = "5432";
         ZITADEL_DATABASE_POSTGRES_DATABASE = "zitadel";
         ZITADEL_DATABASE_POSTGRES_USER_USERNAME = "zitadel";
@@ -62,9 +62,9 @@ in
         config.homefree.services.zitadel.secrets.env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-zitadel = {
+  systemd.services.podman-zitadel = lib.optionalAttrs config.homefree.services.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -73,7 +73,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.zitadel.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
       label = "zitadel";
       name = "Single Sign-on (SSO)";
@@ -86,7 +86,7 @@ in
         subdomains = [ "sso" "zitadel" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.zitadel.public;
       };
@@ -99,6 +99,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

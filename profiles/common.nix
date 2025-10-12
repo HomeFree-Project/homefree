@@ -1,17 +1,9 @@
-{ config, homefree-inputs, pkgs, system, ...}:
+{ pkgs, system, ...}:
 {
 
   # --------------------------------------------------------------------------------------
   # Base Nix config
   # --------------------------------------------------------------------------------------
-
-  # This vale determines the NixOS release from which the default
-  # settings for stateful data, like file locations and database versions
-  # on your system were taken. It‘s perfectly fine and recommended to leave
-  # this value at the release version of the first install of this system.
-  # Before changing this value read the documentation for this option
-  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
-  system.stateVersion = "25.05"; # Did you read the comment?
 
   # @TODO: Could this be useful for auto-upgrading systems out there?
   # system.autoUpgrade = {
@@ -27,8 +19,6 @@
   # };
 
   nix = {
-    nixPath = [ "nixpkgs=${homefree-inputs.nixpkgs}" "nixos-config=/home/${config.homefree.system.adminUsername}/nixcfg" ];
-
     # Which package collection to use system-wide.
     package = pkgs.nixVersions.stable;
     # package = pkgs.nixFlakes;
@@ -99,15 +89,6 @@
   # User config
   # --------------------------------------------------------------------------------------
 
-  users.users."${config.homefree.system.adminUsername}" = {
-    isNormalUser  = true;
-    home  = "/home/${config.homefree.system.adminUsername}";
-    description  = "Homefree Admin";
-    extraGroups  = [ "wheel" "docker" ];
-    openssh.authorizedKeys.keys= config.homefree.system.authorizedKeys;
-    hashedPassword = config.homefree.system.adminHashedPassword;
-  };
-
   users.users.www-data = {
     uid = 33;
     group = "www-data";
@@ -135,12 +116,6 @@
     config = {
       # Allow proprietary packages.
       allowUnfree = true;
-      packageOverrides = pkgs: {
-        unstable = import homefree-inputs.nixpkgs-unstable {
-          config = config.nixpkgs.config;
-          inherit system;
-        };
-      };
     };
   };
 
@@ -150,9 +125,9 @@
 
   # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort.
   # Nix mounts read-write automatically when it needs to write to it.
-  boot.readOnlyNixStore = true;
+  boot.nixStoreMountOpts = [ "ro" ];
 
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+  # boot.kernelPackages = pkgs.linuxPackages_latest;
 
   boot.kernel.sysctl = {
     "fs.inotify.max_user_watches" = 1048576; # defau
@@ -172,7 +147,7 @@
   # --------------------------------------------------------------------------------------
 
   ## Needed to avoid "too many file open" errors when building containers
-  systemd.extraConfig = "DefaultLimitNOFILE=4096";
+  systemd.settings.Manager.DefaultLimitNOFILE = 4096;
   security.pam.loginLimits = [
     { domain = "*"; item = "nofile"; type = "-"; value = "65536"; }
   ];
@@ -185,7 +160,7 @@
   services.fwupd.enable = true;
 
   # Setting to true will kill things like tmux on logout
-  services.logind.killUserProcesses = false;
+  services.logind.settings.Login.KillUserProcesses = false;
 
   services.gvfs.enable = true; # SMB mounts, trash, and other functionality
   services.tumbler.enable = true; # Thumbnail support for images
@@ -220,35 +195,9 @@
     ET_NO_TELEMETRY = "1";
   };
 
-
-  # --------------------------------------------------------------------------------------
-  # i18n
-  # --------------------------------------------------------------------------------------
-
-  # @TODO: Make this UI configurable
-  i18n.defaultLocale = "en_US.UTF-8";
-
-  # --------------------------------------------------------------------------------------
-  # Networking
-  # --------------------------------------------------------------------------------------
-
-  networking.search = [ config.homefree.system.localDomain ];
-
   # --------------------------------------------------------------------------------------
   # Base Packages
   # --------------------------------------------------------------------------------------
-
-  nixvim-config = {
-    enable = true;
-    startify-header = let header-space = "   "; in [
-     ''${header-space}  ___ ___                      ___________''
-     ''${header-space} /   |   \  ____   _____   ____\_   _____/______   ____   ____''
-     ''${header-space}/    ~    \/  _ \ /     \_/ __ \|    __) \_  __ \_/ __ \_/ __ \''
-     ''${header-space}\    Y    (  <_> )  Y Y  \  ___/|     \   |  | \/\  ___/\  ___/''
-     ''${header-space} \___|_  / \____/|__|_|  /\___  >___  /   |__|    \___  >\___  >''
-     ''${header-space}       \/              \/     \/    \/                \/     \/''
-    ];
-  };
 
   programs.nix-ld.enable = true;
 
@@ -311,7 +260,7 @@
     steampipe
     tmux
     usbutils
-    utillinux
+    util-linux
     vulnix
     wireguard-tools
     wget

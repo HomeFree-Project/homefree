@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/vaultwarden-podman";
 
@@ -10,7 +10,7 @@ let
   version = "1.34.3";
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.vaultwarden.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.vaultwarden.enable {
     vaultwarden = {
       image = "vaultwarden/server:${version}";
 
@@ -33,9 +33,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-vaultwarden = {
+  systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.services.vaultwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -44,7 +44,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.vaultwarden.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.vaultwarden.enable [
     {
       label = "vaultwarden";
       name = "Password Manager";
@@ -57,7 +57,7 @@ in
         subdomains = [ "vaultwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.vaultwarden.public;
       };
@@ -67,5 +67,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

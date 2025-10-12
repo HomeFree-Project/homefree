@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "9.1.120";
   containerDataPath = "/var/lib/unifi-podman";
@@ -47,7 +47,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.unifi.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.unifi.enable {
     unifi-db = {
       image = "mongo:${mongo-version}";
       # image = "mongodb/mongodb-community-server:${version}";
@@ -139,9 +139,9 @@ in
         MONGO_TLS = ""; #optional
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-unifi-db = {
+  systemd.services.podman-unifi-db = lib.optionalAttrs config.homefree.services.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -150,7 +150,7 @@ in
     };
   };
 
-  systemd.services.podman-unifi = {
+  systemd.services.podman-unifi = lib.optionalAttrs config.homefree.services.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -159,7 +159,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.unifi.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.unifi.enable [
     {
       label = "unifi";
       name = "Unifi Controller";
@@ -172,7 +172,7 @@ in
         subdomains = [ "unifi" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         ssl = true;
         ssl-no-verify = true;
@@ -185,6 +185,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

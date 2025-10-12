@@ -2,7 +2,7 @@
   description = "HomeFree Self-Hosting Platform";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -12,11 +12,6 @@
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
     nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";
-
-    nixos-generators = {
-      url = "github:nix-community/nixos-generators";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
 
     nix-editor.url = "github:snowfallorg/nix-editor";
 
@@ -50,8 +45,30 @@
     homefree-inputs = inputs;
     # versionInfo = import ./version.nix;
     # version = versionInfo.version + (inputs.nixpkgs.lib.optionalString (!versionInfo.released) "-dirty");
+
+    # Helper function to create script apps
+    mkScriptApp = system: pkgs: scriptName: scriptPath: {
+      type = "app";
+      program = "${pkgs.writeShellScriptBin scriptName ''
+        exec ${scriptPath} "$@"
+      ''}/bin/${scriptName}";
+    };
+
+    # Create apps for a specific system
+    mkSystemApps = system: pkgs: {
+      deploy = mkScriptApp system pkgs "deploy" ./scripts/deploy.sh;
+      build-iso-image = mkScriptApp system pkgs "build-image" ./scripts/build-image.sh;
+      build-qcow2-image = mkScriptApp system pkgs "build-qcow2-image" ./scripts/build-qcow2-installer.sh;
+      flash = mkScriptApp system pkgs "flash" ./scripts/flash.sh;
+      build = mkScriptApp system pkgs "build" ./scripts/build.sh;
+      run-vm = mkScriptApp system pkgs "run" ./scripts/run-vm.sh;
+    };
   in
   {
+    apps = {
+      x86_64-linux = mkSystemApps "x86_64-linux" inputs.nixpkgs.legacyPackages.x86_64-linux;
+    };
+
     nixosModules = rec {
       homefree = import ./default.nix { inherit homefree-inputs; inherit system; };
       imports = [ ];
@@ -59,17 +76,59 @@
       lan-client = import ./lan-client.nix { inherit homefree-inputs; inherit system; };
     };
     nixosConfigurations = {
-      homefree-test = inputs.nixpkgs.lib.nixosSystem {
+      # Note that this uses unstable
+      homefree = inputs.nixpkgs-unstable.lib.nixosSystem {
         system = system;
         modules = [
           self.nixosModules.homefree
+          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
         ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
       };
-      lan-client = inputs.nixpkgs.lib.nixosSystem {
+
+      # Note that this uses unstable
+      lan-client = inputs.nixpkgs-unstable.lib.nixosSystem {
         system = system;
         modules = [
           self.nixosModules.lan-client
+          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
         ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
+      };
+
+      # Default installer - Web-based (replaces Calamares)
+      # Note that this uses STABLE, as the installation CD doesn't necessarily work on unstable
+      homefree-installer = inputs.nixpkgs.lib.nixosSystem {
+        system = system;
+        modules = [
+          ## HomeFree web-based installer
+          ./installer-web
+        ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
+      };
+
+      # Legacy Calamares installer (backup, use: nix build .#nixosConfigurations.homefree-installer-calamares.config.system.build.isoImage)
+      homefree-installer-calamares = inputs.nixpkgs.lib.nixosSystem {
+        system = system;
+        modules = [
+          ## Official NixOS GNOME installer with Calamares
+          "${inputs.nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
+          ## HomeFree installer customizations
+          ./installer
+        ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
       };
     };
   };
