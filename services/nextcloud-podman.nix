@@ -70,7 +70,7 @@ let
       ),
       'htaccess.RewriteBase' => '/',
       'log_type' => 'file',
-      'loglevel' => 1,
+      'loglevel' => 2,         // 0: debug, 1: info, 2: warn, 3: error, 4: fatal. Default: warn
       'memcache.local' => '\\OC\\Memcache\\APCu',
       'memcache.distributed' => '\\OC\\Memcache\\Redis',
       'memcache.locking' => '\\OC\\Memcache\\Redis',
