@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/grocy";
 
@@ -14,7 +14,7 @@ in
   ## @NOTE: Default username and password: admin, admin
   ## @TODO: Setup LDAP login (see /var/lib/grocy/data/config.php)
   ##        Can this be set up with env vars?
-  virtualisation.oci-containers.containers = if config.homefree.services.grocy.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.grocy.enable {
     grocy = {
       image = "lscr.io/linuxserver/grocy:${version}";
 
@@ -37,9 +37,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-grocy = {
+  systemd.services.podman-grocy = lib.optionalAttrs config.homefree.services.grocy.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -48,7 +48,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.grocy.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.grocy.enable [
     {
       label = "grocy";
       name = "Grocy";
@@ -71,6 +71,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

@@ -49,6 +49,12 @@
         description = "Default locale for the system";
       };
 
+      keyMap = lib.mkOption {
+        type = lib.types.str;
+        default = "us";
+        description = "Keymap for system";
+      };
+
       localDomain = lib.mkOption {
         type = lib.types.str;
         ## @TODO: Should this be "local"?
@@ -86,6 +92,12 @@
         description = "Username for the system admin";
       };
 
+      adminDescription = lib.mkOption {
+        type = lib.types.str;
+        default = "HomeFree Admin";
+        description = "Username for the system admin";
+      };
+
       adminHashedPassword = lib.mkOption {
         type = lib.types.str;
         default = "";
@@ -115,12 +127,14 @@
       };
 
       wan-bitrate-mbps-down = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN download bitrate in Mbit/s";
       };
 
       wan-bitrate-mbps-up = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN upload bitrate in Mbit/s";
       };
 
@@ -200,6 +214,14 @@
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "list of domains to block";
+      };
+
+      router = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable router functionality";
+        };
       };
     };
 
@@ -501,7 +523,8 @@
 
         secrets = {
           tailscale-key = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
           };
           headplane-env = lib.mkOption {
@@ -712,11 +735,13 @@
 
         secrets = {
           registration-shared-secret = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Matrix Synapse shared secret file. Should not be a file included in your source repo.";
           };
           admin-account-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of admin account password. Should not be a file included in your source repo.";
           };
         };
@@ -1407,7 +1432,7 @@
       backblaze = {
         enable = lib.mkOption {
           type = lib.types.bool;
-          default = true;
+          default = false;
           description = "Whether to enable Backblaze backups";
         };
 
@@ -1526,7 +1551,7 @@
         ''
       ] else [])
     ++
-      (if config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
+      (if config.homefree.backups.enable == true && config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
         ''
           Backups being written locally to the default path of "${config.homefree.backups.path}".
           You should backup to an off-machine location, e.g. to an NFS mounted path. To change

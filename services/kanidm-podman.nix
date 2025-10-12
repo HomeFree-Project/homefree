@@ -26,7 +26,7 @@
 ##   --secret=[from show-basic-secret above] \
 ##   --auto-discover-url=https://idm.${config.homefree.system.domain}/oauth2/openid/forgejo/.well-known/openid-configuration
 
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "1.4.6";
   containerDataPath = "/var/lib/kanidm";
@@ -174,11 +174,11 @@ let
   '';
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.kanidm.enable [
     kanidm-script
   ];
 
-  system.activationScripts.kanidmUserConfig = {
+  system.activationScripts.kanidmUserConfig = lib.optionalAttrs config.homefree.services.kanidm.enable {
     text = ''
       mkdir -p ${user-config-path}
       cat > ${user-config-path}/kanidm << 'EOF'
@@ -190,7 +190,7 @@ in
     '';
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.kanidm.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.kanidm.enable {
     kanidm = {
       image = "docker.io/kanidm/server:${version}";
 
@@ -214,9 +214,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-kanidm = {
+  systemd.services.podman-kanidm = lib.optionalAttrs config.homefree.services.kanidm.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -225,7 +225,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.kanidm.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.kanidm.enable [
     {
       label = "kanidm";
       name = "Kanidm Authentication";
@@ -250,6 +250,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

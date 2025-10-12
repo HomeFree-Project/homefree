@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/ollama-webui";
 
@@ -10,11 +10,11 @@ let
   port = 3014;
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.ollama.enable [
     pkgs.ollama
   ];
 
-  services.ollama = {
+  services.ollama = lib.optionalAttrs config.homefree.services.ollama.enable {
     enable = true;
     ## Default: 11434
     port = 11434;
@@ -24,7 +24,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.ollama.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.ollama.enable {
     ollama-webui = {
       image = "ghcr.io/open-webui/open-webui:main";
 
@@ -59,9 +59,9 @@ in
         # WEBUI_AUTH=False
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-ollama-webui = {
+  systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.services.ollama.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -70,7 +70,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.ollama.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.ollama.enable [
     {
       label = "ollama";
       name = "Ollama";
@@ -95,5 +95,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

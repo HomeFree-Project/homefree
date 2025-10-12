@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "v2.10.2";
   version-meili = "v1.12.8";
@@ -15,7 +15,7 @@ let
 in
 {
   ## Copied from nixpkgs
-  services.postgresql = if config.homefree.services.linkwarden.enable then {
+  services.postgresql = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -25,10 +25,10 @@ in
         ensureClauses.login = true;
       }
     ];
-  } else {};
+  };
 
 
-  virtualisation.oci-containers.containers = if config.homefree.services.linkwarden.enable then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     linkwarden = {
       image = "ghcr.io/linkwarden/linkwarden:${version}";
 
@@ -81,9 +81,9 @@ in
       };
     };
 
-  } else {};
+  };
 
-  systemd.services.podman-linkwarden = {
+  systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf = [ "nftables.service" ];
@@ -92,7 +92,7 @@ in
     };
   };
 
-  systemd.services.podman-meilisearch = {
+  systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -101,7 +101,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.linkwarden.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.linkwarden.enable [
     {
       label = "linkwarden";
       name = "Bookmark Manager";
@@ -129,5 +129,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

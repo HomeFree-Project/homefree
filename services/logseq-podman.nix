@@ -1,12 +1,12 @@
-{ config, ... }:
+{ config, lib, ... }:
 let
   version = "3.3.13";
   port = 8938;
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.logseq.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.logseq.enable {
     logseq = {
-      image = "ghcr.io/logseq/logseq-webapp:latest";
+      image = "ghcr.io/logseq/logseq-webapp:${version}";
 
       autoStart = true;
 
@@ -26,15 +26,15 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-logseq = {
+  systemd.services.podman-logseq = lib.optionalAttrs config.homefree.services.logseq.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = if config.homefree.services.logseq.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.logseq.enable [
     {
       label = "logseq";
       name = "Logseq Knowledge Management";
@@ -54,6 +54,6 @@ in
       backup = {
       };
     }
-  ] else [];
+  ];
 }
 

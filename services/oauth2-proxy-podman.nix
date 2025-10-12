@@ -1,10 +1,10 @@
-{ config, ... }:
+{ config, lib, ... }:
 let
   version = "v7.12.0";
   port = 4180;
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.zitadel.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     oauth2-proxy = {
       image = "oauth2-proxy/oauth2-proxy:${version}";
 
@@ -50,15 +50,15 @@ in
         config.homefree.services.oauth2-proxy.secrets.env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-oauth2-proxy = {
+  systemd.services.podman-oauth2-proxy = lib.optionalAttrs config.homefree.services.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = if config.homefree.services.zitadel.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
       label = "oauth2proxy";
       name = "Oauth2 Proxy";
@@ -77,6 +77,6 @@ in
         public = false;
       };
     }
-  ] else [];
+  ];
 }
 

@@ -6,9 +6,8 @@ let
   initialPort = 25565;
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.minecraft.enable == true then
-    (lib.listToAttrs
-      (lib.imap0 (index: instance:
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.minecraft.enable (
+    lib.listToAttrs (lib.imap0 (index: instance:
       let
         instance-id = "minecraft_${instance.subdomain}";
         containerDataPath = "/var/lib/${instance-id}";
@@ -84,11 +83,11 @@ in
             MEMORY = instance.memory;
           };
         };
-      }) config.homefree.services.minecraft.instances)
-    )
-    else {};
+      }
+    ) config.homefree.services.minecraft.instances)
+  );
 
-  systemd.services =
+  systemd.services = lib.optionalAttrs config.homefree.services.minecraft.enable
   (lib.listToAttrs (
     lib.map (instance:
     let
@@ -115,7 +114,7 @@ in
     }) config.homefree.services.minecraft.instances)
   );
 
-  homefree.service-config = if config.homefree.services.minecraft.enable == true then
+  homefree.service-config = lib.optionals config.homefree.services.minecraft.enable
   (lib.imap0 (index: instance:
   let
     instance-id = "minecraft_${instance.subdomain}";
@@ -149,7 +148,6 @@ in
         containerDataPath
       ];
     };
-  }) config.homefree.services.minecraft.instances)
-  else [];
+  }) config.homefree.services.minecraft.instances);
 }
 

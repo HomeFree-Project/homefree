@@ -1,17 +1,12 @@
-{ config, homefree-inputs, pkgs, system, ...}:
+{ config, lib, homefree-inputs, pkgs, system, ...}:
+let
+  defaultLocale = config.homefree.system.defaultLocale;
+in
 {
 
   # --------------------------------------------------------------------------------------
   # Base Nix config
   # --------------------------------------------------------------------------------------
-
-  # This vale determines the NixOS release from which the default
-  # settings for stateful data, like file locations and database versions
-  # on your system were taken. It‘s perfectly fine and recommended to leave
-  # this value at the release version of the first install of this system.
-  # Before changing this value read the documentation for this option
-  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
-  system.stateVersion = "25.05"; # Did you read the comment?
 
   # @TODO: Could this be useful for auto-upgrading systems out there?
   # system.autoUpgrade = {
@@ -99,13 +94,14 @@
   # User config
   # --------------------------------------------------------------------------------------
 
-  users.users."${config.homefree.system.adminUsername}" = {
+  # Only create admin user on installed systems (not in live installer)
+  users.users."${config.homefree.system.adminUsername}" = lib.mkIf (config.system.nixos.variant_id or "" != "installer") {
     isNormalUser  = true;
     home  = "/home/${config.homefree.system.adminUsername}";
-    description  = "Homefree Admin";
-    extraGroups  = [ "wheel" "docker" ];
-    openssh.authorizedKeys.keys= config.homefree.system.authorizedKeys;
-    hashedPassword = config.homefree.system.adminHashedPassword;
+    description = config.homefree.system.adminDescription;
+    extraGroups = [ "wheel" "docker" ];
+    openssh.authorizedKeys.keys = config.homefree.system.authorizedKeys;
+    initialHashedPassword = "";  # Empty password - should be set on first login or via SSH
   };
 
   users.users.www-data = {
@@ -150,9 +146,9 @@
 
   # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort.
   # Nix mounts read-write automatically when it needs to write to it.
-  boot.readOnlyNixStore = true;
+  boot.nixStoreMountOpts = [ "ro" ];
 
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+  # boot.kernelPackages = pkgs.linuxPackages_latest;
 
   boot.kernel.sysctl = {
     "fs.inotify.max_user_watches" = 1048576; # defau
@@ -172,7 +168,7 @@
   # --------------------------------------------------------------------------------------
 
   ## Needed to avoid "too many file open" errors when building containers
-  systemd.extraConfig = "DefaultLimitNOFILE=4096";
+  systemd.settings.Manager.DefaultLimitNOFILE = 4096;
   security.pam.loginLimits = [
     { domain = "*"; item = "nofile"; type = "-"; value = "65536"; }
   ];
@@ -185,7 +181,7 @@
   services.fwupd.enable = true;
 
   # Setting to true will kill things like tmux on logout
-  services.logind.killUserProcesses = false;
+  services.logind.settings.Login.KillUserProcesses = false;
 
   services.gvfs.enable = true; # SMB mounts, trash, and other functionality
   services.tumbler.enable = true; # Thumbnail support for images
@@ -226,7 +222,21 @@
   # --------------------------------------------------------------------------------------
 
   # @TODO: Make this UI configurable
-  i18n.defaultLocale = "en_US.UTF-8";
+  i18n.defaultLocale = defaultLocale;
+
+  i18n.extraLocaleSettings = {
+    LC_ADDRESS = defaultLocale;
+    LC_IDENTIFICATION = defaultLocale;
+    LC_MEASUREMENT = defaultLocale;
+    LC_MONETARY = defaultLocale;
+    LC_NAME = defaultLocale;
+    LC_NUMERIC = defaultLocale;
+    LC_PAPER = defaultLocale;
+    LC_TELEPHONE = defaultLocale;
+    LC_TIME = defaultLocale;
+  };
+
+  console.keyMap = config.homefree.system.keyMap;
 
   # --------------------------------------------------------------------------------------
   # Networking
@@ -311,7 +321,7 @@
     steampipe
     tmux
     usbutils
-    utillinux
+    util-linux
     vulnix
     wireguard-tools
     wget

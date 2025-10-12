@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "v5.8.0";
   containerDataPath = "/var/lib/webdav";
@@ -122,7 +122,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.webdav.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.webdav.enable {
     webdav = {
       image = "hacdias/webdav:${version}";
 
@@ -146,9 +146,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-webdav = {
+  systemd.services.podman-webdav = lib.optionalAttrs config.homefree.services.webdav.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -157,7 +157,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.webdav.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.webdav.enable [
     {
       label = "webdav";
       name = "WebDAV";
@@ -182,6 +182,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

@@ -1,10 +1,10 @@
-{ config, ... }:
+{ config, lib, ... }:
 let
   version = "???";
   port = 4185;
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.zitadel.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     goidc-proxy = {
       image = "???/goidc-proxy:${version}";
 
@@ -26,15 +26,15 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-goidc-proxy = {
+  systemd.services.podman-goidc-proxy = lib.optionalAttrs config.homefree.services.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = if config.homefree.services.zitadel.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
       label = "goidc-proxy";
       name = "goidc proxy (for Basic Auth)";
@@ -53,6 +53,6 @@ in
         public = false;
       };
     }
-  ] else [];
+  ];
 }
 

@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/freshrss-podman";
 
@@ -23,7 +23,7 @@ let
   ADMIN_PASSWORD = "changeme";
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.freshrss.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.freshrss.enable {
     freshrss = {
       image = "${image}:${version}";
 
@@ -75,9 +75,9 @@ in
         '';
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-freshrss = {
+  systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.services.freshrss.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -86,7 +86,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.freshrss.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.freshrss.enable [
     {
       label = "freshrss";
       name = "FreshRSS";
@@ -109,6 +109,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "3.5.2.0";
   containerDataPath = "/var/lib/radicale-podman";
@@ -9,7 +9,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.radicale.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.radicale.enable {
     radicale = {
       image = "tomsquest/docker-radicale:${version}";
 
@@ -32,9 +32,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-radicale = {
+  systemd.services.podman-radicale = lib.optionalAttrs config.homefree.services.radicale.enable  {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -43,7 +43,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.radicale.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.radicale.enable [
     {
       label = "radicale";
       name = "Contacts/Calendar (CalDAV/CardDAV)";
@@ -67,6 +67,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

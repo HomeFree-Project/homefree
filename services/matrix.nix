@@ -47,7 +47,7 @@
   #   group = "turnserver";
   # };
 
-  services.matrix-synapse = {
+  services.matrix-synapse = lib.optionalAttrs config.homefree.services.matrix.enable {
     enable = true;
     # settings = with config.services.coturn; {
     #   # configure synapse to point users to coturn
@@ -118,7 +118,7 @@
     };
   };
 
-  services.matrix-appservice-discord = {
+  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.services.matrix.enable {
     enable = config.homefree.services.matrix.enable;
     # environmentFile = /etc/keyring/matrix-appservice-discord/tokens.env;
     # The appservice is pre-configured to use SQLite by default.
@@ -141,7 +141,7 @@
   ## @TODO: lock down user password
   systemd.services.matrix-synapse =
   let
-    preStart = ''
+    preStart = if config.homefree.services.matrix.enable then ''
       mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.admin-account-password}"
       mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.registration-shared-secret}"
 
@@ -176,12 +176,13 @@
         END
         \$do\$;
       EOF
-    '';
+    '' else "";
 
     postStart = (if config.homefree.services.matrix.admin-account != null then ''
       /run/current-system/sw/bin/matrix-synapse-register_new_matrix_user --exists-ok --admin --user ${config.homefree.services.matrix.admin-account} --password-file ${config.homefree.services.matrix.secrets.admin-account-password}
     '' else "");
   in
+  lib.optionalAttrs config.homefree.services.matrix.enable
   {
     serviceConfig = {
       ExecStartPre = [
@@ -198,7 +199,7 @@
     };
   };
 
-  homefree.service-config = if config.homefree.services.matrix.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.matrix.enable [
     {
       label = "matrix";
       name = "Matrix Chat";
@@ -245,5 +246,5 @@
         ];
       };
     }
-  ] else [];
+  ];
 }

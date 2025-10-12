@@ -3,7 +3,7 @@
 ##   - https://community.home-assistant.io/t/installing-hacs-is-tricky-in-docker-but-the-documentation-is-very-straightforward-when-you-know-how-to-read/450283
 ## - Look into using packaged custom components:
 ##   - https://github.com/NixOS/nixpkgs/tree/nixos-24.11/pkgs/servers/home-assistant/custom-components
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "2025.1";
 
@@ -62,7 +62,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.homeassistant.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     homeassistant = {
       image = "ghcr.io/home-assistant/home-assistant:${version}";
 
@@ -84,9 +84,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-homeassistant = {
+  systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -95,7 +95,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.homeassistant.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.homeassistant.enable [
     {
       label = "homeassistant";
       name = "Home Assistant";
@@ -118,5 +118,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

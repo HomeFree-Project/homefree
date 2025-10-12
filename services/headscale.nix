@@ -28,13 +28,13 @@ let
   '';
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.headscale.enable [
     pkgs.headscale
     pkgs.tailscale
   ];
 
-  services.headscale = {
-    enable = config.homefree.services.headscale.enable;
+  services.headscale = lib.optionalAttrs config.homefree.services.headscale.enable {
+    enable = true ;
     port = 8087;
     address = "10.0.0.1";
     settings = {
@@ -96,7 +96,7 @@ in
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
-  services.tailscale = {
+  services.tailscale = lib.optionalAttrs config.homefree.services.headscale.enable {
     enable = true;
     authKeyFile = config.homefree.services.headscale.secrets.tailscale-key;
     authKeyParameters = {
@@ -118,7 +118,7 @@ in
     ];
   };
 
-  systemd.services.headscale-enable-routes = {
+  systemd.services.headscale-enable-routes = lib.optionalAttrs config.homefree.services.headscale.enable {
     after = [ "network.target" "network-online.target" "tailscale.service" ];
     requires = [ "network-online.target" "tailscaled.service" "tailscaled-set.service" "tailscaled-autoconnect.service" ];
     enable = true;
@@ -134,7 +134,7 @@ in
     '';
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.headscale.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.headscale.enable {
     headplane = {
       image = "ghcr.io/tale/headplane:${headplane-version}";
 
@@ -183,9 +183,9 @@ in
         config.homefree.services.headscale.secrets.headplane-env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-headplane = {
+  systemd.services.podman-headplane = lib.optionalAttrs config.homefree.services.headscale.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -194,7 +194,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.headscale.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.headscale.enable [
     {
       label = "headscale";
       name = "VPN";
@@ -239,5 +239,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

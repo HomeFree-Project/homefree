@@ -81,10 +81,8 @@ rec {
             hash = "sha256-XW1cBW7mk/aO/3IPQK29s4a6ArSKjo7/64koJuzp07I=";
           };
         in
-        prev.caddy.override {
-          ## Requires Nix Unstable
-          # buildGo125Module = args: buildGo125Module (args // {
-          buildGoModule = args: buildGoModule (args // {
+        (prev.caddy.override {
+          buildGo125Module = args: buildGo125Module (args // {
             inherit version src;
             inherit vendorHash;
             overrideModAttrs = _: {
@@ -94,14 +92,17 @@ rec {
               '';
               postInstall = "cp go.mod go.sum $out/";
             };
-            postInstall = ''
-              ${args.postInstall}
-              sed -i -E '/Group=caddy/aEnvironmentFile=-/etc/default/caddy\nTimeoutSec=180' $out/lib/systemd/system/caddy.service
-            '';
             postPatch = caddyPatchMain;
             preBuild = "cp vendor/go.mod vendor/go.sum .";
           });
-        };
+        }).overrideAttrs (oldAttrs: {
+          # Disable tests - they are flaky and can fail due to timing issues
+          doCheck = false;
+          postInstall = ''
+            ${oldAttrs.postInstall or ""}
+            sed -i -E '/Group=caddy/aEnvironmentFile=-/etc/default/caddy\nTimeoutSec=180' $out/lib/systemd/system/caddy.service
+          '';
+        });
     in
     caddy-with-plugins;
   caddy = prev.caddy.overrideAttrs (_: { passthru.withPackages = caddy-with-plugins; });

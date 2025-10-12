@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "12.0.4";
   containerDataPath = "/var/lib/forgejo";
@@ -15,7 +15,7 @@ in
     pkgs.forgejo
   ];
 
-  virtualisation.oci-containers.containers = if config.homefree.services.forgejo.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.forgejo.enable {
     forgejo = {
       image = "codeberg.org/forgejo/forgejo:${version}";
 
@@ -75,9 +75,9 @@ in
         # FORGEJO__database__PASSWD = "forgejo";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-forgejo = {
+  systemd.services.podman-forgejo = lib.optionalAttrs config.homefree.services.forgejo.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -86,7 +86,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.forgejo.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.forgejo.enable [
     {
       label = "forgejo";
       name = "Git";
@@ -114,6 +114,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

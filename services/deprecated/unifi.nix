@@ -1,15 +1,15 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   nixpkgs.config.allowUnfree = true;
 
-  services.unifi = {
-    enable = config.homefree.services.unifi.enable;
+  services.unifi = lib.optionalAttrs config.homefree.services.unifi.enable {
+    enable = true;
     openFirewall = true;
     unifiPackage = pkgs.unifi8;
     mongodbPackage = pkgs.mongodb-7_0;
   };
 
-  homefree.service-config = if config.homefree.services.unifi.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.unifi.enable [
     {
       label = "unifi";
       name = "Unifi Controller";
@@ -35,6 +35,6 @@
         ];
       };
     }
-  ] else [];
+  ];
 }
 

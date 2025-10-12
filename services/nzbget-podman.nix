@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "version-v24.8";
   port = 6799;
@@ -11,7 +11,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.nzbget.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.nzbget.enable {
     nzbget = {
       image = "lscr.io/linuxserver/nzbget:${version}";
 
@@ -39,9 +39,9 @@ in
         # NZBGET_PASS = "tegbzn6789"; #optional
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-nzbget = {
+  systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.services.nzbget.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -50,7 +50,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.nzbget.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.nzbget.enable [
     {
       label = "nzbet";
       name = "NZB Downloader";
@@ -67,11 +67,11 @@ in
         port = port;
         public = config.homefree.services.nzbget.public;
       };
-      backup = if config.homefree.services.nzbget.enable-backup-media then {
+      backup = lib.optionalAttrs {
         paths = [
           downloadsPath
         ];
-      } else {};
+      };
     }
-  ] else [];
+  ];
 }

@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 ## Default username: zitadel-admin@zitadel.${config.homefree.system.domain}
 ## Default password: Password1!
@@ -13,7 +13,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.zitadel.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     zitadel = {
       image = "ghcr.io/zitadel/zitadel:${version}";
 
@@ -62,9 +62,9 @@ in
         config.homefree.services.zitadel.secrets.env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-zitadel = {
+  systemd.services.podman-zitadel = lib.optionalAttrs config.homefree.services.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -73,7 +73,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.zitadel.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
       label = "zitadel";
       name = "Single Sign-on (SSO)";
@@ -99,6 +99,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

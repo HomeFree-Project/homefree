@@ -36,8 +36,9 @@ let
         name = "MobileFrontend";
         owner = "wikimedia";
         repo = "mediawiki-extensions-MobileFrontend";
-        rev = "REL1_44";
-        sha256 = "sha256-qaz8QRBTGFQkE1Y2k7BCxz5AkE2qNO5ya/63DrKDSQw=";
+        ## Latest commit from tag: REL1_44
+        rev = "c75c95d9ce76278973bc2a5de7940e91c28b8cb8";
+        sha256 = "sha256-kG82JeHvAG//llxEYQozCJrl08tIEU4fcSicHEeuBU4=";
       })
     ];
 
@@ -245,7 +246,7 @@ in
   ];
 };
 
-virtualisation.oci-containers.containers = if config.homefree.services.mediawiki.enable == true then
+virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.mediawiki.enable
   (lib.listToAttrs
     (lib.imap0 (index: site:
     let
@@ -317,10 +318,9 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
         };
       };
     }) config.homefree.services.mediawiki.sites)
-  )
-  else {};
+  );
 
-  systemd.services =
+  systemd.services = lib.optionalAttrs config.homefree.services.mediawiki.enable
   (lib.listToAttrs (
     lib.map (site:
     let
@@ -413,7 +413,7 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
     }) config.homefree.services.mediawiki.sites)
   );
 
-  homefree.service-config = if config.homefree.services.mediawiki.enable == true then
+  homefree.service-config = lib.optionals config.homefree.services.mediawiki.enable
   (lib.imap0 (index: site:
   let
     site-id = "mediawiki_${site.subdomain}";
@@ -444,7 +444,6 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
         site-id
       ];
     };
-  }) config.homefree.services.mediawiki.sites)
-  else [];
+  }) config.homefree.services.mediawiki.sites);
 }
 

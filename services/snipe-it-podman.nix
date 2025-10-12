@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/snipeit";
 
@@ -22,7 +22,7 @@ let
 in
 {
 
-  services.mysql = {
+  services.mysql = lib.optionalAttrs config.homefree.services.snipe-it.enable {
     ensureDatabases = [
       "snipeit"
     ];
@@ -37,7 +37,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.snipe-it.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.snipe-it.enable {
     snipe-it = {
       image = "snipe/snipe-it:${version}";
 
@@ -238,9 +238,9 @@ in
         LDAP_TIME_LIM = "600";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-snipe-it = {
+  systemd.services.podman-snipe-it = lib.optionalAttrs config.homefree.services.snipe-it.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -249,7 +249,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.snipe-it.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.snipe-it.enable [
     {
       label = "snipe-it";
       name = "Snipe-IT";
@@ -276,6 +276,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

@@ -306,7 +306,7 @@ in
     '';
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.headscale.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.headscale.enable {
     headplane = {
       image = "ghcr.io/tale/headplane:${headplane-version}";
 
@@ -356,9 +356,9 @@ in
         config.homefree.services.headscale.secrets.headplane-env
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-headplane = {
+  systemd.services.podman-headplane = lib.optionalAttrs config.homefree.services.headscale.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -367,7 +367,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.headscale.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.headscale.enable [
     {
       label = "headscale";
       name = "VPN";
@@ -398,5 +398,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

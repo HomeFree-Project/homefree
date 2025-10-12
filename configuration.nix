@@ -3,6 +3,7 @@
   imports = [
     ./profiles/acme.nix
     ./profiles/bash.nix
+    ./profiles/boot-branding.nix
     ./profiles/common.nix
     ./profiles/config-editor.nix
     ./profiles/git.nix
@@ -73,17 +74,17 @@
   # Boot
   # --------------------------------------------------------------------------------------
 
-  boot.loader = {
-    systemd-boot = {
-      enable = true;
-      configurationLimit = 10;
-      # Use maximum resolution in systemd-boot for hidpi
-      consoleMode = "max";
-    };
-    efi = {
-      canTouchEfiVariables = true;
-    };
-  };
+  # boot.loader = {
+  #   systemd-boot = {
+  #     enable = true;
+  #     configurationLimit = 10;
+  #     # Use maximum resolution in systemd-boot for hidpi
+  #     consoleMode = "max";
+  #   };
+  #   efi = {
+  #     canTouchEfiVariables = true;
+  #   };
+  # };
 
   # --------------------------------------------------------------------------------------
   # Network

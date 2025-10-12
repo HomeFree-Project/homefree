@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "2.10.3";
   port = 8976;
@@ -13,7 +13,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.lidarr.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.lidarr.enable {
     lidarr = {
       image = "lscr.io/linuxserver/lidarr:${version}";
 
@@ -40,9 +40,9 @@ in
         PGID = "100";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-lidarr = {
+  systemd.services.podman-lidarr = lib.optionalAttrs config.homefree.services.lidarr.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -51,7 +51,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.lidarr.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.lidarr.enable [
     {
       label = "lidarr";
       name = "Lidarr Music Collection Manager";
@@ -68,13 +68,13 @@ in
         port = port;
         public = config.homefree.services.lidarr.public;
       };
-      backup = if config.homefree.services.lidarr.enable-backup-media then {
+      backup = lib.optionalAttrs config.homefree.services.lidarr.enable-backup-media {
         paths = [
           mediaPath
           downloadsPath
         ];
-      } else {};
+      };
     }
-  ] else [];
+  ];
 }
 

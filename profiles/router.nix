@@ -36,7 +36,7 @@ in
   # IP Forwarding
   #-----------------------------------------------------------------------------------------------------
 
-  boot.kernel.sysctl = {
+  boot.kernel.sysctl = lib.optionalAttrs config.homefree.network.router.enable {
     # enable ipv4 forwarding
     "net.ipv4.conf.all.forwarding" = true;
 
@@ -51,7 +51,7 @@ in
   };
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
-  systemd.network = {
+  systemd.network = lib.optionalAttrs config.homefree.network.router.enable {
     links = {
       "01-${wan-interface}" = {
         matchConfig.Name = wan-interface;
@@ -96,7 +96,7 @@ in
     };
   };
 
-  networking = {
+  networking = lib.optionalAttrs config.homefree.network.router.enable {
     #-----------------------------------------------------------------------------------------------------
     # Interface config
     #-----------------------------------------------------------------------------------------------------
@@ -298,7 +298,7 @@ in
   # Performance Tuning
   #-----------------------------------------------------------------------------------------------------
 
-  systemd.services.configure-ethernet = {
+  systemd.services.configure-ethernet = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## Disabled as it should be handled by systemd.network.links above
     enable = false;
@@ -317,7 +317,7 @@ in
   };
 
   ## @TODO: This was cargo-culted. Evaluate it for efficacy and correctness.
-  systemd.services.tune-router-performance = {
+  systemd.services.tune-router-performance = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## CURRENTLY DISABLED - Need to stabilize network first before enabling this
     enable = false;
@@ -361,7 +361,7 @@ in
 
   # See: https://nixos.wiki/wiki/Systemd-resolved
   ## Disabled as Unbound + Adguard is used instead
-  services.resolved = {
+  services.resolved = lib.optionalAttrs config.homefree.network.router.enable {
     enable = false;
     dnssec = "true";
     domains = [ "~." ];
@@ -375,7 +375,7 @@ in
   # Service Discovery
   #-----------------------------------------------------------------------------------------------------
 
-  services.avahi = {
+  services.avahi = lib.optionalAttrs config.homefree.network.router.enable {
     enable = true;
     reflector = true;
     allowInterfaces = [

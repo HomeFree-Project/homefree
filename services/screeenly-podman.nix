@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/screeenly";
   containerImageName = "hadogenes/screeenly";
@@ -10,8 +10,6 @@ let
   database-user = "screeenly";
   database-host = "10.0.0.1";
   database-port = 3306;
-
-
 
   preStart = ''
     mkdir -p ${containerDataPath}
@@ -28,7 +26,7 @@ let
   '';
 in
 {
-  services.mysql = if enabled then {
+  services.mysql = lib.optionalAttrs enabled {
     ensureDatabases = [ database-name ];
     ensureUsers = [
       {
@@ -38,10 +36,10 @@ in
         };
       }
     ];
-  } else {};
+  };
 
   ## Used by nextcloud for generating bookmark previews
-  virtualisation.oci-containers.containers = if enabled then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs enabled {
     screeenly = {
       image = "${containerImageName}@${containerHash}";
 
@@ -77,9 +75,9 @@ in
         "${containerDataPath}/env.txt"
       ];
     };
-  } else {};
+  };
 
-  systemd.services.podman-screeenly = {
+  systemd.services.podman-screeenly = lib.optionalAttrs enabled {
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -88,7 +86,7 @@ in
     };
   };
 
-  homefree.service-config = if enabled then [
+  homefree.service-config = lib.optionals enabled [
     {
       label = "screeenly";
       name = "Screeenly";
@@ -111,6 +109,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

@@ -6,3 +6,6 @@ lan-client-image
 services/landing-page/site/node_modules
 services/landing-page/site/public
 services/admin/site/node_modules
+vm-state
+.claude
+CLAUDE.md

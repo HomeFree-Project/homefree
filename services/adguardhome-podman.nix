@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "v0.107.64";
   image = "adguard/adguardhome:${version}";
@@ -175,22 +175,29 @@ let
 
     cp ${config-yaml} ${containerDataPath}/conf/AdGuardHome.yaml
 
+    ## Kill any existing socat instances from previous failed starts
+    pkill -f "socat.*127.0.0.1:53.*127.0.0.1:53530" || true
+
     ## There is no DNS running yet at port 53, so create a temporary
     ## proxy so that podman pull works
     # Start a temporary socat proxy from 53 to 53530
     ${pkgs.socat}/bin/socat UDP4-LISTEN:53,fork,bind=127.0.0.1 UDP4:127.0.0.1:53530 &
     SOCAT_PID=$!
 
+    # Ensure socat is killed even if the script fails
+    trap "kill $SOCAT_PID 2>/dev/null || true" EXIT
+
     # Give the proxy a moment to start
     sleep 1
 
     ${pkgs.podman}/bin/podman pull ${image}
 
-    kill $SOCAT_PID
+    # Kill socat (trap will also handle this on exit)
+    kill $SOCAT_PID 2>/dev/null || true
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.adguard.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.adguard.enable {
     adguardhome = {
       image = image;
 
@@ -247,23 +254,28 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
   environment.etc."podman-adguardhome-dns.conf".text = ''
     nameserver 127.0.0.1:53530
   '';
 
-  systemd.services.podman-adguardhome = {
+  systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.services.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
       ## Bump ulimit
       LimitNOFILE = 65535;
+      ## Limit restart attempts to prevent socat accumulation
+      StartLimitBurst = 5;
+      StartLimitIntervalSec = 60;
+      Restart = lib.mkForce "on-failure";
+      RestartSec = 10;
     };
   };
 
-  homefree.service-config = if config.homefree.services.adguard.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.adguard.enable [
     {
       label = "adguard";
       name = "Ad Blocker";
@@ -286,6 +298,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 
