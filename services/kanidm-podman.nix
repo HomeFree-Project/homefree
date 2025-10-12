@@ -174,11 +174,11 @@ let
   '';
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.kanidm.enable [
     kanidm-script
   ];
 
-  system.activationScripts.kanidmUserConfig = {
+  system.activationScripts.kanidmUserConfig = lib.optionalAttrs config.homefree.services.kanidm.enable {
     text = ''
       mkdir -p ${user-config-path}
       cat > ${user-config-path}/kanidm << 'EOF'
@@ -190,7 +190,7 @@ in
     '';
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.kanidm.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.kanidm.enable {
     kanidm = {
       image = "docker.io/kanidm/server:${version}";
 
@@ -214,7 +214,7 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
   systemd.services = lib.optionalAttrs config.homefree.services.kanidm.enable {
     podman-kanidm = {
@@ -227,7 +227,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.kanidm.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.kanidm.enable [
     {
       label = "kanidm";
       name = "Kanidm Authentication";
@@ -240,7 +240,7 @@ in
         subdomains = [ "idm" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         ssl = true;
         ssl-no-verify = true;
@@ -252,6 +252,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

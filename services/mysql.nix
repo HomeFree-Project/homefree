@@ -1,4 +1,7 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
+let
+  lan-address = config.homefree.network.lan-address;
+in
 {
   services.mysql = {
     enable = true;
@@ -7,7 +10,7 @@
       [mysqld]
       datadir = /var/lib/mysql
       bind-address = 127.0.0.1
-      bind-address = 10.0.0.1
+      bind-address = ${lan-address}
       port = 3306
     '';
   };

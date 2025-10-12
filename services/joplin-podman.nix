@@ -1,4 +1,4 @@
-{ config, ... }:
+{ config, lib, ... }:
 let
   version = "3.6.1";
   port = 8975;
@@ -6,7 +6,7 @@ let
   database-user = "joplin";
 in
 {
-  services.postgresql = if config.homefree.services.joplin.enable then {
+  services.postgresql = lib.optionalAttrs config.homefree.services.joplin.enable {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -16,9 +16,9 @@ in
         ensureClauses.login = true;
       }
     ];
-  } else {};
+  };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.joplin.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.joplin.enable {
     joplin = {
       image = "joplin/server:${version}";
 
@@ -47,15 +47,15 @@ in
         APP_BASE_URL = "https://joplin.${config.homefree.system.domain}";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-joplin = {
+  systemd.services.podman-joplin = lib.optionalAttrs config.homefree.services.joplin.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = if config.homefree.services.joplin.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.joplin.enable [
     {
       label = "joplin";
       name = "Joplin Notes";
@@ -68,7 +68,7 @@ in
         subdomains = [ "joplin" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.joplin.public;
       };
@@ -78,6 +78,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

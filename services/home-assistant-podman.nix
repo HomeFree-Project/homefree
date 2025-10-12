@@ -3,7 +3,7 @@
 ##   - https://community.home-assistant.io/t/installing-hacs-is-tricky-in-docker-but-the-documentation-is-very-straightforward-when-you-know-how-to-read/450283
 ## - Look into using packaged custom components:
 ##   - https://github.com/NixOS/nixpkgs/tree/nixos-24.11/pkgs/servers/home-assistant/custom-components
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "2026.4";
 
@@ -36,7 +36,7 @@ let
 
     http = {
       use_x_forwarded_for = true;
-      trusted_proxies = "10.0.0.1";
+      trusted_proxies = "${config.homefree.network.lan-address}";
     };
 
     auth_header = {
@@ -62,7 +62,7 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.homeassistant.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     homeassistant = {
       image = "ghcr.io/home-assistant/home-assistant:${version}";
 
@@ -84,9 +84,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-homeassistant = {
+  systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -95,7 +95,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.homeassistant.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.homeassistant.enable [
     {
       label = "homeassistant";
       name = "Home Assistant";
@@ -108,7 +108,7 @@ in
         subdomains = [ "homeassistant" "ha" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.homeassistant.public;
       };
@@ -118,5 +118,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

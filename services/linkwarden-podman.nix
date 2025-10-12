@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "v2.14.1";
   version-meili = "v1.43.0";
@@ -15,7 +15,7 @@ let
 in
 {
   ## Copied from nixpkgs
-  services.postgresql = if config.homefree.services.linkwarden.enable then {
+  services.postgresql = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -25,10 +25,10 @@ in
         ensureClauses.login = true;
       }
     ];
-  } else {};
+  };
 
 
-  virtualisation.oci-containers.containers = if config.homefree.services.linkwarden.enable then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     linkwarden = {
       image = "ghcr.io/linkwarden/linkwarden:${version}";
 
@@ -54,7 +54,7 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        DATABASE_URL = "postgresql://${database-user}@10.0.0.1:5432/${database-name}";
+        DATABASE_URL = "postgresql://${database-user}@${config.homefree.network.lan-address}:5432/${database-name}";
       };
 
       environmentFiles = [
@@ -81,9 +81,9 @@ in
       };
     };
 
-  } else {};
+  };
 
-  systemd.services.podman-linkwarden = {
+  systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf = [ "nftables.service" ];
@@ -92,7 +92,7 @@ in
     };
   };
 
-  systemd.services.podman-meilisearch = {
+  systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.services.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -101,7 +101,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.linkwarden.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.linkwarden.enable [
     {
       label = "linkwarden";
       name = "Bookmark Manager";
@@ -116,7 +116,7 @@ in
         subdomains = [ "links" "linkwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.linkwarden.public;
       };
@@ -129,5 +129,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

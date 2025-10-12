@@ -49,8 +49,10 @@ export default class HFController {
     this.model.subscribe(data => {
       view.model = data;
     })
-    if (location.hostname === '10.0.0.1') {
-      this.model.apiUrl = 'http://10.0.0.1:4001';
+    // Check if accessing via private IP (10.x.x.x, 192.168.x.x, 172.16-31.x.x) or localhost
+    const isPrivateIP = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)/.test(location.hostname);
+    if (isPrivateIP || location.hostname === 'localhost') {
+      this.model.apiUrl = `http://${location.hostname}:4001`;
     } else {
       this.model.apiUrl = 'https://api.homefree.host';
     }

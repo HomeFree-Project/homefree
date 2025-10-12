@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/homebox-podman";
 
@@ -10,7 +10,7 @@ let
   version = "0.25.0";
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.homebox.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.homebox.enable {
     homebox = {
       image = "ghcr.io/sysadminsmedia/homebox:${version}";
 
@@ -35,9 +35,9 @@ in
         HBOX_OPTIONS_ALLOW_ANALYTICS = "false";
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-homebox = {
+  systemd.services.podman-homebox = lib.optionalAttrs config.homefree.services.homebox.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -46,7 +46,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.homebox.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.homebox.enable [
     {
       label = "homebox";
       name = "Homebox";
@@ -59,7 +59,7 @@ in
         subdomains = [ "homebox" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.homebox.public;
       };
@@ -69,5 +69,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

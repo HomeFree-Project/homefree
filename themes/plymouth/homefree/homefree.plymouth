@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=HomeFree
+Description=HomeFree boot splash theme
+ModuleName=script
+
+[script]
+ImageDir=@PLYMOUTH_THEME_PATH@
+ScriptFile=@PLYMOUTH_THEME_PATH@/homefree.script

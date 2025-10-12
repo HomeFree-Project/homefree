@@ -20,7 +20,7 @@ build:
 	./build.sh
 
 run:
-	./run.sh
+	./run-vm.sh
 
 setup:
 	./setup.sh

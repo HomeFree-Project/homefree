@@ -49,6 +49,12 @@
         description = "Default locale for the system";
       };
 
+      keyMap = lib.mkOption {
+        type = lib.types.str;
+        default = "us";
+        description = "Keymap for system";
+      };
+
       localDomain = lib.mkOption {
         type = lib.types.str;
         ## @TODO: Should this be "local"?
@@ -86,6 +92,12 @@
         description = "Username for the system admin";
       };
 
+      adminDescription = lib.mkOption {
+        type = lib.types.str;
+        default = "HomeFree Admin";
+        description = "Username for the system admin";
+      };
+
       adminHashedPassword = lib.mkOption {
         type = lib.types.str;
         default = "";
@@ -103,7 +115,6 @@
       };
     };
 
-    ## @TODO: Add default subnet and gateway config, e.g. 10.0.0.0/24, 10.0.0.1
     ## @TODO: This section doesn't make sense. Some network config is in "system" above
     ##        and some is in separate services, e.g. unbound and ddns
     network = {
@@ -115,12 +126,14 @@
       };
 
       wan-bitrate-mbps-down = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN download bitrate in Mbit/s";
       };
 
       wan-bitrate-mbps-up = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN upload bitrate in Mbit/s";
       };
 
@@ -129,6 +142,47 @@
         type = lib.types.str;
         default = "ens5";
         description = "Internal interface to the local network";
+      };
+
+      # QEMU User-Mode Network Details:
+      # - Guest IP: Always 10.0.2.15
+      # - Gateway/Host: Always 10.0.2.2
+      # - DNS: Always 10.0.2.3
+      # - Network: 10.0.2.0/24
+      lan-address = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.1";
+        description = "IP address of the LAN gateway (router address)";
+      };
+
+      lan-subnet = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.0/24";
+        description = "LAN subnet in CIDR notation";
+      };
+
+      lan-netmask = lib.mkOption {
+        type = lib.types.str;
+        default = "255.255.255.0";
+        description = "LAN subnet mask";
+      };
+
+      dhcp-range-start = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.100";
+        description = "Start of DHCP IP address range";
+      };
+
+      dhcp-range-end = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.254";
+        description = "End of DHCP IP address range";
+      };
+
+      dhcp-lease-time = lib.mkOption {
+        type = lib.types.str;
+        default = "8h";
+        description = "DHCP lease time (e.g., '8h', '24h', '7d')";
       };
 
       static-ip-expiration = lib.mkOption {
@@ -176,6 +230,14 @@
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "list of domains to block";
+      };
+
+      router = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable router functionality";
+        };
       };
     };
 
@@ -647,7 +709,8 @@
 
         secrets = {
           tailscale-key = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
           };
           headplane-env = lib.mkOption {
@@ -858,11 +921,13 @@
 
         secrets = {
           registration-shared-secret = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Matrix Synapse shared secret file. Should not be a file included in your source repo.";
           };
           admin-account-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of admin account password. Should not be a file included in your source repo.";
           };
         };
@@ -1613,7 +1678,7 @@
       backblaze = {
         enable = lib.mkOption {
           type = lib.types.bool;
-          default = true;
+          default = false;
           description = "Whether to enable Backblaze backups";
         };
 
@@ -1732,7 +1797,7 @@
         ''
       ] else [])
     ++
-      (if config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
+      (if config.homefree.backups.enable == true && config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
         ''
           Backups being written locally to the default path of "${config.homefree.backups.path}".
           You should backup to an off-machine location, e.g. to an NFS mounted path. To change

@@ -55,6 +55,17 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/pgdata
+
+    # If PostgreSQL has been initialized (PG_VERSION exists), copy our custom configs
+    if [ -f "${containerDataPath}/pgdata/PG_VERSION" ]; then
+      echo "PostgreSQL already initialized, applying custom configs..."
+      cp ${hba-file} ${containerDataPath}/pgdata/pg_hba.conf
+      cp ${config-file} ${containerDataPath}/pgdata/postgresql.conf
+      chmod 600 ${containerDataPath}/pgdata/pg_hba.conf
+      chmod 600 ${containerDataPath}/pgdata/postgresql.conf
+    else
+      echo "PostgreSQL not yet initialized, will use defaults for first start..."
+    fi
   '';
 in
 {
@@ -76,8 +87,6 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:${containerDataPathInternal}"
-        "${config-file}:${containerDataPathInternal}/pgdata/postgresql.conf"
-        "${hba-file}:${containerDataPathInternal}/pgdata/pg_hba.conf"
       ];
 
       environment = {

@@ -32,7 +32,7 @@ let
     };
 
     mqtt = {
-      host = "10.0.0.1";
+      host = config.homefree.network.lan-address;
       port = 1883;
       topic_prefix = "frigate";
       ## Must be unique if running multiple instances
@@ -159,7 +159,7 @@ in
     pkgs.libedgetpu
   ];
 
-  virtualisation.oci-containers.containers = if config.homefree.services.frigate.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.frigate.enable {
     frigate = {
       image = "ghcr.io/blakeblackshear/frigate:${version}";
 
@@ -196,9 +196,9 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-frigate = {
+  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.services.frigate.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -207,7 +207,7 @@ in
     };
   };
 
-  systemd.services.frigate-cleanup-old-data = if retain != null && retain > 0 then {
+  systemd.services.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
     wantedBy = [];  # Only ever start with timer
     description = "Clean up Frigate files older than ${toString retain} days";
     serviceConfig = {
@@ -219,9 +219,9 @@ in
     # Optional: Add some safety and logging
     serviceConfig.StandardOutput = "journal";
     serviceConfig.StandardError = "journal";
-  } else {};
+  };
 
-  systemd.timers.frigate-cleanup-old-data = if retain != null && retain > 0 then {
+  systemd.timers.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
     enable = true;
     description = "Timer for cleaning up old Frigate files";
     timerConfig = {
@@ -232,7 +232,7 @@ in
       RandomizedDelaySec = "30min";  # Optional: add some randomization
     };
     wantedBy = [ "timers.target" ];
-  } else {};
+  };
 
   # systemd.services.podman-create-frigate-network = {
   #   serviceConfig.Type = "oneshot";
@@ -242,7 +242,7 @@ in
   #   '';
   # };
 
-  homefree.service-config = if config.homefree.services.frigate.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.frigate.enable [
     {
       label = "frigate";
       name = "NVR (Network Video Recorer)";
@@ -255,7 +255,7 @@ in
         subdomains = [ "nvr" "frigate" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 8971;
         ssl = true;
         ssl-no-verify = true;
@@ -267,6 +267,6 @@ in
         ];
       } else {};
     }
-  ] else [];
+  ];
 }
 

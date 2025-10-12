@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/ollama-webui";
 
@@ -10,11 +10,11 @@ let
   port = 3014;
 in
 {
-  environment.systemPackages = [
+  environment.systemPackages = lib.optionals config.homefree.services.ollama.enable [
     pkgs.ollama
   ];
 
-  services.ollama = {
+  services.ollama = lib.optionalAttrs config.homefree.services.ollama.enable {
     enable = true;
     ## Default: 11434
     port = 11434;
@@ -24,7 +24,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = if config.homefree.services.ollama.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.ollama.enable {
     ollama-webui = {
       image = "ghcr.io/open-webui/open-webui:main";
 
@@ -48,7 +48,7 @@ in
         TZ = config.homefree.system.timeZone;
         PORT = toString port-internal;
         WEBUI_URL = "https://ollama.${config.homefree.system.domain}";
-        OLLAMA_BASE_URL = "http://10.0.0.1:${toString config.services.ollama.port}";
+        OLLAMA_BASE_URL = "http://${config.homefree.network.lan-address}:${toString config.services.ollama.port}";
         ## @TODOS
         # WEBUI_SECRET_KEY
         # DEFAULT_LOCALE
@@ -59,9 +59,9 @@ in
         # WEBUI_AUTH=False
       };
     };
-  } else {};
+  };
 
-  systemd.services.podman-ollama-webui = {
+  systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.services.ollama.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -70,7 +70,7 @@ in
     };
   };
 
-  homefree.service-config = if config.homefree.services.ollama.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.ollama.enable [
     {
       label = "ollama";
       name = "Ollama";
@@ -85,7 +85,7 @@ in
         subdomains = [ "ollama" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.ollama.public;
       };
@@ -95,5 +95,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

@@ -1,4 +1,4 @@
-{config,  pkgs, ...}:
+{config, lib, pkgs, ...}:
 let
   version = "v1.152.0";
   image = "matrixdotorg/synapse";
@@ -130,7 +130,7 @@ let
 in
 {
 
-  virtualisation.oci-containers.containers = if config.homefree.services.matrix.enable then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.matrix.enable {
     matrix-synapse = {
       image = "${image}:${version}";
 
@@ -169,9 +169,9 @@ in
     # matrix-discord = {
     #   image = ":${}"
     # }
-  } else {};
+  };
 
-  systemd.services.podman-matrix-synapse = {
+  systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.services.matrix.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -232,7 +232,7 @@ in
   # };
 
   ## These are blocked by adguardhome
-  services.adguardhome.settings.user_rules = [
+  services.adguardhome.settings.user_rules = lib.optionals config.homefree.services.matrix.enable [
     # "@@||_matrix._tcp.bchn.foo^"
     # "@@||_matrix-fed._tcp.bchn.foo^"
     # "@@||_matrix._tcp.mastersh.pro^"
@@ -242,7 +242,7 @@ in
     # "@@||dea.monster^"
   ];
 
-  services.matrix-appservice-discord = {
+  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.services.matrix.enable {
     enable = config.homefree.services.matrix.enable;
     # environmentFile = /etc/keyring/matrix-appservice-discord/tokens.env;
     # The appservice is pre-configured to use SQLite by default.
@@ -322,7 +322,7 @@ in
   #   };
   # };
 
-  homefree.service-config = if config.homefree.services.matrix.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.matrix.enable [
     {
       label = "matrix";
       name = "Matrix Chat";
@@ -336,14 +336,14 @@ in
         subdomains = [ "matrix" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.matrix.public;
         extraCaddyConfig = ''
           # Matrix Synapse settings
           respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
-          reverse_proxy /_matrix/* 10.0.0.1:8008
-          reverse_proxy /_synapse/client/* 10.0.0.1:8008
+          reverse_proxy /_matrix/* ${config.homefree.network.lan-address}:8008
+          reverse_proxy /_synapse/client/* ${config.homefree.network.lan-address}:8008
         '';
       };
       firewall = {
@@ -368,5 +368,5 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }

@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "v0.107.73";
   image = "adguard/adguardhome:${version}";
@@ -7,7 +7,7 @@ let
 
   settings = {
     http = {
-      address = "10.0.0.1:${toString port}";
+      address = "${config.homefree.network.lan-address}:${toString port}";
       session_ttl = "720h";
     };
     users = [
@@ -22,7 +22,7 @@ let
     theme = "auto";
     dns = {
       ## Must specify interfaces, otherwise it conflicts with podman
-      bind_hosts = [ "10.0.0.1" "127.0.0.1" "fd01::1" ];
+      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "fd01::1" ];
       port = 53;
       anonymize_client_ip = false;
       ratelimit = 0;
@@ -32,7 +32,7 @@ let
       refuse_any = true;
       upstream_dns = [
         # "127.0.0.1:53530"
-        "10.0.0.1:53530"
+        "${config.homefree.network.lan-address}:53530"
         # "https://dns10.quad9.net/dns-query"
       ];
       bootstrap_dns = [
@@ -175,22 +175,29 @@ let
 
     cp ${config-yaml} ${containerDataPath}/conf/AdGuardHome.yaml
 
+    ## Kill any existing socat instances from previous failed starts
+    pkill -f "socat.*127.0.0.1:53.*127.0.0.1:53530" || true
+
     ## There is no DNS running yet at port 53, so create a temporary
     ## proxy so that podman pull works
     # Start a temporary socat proxy from 53 to 53530
     ${pkgs.socat}/bin/socat UDP4-LISTEN:53,fork,bind=127.0.0.1 UDP4:127.0.0.1:53530 &
     SOCAT_PID=$!
 
+    # Ensure socat is killed even if the script fails
+    trap "kill $SOCAT_PID 2>/dev/null || true" EXIT
+
     # Give the proxy a moment to start
     sleep 1
 
     ${pkgs.podman}/bin/podman pull ${image}
 
-    kill $SOCAT_PID
+    # Kill socat (trap will also handle this on exit)
+    kill $SOCAT_PID 2>/dev/null || true
   '';
 in
 {
-  virtualisation.oci-containers.containers = if config.homefree.services.adguard.enable == true then {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.adguard.enable {
     adguardhome = {
       image = image;
 
@@ -210,8 +217,8 @@ in
 
         ## Standard DNS
         ## Must specify interfaces, otherwise it conflicts with podman
-        "10.0.0.1:53:53/tcp"
-        "10.0.0.1:53:53/udp"
+        "${config.homefree.network.lan-address}:53:53/tcp"
+        "${config.homefree.network.lan-address}:53:53/udp"
         "127.0.0.1:53:53/tcp"
         "127.0.0.1:53:53/udp"
 
@@ -247,23 +254,28 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  } else {};
+  };
 
   environment.etc."podman-adguardhome-dns.conf".text = ''
     nameserver 127.0.0.1:53530
   '';
 
-  systemd.services.podman-adguardhome = {
+  systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.services.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
       ## Bump ulimit
       LimitNOFILE = 65535;
+      ## Limit restart attempts to prevent socat accumulation
+      StartLimitBurst = 5;
+      StartLimitIntervalSec = 60;
+      Restart = lib.mkForce "on-failure";
+      RestartSec = 10;
     };
   };
 
-  homefree.service-config = if config.homefree.services.adguard.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.adguard.enable [
     {
       label = "adguard";
       name = "Ad Blocker";
@@ -276,7 +288,7 @@ in
         subdomains = [ "adguard" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.adguard.public;
       };
@@ -286,6 +298,6 @@ in
         ];
       };
     }
-  ] else [];
+  ];
 }
 

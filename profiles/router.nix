@@ -4,6 +4,8 @@ let
   # @TODO: How to determine interface names?
   wan-interface = config.homefree.network.wan-interface;
   lan-interface = config.homefree.network.lan-interface;
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
   vlan-wan-id = 100;
   vlan-lan-id = 200;
   vlan-iot-id = 201;
@@ -41,7 +43,7 @@ in
   # IP Forwarding
   #-----------------------------------------------------------------------------------------------------
 
-  boot.kernel.sysctl = {
+  boot.kernel.sysctl = lib.optionalAttrs config.homefree.network.router.enable {
     # enable ipv4 forwarding
     "net.ipv4.conf.all.forwarding" = true;
 
@@ -62,7 +64,7 @@ in
   boot.kernelModules = [ "ip6table_nat" ];
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
-  systemd.network = {
+  systemd.network = lib.optionalAttrs config.homefree.network.router.enable {
     links = {
       "01-${wan-interface}" = {
         matchConfig.Name = wan-interface;
@@ -83,7 +85,7 @@ in
         name = lan-interface;
         networkConfig = {
           Description = "LAN link";
-          Address = [ "10.0.0.1/24" "fd01::1/64" ];
+          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.
@@ -107,7 +109,7 @@ in
     };
   };
 
-  networking = {
+  networking = lib.optionalAttrs config.homefree.network.router.enable {
     #-----------------------------------------------------------------------------------------------------
     # Interface config
     #-----------------------------------------------------------------------------------------------------
@@ -144,8 +146,8 @@ in
       ${lan-interface} = {
         useDHCP = false;
         ipv4.addresses = [{
-          address = "10.0.0.1";
-          prefixLength = 24;
+          address = lan-address;
+          prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" lan-subnet) 1);
         }];
       };
 
@@ -222,6 +224,10 @@ in
             tcp dport { http, https } ct state new accept;
 
             ${service-input-rules}
+
+            ${lib.optionalString (config.homefree.development or false) ''
+            tcp dport { 22 } ct state new accept; # Accept SSH connections
+            ''}
 
             # DHCPv6
             ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept
@@ -313,7 +319,7 @@ in
   # Performance Tuning
   #-----------------------------------------------------------------------------------------------------
 
-  systemd.services.configure-ethernet = {
+  systemd.services.configure-ethernet = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## Disabled as it should be handled by systemd.network.links above
     enable = false;
@@ -332,7 +338,7 @@ in
   };
 
   ## @TODO: This was cargo-culted. Evaluate it for efficacy and correctness.
-  systemd.services.tune-router-performance = {
+  systemd.services.tune-router-performance = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## CURRENTLY DISABLED - Need to stabilize network first before enabling this
     enable = false;
@@ -376,7 +382,7 @@ in
 
   # See: https://nixos.wiki/wiki/Systemd-resolved
   ## Disabled as Unbound + Adguard is used instead
-  services.resolved = {
+  services.resolved = lib.optionalAttrs config.homefree.network.router.enable {
     enable = false;
     dnssec = "true";
     domains = [ "~." ];
@@ -390,7 +396,7 @@ in
   # Service Discovery
   #-----------------------------------------------------------------------------------------------------
 
-  services.avahi = {
+  services.avahi = lib.optionalAttrs config.homefree.network.router.enable {
     enable = true;
     reflector = true;
     allowInterfaces = [

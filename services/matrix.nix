@@ -1,4 +1,8 @@
-{config, lib, pkgs, ...}: {
+{config, lib, pkgs, ...}:
+let
+  lan-address = config.homefree.network.lan-address;
+in
+{
   # services.coturn = rec {
   #   enable = config.homefree.services.matrix.enable;
   #   no-cli = true;
@@ -47,7 +51,7 @@
   #   group = "turnserver";
   # };
 
-  services.matrix-synapse = {
+  services.matrix-synapse = lib.optionalAttrs config.homefree.services.matrix.enable {
     enable = true;
     # settings = with config.services.coturn; {
     #   # configure synapse to point users to coturn
@@ -78,12 +82,12 @@
       dns_cache = {
         enabled = true;
         # custom_nameservers = [
-        #   "10.0.0.1:53530"
+        #   "${lan-address}:53530"
         # ];
       };
       listeners = [{
         port = 8008;
-        bind_addresses = [ "10.0.0.1" ];
+        bind_addresses = [ lan-address ];
         type = "http";
         tls = false;
         x_forwarded = true;
@@ -118,7 +122,7 @@
     };
   };
 
-  services.matrix-appservice-discord = {
+  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.services.matrix.enable {
     enable = config.homefree.services.matrix.enable;
     # environmentFile = /etc/keyring/matrix-appservice-discord/tokens.env;
     # The appservice is pre-configured to use SQLite by default.
@@ -141,7 +145,7 @@
   ## @TODO: lock down user password
   systemd.services.matrix-synapse =
   let
-    preStart = ''
+    preStart = if config.homefree.services.matrix.enable then ''
       mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.admin-account-password}"
       mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.registration-shared-secret}"
 
@@ -176,12 +180,13 @@
         END
         \$do\$;
       EOF
-    '';
+    '' else "";
 
     postStart = (if config.homefree.services.matrix.admin-account != null then ''
       /run/current-system/sw/bin/matrix-synapse-register_new_matrix_user --exists-ok --admin --user ${config.homefree.services.matrix.admin-account} --password-file ${config.homefree.services.matrix.secrets.admin-account-password}
     '' else "");
   in
+  lib.optionalAttrs config.homefree.services.matrix.enable
   {
     serviceConfig = {
       ExecStartPre = [
@@ -198,7 +203,7 @@
     };
   };
 
-  homefree.service-config = if config.homefree.services.matrix.enable == true then [
+  homefree.service-config = lib.optionals config.homefree.services.matrix.enable [
     {
       label = "matrix";
       name = "Matrix Chat";
@@ -212,15 +217,15 @@
         subdomains = [ "matrix" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = lan-address;
         port = 8008;
         public = config.homefree.services.matrix.public;
         extraCaddyConfig = ''
           # Matrix Synapse settings
           respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
-          reverse_proxy /_matrix/* 10.0.0.1:8008
-          reverse_proxy /_synapse/admin/* 10.0.0.1:8008
-          reverse_proxy /_synapse/client/* 10.0.0.1:8008
+          reverse_proxy /_matrix/* ${lan-address}:8008
+          reverse_proxy /_synapse/admin/* ${lan-address}:8008
+          reverse_proxy /_synapse/client/* ${lan-address}:8008
         '';
       };
       firewall = {
@@ -245,5 +250,5 @@
         ];
       };
     }
-  ] else [];
+  ];
 }

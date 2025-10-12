@@ -7,3 +7,6 @@ services/landing-page/site/node_modules
 services/landing-page/site/public
 services/admin/site/node_modules
 __pycache__
+vm-state
+.claude
+CLAUDE.md
