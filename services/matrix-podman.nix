@@ -346,6 +346,21 @@ in
           reverse_proxy /_synapse/client/* 10.0.0.1:8008
         '';
       };
+      firewall = {
+        open-ports = {
+          tcp = [
+            3478
+            5349
+          ];
+          udp = [
+            3478
+            5349
+          ]
+          ++
+          # Ports 49000-50000
+          builtins.genList (x: x + 49000) 1001;
+        };
+      };
       backup = {
         paths = [
           containerDataPath

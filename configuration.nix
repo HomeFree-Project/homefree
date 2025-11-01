@@ -46,6 +46,7 @@
     ./services/logseq-podman.nix
     ./services/lidarr-podman.nix
     ./services/mediawiki-podman.nix
+    ./services/minecraft-podman.nix
     # ./services/mongo-podman.nix
     ./services/nextcloud-podman.nix
     ./services/nzbget-podman.nix

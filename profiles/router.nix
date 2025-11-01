@@ -14,6 +14,14 @@ let
     iifname ${wan-interface} saddr ${entry.ip} drop
     iifname ${wan-interface} daddr ${entry.ip} drop
   '') blocked-ips);
+
+  # Firewall rules to open up ports for services
+  public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
+  service-rules = lib.concatStringsSep "\n" (lib.map (service-config:
+    lib.concatStringsSep "\n" (lib.map (tcp-port: "tcp dport { ${toString tcp-port} } ct state new accept;") service-config.firewall.open-ports.tcp)
+    +
+    lib.concatStringsSep "\n" (lib.map (udp-port: "udp dport { ${toString udp-port} } ct state new accept;") service-config.firewall.open-ports.udp)
+  ) public-service-configs);
 in
 {
 
@@ -200,20 +208,9 @@ in
 
             ## Allow for web traffic
             ## http is needed for headscale relaying
-            ## 3022 is for git/forgejo ssh
-            ## @TODO: 3022 should only be opened if forgejo is set to public
-            tcp dport { http, https, 3022 } ct state new accept;
+            tcp dport { http, https } ct state new accept;
 
-            ## Headscale connections
-            udp dport { 41641 } ct state new accept;
-
-            ## Allow Headscale DERP connections
-            udp dport { ${toString config.homefree.services.headscale.stun-port} } ct state new accept;
-            tcp dport { ${toString config.homefree.services.headscale.stun-port} } ct state new accept;
-
-            ## Matrix
-            udp dport { 3478, 5349, 49000-50000 } ct state new accept;
-            tcp dport { 3478, 5349 } ct state new accept;
+            ${service-rules}
 
             # DHCPv6
             ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept

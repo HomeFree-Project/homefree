@@ -726,7 +726,7 @@
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
-          description = "enable Snipe-IT inventory management service";
+          description = "enable MediaWiki";
         };
 
         sites = lib.mkOption {
@@ -803,6 +803,40 @@
             type = lib.types.path;
             description = "Location of MediaWiki env file. Contains DB_PASSWORD";
           };
+        };
+      };
+
+      minecraft = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Minecraft servers";
+        };
+
+        instances = lib.mkOption {
+          description = "Minecraft instance config";
+          default = [];
+          type = with lib.types; listOf (submodule {
+            options = {
+              public = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Open to public on WAN port";
+              };
+
+              subdomain = lib.mkOption {
+                type = lib.types.str;
+                default = "wiki";
+                description = "Subdomain for Minecraft instance (must be unique)";
+              };
+
+              name = lib.mkOption {
+                type = lib.types.str;
+                default = "Minecraft";
+                description = "Name for instance";
+              };
+            };
+          });
         };
       };
 
@@ -1021,6 +1055,9 @@
       description = "Detailed config for services";
       type = with lib.types; listOf (submodule {
         options = {
+
+          # @TODO: Add top-level enable
+
           label = lib.mkOption {
             type = lib.types.str;
             default = "";
@@ -1076,6 +1113,21 @@
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = "Override path of URL to service";
+            };
+          };
+
+          firewall = {
+            open-ports = {
+              tcp = lib.mkOption {
+                type = lib.types.listOf lib.types.int;
+                default = [];
+                description = "list of open tcp ports";
+              };
+              udp = lib.mkOption {
+                type = lib.types.listOf lib.types.int;
+                default = [];
+                description = "list of open udp ports";
+              };
             };
           };
 
@@ -1140,6 +1192,7 @@
               default = null;
             };
 
+            # @TODO: This should be moved up one level, as it's not just for reverse proxy
             public = lib.mkOption {
               type = lib.types.bool;
               default = false;

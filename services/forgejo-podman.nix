@@ -103,6 +103,11 @@ in
         port = port;
         public = config.homefree.services.forgejo.public;
       };
+      firewall = {
+        open-ports = {
+          tcp = [ 3022 ];
+        };
+      };
       backup = {
         paths = [
           containerDataPath

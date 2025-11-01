@@ -219,6 +219,20 @@ in
           reverse_proxy /admin* http://10.0.0.1:3009
         '';
       };
+      firewall = {
+        open-ports = {
+          tcp = [
+            ## Allow Headscale DERP connections
+            config.homefree.services.headscale.stun-port
+          ];
+          udp = [
+            ## Allow Headscale DERP connections
+            config.homefree.services.headscale.stun-port
+            # Headscale connections
+            41641
+          ];
+        };
+      };
       backup = {
         paths = [
           "/var/lib/headscale"
