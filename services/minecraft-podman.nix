@@ -31,9 +31,13 @@ in
 
           volumes = [
             "/etc/localtime:/etc/localtime:ro"
-            "${containerDataPath}:/data"
+            "${containerDataPath}/data:/data"
+            "${containerDataPath}/downloads:/downloads"
           ];
 
+          environmentFiles = [
+            "${containerDataPath}/env"
+          ];
 
           environment = {
             TZ = config.homefree.system.timeZone;
@@ -68,6 +72,16 @@ in
             # RESOURCE_PACK = "https://github.com/FentisDev/PortalGun/raw/master/resourcepacks/PortalGun-By-Fentis-1.0.0.zip";
             # RESOURCE_PACK_SHA1 = "eed7b6a1513957143fbc8841bd497e9ee41fdf1a";
             # RESOURCE_PACK_ENFORCE = "TRUE";
+          } // lib.optionalAttrs (instance.type == "AUTO_CURSEFORGE") {
+            # TYPE = "MODRINTH";
+            # MODRINTH_MODPACK = instance.mod-pack.project-slug;
+            # MODRINTH_MODPACK = instance.mod-pack.download-url;
+            # TYPE = "PAPER";
+            # GENERIC_PACK = instance.mod-pack.download-url;
+            TYPE = "AUTO_CURSEFORGE";
+            CF_SLUG = instance.mod-pack.project-slug;
+          } // lib.optionalAttrs (instance.memory != null) {
+            MEMORY = instance.memory;
           };
         };
       }) config.homefree.services.minecraft.instances)
@@ -82,8 +96,11 @@ in
       containerDataPath = "/var/lib/${instance-id}";
 
       preStart = ''
-        mkdir -p ${containerDataPath}
-      '';
+        mkdir -p ${containerDataPath}/data
+        mkdir -p ${containerDataPath}/downloads
+      '' + (lib.optionalString (config.homefree.services.minecraft.secrets.curseforge-api-key != null) ''
+        echo "CF_API_KEY=$(cat ${config.homefree.services.minecraft.secrets.curseforge-api-key})" > ${containerDataPath}/env
+      '');
     in
     {
       name = "podman-${instance-id}";
@@ -130,9 +147,6 @@ in
     backup = {
       paths = [
         containerDataPath
-      ];
-      mysql-databases = [
-        instance-id
       ];
     };
   }) config.homefree.services.minecraft.instances)

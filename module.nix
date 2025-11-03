@@ -813,6 +813,35 @@
           description = "enable Minecraft servers";
         };
 
+        secrets = {
+          curseforge-api-key = lib.mkOption {
+            type = lib.types.nullOr lib.types.path;
+            default = null;
+            description = ''
+              Location of Curseforge API Key, required for automatic mod/modpack downloads";
+
+              See:
+              https://console.curseforge.com/#/api-keys
+            '';
+          };
+
+          env = lib.mkOption {
+            type = lib.types.path;
+            description = ''
+              Location of docker env file. Contains:
+
+              NEXTCLOUD_ADMIN_PASSWORD=<password>
+
+              Should not be a file included in your source repo.
+            '';
+          };
+
+          secret-file = lib.mkOption {
+            type = lib.types.path;
+            description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
+          };
+        };
+
         instances = lib.mkOption {
           description = "Minecraft instance config";
           default = [];
@@ -834,6 +863,73 @@
                 type = lib.types.str;
                 default = "Minecraft";
                 description = "Name for instance";
+              };
+
+              memory = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Memory for java vm, e.g. 6G";
+              };
+
+              type = lib.mkOption {
+                type = lib.types.nullOr (lib.types.enum [
+                  ## Mod Platforms
+                  "AUTO_CURSEFORGE"
+                  "CURSEFORGE"
+                  "FTBA"
+                  "GTNH"
+                  "MODRINTH"
+
+                  ## Server Types
+                  "SPIGOT"
+                  "FABRIC"
+                  "MAGMA"
+                  "MAGMA_MAINTAINED"
+                  "KETTING"
+                  "MOHIST"
+                  "YOUER"
+                  "BANNER"
+                  "CATSERVER"
+                  "ARCLIGHT"
+                  "SPONGEVANILLA"
+                  "PAPER"
+                  "PURPUR"
+                  "LEAF"
+                  "FOLIA"
+                  "QUILT"
+                ]);
+                default = null;
+              };
+
+              mod-pack = {
+                download-url = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Download URL";
+                };
+
+                project-slug = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Project slug";
+                };
+              };
+
+              # MODS="<url-to-mod1.jar>,<url-to-mod2.jar>,<url-to-mod3.jar>"
+              mods = lib.mkOption {
+                default = [];
+                description = "Mod configs";
+                type = with lib.types; listOf (submodule {
+                  options = {
+                    download-url = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Download URL";
+                    };
+
+                    project-slug = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Project slug";
+                    };
+                  };
+                });
               };
             };
           });
