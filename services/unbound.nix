@@ -1,5 +1,7 @@
 { homefree-inputs, config, lib, pkgs, ... }:
 let
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
@@ -88,13 +90,13 @@ in
         interface = [
           "127.0.0.1"
           "::1"
-          "10.0.0.1"
+          "${lan-address}"
           "100.64.0.2"       # headscale
         ];
         access-control = [
           "127.0.0.1/24 allow"
           "::1 allow"
-          "10.0.0.1/24 allow"
+          "${lan-subnet} allow"
           "100.64.0.2/24 allow"
         ];
         # outgoing-interface = [
@@ -136,7 +138,7 @@ in
         ++
         # Point proxy URLs to internal IP when on LAN
         (lib.map
-          (fqn: "\"${fqn} IN A 10.0.0.1\"")
+          (fqn: "\"${fqn} IN A ${lan-address}\"")
           ## Flatten to single list
           ## e.g. [ "hij.lmnop" "hij.xyz" "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ]
           (lib.flatten
@@ -173,14 +175,14 @@ in
         )
         ++
         ## router lan ip with public domains
-        (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A 10.0.0.1\"") zones)
+        (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A ${lan-address}\"") zones)
         ++
         ## @TODO: Move to config for gateway IP
         [
           ## router lan IP
-          "\"${config.homefree.system.hostName} IN A 10.0.0.1\""
+          "\"${config.homefree.system.hostName} IN A ${lan-address}\""
           ## router lan IP with local domain
-          "\"${config.homefree.system.hostName}.${config.homefree.system.localDomain} IN A 10.0.0.1\""
+          "\"${config.homefree.system.hostName}.${config.homefree.system.localDomain} IN A ${lan-address}\""
         ]
         ++
         ## @TODO: How to configure these at runtime?
@@ -225,7 +227,7 @@ in
         config.homefree.network.static-ips)
 
         ## @TODO: Add caddy domains to zones, e.g.:
-        ## "10.0.0.1 auth.rahh.al"
+        ## "${lan-address} auth.rahh.al"
         ;
 
         hide-identity = true;

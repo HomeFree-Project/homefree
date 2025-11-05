@@ -10,7 +10,7 @@
     configureNginx = false;
     settings = {
       httpPort = 3004;
-      httpAddress = "10.0.0.1";
+      httpAddress = "${config.homefree.network.lan-address}";
       websocketPort = 3023; # defaults to 3003, which is used by
       blockDailyCheck = true;
       httpUnsafeOrigin = "https://docs.${config.homefree.system.domain}";
@@ -35,7 +35,7 @@
         subdomains = [ "docs" "docs-sandbox" "docs-ui" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 3004;
         public = config.homefree.services.cryptpad.public;
       };

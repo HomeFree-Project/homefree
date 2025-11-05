@@ -15,7 +15,7 @@
     port = 3000;
     settings = {
       http = {
-        address = "10.0.0.1:3000";
+        address = "${config.homefree.network.lan-address}:3000";
         session_ttl = "720h";
       };
       users = [
@@ -30,7 +30,7 @@
       theme = "auto";
       dns = {
         ## Must specify interfaces, otherwise it conflicts with podman
-        bind_hosts = [ "10.0.0.1" "127.0.0.1" ];
+        bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" ];
         port = 53;
         anonymize_client_ip = false;
         ratelimit = 0;
@@ -40,7 +40,7 @@
         refuse_any = true;
         upstream_dns = [
           # "127.0.0.1:53530"
-          "10.0.0.1:53530"
+          "${config.homefree.network.lan-address}:53530"
           # "https://dns10.quad9.net/dns-query"
         ];
         bootstrap_dns = [
@@ -196,7 +196,7 @@
         subdomains = [ "adguard" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 3000;
         public = config.homefree.services.adguard.public;
       };

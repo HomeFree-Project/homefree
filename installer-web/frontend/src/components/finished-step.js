@@ -171,7 +171,7 @@ class FinishedStep extends LitElement {
             <h4>📡 Network Setup</h4>
             <p>
               WAN: <code>${data.wanInterface}</code><br/>
-              LAN: <code>${data.lanInterface}</code> (10.0.0.1)
+              LAN: <code>${data.lanInterface}</code> (default: 10.0.0.1)
             </p>
           </div>
 
@@ -179,7 +179,7 @@ class FinishedStep extends LitElement {
             <h4>🛠️ SSH Access</h4>
             <p>
               Connect via:<br/>
-              <code>ssh ${data.username}@10.0.0.1</code>
+              <code>ssh ${data.username}@10.0.0.1</code> (or configured LAN address)
             </p>
           </div>
         </div>

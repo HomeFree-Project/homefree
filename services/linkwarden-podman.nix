@@ -54,7 +54,7 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        DATABASE_URL = "postgresql://${database-user}@10.0.0.1:5432/${database-name}";
+        DATABASE_URL = "postgresql://${database-user}@${config.homefree.network.lan-address}:5432/${database-name}";
       };
 
       environmentFiles = [
@@ -116,7 +116,7 @@ in
         subdomains = [ "links" "linkwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.linkwarden.public;
       };

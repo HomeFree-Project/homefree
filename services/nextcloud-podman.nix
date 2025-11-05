@@ -91,7 +91,7 @@ let
       'trusted_domains' =>
       array (
         0 => 'localhost',
-        1 => '10.0.0.1:${toString port}',
+        1 => '${config.homefree.network.lan-address}:${toString port}',
         2 => '${host}',
       ),
       'trusted_proxies' =>
@@ -242,7 +242,7 @@ in
 
         # Nextcloud configuration
         NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} 10.0.0.1";
+        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
         NEXTCLOUD_UPDATE = "0"; # Disable auto-update
         OVERWRITEPROTOCOL = "https";
         OVERWRITEHOST = host;
@@ -332,7 +332,7 @@ in
 
         # Nextcloud configuration
         NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} 10.0.0.1";
+        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
         NEXTCLOUD_UPDATE = "0"; # Disable auto-update
         OVERWRITEPROTOCOL = "https";
         OVERWRITEHOST = host;
@@ -395,7 +395,7 @@ in
         subdomains = [ "nextcloud" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.nextcloud.public;
         extraCaddyConfig = ''

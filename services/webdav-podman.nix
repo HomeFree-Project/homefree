@@ -170,7 +170,7 @@ in
         subdomains = [ "webdav" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.webdav.public;
         oauth2 = true;

@@ -4,6 +4,8 @@ let
   # @TODO: How to determine interface names?
   wan-interface = config.homefree.network.wan-interface;
   lan-interface = config.homefree.network.lan-interface;
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
   vlan-wan-id = 100;
   vlan-lan-id = 200;
   vlan-iot-id = 201;
@@ -72,7 +74,7 @@ in
         name = lan-interface;
         networkConfig = {
           Description = "LAN link";
-          Address = "10.0.0.1/24";
+          Address = "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}";
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.
@@ -133,8 +135,8 @@ in
       ${lan-interface} = {
         useDHCP = false;
         ipv4.addresses = [{
-          address = "10.0.0.1";
-          prefixLength = 24;
+          address = lan-address;
+          prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" lan-subnet) 1);
         }];
       };
 

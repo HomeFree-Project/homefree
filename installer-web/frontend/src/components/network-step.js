@@ -312,7 +312,7 @@ class NetworkStep extends LitElement {
         <div class="info-box">
           <strong>ℹ️ Note:</strong>
           After installation, the WAN interface will receive an IP from your ISP,
-          and the LAN interface will be configured as 10.0.0.1 with DHCP server.
+          and the LAN interface will be configured with default address 10.0.0.1 and DHCP server (configurable via homefree.network options).
         </div>
       </div>
     `;

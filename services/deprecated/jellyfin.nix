@@ -71,7 +71,7 @@
         subdomains = [ "media" "video" "jellyfin" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 8096;
         public = config.homefree.services.jellyfin.public;
       };

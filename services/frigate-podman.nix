@@ -32,7 +32,7 @@ let
     };
 
     mqtt = {
-      host = "10.0.0.1";
+      host = config.homefree.network.lan-address;
       port = 1883;
       topic_prefix = "frigate";
       ## Must be unique if running multiple instances
@@ -253,7 +253,7 @@ in
         subdomains = [ "nvr" "frigate" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 8971;
         ssl = true;
         ssl-no-verify = true;

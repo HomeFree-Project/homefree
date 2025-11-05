@@ -8,7 +8,7 @@ let
   database-type = "mysql";
   database-name = "screeenly";
   database-user = "screeenly";
-  database-host = "10.0.0.1";
+  database-host = config.homefree.network.lan-address;
   database-port = 3306;
 
   preStart = ''
@@ -99,7 +99,7 @@ in
         subdomains = [ "screeenly" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.screeenly.public;
       };

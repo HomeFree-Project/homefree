@@ -98,7 +98,7 @@ let
 
     ## Database settings
     $wgDBtype = "mysql";
-    $wgDBserver = "10.0.0.1";
+    $wgDBserver = "${config.homefree.network.lan-address}";
     $wgDBuser = "mediawiki";
     $wgDBpassword = '{{MYSQL_PASSWORD}}';
 
@@ -309,7 +309,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           MEDIAWIKI_SITE_NAME = site.name;
           # MEDIAWIKI_UPDATE = true;
           MEDIAWIKI_DB_TYPE = "mysql";
-          MEDIAWIKI_DB_HOST = "10.0.0.1";
+          MEDIAWIKI_DB_HOST = "${config.homefree.network.lan-address}";
           MEDIAWIKI_DB_USER = "mediawiki";
           MEDIAWIKI_DB_NAME = site-id;
           ## In secrets file
@@ -432,7 +432,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
       subdomains = [ site.subdomain ];
       http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
       https-domains = [ config.homefree.system.domain ];
-      host = "10.0.0.1";
+      host = config.homefree.network.lan-address;
       port = initialPort + index;
       public = site.public;
     };

@@ -146,7 +146,7 @@ class SummaryStep extends LitElement {
             </div>
             <div class="summary-item">
               <span class="summary-label">LAN IP Address:</span>
-              <span class="summary-value">10.0.0.1/24</span>
+              <span class="summary-value">10.0.0.1/24 (default)</span>
             </div>
           ` : html`
             <div class="summary-item">

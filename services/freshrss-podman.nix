@@ -15,7 +15,7 @@ let
 
   BASE_URL = "/";
   DB_BASE = "freshrss";
-  DB_HOST = "10.0.0.1";
+  DB_HOST = "${config.homefree.network.lan-address}";
   DB_PASSWORD = "changeme";
   DB_USER = "postgres";
   ADMIN_API_PASSWORD = "changeme";
@@ -99,7 +99,7 @@ in
         subdomains = [ "freshrss" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.freshrss.public;
       };

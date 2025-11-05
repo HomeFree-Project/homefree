@@ -1,17 +1,20 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.homefree;
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
+  lan-subnet-prefix = lib.head (lib.splitString "/" lan-subnet);  # Extract "10.0.0.0" from "${lan-subnet}"
   search-domains = [ cfg.system.domain cfg.system.localDomain ] ++ cfg.system.additionalDomains;
   ## See: https://headscale.net/stable/ref/acls/
   ## @TODO: Doesn't seem to work, may even block all traffic not explicitly approved.
   policy = pkgs.writeText "headscale-policy.json" ''
     {
       "hosts": {
-        "homefree.lan": "10.0.0.1/32"
+        "homefree.lan": "${lan-address}/32"
       },
       "autoApprovers": {
         "routes": {
-          "10.0.0.0/24": [
+          "${lan-subnet}": [
             "homefree.lan"
           ]
         }
@@ -208,7 +211,7 @@ in
   services.headscale = {
     enable = config.homefree.services.headscale.enable;
     port = 8087;
-    address = "10.0.0.1";
+    address = lan-address;
     settings = {
       server_url = "https://headscale.${cfg.system.domain}:443";
       # policy.path = policy;
@@ -221,11 +224,11 @@ in
         ## Add
         nameservers.global = [
           ## @TODO: It appears that these servers are round-robinned.
-          ##        Can 10.0.0.1 be set as default, and the rest as backups?
+          ##        Can ${lan-address} be set as default, and the rest as backups?
           ##        Would be useful to support ad blocking over tailscale.
 
           ## Internal DNS, has local domain names
-          # "10.0.0.1"
+          # "${lan-address}"
 
           ## Backup in case internal DNS not accessible due to connectivity issues
           "9.9.9.10"
@@ -237,7 +240,7 @@ in
           {
             name = domain;
             value = [
-              "10.0.0.1"
+              lan-address
             ];
           }
         ) search-domains);
@@ -277,14 +280,14 @@ in
     };
     useRoutingFeatures = "server";
     extraUpFlags = [
-      # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
-      "--advertise-routes=10.0.0.0/24"
+      # "--advertise-routes=${lan-subnet},100.64.0.0/24"
+      "--advertise-routes=${lan-subnet}"
       "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
     extraSetFlags = [
-      # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
-      "--advertise-routes=10.0.0.0/24"
+      # "--advertise-routes=${lan-subnet},100.64.0.0/24"
+      "--advertise-routes=${lan-subnet}"
       "--advertise-exit-node"
       # "--netfilter-mode=nodivert"
     ];
@@ -302,7 +305,7 @@ in
       HEADSCALE=${pkgs.headscale}/bin/headscale
       GREP=${pkgs.gnugrep}/bin/grep
       AWK=${pkgs.gawk}/bin/awk
-      $HEADSCALE routes enable -r $($HEADSCALE routes list | $GREP homefree | $GREP "10.0.0.0" | $AWK '{ print $1 }')
+      $HEADSCALE routes enable -r $($HEADSCALE routes list | $GREP homefree | $GREP "${lan-subnet-prefix}" | $AWK '{ print $1 }')
     '';
   };
 
@@ -385,11 +388,11 @@ in
         subdomains = [ "vpn" "headscale" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = lan-address;
         port = config.services.headscale.port;
         public = true;
         extraCaddyConfig = ''
-          reverse_proxy /admin* http://10.0.0.1:3009
+          reverse_proxy /admin* http://${lan-address}:3009
         '';
       };
       backup = {

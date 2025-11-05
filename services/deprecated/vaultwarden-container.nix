@@ -44,7 +44,7 @@ in
         dbBackend = "sqlite";   # "sqlite", "mysql", "postgresql"
         backupDir = backup-path;
         config = {
-          ROCKET_ADDRESS = "10.0.0.1";
+          ROCKET_ADDRESS = "${config.homefree.network.lan-address}";
           ROCKET_PORT = port;
         };
       };
@@ -64,7 +64,7 @@ in
         subdomains = [ "vaultwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.vaultwarden.public;
       };

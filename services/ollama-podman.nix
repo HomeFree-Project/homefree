@@ -48,7 +48,7 @@ in
         TZ = config.homefree.system.timeZone;
         PORT = toString port-internal;
         WEBUI_URL = "https://ollama.${config.homefree.system.domain}";
-        OLLAMA_BASE_URL = "http://10.0.0.1:${toString config.services.ollama.port}";
+        OLLAMA_BASE_URL = "http://${config.homefree.network.lan-address}:${toString config.services.ollama.port}";
         ## @TODOS
         # WEBUI_SECRET_KEY
         # DEFAULT_LOCALE
@@ -85,7 +85,7 @@ in
         subdomains = [ "ollama" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.ollama.public;
       };

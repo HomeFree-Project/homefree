@@ -12,7 +12,7 @@ in
   services.linkwarden = {
     enable = config.homefree.services.linkwarden.enable;
     enableRegistration = true;
-    host = "10.0.0.1";
+    host = config.homefree.network.lan-address;
     port = 3005;
     openFirewall = true;
     secretsFile = config.homefree.services.linkwarden.secrets.environment;
@@ -35,7 +35,7 @@ in
         subdomains = [ "links" "linkwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 3005;
         public = config.homefree.services.linkwarden.public;
       };

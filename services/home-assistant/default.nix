@@ -1,6 +1,7 @@
 { config, pkgs, ... }:
 
 let
+  lan-address = config.homefree.network.lan-address;
   # automations = import ./automations.nix;
   scenes = import ./scenes.nix;
   scripts = import ./scripts.nix;
@@ -101,7 +102,7 @@ in
         trusted_proxies = [
           # @TODO: Make this a passed-in var
           "127.0.0.1"
-          "10.0.0.1"
+          lan-address
           "10.0.2.15"
         ];
       };
@@ -425,7 +426,7 @@ in
         subdomains = [ "homeassistant" "ha" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = lan-address;
         port = 8123;
         public = config.homefree.services.homeassistant.public;
       };

@@ -36,7 +36,7 @@ let
 
     http = {
       use_x_forwarded_for = true;
-      trusted_proxies = "10.0.0.1";
+      trusted_proxies = "${config.homefree.network.lan-address}";
     };
 
     auth_header = {
@@ -108,7 +108,7 @@ in
         subdomains = [ "homeassistant" "ha" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.homeassistant.public;
       };

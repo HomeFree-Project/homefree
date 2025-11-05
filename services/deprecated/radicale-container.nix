@@ -41,7 +41,7 @@ in
       services.radicale = {
         enable =  enable;
         settings = {
-          server.hosts = [ "10.0.0.1:5232" ];
+          server.hosts = [ "${config.homefree.network.lan-address}:5232" ];
 
           auth = {
             type = "none";
@@ -75,7 +75,7 @@ in
         subdomains = [ "radicale" "dav" "webdav" "caldav" "carddav" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 5232;
         public = config.homefree.services.radicale.public;
         # basic-auth = true;

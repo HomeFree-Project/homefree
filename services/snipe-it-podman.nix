@@ -95,7 +95,7 @@ in
         # REQUIRED: DATABASE SETTINGS
         # --------------------------------------------
         DB_CONNECTION = "mysql";
-        DB_HOST = "10.0.0.1";
+        DB_HOST = config.homefree.network.lan-address;
         DB_DATABASE = "snipeit";
         DB_PORT = "3306";
         DB_USERNAME = "snipeit";
@@ -163,7 +163,7 @@ in
         # --------------------------------------------
         # OPTIONAL: SECURITY HEADER SETTINGS
         # --------------------------------------------
-        APP_TRUSTED_PROXIES = "192.168.1.1,10.0.0.1,172.16.0.0/12";
+        APP_TRUSTED_PROXIES = "192.168.1.1,${config.homefree.network.lan-address},172.16.0.0/12";
         ALLOW_IFRAMING = "false";
         REFERRER_POLICY = "same-origin";
         ENABLE_CSP = "false";
@@ -263,7 +263,7 @@ in
         subdomains = [ "snipeit" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.snipe-it.public;
       };

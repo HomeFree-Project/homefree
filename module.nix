@@ -115,7 +115,6 @@
       };
     };
 
-    ## @TODO: Add default subnet and gateway config, e.g. 10.0.0.0/24, 10.0.0.1
     ## @TODO: This section doesn't make sense. Some network config is in "system" above
     ##        and some is in separate services, e.g. unbound and ddns
     network = {
@@ -143,6 +142,47 @@
         type = lib.types.str;
         default = "ens5";
         description = "Internal interface to the local network";
+      };
+
+      # QEMU User-Mode Network Details:
+      # - Guest IP: Always 10.0.2.15
+      # - Gateway/Host: Always 10.0.2.2
+      # - DNS: Always 10.0.2.3
+      # - Network: 10.0.2.0/24
+      lan-address = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.1";
+        description = "IP address of the LAN gateway (router address)";
+      };
+
+      lan-subnet = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.0/24";
+        description = "LAN subnet in CIDR notation";
+      };
+
+      lan-netmask = lib.mkOption {
+        type = lib.types.str;
+        default = "255.255.255.0";
+        description = "LAN subnet mask";
+      };
+
+      dhcp-range-start = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.100";
+        description = "Start of DHCP IP address range";
+      };
+
+      dhcp-range-end = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.254";
+        description = "End of DHCP IP address range";
+      };
+
+      dhcp-lease-time = lib.mkOption {
+        type = lib.types.str;
+        default = "8h";
+        description = "DHCP lease time (e.g., '8h', '24h', '7d')";
       };
 
       static-ip-expiration = lib.mkOption {

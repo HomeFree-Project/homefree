@@ -55,7 +55,7 @@ in
 
       ## To get rid of security warning on admin page
       trusted_proxies = [
-        "10.0.0.1/24"
+        "${config.homefree.network.lan-address}/24"
       ];
 
       ## To get rid of js map warning on admin page
@@ -100,7 +100,7 @@ in
   ## Nextcloud starts nginx
   ## Setup to be at /nextcloud/ path rather than root
   services.nginx.virtualHosts."localhost" = {
-    listen = [ { addr = "10.0.0.1"; port = 3010; }];
+    listen = [ { addr = "${config.homefree.network.lan-address}"; port = 3010; }];
     locations = {
       "^~ /.well-known" = lib.mkForce {
         priority = 210;
@@ -156,7 +156,7 @@ in
         subdomains = [ "nextcloud" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 3010;
         subdir = "/nextcloud/";
         public = config.homefree.services.nextcloud.public;

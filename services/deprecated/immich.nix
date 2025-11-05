@@ -3,7 +3,7 @@
   services.immich = {
     enable = true;
     port = 3013;
-    host = "10.0.0.1";
+    host = config.homefree.network.lan-address;
     environment.IMMICH_MACHINE_LEARNING_URL = "http://localhost:3003";
     settings = {
       server = {
@@ -38,7 +38,7 @@
         subdomains = [ "photos" "immich" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = config.services.immich.port;
         public = config.homefree.services.immich.public;
       };

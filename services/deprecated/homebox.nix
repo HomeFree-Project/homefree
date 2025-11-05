@@ -21,7 +21,7 @@
         subdomains = [ "homebox" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = 7745;
         public = config.homefree.services.homebox.public;
       };

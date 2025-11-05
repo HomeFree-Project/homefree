@@ -1,4 +1,8 @@
-{config, lib, pkgs, ...}: {
+{config, lib, pkgs, ...}:
+let
+  lan-address = config.homefree.network.lan-address;
+in
+{
   # services.coturn = rec {
   #   enable = config.homefree.services.matrix.enable;
   #   no-cli = true;
@@ -78,12 +82,12 @@
       dns_cache = {
         enabled = true;
         # custom_nameservers = [
-        #   "10.0.0.1:53530"
+        #   "${lan-address}:53530"
         # ];
       };
       listeners = [{
         port = 8008;
-        bind_addresses = [ "10.0.0.1" ];
+        bind_addresses = [ lan-address ];
         type = "http";
         tls = false;
         x_forwarded = true;
@@ -213,15 +217,15 @@
         subdomains = [ "matrix" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = lan-address;
         port = 8008;
         public = config.homefree.services.matrix.public;
         extraCaddyConfig = ''
           # Matrix Synapse settings
           respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
-          reverse_proxy /_matrix/* 10.0.0.1:8008
-          reverse_proxy /_synapse/admin/* 10.0.0.1:8008
-          reverse_proxy /_synapse/client/* 10.0.0.1:8008
+          reverse_proxy /_matrix/* ${lan-address}:8008
+          reverse_proxy /_synapse/admin/* ${lan-address}:8008
+          reverse_proxy /_synapse/client/* ${lan-address}:8008
         '';
       };
       firewall = {

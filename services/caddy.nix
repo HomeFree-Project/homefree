@@ -1,5 +1,6 @@
 { config, lib, pkgs, ... }:
 let
+  lan-address = config.homefree.network.lan-address;
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 in
@@ -65,7 +66,7 @@ in
             }
           ''
           + (if reverse-proxy-config.public == false then ''
-            bind 10.0.0.1
+            bind ${lan-address}
           '' else "")
           + (if reverse-proxy-config.subdir != null then ''
             rewrite / ${trimTrailingSlash reverse-proxy-config.subdir}{uri}

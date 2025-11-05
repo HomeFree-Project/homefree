@@ -11,7 +11,7 @@ npm run serve &
 pids[2]=$!
 cd "${SCRIPTPATH}"
 
-echo "Visit site at http://10.0.0.1:8456"
+echo "Visit site at http://localhost:8456 or http://<LAN-IP>:8456"
 
 for pid in ${pids[*]}; do
   wait $pid
