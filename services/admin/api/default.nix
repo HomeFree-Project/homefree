@@ -46,8 +46,13 @@ let
 
   preStart = ''
     mkdir -p /run/homefree/admin
+    mkdir -p /var/lib/admin-api
 
     cp ${config-json} /run/homefree/admin/config.json
+
+    # Copy API files to writable location
+    cp -r ${./.}/* /var/lib/admin-api/
+    chmod -R u+w /var/lib/admin-api
   '';
 in
 {
@@ -65,7 +70,8 @@ in
       Type = "simple";
       User = "root";
       Group = "root";
-      WorkingDirectory = "${./.}";
+      StateDirectory = "admin-api";
+      WorkingDirectory = "/var/lib/admin-api";
       ExecStartPre = [ "!${pkgs.writeShellScript "homefree-admin-prestart" preStart}" ];
       ExecStart = "${pkgs.deno}/bin/deno task start";
       Restart = "always";
