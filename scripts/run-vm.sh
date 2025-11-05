@@ -351,16 +351,16 @@ if [[ "$USE_UEFI" == "true" ]]; then
     )
 fi
 
-# Boot from ISO (CD-ROM)
-QEMU_CMD+=(-cdrom "$ISO_PATH")
-
 # Virtual hard disk for installation with optimized cache settings
 # Use writeback cache for better performance (safe for testing VMs)
-QEMU_CMD+=(-drive "file=$DISK_IMAGE,format=qcow2,if=virtio,cache=writeback,discard=unmap")
+# Use explicit device specification to allow bootindex
+QEMU_CMD+=(-drive "file=$DISK_IMAGE,format=qcow2,if=none,id=maindisk,cache=writeback,discard=unmap")
+QEMU_CMD+=(-device "virtio-blk-pci,drive=maindisk,bootindex=0")
 
-# Force boot from CD-ROM first to avoid UEFI boot state issues
-# Without this, UEFI may boot from disk and use cached terminal settings
-QEMU_CMD+=(-boot order=d)
+# Boot from ISO (CD-ROM) as fallback
+# bootindex=1 means this is the second boot device (fallback if disk not bootable)
+QEMU_CMD+=(-drive "file=$ISO_PATH,if=none,id=cdrom,media=cdrom,readonly=on")
+QEMU_CMD+=(-device "ide-cd,drive=cdrom,bootindex=1")
 
 # Graphics adapter configuration
 if [[ "$USE_VIRTVIEWER" == "true" ]]; then

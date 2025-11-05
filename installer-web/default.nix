@@ -368,6 +368,7 @@ in {
   boot.kernelParams = [
     "quiet"
     "splash"
+    "vt.global_cursor_default=1"  # Enable blinking cursor in text console (0=no blink, 1=blink)
   ];
 
   # Auto-login for live ISO
