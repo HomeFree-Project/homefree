@@ -166,30 +166,6 @@
         });
       };
 
-      ## @TODO: Make type for dns override entry
-      dns-overrides = lib.mkOption {
-        description = "dns hostname to IP overrides";
-        default = [];
-        type = with lib.types; listOf (submodule {
-          options = {
-            hostname = lib.mkOption {
-              type = lib.types.str;
-              description = "Hostname of override";
-            };
-
-            domain = lib.mkOption {
-              type = lib.types.str;
-              description = "Domain of override";
-            };
-
-            ip = lib.mkOption {
-              type = lib.types.str;
-              description = "IP Address";
-            };
-          };
-        });
-      };
-
       enable-adblock = lib.mkOption {
         type = lib.types.bool;
         default = false;
@@ -203,68 +179,197 @@
       };
     };
 
-    dynamic-dns = {
-      interval = lib.mkOption {
-        type = lib.types.str;
-        default = "10m";
-        description = "Interval for dynamic DNS client";
+    dns = {
+      local = {
+        overrides = lib.mkOption {
+          description = "dns hostname to IP overrides";
+          default = [];
+          type = with lib.types; listOf (submodule {
+            options = {
+              hostname = lib.mkOption {
+                type = lib.types.str;
+                description = "Hostname of override";
+              };
+
+              domain = lib.mkOption {
+                type = lib.types.str;
+                description = "Domain of override";
+              };
+
+              ip = lib.mkOption {
+                type = lib.types.str;
+                description = "IP Address";
+              };
+            };
+          });
+        };
       };
 
-      usev4 = lib.mkOption {
-        type = lib.types.str;
-        default = "webv4, webv4=ipinfo.io/ip";
-        description = "Use format for obtaining ipv4 for dynamic DNS client";
-      };
-
-      usev6 = lib.mkOption {
-        type = lib.types.str;
-        default = "webv6, webv6=v6.ipinfo.io/ip";
-        description = "Use format for obtaining ipv6 for dynamic DNS client";
-      };
-
-      zones = lib.mkOption {
-        description = "Dynamic DNS Zone Config";
-        default = [];
-        type = with lib.types; listOf (submodule {
-          options = {
-            disable = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "disable dynamic dns for zone";
+      remote = {
+        cert-management = {
+          dns-01 = {
+            provider = lib.mkOption {
+              type = lib.types.nullOr (lib.types.enum [
+                "hetzner"
+              ]);
+              default = null;
+              description = "Needed for wildcard certs. Usually requires an API Key";
             };
 
-            ## @TODO: validate against network.domain and network.additionalDomains?
-            zone = lib.mkOption {
-              type = lib.types.str;
-              default = "homefree.host";
-              description = "Zone for dynamic DNS client";
-            };
-
-            protocol = lib.mkOption {
-              type = lib.types.str;
-              default = "hetzner";
-              description = "Protocol for dynamic DNS client";
-            };
-
-            username = lib.mkOption {
-              type = lib.types.str;
-              default = "erahhal";
-              description = "Username for dynamic DNS client";
-            };
-
-            domains = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ "@" "*" "www" "dev" ];
-              description = "Domains for dynamic DNS client";
-            };
-
-            passwordFile = lib.mkOption {
-              type = lib.types.path;
-              description = "Path to password file";
+            secrets = {
+              api-token = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Location of API token. Should not be a file included in your source repo.";
+              };
             };
           };
-        });
+        };
+
+        dynamic-dns = {
+          interval = lib.mkOption {
+            type = lib.types.str;
+            default = "10m";
+            description = "Interval for dynamic DNS client";
+          };
+
+          usev4 = lib.mkOption {
+            type = lib.types.str;
+            default = "webv4, webv4=ipinfo.io/ip";
+            description = "Use format for obtaining ipv4 for dynamic DNS client";
+          };
+
+          usev6 = lib.mkOption {
+            type = lib.types.str;
+            default = "webv6, webv6=v6.ipinfo.io/ip";
+            description = "Use format for obtaining ipv6 for dynamic DNS client";
+          };
+
+          zones = lib.mkOption {
+            description = "Dynamic DNS Zone Config";
+            default = [];
+            type = with lib.types; listOf (submodule {
+              options = {
+                disable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "disable dynamic dns for zone";
+                };
+
+                ## @TODO: validate against network.domain and network.additionalDomains?
+                zone = lib.mkOption {
+                  type = lib.types.str;
+                  default = "homefree.host";
+                  description = "Zone for dynamic DNS client";
+                };
+
+                protocol = lib.mkOption {
+                  type = lib.types.str;
+                  default = "hetzner";
+                  description = "Protocol for dynamic DNS client";
+                };
+
+                username = lib.mkOption {
+                  type = lib.types.str;
+                  default = "erahhal";
+                  description = "Username for dynamic DNS client";
+                };
+
+                domains = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  default = [ "@" "*" "www" "dev" ];
+                  description = "Domains for dynamic DNS client";
+                };
+
+                passwordFile = lib.mkOption {
+                  type = lib.types.path;
+                  description = "Path to password file";
+                };
+              };
+            });
+          };
+        };
       };
+    };
+
+    proxied-domains = lib.mkOption {
+      description = "Domain proxy mappings for transparently forwarding entire domains to other servers";
+      default = [];
+      type = with lib.types; listOf (submodule {
+        options = {
+          domains = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            description = ''
+              List of domains to proxy (supports wildcards like *.example.com).
+              All requests matching these domains will be transparently forwarded to the target server.
+            '';
+            example = [ "example.com" "*.example.com" "another.org" ];
+          };
+
+          target = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                host = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Target host IP address or hostname to proxy to";
+                  example = "192.168.1.100";
+                };
+
+                http = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.submodule {
+                    options = {
+                      port = lib.mkOption {
+                        type = lib.types.int;
+                        default = 80;
+                        description = "HTTP port number to proxy to";
+                      };
+                    };
+                  });
+                  default = null;
+                  description = "HTTP configuration. If null, HTTP traffic will not be proxied.";
+                  example = { port = 80; };
+                };
+
+                https = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.submodule {
+                    options = {
+                      port = lib.mkOption {
+                        type = lib.types.int;
+                        default = 443;
+                        description = "HTTPS port number to proxy to on the backend server";
+                      };
+
+                      ignore-self-signed-cert = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = ''
+                          Whether to ignore self-signed or invalid certificates on the backend server.
+                          This should only be enabled for development environments.
+                          Setting this to true will disable certificate verification when connecting to the backend.
+                        '';
+                      };
+                    };
+                  });
+                  default = null;
+                  description = "HTTPS configuration. If null, HTTPS traffic will not be proxied.";
+                  example = { port = 443; ignore-self-signed-cert = false; };
+                };
+              };
+            };
+            description = "Target server configuration for proxying";
+          };
+
+          public = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              Whether to make the proxied domains publicly accessible from WAN.
+              If false, domains will only be accessible from LAN (bound to 10.0.0.1).
+              If true, domains will be accessible from all interfaces.
+            '';
+          };
+        };
+      });
     };
 
     services = {

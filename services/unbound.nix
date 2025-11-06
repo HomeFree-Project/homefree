@@ -131,7 +131,7 @@ in
             "\"${local-data-config.hostname}.${local-data-config.domain} IN A ${local-data-config.ip}\""
           else
             "\"${local-data-config.hostname} IN A ${local-data-config.ip}\""
-          ) config.homefree.network.dns-overrides
+          ) config.homefree.dns.local.overrides
         )
         ++
         # Point proxy URLs to internal IP when on LAN
