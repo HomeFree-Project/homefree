@@ -1,18 +1,76 @@
 { config, lib, pkgs, ... }:
 let
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
+
+  # Process proxied domains for standard reverse proxy (proxy handles TLS)
+  processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    let
+      httpEntries = if domain-mapping.target.http != null then
+        lib.map (domain: {
+          inherit domain;
+          inherit (domain-mapping) public;
+          inherit (domain-mapping.target) host;
+          port = domain-mapping.target.http.port;
+          ssl = false;
+          ignore-self-signed-cert = false;
+        }) domain-mapping.domains
+      else [];
+
+      httpsEntries = if domain-mapping.target.https != null then
+        lib.map (domain: {
+          inherit domain;
+          inherit (domain-mapping) public;
+          inherit (domain-mapping.target) host;
+          port = domain-mapping.target.https.port;
+          ssl = true;
+          ignore-self-signed-cert = domain-mapping.target.https.ignore-self-signed-cert;
+        }) domain-mapping.domains
+      else [];
+    in
+      httpEntries ++ httpsEntries
+  ) proxiedDomains);
 in
 {
+  # Service to create DNS token env file readable by caddy user
+  systemd.services.caddy-dns-token = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
+    description = "Create Caddy DNS API Token for caddy user";
+    wantedBy = [ "caddy.service" ];
+    before = [ "caddy.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      mkdir -p /run/caddy-secrets
+      cp ${toString config.homefree.dns.remote.cert-management.dns-01.secrets.api-token} /run/caddy-secrets/dns-api-token
+      chown caddy:caddy /run/caddy-secrets/dns-api-token
+      chmod 400 /run/caddy-secrets/dns-api-token
+    '';
+  };
+
   nixpkgs.overlays = [
     (import ../overlays/caddy-with-plugins.nix)
-  ];
+  ] ++ lib.optional (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) (final: prev: {
+    caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
+      if [ -f /run/caddy-secrets/dns-api-token ]; then
+        export DNS_API_TOKEN=''$(cat /run/caddy-secrets/dns-api-token)
+      fi
+      exec ${final.caddy-with-plugins}/bin/caddy "$@"
+    '';
+  });
 
   systemd.services.caddy = {
     wants = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     ## Restart Caddy with Unbound DNS changes
     partOf = [ "unbound.service" ];
+
+    # Grant capability to bind to privileged ports when using wrapper
+    serviceConfig = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+    };
   };
 
   ## Restart Unbound DNS with caddy changes
@@ -29,13 +87,20 @@ in
   services.caddy = {
     enable = true;
 
-    package = pkgs.caddy-with-plugins;
+    package = if (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null)
+              then pkgs.caddy-with-dns-token
+              else pkgs.caddy-with-plugins;
 
     ## reload config while running instead of restarting. true by default.
     enableReload = true;
 
     ## Temporarily set to staging
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
+
+    # Global configuration for DNS-01 challenge
+    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+      acme_dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+    '';
 
     virtualHosts = lib.mkMerge [
       (lib.listToAttrs (lib.map (service-config:
@@ -215,6 +280,56 @@ in
         };
       }
       ) proxiedHostConfig))
+
+      # Add reverse proxy for proxied domains (proxy handles TLS certificates)
+      (lib.listToAttrs (lib.map (entry:
+        let
+          # Create virtualHost with http:// and https:// (Caddy will handle ACME for https)
+          protocol = if entry.ssl then "https" else "http";
+          host-string = "${protocol}://${entry.domain}";
+          log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] "${entry.domain}-${toString entry.port}";
+          backend-protocol = if entry.ssl then "https" else "http";
+        in {
+          name = host-string;
+          value = {
+            logFormat = ''
+              output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
+            '';
+            extraConfig = ''
+              ${if !entry.public then "bind 10.0.0.1" else ""}
+
+              ${if entry.ssl && lib.hasInfix "*" entry.domain then ''
+              # Use DNS-01 challenge for wildcard domains
+              tls {
+              ''
+              + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+                dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+              ''
+              +
+              ''
+                propagation_delay 180s
+              }
+              '' else ""}
+
+              # Proxy handles TLS termination for HTTPS backends
+              reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
+                header_up Host {http.request.host}
+                header_up X-Real-IP {remote_host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto {scheme}
+                ${if entry.ssl then ''
+                transport http {
+                  tls
+                  ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}
+                  tls_server_name {http.request.host}
+                }
+                '' else ""}
+              }
+            '';
+          };
+        }
+      ) processedProxiedDomains))
     ];
   };
+
 }

@@ -2,7 +2,22 @@
 let
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  proxiedDomains = config.homefree.proxied-domains;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
+
+  # Process proxied domains to extract non-public domains
+  nonPublicProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    if domain-mapping.public == false then
+      domain-mapping.domains
+    else
+      []
+  ) proxiedDomains);
+
+  # Extract unique base domains from non-public proxied domains (handle wildcards like *.example.com)
+  nonPublicBaseDomains = lib.unique (lib.map (domain:
+    lib.removePrefix "*." domain
+  ) nonPublicProxiedDomains);
+
   preStart = ''
     touch /run/unbound/include.conf
     cat > /run/unbound/dynamic.zone<< EOF
@@ -106,7 +121,11 @@ in
           "\"homefree.lan\" static"
           "\"homefree.host\" transparent"
           "\"rahh.al\" transparent"
-        ];
+        ]
+        ++
+        # Add non-public proxied base domains as redirect zones to handle wildcards
+        (lib.map (domain: "\"${domain}\" redirect") nonPublicBaseDomains)
+        ;
         ## @TODO: Add config.homefree.network.blocked-domains as such:
         # local-zone: "example.org" always_nxdomain
 
@@ -131,7 +150,7 @@ in
             "\"${local-data-config.hostname}.${local-data-config.domain} IN A ${local-data-config.ip}\""
           else
             "\"${local-data-config.hostname} IN A ${local-data-config.ip}\""
-          ) config.homefree.network.dns-overrides
+          ) config.homefree.dns.local.overrides
         )
         ++
         # Point proxy URLs to internal IP when on LAN
@@ -170,6 +189,12 @@ in
               # proxiedHostConfig
             )
           )
+        )
+        ++
+        # Point non-public proxied base domains to internal IP (for redirect zones)
+        (lib.map
+          (domain: "\"${domain} IN A 10.0.0.1\"")
+          nonPublicBaseDomains
         )
         ++
         ## router lan ip with public domains
