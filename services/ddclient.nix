@@ -1,6 +1,6 @@
 { config, lib, ... }:
 let
-  cfg = config.homefree.dynamic-dns;
+  cfg = config.homefree.dns.remote.dynamic-dns;
 in
 {
   #-----------------------------------------------------------------------------------------------------
