@@ -203,6 +203,69 @@
       };
     };
 
+    proxied-domains = lib.mkOption {
+      description = "Domain proxy mappings for transparently forwarding entire domains to other servers";
+      default = [];
+      type = with lib.types; listOf (submodule {
+        options = {
+          domains = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            description = ''
+              List of domains to proxy (supports wildcards like *.example.com).
+              All requests matching these domains will be transparently forwarded to the target server.
+            '';
+            example = [ "example.com" "*.example.com" "another.org" ];
+          };
+
+          target = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                host = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Target host IP address or hostname to proxy to";
+                  example = "192.168.1.100";
+                };
+
+                ports = lib.mkOption {
+                  type = lib.types.listOf (lib.types.submodule {
+                    options = {
+                      number = lib.mkOption {
+                        type = lib.types.int;
+                        description = "Port number to proxy to";
+                        example = 443;
+                      };
+
+                      ssl = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether this port uses SSL/TLS (https)";
+                      };
+                    };
+                  });
+                  description = "List of ports to proxy to. Each port creates a separate virtualHost (domain.com:port)";
+                  example = [
+                    { number = 80; ssl = false; }
+                    { number = 443; ssl = true; }
+                  ];
+                };
+              };
+            };
+            description = "Target server configuration for proxying";
+          };
+
+          public = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              Whether to make the proxied domains publicly accessible from WAN.
+              If false, domains will only be accessible from LAN (bound to 10.0.0.1).
+              If true, domains will be accessible from all interfaces.
+            '';
+          };
+        };
+      });
+    };
+
     dynamic-dns = {
       interval = lib.mkOption {
         type = lib.types.str;

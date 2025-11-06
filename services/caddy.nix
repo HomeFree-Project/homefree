@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 in
 {
@@ -215,6 +216,51 @@ in
         };
       }
       ) proxiedHostConfig))
+
+      # Process proxied-domains configuration
+      # For each domain-mapping, create a virtualHost for each port
+      (lib.listToAttrs (lib.flatten (lib.map (domain-mapping:
+        let
+          domains = domain-mapping.domains;
+          target = domain-mapping.target;
+          public = domain-mapping.public;
+        in
+          # For each port, create a virtualHost entry
+          lib.map (port-config:
+            let
+              # Add port suffix to each domain (e.g., example.com:8080)
+              domains-with-port = lib.map (domain: "${domain}:${toString port-config.number}") domains;
+              host-string = lib.concatStringsSep ", " domains-with-port;
+              protocol = if port-config.ssl then "https" else "http";
+              # Create a safe filename by replacing special characters
+              log-name = lib.replaceStrings [" " "," "." "*" ":"] ["_" "" "_" "wildcard" "_"] host-string;
+            in {
+              name = host-string;
+              value = {
+                logFormat = ''
+                  output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
+                '';
+                extraConfig = ''
+                  ${if !public then "bind 10.0.0.1" else ""}
+
+                  # Transparent proxy - preserve all headers
+                  reverse_proxy ${protocol}://${target.host}:${toString port-config.number} {
+                    header_up Host {host}
+                    header_up X-Real-IP {remote_host}
+                    header_up X-Forwarded-For {remote_host}
+                    header_up X-Forwarded-Proto {scheme}
+                    ${if port-config.ssl then ''
+                    transport http {
+                      tls
+                      tls_insecure_skip_verify
+                    }
+                    '' else ""}
+                  }
+                '';
+              };
+            }
+          ) target.ports
+      ) proxiedDomains)))
     ];
   };
 }
