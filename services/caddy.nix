@@ -4,24 +4,19 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
-  # Separate proxied domains into HTTPS (layer4) and HTTP (layer7)
-  # Collect all unique port numbers and group domain mappings by port
-  layer4ProxiedDomains = lib.flatten (lib.map (domain-mapping:
-    lib.map (port-config: {
+  # Process proxied domains for layer4 TCP proxy (both HTTP and HTTPS)
+  layer4ProxiedDomains = lib.map (domain-mapping:
+    let
+      sslPorts = lib.filter (p: p.ssl == true) domain-mapping.target.ports;
+      nonSslPorts = lib.filter (p: p.ssl == false) domain-mapping.target.ports;
+    in {
       inherit (domain-mapping) domains public;
       inherit (domain-mapping.target) host;
-      port = port-config.number;
-    }) (lib.filter (p: p.ssl == true) domain-mapping.target.ports)
-  ) proxiedDomains);
-
-  layer7ProxiedDomains = lib.flatten (lib.map (domain-mapping:
-    lib.map (port-config: {
-      inherit (domain-mapping) domains public;
-      inherit (domain-mapping.target) host;
-      port = port-config.number;
-      ssl = port-config.ssl;
-    }) (lib.filter (p: p.ssl == false) domain-mapping.target.ports)
-  ) proxiedDomains);
+      # Use first port of each type
+      httpPort = if nonSslPorts != [] then (lib.head nonSslPorts).number else null;
+      httpsPort = if sslPorts != [] then (lib.head sslPorts).number else null;
+    }
+  ) proxiedDomains;
 in
 {
   nixpkgs.overlays = [
@@ -235,68 +230,47 @@ in
         };
       }
       ) proxiedHostConfig))
-
-      # Process HTTP (layer7) proxied-domains
-      # Group by domain list to merge multiple backend ports into one virtualHost
-      (lib.listToAttrs (lib.mapAttrsToList (domains-key: entries:
-        let
-          firstEntry = lib.head entries;
-          # HTTP virtualHosts always listen on port 80 (no port suffix)
-          domains-list = lib.map (domain: "http://${domain}") firstEntry.domains;
-          host-string = lib.concatStringsSep ", " domains-list;
-          # Create a safe filename by replacing special characters
-          log-name = lib.replaceStrings [" " "," "." "*" ":"] ["_" "" "_" "wildcard" "_"] host-string;
-        in {
-          name = host-string;
-          value = {
-            logFormat = ''
-              output file ${config.services.caddy.logDir}/access-proxied-http-${log-name}.log
-            '';
-            extraConfig = ''
-              ${if !firstEntry.public then "bind 10.0.0.1" else ""}
-
-              # HTTP reverse proxy - preserve all headers
-              # If multiple backend ports, proxy to the first one
-              reverse_proxy http://${firstEntry.host}:${toString firstEntry.port} {
-                header_up Host {host}
-                header_up X-Real-IP {remote_host}
-                header_up X-Forwarded-For {remote_host}
-                header_up X-Forwarded-Proto {scheme}
-              }
-            '';
-          };
-        }
-      ) (lib.groupBy (e: lib.concatStringsSep "," e.domains) layer7ProxiedDomains)))
     ];
   };
 
   # Create JSON config file for layer4 TCP proxy (this version only supports JSON, not Caddyfile)
   environment.etc."caddy/layer4-config.json" = lib.mkIf (layer4ProxiedDomains != []) {
-    text = builtins.toJSON {
-      servers = {
-        # Single server listening on port 443 for all HTTPS proxied domains
-        https-proxy = {
-          listen = [
-            # Listen on 443 for public domains, or 10.0.0.1:443 for LAN-only
-            (if (lib.any (e: e.public) layer4ProxiedDomains) then ":443" else "10.0.0.1:443")
-          ];
-          # Create a route for each domain → backend mapping
-          routes = lib.map (entry: {
-            match = [{
-              tls = {
-                sni = entry.domains;
-              };
-            }];
-            handle = [{
-              handler = "proxy";
-              upstreams = [{
-                dial = ["${entry.host}:${toString entry.port}"];
-              }];
-            }];
-          }) layer4ProxiedDomains;
-        };
-      };
-    };
+    text = builtins.toJSON (
+      let
+        hasHttps = lib.any (e: e.httpsPort != null) layer4ProxiedDomains;
+        hasHttp = lib.any (e: e.httpPort != null) layer4ProxiedDomains;
+        isPublic = lib.any (e: e.public) layer4ProxiedDomains;
+      in {
+        servers = {}
+          // (if hasHttps then {
+            https-proxy = {
+              listen = [ (if isPublic then ":443" else "10.0.0.1:443") ];
+              routes = lib.filter (r: r != null) (lib.map (entry:
+                if entry.httpsPort != null then {
+                  match = [{ tls = { sni = entry.domains; }; }];
+                  handle = [{
+                    handler = "proxy";
+                    upstreams = [{ dial = ["${entry.host}:${toString entry.httpsPort}"]; }];
+                  }];
+                } else null
+              ) layer4ProxiedDomains);
+            };
+          } else {})
+          // (if hasHttp then {
+            http-proxy = {
+              listen = [ (if isPublic then ":80" else "10.0.0.1:80") ];
+              routes = lib.filter (r: r != null) (lib.map (entry:
+                if entry.httpPort != null then {
+                  handle = [{
+                    handler = "proxy";
+                    upstreams = [{ dial = ["${entry.host}:${toString entry.httpPort}"]; }];
+                  }];
+                } else null
+              ) layer4ProxiedDomains);
+            };
+          } else {});
+      }
+    );
   };
 
   # Load layer4 config via Caddy admin API after main service starts
