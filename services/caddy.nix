@@ -237,11 +237,13 @@ in
       ) proxiedHostConfig))
 
       # Process HTTP (layer7) proxied-domains
-      (lib.listToAttrs (lib.map (domain-port:
+      # Group by domain list to merge multiple backend ports into one virtualHost
+      (lib.listToAttrs (lib.mapAttrsToList (domains-key: entries:
         let
-          # Add port suffix to each domain (e.g., example.com:80)
-          domains-with-port = lib.map (domain: "${domain}:${toString domain-port.port}") domain-port.domains;
-          host-string = lib.concatStringsSep ", " domains-with-port;
+          firstEntry = lib.head entries;
+          # HTTP virtualHosts always listen on port 80 (no port suffix)
+          domains-list = lib.map (domain: "http://${domain}") firstEntry.domains;
+          host-string = lib.concatStringsSep ", " domains-list;
           # Create a safe filename by replacing special characters
           log-name = lib.replaceStrings [" " "," "." "*" ":"] ["_" "" "_" "wildcard" "_"] host-string;
         in {
@@ -251,10 +253,11 @@ in
               output file ${config.services.caddy.logDir}/access-proxied-http-${log-name}.log
             '';
             extraConfig = ''
-              ${if !domain-port.public then "bind 10.0.0.1" else ""}
+              ${if !firstEntry.public then "bind 10.0.0.1" else ""}
 
               # HTTP reverse proxy - preserve all headers
-              reverse_proxy http://${domain-port.host}:${toString domain-port.port} {
+              # If multiple backend ports, proxy to the first one
+              reverse_proxy http://${firstEntry.host}:${toString firstEntry.port} {
                 header_up Host {host}
                 header_up X-Real-IP {remote_host}
                 header_up X-Forwarded-For {remote_host}
@@ -263,7 +266,7 @@ in
             '';
           };
         }
-      ) layer7ProxiedDomains))
+      ) (lib.groupBy (e: lib.concatStringsSep "," e.domains) layer7ProxiedDomains)))
     ];
   };
 
