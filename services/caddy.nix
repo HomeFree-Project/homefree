@@ -18,11 +18,28 @@ let
   ) proxiedDomains);
 in
 {
+  # Service to create DNS token env file readable by caddy user
+  systemd.services.caddy-dns-token = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
+    description = "Create Caddy DNS API Token for caddy user";
+    wantedBy = [ "caddy.service" ];
+    before = [ "caddy.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      mkdir -p /run/caddy-secrets
+      cp ${toString config.homefree.network.dns.dns-01.secrets.api-token} /run/caddy-secrets/dns-api-token
+      chown caddy:caddy /run/caddy-secrets/dns-api-token
+      chmod 400 /run/caddy-secrets/dns-api-token
+    '';
+  };
+
   nixpkgs.overlays = [
     (import ../overlays/caddy-with-plugins.nix)
   ] ++ lib.optional (config.homefree.network.dns.dns-01.secrets.api-token != null) (final: prev: {
     caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
-      export DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})
+      export DNS_API_TOKEN=$(cat /run/caddy-secrets/dns-api-token)
       exec ${final.caddy-with-plugins}/bin/caddy "$@"
     '';
   });
