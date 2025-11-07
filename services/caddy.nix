@@ -4,30 +4,17 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
-  # Process proxied domains for layer4 HTTPS TCP proxy (SNI matching)
-  layer4ProxiedDomains = lib.map (domain-mapping:
-    let
-      sslPorts = lib.filter (p: p.ssl == true) domain-mapping.target.ports;
-    in {
-      inherit (domain-mapping) domains public;
-      inherit (domain-mapping.target) host;
-      httpsPort = if sslPorts != [] then (lib.head sslPorts).number else null;
-    }
-  ) (lib.filter (d: lib.any (p: p.ssl == true) d.target.ports) proxiedDomains);
-
-  # Process proxied domains for HTTP reverse proxy (Host header matching)
-  httpProxiedDomains = lib.flatten (lib.map (domain-mapping:
-    let
-      nonSslPorts = lib.filter (p: p.ssl == false) domain-mapping.target.ports;
-      httpPort = if nonSslPorts != [] then (lib.head nonSslPorts).number else null;
-    in
-      if httpPort != null then
-        lib.map (domain: {
-          inherit domain httpPort;
-          inherit (domain-mapping) public;
-          inherit (domain-mapping.target) host;
-        }) domain-mapping.domains
-      else []
+  # Process proxied domains for standard reverse proxy (proxy handles TLS)
+  processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    lib.flatten (lib.map (port-config:
+      lib.map (domain: {
+        inherit domain;
+        inherit (domain-mapping) public;
+        inherit (domain-mapping.target) host;
+        port = port-config.number;
+        ssl = port-config.ssl;
+      }) domain-mapping.domains
+    ) domain-mapping.target.ports)
   ) proxiedDomains);
 in
 {
@@ -243,12 +230,14 @@ in
       }
       ) proxiedHostConfig))
 
-      # Add HTTP reverse proxy for proxied domains (uses Host header matching)
+      # Add reverse proxy for proxied domains (proxy handles TLS certificates)
       (lib.listToAttrs (lib.map (entry:
         let
-          # Create virtualHost for http://domain (listening on port 80)
-          host-string = "http://${entry.domain}";
-          log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] entry.domain;
+          # Create virtualHost with http:// and https:// (Caddy will handle ACME for https)
+          protocol = if entry.ssl then "https" else "http";
+          host-string = "${protocol}://${entry.domain}";
+          log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] "${entry.domain}-${toString entry.port}";
+          backend-protocol = if entry.ssl then "https" else "http";
         in {
           name = host-string;
           value = {
@@ -258,58 +247,24 @@ in
             extraConfig = ''
               ${if !entry.public then "bind 10.0.0.1" else ""}
 
-              # Transparent proxy - preserve all headers
-              reverse_proxy http://${entry.host}:${toString entry.httpPort} {
+              # Proxy handles TLS, backend can have invalid certs
+              reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
                 header_up Host {host}
                 header_up X-Real-IP {remote_host}
                 header_up X-Forwarded-For {remote_host}
                 header_up X-Forwarded-Proto {scheme}
+                ${if entry.ssl then ''
+                transport http {
+                  tls
+                  tls_insecure_skip_verify
+                }
+                '' else ""}
               }
             '';
           };
         }
-      ) httpProxiedDomains))
+      ) processedProxiedDomains))
     ];
   };
 
-  # Create JSON config file for layer4 HTTPS TCP proxy (uses SNI matching)
-  environment.etc."caddy/layer4-config.json" = lib.mkIf (layer4ProxiedDomains != []) {
-    text = builtins.toJSON (
-      let
-        isPublic = lib.any (e: e.public) layer4ProxiedDomains;
-      in {
-        servers = {
-          https-proxy = {
-            listen = [ (if isPublic then ":443" else "10.0.0.1:443") ];
-            routes = lib.filter (r: r != null) (lib.map (entry:
-              if entry.httpsPort != null then {
-                match = [{ tls = { sni = entry.domains; }; }];
-                handle = [{
-                  handler = "proxy";
-                  upstreams = [{ dial = ["${entry.host}:${toString entry.httpsPort}"]; }];
-                }];
-              } else null
-            ) layer4ProxiedDomains);
-          };
-        };
-      }
-    );
-  };
-
-  # Load layer4 config via Caddy admin API after main service starts
-  systemd.services.caddy-layer4-loader = lib.mkIf (layer4ProxiedDomains != []) {
-    description = "Load Caddy Layer4 TCP Proxy Configuration";
-    after = [ "caddy.service" ];
-    requires = [ "caddy.service" ];
-    partOf = [ "caddy.service" ];  # Restart when caddy restarts
-    wantedBy = [ "multi-user.target" ];
-
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      # Use /config/apps/layer4 to ADD the layer4 app without replacing the entire config
-      ExecStart = "${pkgs.curl}/bin/curl -X POST http://localhost:2019/config/apps/layer4 -H 'Content-Type: application/json' -d @/etc/caddy/layer4-config.json";
-      ExecStop = "${pkgs.curl}/bin/curl -X DELETE http://localhost:2019/config/apps/layer4";
-    };
-  };
 }
