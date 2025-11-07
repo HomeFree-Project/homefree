@@ -29,12 +29,12 @@ in
     partOf = [ "unbound.service" ];
 
     # Load DNS API token from secrets file at runtime (not at build time)
-    serviceConfig = lib.mkIf (config.homefree.network.dns.secrets.api-token != null) {
+    serviceConfig = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
       RuntimeDirectory = "caddy-dns";
       # Read the token file and write to environment file at service start
       ExecStartPre = [
         "${pkgs.writeShellScript "load-dns-token" ''
-          echo "DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.secrets.api-token})" > /run/caddy-dns/dns-token.env
+          echo "DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})" > /run/caddy-dns/dns-token.env
         ''}"
       ];
       EnvironmentFile = ["/run/caddy-dns/dns-token.env"];
@@ -64,8 +64,8 @@ in
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
     # Global configuration for DNS-01 challenge
-    globalConfig = lib.optionalString (config.homefree.network.dns.dns-01-token.provider != null) ''
-      acme_dns ${config.homefree.network.dns.dns-01-token.provider} {env.DNS_API_TOKEN}
+    globalConfig = lib.optionalString (config.homefree.network.dns.dns-01.provider != null) ''
+      acme_dns ${config.homefree.network.dns.dns-01.provider} {env.DNS_API_TOKEN}
     '';
 
     virtualHosts = lib.mkMerge [
@@ -268,8 +268,8 @@ in
               # Use DNS-01 challenge for wildcard domains
               tls {
               ''
-              + lib.optionalString (config.homefree.network.dns.dns-01-token.provider != null) ''
-                dns ${config.homefree.network.dns.dns-01-token.provider} {env.DNS_API_TOKEN}
+              + lib.optionalString (config.homefree.network.dns.dns-01.provider != null) ''
+                dns ${config.homefree.network.dns.dns-01.provider} {env.DNS_API_TOKEN}
               ''
               +
               ''

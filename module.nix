@@ -167,27 +167,44 @@
       };
 
       ## @TODO: Make type for dns override entry
-      dns-overrides = lib.mkOption {
-        description = "dns hostname to IP overrides";
-        default = [];
-        type = with lib.types; listOf (submodule {
-          options = {
-            hostname = lib.mkOption {
-              type = lib.types.str;
-              description = "Hostname of override";
-            };
+      dns = {
+        dns-01 = {
+          provider = lib.mkOption {
+            type = lib.types.nullOr (lib.types.enum [
+              "hetzner"
+            ]);
+          };
 
-            domain = lib.mkOption {
-              type = lib.types.str;
-              description = "Domain of override";
-            };
-
-            ip = lib.mkOption {
-              type = lib.types.str;
-              description = "IP Address";
+          secrets = {
+            api-token = lib.mkOption {
+              type = lib.types.path;
+              description = "Location of API token. Should not be a file included in your source repo.";
             };
           };
-        });
+        };
+
+        overrides = lib.mkOption {
+          description = "dns hostname to IP overrides";
+          default = [];
+          type = with lib.types; listOf (submodule {
+            options = {
+              hostname = lib.mkOption {
+                type = lib.types.str;
+                description = "Hostname of override";
+              };
+
+              domain = lib.mkOption {
+                type = lib.types.str;
+                description = "Domain of override";
+              };
+
+              ip = lib.mkOption {
+                type = lib.types.str;
+                description = "IP Address";
+              };
+            };
+          });
+        };
       };
 
       enable-adblock = lib.mkOption {
