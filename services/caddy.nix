@@ -22,20 +22,14 @@ in
     (import ../overlays/caddy-with-plugins.nix)
   ];
 
-  # Service to create DNS token env file at runtime
-  systemd.services.caddy-dns-token = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
-    description = "Create Caddy DNS API Token Environment File";
-    wantedBy = [ "caddy.service" ];
-    before = [ "caddy.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
+  # Override caddy package with wrapper that loads DNS token
+  nixpkgs.config = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
+    packageOverrides = pkgs: {
+      caddy-with-dns-token = pkgs.writeShellScriptBin "caddy" ''
+        export DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})
+        exec ${pkgs.caddy-with-plugins}/bin/caddy "$@"
+      '';
     };
-    script = ''
-      mkdir -p /run/caddy
-      echo "DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})" > /run/caddy/dns-token.env
-      chmod 400 /run/caddy/dns-token.env
-    '';
   };
 
   systemd.services.caddy = {
@@ -59,16 +53,15 @@ in
   services.caddy = {
     enable = true;
 
-    package = pkgs.caddy-with-plugins;
+    package = if (config.homefree.network.dns.dns-01.secrets.api-token != null)
+              then pkgs.caddy-with-dns-token
+              else pkgs.caddy-with-plugins;
 
     ## reload config while running instead of restarting. true by default.
     enableReload = true;
 
     ## Temporarily set to staging
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
-
-    # Use environmentFile to load DNS API token
-    environmentFile = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) "/run/caddy/dns-token.env";
 
     # Global configuration for DNS-01 challenge
     globalConfig = lib.optionalString (config.homefree.network.dns.dns-01.provider != null) ''
