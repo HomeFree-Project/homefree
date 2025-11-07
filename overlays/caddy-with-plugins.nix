@@ -23,7 +23,7 @@ rec {
         gandi = { name = "github.com/caddy-dns/gandi"; version = "v1.0.2"; };
         googleclouddns = { name = "github.com/caddy-dns/googleclouddns"; version = "v1.0.4"; };
         porkbun = { name = "github.com/caddy-dns/porkbun"; version = "v0.2.1"; };
-        hetzner = { name = "github.com/caddy-dns/hetzner"; version = "v1.0.0"; };
+        hetzner = { name = "github.com/caddy-dns/hetzner"; version = "23343c04385f08c188b3f43f7c21e5f6a65dedcb"; };
         route53 = { name = "github.com/caddy-dns/route53"; version = "v1.2.1"; };
         tencentcloud = { name = "github.com/caddy-dns/tencentcloud"; version = "v0.1.0"; };
         vultr = { name = "github.com/caddy-dns/vultr"; version = "733392841379526fd314012909963c3c6406687a"; };
