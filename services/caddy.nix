@@ -270,31 +270,27 @@ in
   # Create JSON config file for layer4 TCP proxy (this version only supports JSON, not Caddyfile)
   environment.etc."caddy/layer4-config.json" = lib.mkIf (layer4ProxiedDomains != []) {
     text = builtins.toJSON {
-      apps = {
-        layer4 = {
-          servers = {
-            # Single server listening on port 443 for all HTTPS proxied domains
-            https-proxy = {
-              listen = [
-                # Listen on 443 for public domains, or 10.0.0.1:443 for LAN-only
-                (if (lib.any (e: e.public) layer4ProxiedDomains) then ":443" else "10.0.0.1:443")
-              ];
-              # Create a route for each domain → backend mapping
-              routes = lib.map (entry: {
-                match = [{
-                  tls = {
-                    sni = entry.domains;
-                  };
-                }];
-                handle = [{
-                  handler = "proxy";
-                  upstreams = [{
-                    dial = ["${entry.host}:${toString entry.port}"];
-                  }];
-                }];
-              }) layer4ProxiedDomains;
-            };
-          };
+      servers = {
+        # Single server listening on port 443 for all HTTPS proxied domains
+        https-proxy = {
+          listen = [
+            # Listen on 443 for public domains, or 10.0.0.1:443 for LAN-only
+            (if (lib.any (e: e.public) layer4ProxiedDomains) then ":443" else "10.0.0.1:443")
+          ];
+          # Create a route for each domain → backend mapping
+          routes = lib.map (entry: {
+            match = [{
+              tls = {
+                sni = entry.domains;
+              };
+            }];
+            handle = [{
+              handler = "proxy";
+              upstreams = [{
+                dial = ["${entry.host}:${toString entry.port}"];
+              }];
+            }];
+          }) layer4ProxiedDomains;
         };
       };
     };
@@ -311,8 +307,9 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${pkgs.curl}/bin/curl -X POST http://localhost:2019/load -H 'Content-Type: application/json' -d @/etc/caddy/layer4-config.json";
-      ExecStop = "${pkgs.curl}/bin/curl -X DELETE http://localhost:2019/id/layer4";
+      # Use /config/apps/layer4 to ADD the layer4 app without replacing the entire config
+      ExecStart = "${pkgs.curl}/bin/curl -X POST http://localhost:2019/config/apps/layer4 -H 'Content-Type: application/json' -d @/etc/caddy/layer4-config.json";
+      ExecStop = "${pkgs.curl}/bin/curl -X DELETE http://localhost:2019/config/apps/layer4";
     };
   };
 }
