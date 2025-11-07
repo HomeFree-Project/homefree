@@ -49,6 +49,11 @@ in
     requires = [ "dns-ready.service" ];
     ## Restart Caddy with Unbound DNS changes
     partOf = [ "unbound.service" ];
+
+    # Grant capability to bind to privileged ports when using wrapper
+    serviceConfig = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+    };
   };
 
   ## Restart Unbound DNS with caddy changes
