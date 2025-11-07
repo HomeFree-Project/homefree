@@ -272,35 +272,29 @@ in
     text = builtins.toJSON {
       apps = {
         layer4 = {
-          servers = lib.listToAttrs (
-            # Group by port number
-            lib.mapAttrsToList (port: entries:
-              let
-                portNum = toString port;
-                firstEntry = lib.head entries;
-              in {
-                name = "proxied-port-${portNum}";
-                value = {
-                  listen = [
-                    (if firstEntry.public then ":${portNum}" else "10.0.0.1:${portNum}")
-                  ];
-                  routes = lib.map (entry: {
-                    match = [{
-                      tls = {
-                        sni = entry.domains;
-                      };
-                    }];
-                    handle = [{
-                      handler = "proxy";
-                      upstreams = [{
-                        dial = ["${entry.host}:${toString entry.port}"];
-                      }];
-                    }];
-                  }) entries;
-                };
-              }
-            ) (lib.groupBy (e: toString e.port) layer4ProxiedDomains)
-          );
+          servers = {
+            # Single server listening on port 443 for all HTTPS proxied domains
+            https-proxy = {
+              listen = [
+                # Listen on 443 for public domains, or 10.0.0.1:443 for LAN-only
+                (if (lib.any (e: e.public) layer4ProxiedDomains) then ":443" else "10.0.0.1:443")
+              ];
+              # Create a route for each domain → backend mapping
+              routes = lib.map (entry: {
+                match = [{
+                  tls = {
+                    sni = entry.domains;
+                  };
+                }];
+                handle = [{
+                  handler = "proxy";
+                  upstreams = [{
+                    dial = ["${entry.host}:${toString entry.port}"];
+                  }];
+                }];
+              }) layer4ProxiedDomains;
+            };
+          };
         };
       };
     };
