@@ -113,7 +113,7 @@ rec {
       geolocation
       hetzner
     ];
-    vendorHash = lib.fakeHash;  # Will need to update after first build
+    vendorHash = "sha256-iG6Pki5SIDUjvJm3rVjJLGZ0jfft0UsCXCSDDEzNTIU=";
   };
 }
 
