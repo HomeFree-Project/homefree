@@ -27,6 +27,18 @@ in
     requires = [ "dns-ready.service" ];
     ## Restart Caddy with Unbound DNS changes
     partOf = [ "unbound.service" ];
+
+    # Load DNS API token from secrets file at runtime (not at build time)
+    serviceConfig = lib.mkIf (config.homefree.network.dns.secrets.api-token != null) {
+      RuntimeDirectory = "caddy-dns";
+      # Read the token file and write to environment file at service start
+      ExecStartPre = [
+        "${pkgs.writeShellScript "load-dns-token" ''
+          echo "DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.secrets.api-token})" > /run/caddy-dns/dns-token.env
+        ''}"
+      ];
+      EnvironmentFile = ["/run/caddy-dns/dns-token.env"];
+    };
   };
 
   ## Restart Unbound DNS with caddy changes
@@ -50,6 +62,11 @@ in
 
     ## Temporarily set to staging
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
+
+    # Global configuration for DNS-01 challenge
+    globalConfig = lib.optionalString (config.homefree.network.dns.dns-01-token.provider != null) ''
+      acme_dns ${config.homefree.network.dns.dns-01-token.provider} {env.DNS_API_TOKEN}
+    '';
 
     virtualHosts = lib.mkMerge [
       (lib.listToAttrs (lib.map (service-config:
@@ -246,6 +263,19 @@ in
             '';
             extraConfig = ''
               ${if !entry.public then "bind 10.0.0.1" else ""}
+
+              ${if entry.ssl && lib.hasInfix "*" entry.domain then ''
+              # Use DNS-01 challenge for wildcard domains
+              tls {
+              ''
+              + lib.optionalString (config.homefree.network.dns.dns-01-token.provider != null) ''
+                dns ${config.homefree.network.dns.dns-01-token.provider} {env.DNS_API_TOKEN}
+              ''
+              +
+              ''
+                propagation_delay 30s
+              }
+              '' else ""}
 
               # Proxy handles TLS, backend can have invalid certs
               reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {

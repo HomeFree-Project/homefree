@@ -111,9 +111,9 @@ rec {
       caddy-security
       caddy-l4
       geolocation
-      # hetzner
+      hetzner
     ];
-    vendorHash = "sha256-SD6siUoIIgfROIDoXpHPLJ/JrnHTFx0QoOCu7oNtLqU=";
+    vendorHash = lib.fakeHash;  # Will need to update after first build
   };
 }
 
