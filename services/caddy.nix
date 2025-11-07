@@ -290,7 +290,7 @@ in
               ''
               +
               ''
-                propagation_delay 30s
+                propagation_delay 180s
               }
               '' else ""}
 
