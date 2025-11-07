@@ -113,7 +113,7 @@ rec {
       geolocation
       # hetzner
     ];
-    vendorHash = lib.fakeHash;
+    vendorHash = "sha256-SD6siUoIIgfROIDoXpHPLJ/JrnHTFx0QoOCu7oNtLqU=";
   };
 }
 
