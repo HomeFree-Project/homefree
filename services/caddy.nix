@@ -20,17 +20,12 @@ in
 {
   nixpkgs.overlays = [
     (import ../overlays/caddy-with-plugins.nix)
-  ];
-
-  # Override caddy package with wrapper that loads DNS token
-  nixpkgs.config = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
-    packageOverrides = pkgs: {
-      caddy-with-dns-token = pkgs.writeShellScriptBin "caddy" ''
-        export DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})
-        exec ${pkgs.caddy-with-plugins}/bin/caddy "$@"
-      '';
-    };
-  };
+  ] ++ lib.optional (config.homefree.network.dns.dns-01.secrets.api-token != null) (final: prev: {
+    caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
+      export DNS_API_TOKEN=$(cat ${toString config.homefree.network.dns.dns-01.secrets.api-token})
+      exec ${final.caddy-with-plugins}/bin/caddy "$@"
+    '';
+  });
 
   systemd.services.caddy = {
     wants = [ "dns-ready.service" ];
