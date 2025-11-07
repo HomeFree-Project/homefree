@@ -46,9 +46,8 @@ rec {
         caddy-bandwidth = { name = "github.com/mediafoundation/caddy-bandwidth"; version = "v1.0.10"; };
         caddy-git = { name = "github.com/greenpau/caddy-git"; version = "v1.0.9"; };
         caddy-json-parse = { name = "github.com/abiosoft/caddy-json-parse"; version = "c57039f26567f4b4120e35b4dc1a9bbd20a4f37f"; };
-        caddy-l4-app = { name = "github.com/mholt/caddy-l4/layer4"; version = "22554b119f249f9cac5626ada525cd257f2fb404"; };
-        caddy-l4-proxy = { name = "github.com/mholt/caddy-l4/modules/l4proxy"; version = "22554b119f249f9cac5626ada525cd257f2fb404"; };
-        caddy-l4-tls = { name = "github.com/mholt/caddy-l4/modules/l4tls"; version = "22554b119f249f9cac5626ada525cd257f2fb404"; };
+        caddy-l4 = { name = "github.com/mholt/caddy-l4"; version = "22554b119f249f9cac5626ada525cd257f2fb404"; };
+        caddy-l4-layer4 = { name = "github.com/mholt/caddy-l4/layer4"; version = "22554b119f249f9cac5626ada525cd257f2fb404"; };
         caddy-ratelimit = { name = "github.com/mholt/caddy-ratelimit"; version = "2dc0d586f0b87e983757c403bc0929ddeb84a537"; };
         caddy-trace = { name = "github.com/greenpau/caddy-trace"; version = "v1.1.13"; };
         forwardproxy = { name = "github.com/caddyserver/forwardproxy"; version = "1.0.1"; };
@@ -111,9 +110,8 @@ rec {
   caddy-with-plugins = caddy-with-plugins-builder {
     plugins = p: with p; [
       caddy-security
-      caddy-l4-app
-      caddy-l4-proxy
-      caddy-l4-tls
+      caddy-l4
+      caddy-l4-layer4
       geolocation
       # hetzner
     ];

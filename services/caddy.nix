@@ -289,21 +289,21 @@ in
                 matcherName = lib.replaceStrings ["." "*" "-"] ["_" "wildcard" "_"] (lib.head entry.domains);
                 sniList = lib.concatStringsSep " " entry.domains;
               in ''
-      @${matcherName} tls sni ${sniList}
-      route @${matcherName} {
-        proxy ${entry.host}:${toString entry.port}
-      }''
+        @${matcherName} tls sni ${sniList}
+        route @${matcherName} {
+          proxy ${entry.host}:${toString entry.port}
+        }''
             ) entries;
           in ''
-    ${listenAddr} {
+      ${listenAddr} {
 ${routes}
-    }''
+      }''
         ) portGroups;
 
       in ''
-layer4 {
+  layer4 {
 ${lib.concatStringsSep "\n" portConfigs}
-}''
+  }''
     );
   };
 }
