@@ -271,41 +271,42 @@ in
 
     # Add layer4 TCP proxy configuration for HTTPS ports
     # This goes in the global options block
-    globalConfig = lib.mkIf (layer4ProxiedDomains != []) {
-      apps = {
-        layer4 = {
-          servers = lib.listToAttrs (
-            # Group by port number
-            lib.mapAttrsToList (port: entries:
+    globalConfig = lib.mkIf (layer4ProxiedDomains != []) (
+      let
+        # Group domains by port number
+        portGroups = lib.groupBy (e: toString e.port) layer4ProxiedDomains;
+
+        # Generate Caddyfile config for each port
+        portConfigs = lib.mapAttrsToList (port: entries:
+          let
+            portNum = toString port;
+            # Get listen address (public or LAN-only)
+            listenAddr = if (lib.head entries).public then ":${portNum}" else "10.0.0.1:${portNum}";
+
+            # Generate route for each domain group
+            routes = lib.concatMapStringsSep "\n" (entry:
               let
-                portNum = toString port;
-                # Collect all domains and their targets for this port
-                routes = lib.map (entry: {
-                  match = [{
-                    tls = {
-                      sni = entry.domains;
-                    };
-                  }];
-                  handle = [{
-                    handler = "proxy";
-                    upstreams = [{
-                      dial = ["${entry.host}:${toString entry.port}"];
-                    }];
-                  }];
-                }) entries;
-              in {
-                name = "proxied-port-${portNum}";
-                value = {
-                  listen = [
-                    (if (lib.head entries).public then ":${portNum}" else "10.0.0.1:${portNum}")
-                  ];
-                  inherit routes;
-                };
-              }
-            ) (lib.groupBy (e: toString e.port) layer4ProxiedDomains)
-          );
-        };
-      };
-    };
+                # Create matcher name from first domain (sanitized)
+                matcherName = lib.replaceStrings ["." "*" "-"] ["_" "wildcard" "_"] (lib.head entry.domains);
+                sniList = lib.concatStringsSep " " entry.domains;
+              in ''
+      @${matcherName} tls sni ${sniList}
+      route @${matcherName} {
+        proxy ${entry.host}:${toString entry.port}
+      }''
+            ) entries;
+          in ''
+    ${listenAddr} {
+${routes}
+    }''
+        ) portGroups;
+
+      in ''
+{
+  layer4 {
+${lib.concatStringsSep "\n" portConfigs}
+  }
+}''
+    );
   };
 }
