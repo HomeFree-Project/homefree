@@ -305,6 +305,7 @@ in
     description = "Load Caddy Layer4 TCP Proxy Configuration";
     after = [ "caddy.service" ];
     requires = [ "caddy.service" ];
+    partOf = [ "caddy.service" ];  # Restart when caddy restarts
     wantedBy = [ "multi-user.target" ];
 
     serviceConfig = {
