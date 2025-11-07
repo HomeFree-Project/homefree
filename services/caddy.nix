@@ -4,19 +4,31 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
-  # Process proxied domains for layer4 TCP proxy (both HTTP and HTTPS)
+  # Process proxied domains for layer4 HTTPS TCP proxy (SNI matching)
   layer4ProxiedDomains = lib.map (domain-mapping:
     let
       sslPorts = lib.filter (p: p.ssl == true) domain-mapping.target.ports;
-      nonSslPorts = lib.filter (p: p.ssl == false) domain-mapping.target.ports;
     in {
       inherit (domain-mapping) domains public;
       inherit (domain-mapping.target) host;
-      # Use first port of each type
-      httpPort = if nonSslPorts != [] then (lib.head nonSslPorts).number else null;
       httpsPort = if sslPorts != [] then (lib.head sslPorts).number else null;
     }
-  ) proxiedDomains;
+  ) (lib.filter (d: lib.any (p: p.ssl == true) d.target.ports) proxiedDomains);
+
+  # Process proxied domains for HTTP reverse proxy (Host header matching)
+  httpProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    let
+      nonSslPorts = lib.filter (p: p.ssl == false) domain-mapping.target.ports;
+      httpPort = if nonSslPorts != [] then (lib.head nonSslPorts).number else null;
+    in
+      if httpPort != null then
+        lib.map (domain: {
+          inherit domain httpPort;
+          inherit (domain-mapping) public;
+          inherit (domain-mapping.target) host;
+        }) domain-mapping.domains
+      else []
+  ) proxiedDomains);
 in
 {
   nixpkgs.overlays = [
@@ -230,45 +242,56 @@ in
         };
       }
       ) proxiedHostConfig))
+
+      # Add HTTP reverse proxy for proxied domains (uses Host header matching)
+      (lib.listToAttrs (lib.map (entry:
+        let
+          # Create virtualHost for http://domain (listening on port 80)
+          host-string = "http://${entry.domain}";
+          log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] entry.domain;
+        in {
+          name = host-string;
+          value = {
+            logFormat = ''
+              output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
+            '';
+            extraConfig = ''
+              ${if !entry.public then "bind 10.0.0.1" else ""}
+
+              # Transparent proxy - preserve all headers
+              reverse_proxy http://${entry.host}:${toString entry.httpPort} {
+                header_up Host {host}
+                header_up X-Real-IP {remote_host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto {scheme}
+              }
+            '';
+          };
+        }
+      ) httpProxiedDomains))
     ];
   };
 
-  # Create JSON config file for layer4 TCP proxy (this version only supports JSON, not Caddyfile)
+  # Create JSON config file for layer4 HTTPS TCP proxy (uses SNI matching)
   environment.etc."caddy/layer4-config.json" = lib.mkIf (layer4ProxiedDomains != []) {
     text = builtins.toJSON (
       let
-        hasHttps = lib.any (e: e.httpsPort != null) layer4ProxiedDomains;
-        hasHttp = lib.any (e: e.httpPort != null) layer4ProxiedDomains;
         isPublic = lib.any (e: e.public) layer4ProxiedDomains;
       in {
-        servers = {}
-          // (if hasHttps then {
-            https-proxy = {
-              listen = [ (if isPublic then ":443" else "10.0.0.1:443") ];
-              routes = lib.filter (r: r != null) (lib.map (entry:
-                if entry.httpsPort != null then {
-                  match = [{ tls = { sni = entry.domains; }; }];
-                  handle = [{
-                    handler = "proxy";
-                    upstreams = [{ dial = ["${entry.host}:${toString entry.httpsPort}"]; }];
-                  }];
-                } else null
-              ) layer4ProxiedDomains);
-            };
-          } else {})
-          // (if hasHttp then {
-            http-proxy = {
-              listen = [ (if isPublic then ":80" else "10.0.0.1:80") ];
-              routes = lib.filter (r: r != null) (lib.map (entry:
-                if entry.httpPort != null then {
-                  handle = [{
-                    handler = "proxy";
-                    upstreams = [{ dial = ["${entry.host}:${toString entry.httpPort}"]; }];
-                  }];
-                } else null
-              ) layer4ProxiedDomains);
-            };
-          } else {});
+        servers = {
+          https-proxy = {
+            listen = [ (if isPublic then ":443" else "10.0.0.1:443") ];
+            routes = lib.filter (r: r != null) (lib.map (entry:
+              if entry.httpsPort != null then {
+                match = [{ tls = { sni = entry.domains; }; }];
+                handle = [{
+                  handler = "proxy";
+                  upstreams = [{ dial = ["${entry.host}:${toString entry.httpsPort}"]; }];
+                }];
+              } else null
+            ) layer4ProxiedDomains);
+          };
+        };
       }
     );
   };
