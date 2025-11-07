@@ -253,9 +253,6 @@ in
             extraConfig = ''
               ${if !domain-port.public then "bind 10.0.0.1" else ""}
 
-              # Disable automatic HTTPS for HTTP ports
-              auto_https off
-
               # HTTP reverse proxy - preserve all headers
               reverse_proxy http://${domain-port.host}:${toString domain-port.port} {
                 header_up Host {host}
