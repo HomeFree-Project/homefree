@@ -3,6 +3,25 @@ let
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
+
+  # Separate proxied domains into HTTPS (layer4) and HTTP (layer7)
+  # Collect all unique port numbers and group domain mappings by port
+  layer4ProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    lib.map (port-config: {
+      inherit (domain-mapping) domains public;
+      inherit (domain-mapping.target) host;
+      port = port-config.number;
+    }) (lib.filter (p: p.ssl == true) domain-mapping.target.ports)
+  ) proxiedDomains);
+
+  layer7ProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    lib.map (port-config: {
+      inherit (domain-mapping) domains public;
+      inherit (domain-mapping.target) host;
+      port = port-config.number;
+      ssl = port-config.ssl;
+    }) (lib.filter (p: p.ssl == false) domain-mapping.target.ports)
+  ) proxiedDomains);
 in
 {
   nixpkgs.overlays = [
@@ -217,50 +236,76 @@ in
       }
       ) proxiedHostConfig))
 
-      # Process proxied-domains configuration
-      # For each domain-mapping, create a virtualHost for each port
-      (lib.listToAttrs (lib.flatten (lib.map (domain-mapping:
+      # Process HTTP (layer7) proxied-domains
+      (lib.listToAttrs (lib.map (domain-port:
         let
-          domains = domain-mapping.domains;
-          target = domain-mapping.target;
-          public = domain-mapping.public;
-        in
-          # For each port, create a virtualHost entry
-          lib.map (port-config:
-            let
-              # Add port suffix to each domain (e.g., example.com:8080)
-              domains-with-port = lib.map (domain: "${domain}:${toString port-config.number}") domains;
-              host-string = lib.concatStringsSep ", " domains-with-port;
-              protocol = if port-config.ssl then "https" else "http";
-              # Create a safe filename by replacing special characters
-              log-name = lib.replaceStrings [" " "," "." "*" ":"] ["_" "" "_" "wildcard" "_"] host-string;
-            in {
-              name = host-string;
-              value = {
-                logFormat = ''
-                  output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
-                '';
-                extraConfig = ''
-                  ${if !public then "bind 10.0.0.1" else ""}
+          # Add port suffix to each domain (e.g., example.com:80)
+          domains-with-port = lib.map (domain: "${domain}:${toString domain-port.port}") domain-port.domains;
+          host-string = lib.concatStringsSep ", " domains-with-port;
+          # Create a safe filename by replacing special characters
+          log-name = lib.replaceStrings [" " "," "." "*" ":"] ["_" "" "_" "wildcard" "_"] host-string;
+        in {
+          name = host-string;
+          value = {
+            logFormat = ''
+              output file ${config.services.caddy.logDir}/access-proxied-http-${log-name}.log
+            '';
+            extraConfig = ''
+              ${if !domain-port.public then "bind 10.0.0.1" else ""}
 
-                  # Transparent proxy - preserve all headers
-                  reverse_proxy ${protocol}://${target.host}:${toString port-config.number} {
-                    header_up Host {host}
-                    header_up X-Real-IP {remote_host}
-                    header_up X-Forwarded-For {remote_host}
-                    header_up X-Forwarded-Proto {scheme}
-                    ${if port-config.ssl then ''
-                    transport http {
-                      tls
-                      tls_insecure_skip_verify
-                    }
-                    '' else ""}
-                  }
-                '';
-              };
-            }
-          ) target.ports
-      ) proxiedDomains)))
+              # Disable automatic HTTPS for HTTP ports
+              auto_https off
+
+              # HTTP reverse proxy - preserve all headers
+              reverse_proxy http://${domain-port.host}:${toString domain-port.port} {
+                header_up Host {host}
+                header_up X-Real-IP {remote_host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto {scheme}
+              }
+            '';
+          };
+        }
+      ) layer7ProxiedDomains))
     ];
+
+    # Add layer4 TCP proxy configuration for HTTPS ports
+    # This goes in the global options block
+    globalConfig = lib.mkIf (layer4ProxiedDomains != []) {
+      apps = {
+        layer4 = {
+          servers = lib.listToAttrs (
+            # Group by port number
+            lib.mapAttrsToList (port: entries:
+              let
+                portNum = toString port;
+                # Collect all domains and their targets for this port
+                routes = lib.map (entry: {
+                  match = [{
+                    tls = {
+                      sni = entry.domains;
+                    };
+                  }];
+                  handle = [{
+                    handler = "proxy";
+                    upstreams = [{
+                      dial = ["${entry.host}:${toString entry.port}"];
+                    }];
+                  }];
+                }) entries;
+              in {
+                name = "proxied-port-${portNum}";
+                value = {
+                  listen = [
+                    (if (lib.head entries).public then ":${portNum}" else "10.0.0.1:${portNum}")
+                  ];
+                  inherit routes;
+                };
+              }
+            ) (lib.groupBy (e: toString e.port) layer4ProxiedDomains)
+          );
+        };
+      };
+    };
   };
 }

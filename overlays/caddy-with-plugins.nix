@@ -109,6 +109,7 @@ rec {
   caddy-with-plugins = caddy-with-plugins-builder {
     plugins = p: with p; [
       caddy-security
+      caddy-l4
       geolocation
       # hetzner
     ];
