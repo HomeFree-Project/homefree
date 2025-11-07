@@ -113,7 +113,7 @@ rec {
       geolocation
       hetzner
     ];
-    vendorHash = "sha256-iG6Pki5SIDUjvJm3rVjJLGZ0jfft0UsCXCSDDEzNTIU=";
+    vendorHash = "sha256-OLfZbPw2ebJq82hKdU2ZqPz3fb73SgWDrRmiBJTKmJw=";
   };
 }
 
