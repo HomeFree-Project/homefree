@@ -302,10 +302,8 @@ ${routes}
         ) portGroups;
 
       in ''
-{
-  layer4 {
+layer4 {
 ${lib.concatStringsSep "\n" portConfigs}
-  }
 }''
     );
   };
