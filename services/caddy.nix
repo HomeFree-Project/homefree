@@ -39,7 +39,7 @@ in
     (import ../overlays/caddy-with-plugins.nix)
   ] ++ lib.optional (config.homefree.network.dns.dns-01.secrets.api-token != null) (final: prev: {
     caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
-      export DNS_API_TOKEN=$(cat /run/caddy-secrets/dns-api-token)
+      export DNS_API_TOKEN=''$(cat /run/caddy-secrets/dns-api-token)
       exec ${final.caddy-with-plugins}/bin/caddy "$@"
     '';
   });
