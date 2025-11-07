@@ -268,59 +268,42 @@ in
         }
       ) layer7ProxiedDomains))
     ];
-  };
 
-  # Create JSON config file for layer4 TCP proxy
-  environment.etc."caddy/layer4-config.json" = lib.mkIf (layer4ProxiedDomains != []) {
-    text = builtins.toJSON {
-      apps = {
-        layer4 = {
-          servers = lib.listToAttrs (
-            # Group by port number
-            lib.mapAttrsToList (port: entries:
+    # Add layer4 TCP proxy configuration for HTTPS ports
+    globalConfig = lib.mkIf (layer4ProxiedDomains != []) (
+      let
+        # Group domains by port number
+        portGroups = lib.groupBy (e: toString e.port) layer4ProxiedDomains;
+
+        # Generate Caddyfile config for each port
+        portConfigs = lib.mapAttrsToList (port: entries:
+          let
+            portNum = toString port;
+            # Get listen address (public or LAN-only)
+            listenAddr = if (lib.head entries).public then ":${portNum}" else "10.0.0.1:${portNum}";
+
+            # Generate route for each domain group
+            routes = lib.concatMapStringsSep "\n" (entry:
               let
-                portNum = toString port;
-                firstEntry = lib.head entries;
-              in {
-                name = "proxied-port-${portNum}";
-                value = {
-                  listen = [
-                    (if firstEntry.public then ":${portNum}" else "10.0.0.1:${portNum}")
-                  ];
-                  routes = lib.map (entry: {
-                    match = [{
-                      tls = {
-                        sni = entry.domains;
-                      };
-                    }];
-                    handle = [{
-                      handler = "proxy";
-                      upstreams = [{
-                        dial = ["${entry.host}:${toString entry.port}"];
-                      }];
-                    }];
-                  }) entries;
-                };
-              }
-            ) (lib.groupBy (e: toString e.port) layer4ProxiedDomains)
-          );
-        };
-      };
-    };
-  };
+                # Create matcher name from first domain (sanitized)
+                matcherName = lib.replaceStrings ["." "*" "-"] ["_" "wildcard" "_"] (lib.head entry.domains);
+                sniList = lib.concatStringsSep " " entry.domains;
+              in ''
+      @${matcherName} tls sni ${sniList}
+      route @${matcherName} {
+        proxy ${entry.host}:${toString entry.port}
+      }''
+            ) entries;
+          in ''
+    ${listenAddr} {
+${routes}
+    }''
+        ) portGroups;
 
-  # Load layer4 config via Caddy admin API after main service starts
-  systemd.services.caddy-layer4-loader = lib.mkIf (layer4ProxiedDomains != []) {
-    description = "Load Caddy Layer4 TCP Proxy Configuration";
-    after = [ "caddy.service" ];
-    requires = [ "caddy.service" ];
-    wantedBy = [ "multi-user.target" ];
-
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${pkgs.curl}/bin/curl -X POST http://localhost:2019/load -H 'Content-Type: application/json' -d @/etc/caddy/layer4-config.json";
-      ExecStop = "${pkgs.curl}/bin/curl -X DELETE http://localhost:2019/id/layer4";
-    };
+      in ''
+layer4 {
+${lib.concatStringsSep "\n" portConfigs}
+}''
+    );
   };
 }
