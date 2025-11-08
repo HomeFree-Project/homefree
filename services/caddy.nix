@@ -128,7 +128,7 @@ in
               X-XSS-Protection "1; mode=block"
             }
           ''
-          + (if reverse-proxy-config.public == false then ''
+          + (if reverse-proxy-config.public == false && !config.homefree.development then ''
             bind ${lan-address}
           '' else "")
           + (if reverse-proxy-config.subdir != null then ''
