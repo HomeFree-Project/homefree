@@ -166,23 +166,21 @@
         });
       };
 
-      ## @TODO: Make type for dns override entry
-      dns = {
-        dns-01 = {
-          provider = lib.mkOption {
-            type = lib.types.nullOr (lib.types.enum [
-              "hetzner"
-            ]);
-          };
+      enable-adblock = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "enable ad blocking";
+      };
 
-          secrets = {
-            api-token = lib.mkOption {
-              type = lib.types.path;
-              description = "Location of API token. Should not be a file included in your source repo.";
-            };
-          };
-        };
+      blocked-domains = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "list of domains to block";
+      };
+    };
 
+    dns = {
+      local = {
         overrides = lib.mkOption {
           description = "dns hostname to IP overrides";
           default = [];
@@ -207,16 +205,90 @@
         };
       };
 
-      enable-adblock = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "enable ad blocking";
-      };
+      remote = {
+        cert-management = {
+          dns-01 = {
+            provider = lib.mkOption {
+              type = lib.types.nullOr (lib.types.enum [
+                "hetzner"
+              ]);
+              default = null;
+              description = "Needed for wildcard certs. Usually requires an API Key";
+            };
 
-      blocked-domains = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "list of domains to block";
+            secrets = {
+              api-token = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Location of API token. Should not be a file included in your source repo.";
+              };
+            };
+          };
+        };
+
+        dynamic-dns = {
+          interval = lib.mkOption {
+            type = lib.types.str;
+            default = "10m";
+            description = "Interval for dynamic DNS client";
+          };
+
+          usev4 = lib.mkOption {
+            type = lib.types.str;
+            default = "webv4, webv4=ipinfo.io/ip";
+            description = "Use format for obtaining ipv4 for dynamic DNS client";
+          };
+
+          usev6 = lib.mkOption {
+            type = lib.types.str;
+            default = "webv6, webv6=v6.ipinfo.io/ip";
+            description = "Use format for obtaining ipv6 for dynamic DNS client";
+          };
+
+          zones = lib.mkOption {
+            description = "Dynamic DNS Zone Config";
+            default = [];
+            type = with lib.types; listOf (submodule {
+              options = {
+                disable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "disable dynamic dns for zone";
+                };
+
+                ## @TODO: validate against network.domain and network.additionalDomains?
+                zone = lib.mkOption {
+                  type = lib.types.str;
+                  default = "homefree.host";
+                  description = "Zone for dynamic DNS client";
+                };
+
+                protocol = lib.mkOption {
+                  type = lib.types.str;
+                  default = "hetzner";
+                  description = "Protocol for dynamic DNS client";
+                };
+
+                username = lib.mkOption {
+                  type = lib.types.str;
+                  default = "erahhal";
+                  description = "Username for dynamic DNS client";
+                };
+
+                domains = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  default = [ "@" "*" "www" "dev" ];
+                  description = "Domains for dynamic DNS client";
+                };
+
+                passwordFile = lib.mkOption {
+                  type = lib.types.path;
+                  description = "Path to password file";
+                };
+              };
+            });
+          };
+        };
       };
     };
 
@@ -281,70 +353,6 @@
           };
         };
       });
-    };
-
-    dynamic-dns = {
-      interval = lib.mkOption {
-        type = lib.types.str;
-        default = "10m";
-        description = "Interval for dynamic DNS client";
-      };
-
-      usev4 = lib.mkOption {
-        type = lib.types.str;
-        default = "webv4, webv4=ipinfo.io/ip";
-        description = "Use format for obtaining ipv4 for dynamic DNS client";
-      };
-
-      usev6 = lib.mkOption {
-        type = lib.types.str;
-        default = "webv6, webv6=v6.ipinfo.io/ip";
-        description = "Use format for obtaining ipv6 for dynamic DNS client";
-      };
-
-      zones = lib.mkOption {
-        description = "Dynamic DNS Zone Config";
-        default = [];
-        type = with lib.types; listOf (submodule {
-          options = {
-            disable = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "disable dynamic dns for zone";
-            };
-
-            ## @TODO: validate against network.domain and network.additionalDomains?
-            zone = lib.mkOption {
-              type = lib.types.str;
-              default = "homefree.host";
-              description = "Zone for dynamic DNS client";
-            };
-
-            protocol = lib.mkOption {
-              type = lib.types.str;
-              default = "hetzner";
-              description = "Protocol for dynamic DNS client";
-            };
-
-            username = lib.mkOption {
-              type = lib.types.str;
-              default = "erahhal";
-              description = "Username for dynamic DNS client";
-            };
-
-            domains = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ "@" "*" "www" "dev" ];
-              description = "Domains for dynamic DNS client";
-            };
-
-            passwordFile = lib.mkOption {
-              type = lib.types.path;
-              description = "Path to password file";
-            };
-          };
-        });
-      };
     };
 
     services = {

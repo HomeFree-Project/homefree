@@ -19,7 +19,7 @@ let
 in
 {
   # Service to create DNS token env file readable by caddy user
-  systemd.services.caddy-dns-token = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
+  systemd.services.caddy-dns-token = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
     description = "Create Caddy DNS API Token for caddy user";
     wantedBy = [ "caddy.service" ];
     before = [ "caddy.service" ];
@@ -29,7 +29,7 @@ in
     };
     script = ''
       mkdir -p /run/caddy-secrets
-      cp ${toString config.homefree.network.dns.dns-01.secrets.api-token} /run/caddy-secrets/dns-api-token
+      cp ${toString config.homefree.dns.remote.cert-management.dns-01.secrets.api-token} /run/caddy-secrets/dns-api-token
       chown caddy:caddy /run/caddy-secrets/dns-api-token
       chmod 400 /run/caddy-secrets/dns-api-token
     '';
@@ -37,7 +37,7 @@ in
 
   nixpkgs.overlays = [
     (import ../overlays/caddy-with-plugins.nix)
-  ] ++ lib.optional (config.homefree.network.dns.dns-01.secrets.api-token != null) (final: prev: {
+  ] ++ lib.optional (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) (final: prev: {
     caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
       export DNS_API_TOKEN=''$(cat /run/caddy-secrets/dns-api-token)
       exec ${final.caddy-with-plugins}/bin/caddy "$@"
@@ -51,7 +51,7 @@ in
     partOf = [ "unbound.service" ];
 
     # Grant capability to bind to privileged ports when using wrapper
-    serviceConfig = lib.mkIf (config.homefree.network.dns.dns-01.secrets.api-token != null) {
+    serviceConfig = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
       AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
     };
   };
@@ -70,7 +70,7 @@ in
   services.caddy = {
     enable = true;
 
-    package = if (config.homefree.network.dns.dns-01.secrets.api-token != null)
+    package = if (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null)
               then pkgs.caddy-with-dns-token
               else pkgs.caddy-with-plugins;
 
@@ -81,8 +81,8 @@ in
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
     # Global configuration for DNS-01 challenge
-    globalConfig = lib.optionalString (config.homefree.network.dns.dns-01.provider != null) ''
-      acme_dns ${config.homefree.network.dns.dns-01.provider} {env.DNS_API_TOKEN}
+    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+      acme_dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
     '';
 
     virtualHosts = lib.mkMerge [
@@ -285,8 +285,8 @@ in
               # Use DNS-01 challenge for wildcard domains
               tls {
               ''
-              + lib.optionalString (config.homefree.network.dns.dns-01.provider != null) ''
-                dns ${config.homefree.network.dns.dns-01.provider} {env.DNS_API_TOKEN}
+              + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+                dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
               ''
               +
               ''
