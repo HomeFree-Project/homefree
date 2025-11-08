@@ -296,7 +296,7 @@ in
 
               # Proxy handles TLS, backend can have invalid certs
               reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
-                header_up Host {host}
+                header_up Host {http.request.host}
                 header_up X-Real-IP {remote_host}
                 header_up X-Forwarded-For {remote_host}
                 header_up X-Forwarded-Proto {scheme}
