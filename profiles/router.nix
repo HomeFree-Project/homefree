@@ -225,7 +225,7 @@ in
 
             ${service-input-rules}
 
-            ${lib.optionalString (config.homefree.development or false) ''
+            ${lib.optionalString config.homefree.development ''
             tcp dport { 22 } ct state new accept; # Accept SSH connections
             ''}
 
