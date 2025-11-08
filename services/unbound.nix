@@ -2,7 +2,16 @@
 let
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  proxiedDomains = config.homefree.proxied-domains;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
+
+  # Process proxied domains to extract non-public domains
+  nonPublicProxiedDomains = lib.flatten (lib.map (domain-mapping:
+    if domain-mapping.public == false then
+      domain-mapping.domains
+    else
+      []
+  ) proxiedDomains);
   preStart = ''
     touch /run/unbound/include.conf
     cat > /run/unbound/dynamic.zone<< EOF
@@ -170,6 +179,12 @@ in
               # proxiedHostConfig
             )
           )
+        )
+        ++
+        # Point non-public proxied domains to internal IP when on LAN
+        (lib.map
+          (domain: "\"${domain} IN A 10.0.0.1\"")
+          nonPublicProxiedDomains
         )
         ++
         ## router lan ip with public domains
