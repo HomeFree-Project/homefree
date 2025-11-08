@@ -304,6 +304,7 @@ in
                 transport http {
                   tls
                   tls_insecure_skip_verify
+                  tls_server_name ${entry.domain}
                 }
                 '' else ""}
               }
