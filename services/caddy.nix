@@ -97,21 +97,39 @@ in
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
     # Global configuration for DNS-01 challenge
-    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
       acme_dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+    ''
+    + lib.optionalString config.homefree.development ''
+      # Development mode: disable ACME and use only self-signed certificates
+      local_certs
     '';
 
     virtualHosts = lib.mkMerge [
-      (lib.listToAttrs (lib.map (service-config:
+      (lib.listToAttrs (lib.flatten (lib.map (service-config:
       let
         reverse-proxy-config = service-config.reverse-proxy;
         http-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "http://${subdomain}.${domain}") reverse-proxy-config.http-domains)) reverse-proxy-config.subdomains);
         https-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "https://${subdomain}.${domain}") reverse-proxy-config.https-domains)) reverse-proxy-config.subdomains);
         http-urls-root-domain = if reverse-proxy-config.rootDomain == true then (lib.map (domain: "http://${domain}") reverse-proxy-config.http-domains) else [];
         https-urls-root-domain = if reverse-proxy-config.rootDomain == true then (lib.map (domain: "https://${domain}") reverse-proxy-config.https-domains) else [];
-        urls = http-urls ++ https-urls ++ http-urls-root-domain ++ https-urls-root-domain;
-        host-string = lib.concatStringsSep ", " urls;
-      in {
+
+        # In development mode with mixed protocols, split into two virtualhosts
+        needsSplit = config.homefree.development &&
+                     (lib.length http-urls + lib.length http-urls-root-domain) > 0 &&
+                     (lib.length https-urls + lib.length https-urls-root-domain) > 0;
+
+        # Helper function to create virtualhost value
+        makeVirtualHostValue = includeHttps:
+          let
+            urls = if needsSplit then
+              (if includeHttps
+               then https-urls ++ https-urls-root-domain
+               else http-urls ++ http-urls-root-domain)
+            else
+              http-urls ++ https-urls ++ http-urls-root-domain ++ https-urls-root-domain;
+            host-string = lib.concatStringsSep ", " urls;
+          in {
         name = host-string;
         value = {
           logFormat = ''
@@ -119,6 +137,13 @@ in
           '';
           ## @TODO: Remove headers and check if still works
           extraConfig = ''
+          ''
+          + (if config.homefree.development && includeHttps then ''
+            # Development mode: use internal CA for HTTPS
+            tls internal
+
+          '' else "")
+          + ''
             header {
               # Add general security headers
               Strict-Transport-Security "max-age=31536000; includeSubdomains"
@@ -277,8 +302,14 @@ in
           ''))
           + (if reverse-proxy-config.extraCaddyConfig != null then reverse-proxy-config.extraCaddyConfig else "");
         };
-      }
-      ) proxiedHostConfig))
+      };
+      in
+        # Return either one or two virtualhosts depending on whether we need to split
+        if needsSplit then
+          [ (makeVirtualHostValue false) (makeVirtualHostValue true) ]
+        else
+          [ (makeVirtualHostValue false) ]
+      ) proxiedHostConfig)))
 
       # Add reverse proxy for proxied domains (proxy handles TLS certificates)
       (lib.listToAttrs (lib.map (entry:
@@ -301,13 +332,18 @@ in
               # Use DNS-01 challenge for wildcard domains
               tls {
               ''
-              + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
+              + (if config.homefree.development then ''
+                internal
+              '' else lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
                 dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
-              ''
+                propagation_delay 180s
+              '')
               +
               ''
-                propagation_delay 180s
               }
+              '' else if entry.ssl && config.homefree.development then ''
+              # Development mode: use internal CA for HTTPS
+              tls internal
               '' else ""}
 
               # Proxy handles TLS termination for HTTPS backends
