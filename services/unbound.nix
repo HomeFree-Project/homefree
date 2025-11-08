@@ -123,8 +123,8 @@ in
           "\"rahh.al\" transparent"
         ]
         ++
-        # Add non-public proxied base domains as static zones to prevent upstream DNS lookups
-        (lib.map (domain: "\"${domain}\" static") nonPublicBaseDomains)
+        # Add non-public proxied base domains as redirect zones to handle wildcards
+        (lib.map (domain: "\"${domain}\" redirect") nonPublicBaseDomains)
         ;
         ## @TODO: Add config.homefree.network.blocked-domains as such:
         # local-zone: "example.org" always_nxdomain
@@ -191,10 +191,10 @@ in
           )
         )
         ++
-        # Point non-public proxied domains to internal IP when on LAN
+        # Point non-public proxied base domains to internal IP (for redirect zones)
         (lib.map
           (domain: "\"${domain} IN A 10.0.0.1\"")
-          nonPublicProxiedDomains
+          nonPublicBaseDomains
         )
         ++
         ## router lan ip with public domains
