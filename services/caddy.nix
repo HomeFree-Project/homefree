@@ -321,7 +321,7 @@ in
                 transport http {
                   tls
                   ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}
-                  ${if entry.ignore-self-signed-cert then "" else "tls_server_name {http.request.host}"}
+                  tls_server_name {http.request.host}
                 }
                 '' else ""}
               }
