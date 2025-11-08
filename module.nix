@@ -12,6 +12,15 @@
 # in
 {
   options.homefree = {
+    development = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Indicates development mode is enabled.
+        When true, services may bind to all interfaces for easier testing.
+      '';
+    };
+
     system = {
       hostName = lib.mkOption {
         type = lib.types.str;
