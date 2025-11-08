@@ -6,15 +6,30 @@ let
 
   # Process proxied domains for standard reverse proxy (proxy handles TLS)
   processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
-    lib.flatten (lib.map (port-config:
-      lib.map (domain: {
-        inherit domain;
-        inherit (domain-mapping) public;
-        inherit (domain-mapping.target) host;
-        port = port-config.number;
-        ssl = port-config.ssl;
-      }) domain-mapping.domains
-    ) domain-mapping.target.ports)
+    let
+      httpEntries = if domain-mapping.target.http != null then
+        lib.map (domain: {
+          inherit domain;
+          inherit (domain-mapping) public;
+          inherit (domain-mapping.target) host;
+          port = domain-mapping.target.http.port;
+          ssl = false;
+          ignore-self-signed-cert = false;
+        }) domain-mapping.domains
+      else [];
+
+      httpsEntries = if domain-mapping.target.https != null then
+        lib.map (domain: {
+          inherit domain;
+          inherit (domain-mapping) public;
+          inherit (domain-mapping.target) host;
+          port = domain-mapping.target.https.port;
+          ssl = true;
+          ignore-self-signed-cert = domain-mapping.target.https.ignore-self-signed-cert;
+        }) domain-mapping.domains
+      else [];
+    in
+      httpEntries ++ httpsEntries
   ) proxiedDomains);
 in
 {
@@ -294,7 +309,7 @@ in
               }
               '' else ""}
 
-              # Proxy handles TLS, backend can have invalid certs
+              # Proxy handles TLS termination for HTTPS backends
               reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
                 header_up Host {http.request.host}
                 header_up X-Real-IP {remote_host}
@@ -303,7 +318,7 @@ in
                 ${if entry.ssl then ''
                 transport http {
                   tls
-                  tls_insecure_skip_verify
+                  ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}
                   tls_server_name {http.request.host}
                 }
                 '' else ""}

@@ -315,27 +315,44 @@
                   example = "192.168.1.100";
                 };
 
-                ports = lib.mkOption {
-                  type = lib.types.listOf (lib.types.submodule {
+                http = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.submodule {
                     options = {
-                      number = lib.mkOption {
+                      port = lib.mkOption {
                         type = lib.types.int;
-                        description = "Port number to proxy to";
-                        example = 443;
-                      };
-
-                      ssl = lib.mkOption {
-                        type = lib.types.bool;
-                        default = false;
-                        description = "Whether this port uses SSL/TLS (https)";
+                        default = 80;
+                        description = "HTTP port number to proxy to";
                       };
                     };
                   });
-                  description = "List of ports to proxy to. Each port creates a separate virtualHost (domain.com:port)";
-                  example = [
-                    { number = 80; ssl = false; }
-                    { number = 443; ssl = true; }
-                  ];
+                  default = null;
+                  description = "HTTP configuration. If null, HTTP traffic will not be proxied.";
+                  example = { port = 80; };
+                };
+
+                https = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.submodule {
+                    options = {
+                      port = lib.mkOption {
+                        type = lib.types.int;
+                        default = 443;
+                        description = "HTTPS port number to proxy to on the backend server";
+                      };
+
+                      ignore-self-signed-cert = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = ''
+                          Whether to ignore self-signed or invalid certificates on the backend server.
+                          This should only be enabled for development environments.
+                          Setting this to true will disable certificate verification when connecting to the backend.
+                        '';
+                      };
+                    };
+                  });
+                  default = null;
+                  description = "HTTPS configuration. If null, HTTPS traffic will not be proxied.";
+                  example = { port = 443; ignore-self-signed-cert = false; };
                 };
               };
             };
