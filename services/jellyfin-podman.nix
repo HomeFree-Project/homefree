@@ -1,9 +1,13 @@
 { config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/jellyfin-podman";
+  media-path = if config.homefree.services.jellyfin.media-path == null
+    then "${containerDataPath}/media"
+    else config.homefree.services.jellyfin.media-path;
 
   preStart = ''
     mkdir -p ${containerDataPath}
+    mkdir -p ${containerDataPath}/media
   '';
 
   port = 8096;
@@ -27,10 +31,12 @@ in
     extraPackages = with pkgs; [
       intel-media-driver
       intel-vaapi-driver # previously vaapiIntel
-      vaapiVdpau
+      libva-vdpau-driver
       intel-compute-runtime # OpenCL filter support (hardware tonemapping and subtitle burn-in)
       vpl-gpu-rt # QSV on 11th gen or newer
-      intel-media-sdk # QSV up to 11th gen
+      ## Insecure
+      ## @TODO: Re-enable!!!
+      # intel-media-sdk # QSV up to 11th gen
     ];
   };
 
@@ -63,7 +69,7 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:/config"
-        "${config.homefree.services.jellyfin.media-path}:/data"
+        "${media-path}:/data"
       ];
 
       environment = {
