@@ -4,7 +4,7 @@ set -e
 
 # Configuration
 SCRIPT_NAME=$(basename "$0")
-FLAKE_DIR="${FLAKE_DIR:-$(pwd)}"
+FLAKE_DIR="${FLAKE_DIR:-/etc/nixos}"
 CONFIG_NAME=""
 
 # Colors for output
@@ -153,6 +153,18 @@ FLAKE_REF="$FLAKE_DIR#$CONFIG_NAME"
 log_info "Building NixOS configuration: $CONFIG_NAME"
 log_info "Flake directory: $FLAKE_DIR"
 log_info "Action: $ACTION"
+
+# Update flake inputs before building
+log_info "Updating homefree-local and homefree-base flake inputs..."
+FLAKE_UPDATE_CMD="nix flake lock --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
+if [[ $EUID -ne 0 ]]; then
+    FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
+fi
+if ! eval "$FLAKE_UPDATE_CMD"; then
+    log_error "Failed to update flake inputs"
+    exit 1
+fi
+log_success "Flake inputs updated successfully"
 
 # Build the command
 CMD="nixos-rebuild"
