@@ -54,7 +54,9 @@ in
     (import ../overlays/caddy-with-plugins.nix)
   ] ++ lib.optional (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) (final: prev: {
     caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
-      export DNS_API_TOKEN=''$(cat /run/caddy-secrets/dns-api-token)
+      if [ -f /run/caddy-secrets/dns-api-token ]; then
+        export DNS_API_TOKEN=''$(cat /run/caddy-secrets/dns-api-token)
+      fi
       exec ${final.caddy-with-plugins}/bin/caddy "$@"
     '';
   });
@@ -319,7 +321,7 @@ in
                 transport http {
                   tls
                   ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}
-                  tls_server_name {http.request.host}
+                  ${if entry.ignore-self-signed-cert then "" else "tls_server_name {http.request.host}"}
                 }
                 '' else ""}
               }
