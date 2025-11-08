@@ -12,6 +12,12 @@ let
     else
       []
   ) proxiedDomains);
+
+  # Extract unique base domains from non-public proxied domains (handle wildcards like *.example.com)
+  nonPublicBaseDomains = lib.unique (lib.map (domain:
+    lib.removePrefix "*." domain
+  ) nonPublicProxiedDomains);
+
   preStart = ''
     touch /run/unbound/include.conf
     cat > /run/unbound/dynamic.zone<< EOF
@@ -115,7 +121,11 @@ in
           "\"homefree.lan\" static"
           "\"homefree.host\" transparent"
           "\"rahh.al\" transparent"
-        ];
+        ]
+        ++
+        # Add non-public proxied base domains as static zones to prevent upstream DNS lookups
+        (lib.map (domain: "\"${domain}\" static") nonPublicBaseDomains)
+        ;
         ## @TODO: Add config.homefree.network.blocked-domains as such:
         # local-zone: "example.org" always_nxdomain
 
