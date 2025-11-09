@@ -81,9 +81,9 @@ class NetworkModule extends LitElement {
   async loadNetworkInterfaces() {
     try {
       const result = await getNetworkInterfaces();
-      this.interfaces = result.interfaces.map(iface => ({
+      this.interfaces = result.map(iface => ({
         value: iface.name,
-        label: `${iface.name} (${iface.type})`
+        label: `${iface.name} (Ethernet)`
       }));
       // Force update after interfaces load to ensure select values are set
       this.requestUpdate();
