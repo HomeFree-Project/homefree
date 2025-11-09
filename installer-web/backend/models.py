@@ -87,3 +87,47 @@ class MutationResult:
     """Result of a configuration mutation/action"""
     success: bool
     message: str
+
+
+# Admin mode models
+
+@dataclass
+class ValidationResult:
+    """Result of configuration validation"""
+    valid: bool
+    errors: List[str]
+    warnings: List[str]
+
+
+@dataclass
+class PreviewResult:
+    """Result of configuration preview (dry-activate)"""
+    success: bool
+    changes: List[str]
+    errors: List[str]
+    output: str
+    warnings: List[str]
+
+
+@dataclass
+class ApplyResult:
+    """Result of configuration apply (rebuild)"""
+    success: bool
+    message: str
+    pid: Optional[int] = None
+
+
+@dataclass
+class RebuildStatus:
+    """Status of rebuild operation"""
+    running: bool
+    output: str
+    exit_code: Optional[int]
+    success: bool
+
+
+@dataclass
+class ConfigDiff:
+    """Configuration diff"""
+    has_changes: bool
+    diff: str

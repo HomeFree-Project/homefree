@@ -101,6 +101,15 @@ export const getInstallStatus = () => get('/api/install/status');
 // System Control
 export const rebootSystem = () => post('/api/system/reboot', {});
 
+// Admin Mode
+export const getMode = () => get('/api/mode');
+export const getCurrentConfig = () => get('/api/config/current');
+export const validateConfig = (config) => post('/api/config/validate', config);
+export const getConfigDiff = () => get('/api/config/diff');
+export const previewConfigChanges = (config) => post('/api/config/preview', config);
+export const applyConfigChanges = (config) => post('/api/config/apply', config);
+export const getRebuildStatus = () => get('/api/config/rebuild-status');
+
 // =============================================================================
 // Polling Helper for Installation Progress
 // =============================================================================

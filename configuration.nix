@@ -15,9 +15,11 @@ in
     ./profiles/traffic-control.nix
     ./profiles/virtualisation.nix
 
+    ## Admin interface
+    ./services/admin-web.nix
+
     ## System services
     ## @TODO: Evaluate if any can be moved to podman
-    ./services/admin
     ./services/backup.nix
     ./services/caddy.nix
     ./services/ddclient.nix

@@ -407,6 +407,230 @@ async def reboot_system():
         logger.error(f"Error rebooting system: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Admin Mode Endpoints
+
+@app.get("/api/mode")
+async def get_mode():
+    """Get current application mode (installer or admin)"""
+    try:
+        from services.mode import ModeService
+        mode = ModeService.get_mode()
+        return JSONResponse(content={
+            "mode": mode.value,
+            "is_installer": ModeService.is_installer(),
+            "is_admin": ModeService.is_admin()
+        })
+    except Exception as e:
+        logger.error(f"Error detecting mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/current")
+async def get_current_config():
+    """Get current NixOS configuration (admin mode only)"""
+    try:
+        from services.mode import ModeService
+        from services.config_reader import ConfigReader
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        config = ConfigReader.read_config()
+        return JSONResponse(content=config)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config/validate")
+async def validate_config(config: dict):
+    """Validate configuration changes"""
+    try:
+        from services.validation import ValidationService
+        from services.config_reader import ConfigReader
+
+        # Get current config for network change warnings
+        current_config = ConfigReader.read_config()
+
+        # Validate new config
+        is_valid, errors = ValidationService.validate_config(config)
+
+        # Check for network change warnings
+        warnings = []
+        if 'network' in config:
+            warnings = ValidationService.check_network_change_warning(
+                current_config.get('network', {}),
+                config['network']
+            )
+
+        from models import ValidationResult
+        result = ValidationResult(
+            valid=is_valid,
+            errors=errors,
+            warnings=warnings
+        )
+
+        return JSONResponse(content=to_dict(result))
+    except Exception as e:
+        logger.error(f"Error validating config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/diff")
+async def get_config_diff():
+    """Get diff of configuration changes"""
+    try:
+        from services.mode import ModeService
+        from services.nix_operations import NixOperations
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        diff_result = NixOperations.generate_diff()
+
+        from models import ConfigDiff
+        result = ConfigDiff(
+            has_changes=diff_result.get('has_changes', False),
+            diff=diff_result.get('diff', '')
+        )
+
+        return JSONResponse(content=to_dict(result))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating diff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config/preview")
+async def preview_config_changes(config: dict):
+    """Preview configuration changes with dry-activate"""
+    try:
+        from services.mode import ModeService
+        from services.config_writer import ConfigWriter
+        from services.nix_operations import NixOperations
+        from services.validation import ValidationService
+        from services.config_reader import ConfigReader
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        # Validate first
+        current_config = ConfigReader.read_config()
+        is_valid, errors = ValidationService.validate_config(config)
+
+        if not is_valid:
+            from models import PreviewResult
+            result = PreviewResult(
+                success=False,
+                changes=[],
+                errors=errors,
+                output="Validation failed",
+                warnings=[]
+            )
+            return JSONResponse(content=to_dict(result))
+
+        # Write config temporarily
+        ConfigWriter.write_config(config)
+
+        # Run dry-activate
+        dry_run = NixOperations.dry_activate()
+
+        # Check for network warnings
+        warnings = []
+        if 'network' in config:
+            warnings = ValidationService.check_network_change_warning(
+                current_config.get('network', {}),
+                config['network']
+            )
+
+        from models import PreviewResult
+        result = PreviewResult(
+            success=dry_run['success'],
+            changes=dry_run['changes'],
+            errors=dry_run['errors'],
+            output=dry_run['output'],
+            warnings=warnings
+        )
+
+        return JSONResponse(content=to_dict(result))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error previewing config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config/apply")
+async def apply_config_changes(config: dict):
+    """Apply configuration changes with nixos-rebuild switch"""
+    try:
+        from services.mode import ModeService
+        from services.config_writer import ConfigWriter
+        from services.nix_operations import NixOperations
+        from services.validation import ValidationService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        # Validate first
+        is_valid, errors = ValidationService.validate_config(config)
+
+        if not is_valid:
+            from models import ApplyResult
+            result = ApplyResult(
+                success=False,
+                message=f"Validation failed: {', '.join(errors)}"
+            )
+            return JSONResponse(content=to_dict(result))
+
+        # Write config
+        if not ConfigWriter.write_config(config):
+            from models import ApplyResult
+            result = ApplyResult(
+                success=False,
+                message="Failed to write configuration file"
+            )
+            return JSONResponse(content=to_dict(result))
+
+        # Start rebuild
+        rebuild_result = NixOperations.rebuild_switch()
+
+        from models import ApplyResult
+        result = ApplyResult(
+            success=rebuild_result['success'],
+            message=rebuild_result['message'],
+            pid=rebuild_result.get('pid')
+        )
+
+        return JSONResponse(content=to_dict(result))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/rebuild-status")
+async def get_rebuild_status():
+    """Get status of current rebuild operation"""
+    try:
+        from services.nix_operations import NixOperations
+
+        status = NixOperations.get_rebuild_status()
+
+        from models import RebuildStatus
+        result = RebuildStatus(
+            running=status['running'],
+            output=status['output'],
+            exit_code=status['exit_code'],
+            success=status['exit_code'] == 0 if status['exit_code'] is not None else False
+        )
+
+        return JSONResponse(content=to_dict(result))
+
+    except Exception as e:
+        logger.error(f"Error getting rebuild status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Serve frontend static files
 frontend_dir = Path("/etc/homefree-installer/frontend")
 if frontend_dir.exists():
