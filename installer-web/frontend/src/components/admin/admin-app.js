@@ -224,6 +224,10 @@ class AdminApp extends LitElement {
       background: #ef4444;
     }
 
+    .status-badge.warning {
+      background: #f59e0b;
+    }
+
     .status-badge.building {
       background: transparent;
       width: auto;
@@ -393,6 +397,23 @@ class AdminApp extends LitElement {
 
         // Start polling to show live updates
         this.pollRebuildStatus();
+      } else if (status.exit_code !== null && status.exit_code !== undefined) {
+        // Build has finished - restore final state
+        const success = status.exit_code === 0;
+        const partialSuccess = status.partial_success || false;
+
+        this.rebuildStatus = {
+          running: false,
+          message: success
+            ? 'Rebuild completed successfully'
+            : partialSuccess
+              ? `Rebuild completed with warnings (exit code ${status.exit_code})`
+              : `Rebuild failed (exit code ${status.exit_code})`,
+          lastUpdate: {
+            success: success || partialSuccess,
+            warning: partialSuccess
+          }
+        };
       }
     } catch (error) {
       console.error('Error checking rebuild status:', error);
@@ -419,6 +440,9 @@ class AdminApp extends LitElement {
     if (this.rebuildStatus.running) {
       return 'building';
     } else if (this.rebuildStatus.lastUpdate) {
+      if (this.rebuildStatus.lastUpdate.warning) {
+        return 'warning';
+      }
       return this.rebuildStatus.lastUpdate.success ? 'healthy' : 'unhealthy';
     }
     return 'healthy'; // Default to healthy if no rebuild has run
@@ -501,8 +525,8 @@ class AdminApp extends LitElement {
         const status = await response.json();
 
         if (status.output) {
-          // Accumulate output
-          const newLines = status.output.split('\n').filter(l => l.trim());
+          // Accumulate output (trim to remove leading/trailing whitespace)
+          const newLines = status.output.trim().split('\n').filter(l => l.trim());
           allOutput.push(...newLines);
 
           // Update header status with last line
@@ -516,23 +540,29 @@ class AdminApp extends LitElement {
 
         if (!status.running) {
           // Rebuild finished
-          if (status.exit_code === 0) {
+          const success = status.exit_code === 0;
+          const partialSuccess = status.partial_success || false;
+
+          if (success) {
             this.rebuildStatus = {
               running: false,
               message: 'Rebuild completed successfully',
               lastUpdate: { success: true }
             };
 
-            // Clear success message after 10 seconds
-            setTimeout(() => {
-              this.rebuildStatus = {
-                running: false,
-                message: '',
-                lastUpdate: null
-              };
-            }, 10000);
-
             // Reload config after success
+            setTimeout(() => {
+              this.loadConfig();
+            }, 2000);
+          } else if (partialSuccess) {
+            // Partial success: generation activated but services failed
+            this.rebuildStatus = {
+              running: false,
+              message: `Rebuild completed with warnings (exit code ${status.exit_code}) - Click to view logs`,
+              lastUpdate: { success: true, warning: true }
+            };
+
+            // Reload config after partial success
             setTimeout(() => {
               this.loadConfig();
             }, 2000);

@@ -52,6 +52,11 @@ class StatusModule extends LitElement {
       color: #991b1b;
     }
 
+    .status-indicator.warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
     .status-indicator.building {
       background: #dbeafe;
       color: #1e40af;
@@ -189,9 +194,16 @@ class StatusModule extends LitElement {
       const status = await response.json();
 
       if (status.output) {
-        // Append new output lines
-        const newLines = status.output.split('\n').filter(l => l.trim());
-        this.buildLogs = [...this.buildLogs, ...newLines];
+        // Append new output lines (trim to remove leading/trailing whitespace)
+        const newLines = status.output.trim().split('\n').filter(l => l.trim());
+
+        // If not running, replace logs (saved state) instead of appending
+        // If running, append new logs (streaming)
+        if (!status.running) {
+          this.buildLogs = newLines;
+        } else {
+          this.buildLogs = [...this.buildLogs, ...newLines];
+        }
 
         // Auto-scroll to bottom
         this.requestUpdate().then(() => {
@@ -214,11 +226,25 @@ class StatusModule extends LitElement {
         // Build finished (not running)
         if (status.exit_code !== null && status.exit_code !== undefined) {
           const success = status.exit_code === 0;
-          this.systemHealth = success ? 'healthy' : 'unhealthy';
+          const partialSuccess = status.partial_success || false;
+
+          // Set health: success = healthy, partial = warning, failure = unhealthy
+          if (success) {
+            this.systemHealth = 'healthy';
+          } else if (partialSuccess) {
+            this.systemHealth = 'warning';
+          } else {
+            this.systemHealth = 'unhealthy';
+          }
+
           this.rebuildStatus = {
             running: false,
-            message: success ? 'Build completed successfully' : `Build failed (exit code ${status.exit_code})`,
-            lastUpdate: { success }
+            message: success
+              ? 'Build completed successfully'
+              : partialSuccess
+                ? `Build completed with warnings (exit code ${status.exit_code})`
+                : `Build failed (exit code ${status.exit_code})`,
+            lastUpdate: { success: success || partialSuccess }
           };
         } else {
           // No exit code and not running - either no rebuild ever ran, or there was an early failure
@@ -252,6 +278,8 @@ class StatusModule extends LitElement {
         return '✓';
       case 'unhealthy':
         return '✗';
+      case 'warning':
+        return '⚠';
       case 'building':
         return html`<div class="spinner"></div>`;
       default:
@@ -265,6 +293,8 @@ class StatusModule extends LitElement {
         return 'System Healthy';
       case 'unhealthy':
         return 'System Unhealthy';
+      case 'warning':
+        return 'System Warning';
       case 'building':
         return 'Building System';
       default:

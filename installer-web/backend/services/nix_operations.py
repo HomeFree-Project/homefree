@@ -31,6 +31,44 @@ class NixOperations:
     _current_rebuild_output_offset = 0
     _last_rebuild_error = None
     _last_rebuild_exit_code = None
+    _last_rebuild_partial_success = False
+    _last_rebuild_output = None
+
+    @staticmethod
+    def _detect_partial_success(output: str, exit_code: int) -> bool:
+        """
+        Detect if rebuild partially succeeded (generation activated but services failed).
+
+        Args:
+            output: Full rebuild output
+            exit_code: Process exit code
+
+        Returns:
+            True if generation was activated but services failed
+        """
+        if exit_code == 0:
+            # Complete success
+            return False
+
+        if not output:
+            return False
+
+        output_lower = output.lower()
+
+        # Look for activation success indicators
+        activation_success = (
+            'activating the configuration' in output_lower or
+            'activation script' in output_lower
+        )
+
+        # Look for service failure indicators
+        service_failure = (
+            'failed' in output_lower and
+            ('service' in output_lower or 'unit' in output_lower or '.service' in output_lower)
+        )
+
+        # Partial success: activation worked but services failed
+        return activation_success and service_failure
 
     @staticmethod
     def dry_activate() -> Dict[str, Any]:
@@ -95,6 +133,8 @@ class NixOperations:
             # Clear any previous error state
             NixOperations._last_rebuild_error = None
             NixOperations._last_rebuild_exit_code = None
+            NixOperations._last_rebuild_partial_success = False
+            NixOperations._last_rebuild_output = None
 
             # Create a temporary file to capture output
             output_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
@@ -145,27 +185,28 @@ class NixOperations:
         Returns:
             Dictionary with:
                 - running: bool
-                - output: str (new output since last call)
+                - output: str (new output since last call, or full output if finished)
                 - exit_code: Optional[int]
+                - partial_success: bool (True if generation activated but services failed)
         """
         process = NixOperations._current_rebuild_process
         output_file = NixOperations._current_rebuild_output_file
 
         if process is None:
             # No active rebuild process
-            # Check if there was a previous rebuild error
+            # Return saved state from previous rebuild (for persistence)
             if NixOperations._last_rebuild_exit_code is not None:
-                error_msg = NixOperations._last_rebuild_error or ''
-                exit_code = NixOperations._last_rebuild_exit_code
                 return {
                     'running': False,
-                    'output': error_msg,
-                    'exit_code': exit_code
+                    'output': NixOperations._last_rebuild_output or '',
+                    'exit_code': NixOperations._last_rebuild_exit_code,
+                    'partial_success': NixOperations._last_rebuild_partial_success
                 }
             return {
                 'running': False,
                 'output': '',
-                'exit_code': None
+                'exit_code': None,
+                'partial_success': False
             }
 
         # Check if process is still running
@@ -192,7 +233,25 @@ class NixOperations:
                 'exit_code': None
             }
         else:
-            # Process finished, clean up
+            # Process finished
+            # Read full output to detect partial success
+            full_output = ''
+            if output_file and os.path.exists(output_file):
+                try:
+                    with open(output_file, 'r') as f:
+                        full_output = f.read()
+                except Exception as e:
+                    logger.error(f"Error reading full rebuild output: {e}")
+
+            # Detect partial success: generation activated but services failed
+            partial_success = NixOperations._detect_partial_success(full_output, exit_code)
+
+            # Save state for subsequent requests (persistence across page refreshes)
+            NixOperations._last_rebuild_exit_code = exit_code
+            NixOperations._last_rebuild_partial_success = partial_success
+            NixOperations._last_rebuild_output = full_output
+
+            # Clean up process reference
             NixOperations._current_rebuild_process = None
 
             # Clean up temp file after a delay (allow final reads)
@@ -207,7 +266,8 @@ class NixOperations:
             return {
                 'running': False,
                 'output': new_output,
-                'exit_code': exit_code
+                'exit_code': exit_code,
+                'partial_success': partial_success
             }
 
     @staticmethod
