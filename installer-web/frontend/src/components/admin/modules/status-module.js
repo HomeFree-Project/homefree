@@ -172,6 +172,7 @@ class StatusModule extends LitElement {
     this.buildLogs = [];
     this.systemHealth = 'healthy';
     this.pollInterval = null;
+    this.previousRunningState = false;
   }
 
   connectedCallback() {
@@ -190,11 +191,16 @@ class StatusModule extends LitElement {
 
   async checkRebuildStatus() {
     try {
-      console.log('[STATUS MODULE] Fetching rebuild status...');
       const response = await fetch('/api/config/rebuild-status');
       const status = await response.json();
-      console.log('[STATUS MODULE] Received status:', JSON.stringify(status, null, 2));
-      console.log('[STATUS MODULE] Current systemHealth BEFORE update:', this.systemHealth);
+
+      // Detect new build starting: running changed from false → true
+      if (status.running && !this.previousRunningState) {
+        // New build started - clear old logs and reset status
+        this.buildLogs = [];
+        this.systemHealth = 'building';
+      }
+      this.previousRunningState = status.running;
 
       if (status.output) {
         // Append new output lines (trim to remove leading/trailing whitespace)
@@ -218,17 +224,13 @@ class StatusModule extends LitElement {
 
       // Update status
       if (status.running) {
-        console.log('[STATUS MODULE] Branch: RUNNING');
         this.systemHealth = 'building';
         this.rebuildStatus = {
           running: true,
           message: 'Building system...',
           lastUpdate: null
         };
-        console.log('[STATUS MODULE] Set systemHealth to: building');
       } else if (status.exit_code !== null && status.exit_code !== undefined) {
-        console.log('[STATUS MODULE] Branch: HAS EXIT CODE', status.exit_code);
-        console.log('[STATUS MODULE] partial_success:', status.partial_success);
         // Build finished - restore final state
         const success = status.exit_code === 0;
         const partialSuccess = status.partial_success || false;
@@ -242,8 +244,6 @@ class StatusModule extends LitElement {
           this.systemHealth = 'unhealthy';
         }
 
-        console.log('[STATUS MODULE] Set systemHealth to:', this.systemHealth);
-
         this.rebuildStatus = {
           running: false,
           message: success
@@ -254,9 +254,6 @@ class StatusModule extends LitElement {
           lastUpdate: { success: success || partialSuccess }
         };
       } else {
-        console.log('[STATUS MODULE] Branch: ELSE (no exit code)');
-        console.log('[STATUS MODULE] output exists:', !!status.output);
-        console.log('[STATUS MODULE] output trimmed length:', status.output?.trim().length);
         // No exit code and not running - either no rebuild ever ran, or there was an early failure
         // If there's output, it's likely an error
         if (status.output && status.output.trim()) {
@@ -266,7 +263,6 @@ class StatusModule extends LitElement {
             message: 'Build failed',
             lastUpdate: { success: false }
           };
-          console.log('[STATUS MODULE] Set systemHealth to: unhealthy (has output)');
         } else {
           // No rebuild has run yet - keep healthy default
           this.systemHealth = 'healthy';
@@ -275,13 +271,10 @@ class StatusModule extends LitElement {
             message: 'System is healthy',
             lastUpdate: { success: true }
           };
-          console.log('[STATUS MODULE] Set systemHealth to: healthy (no output)');
         }
       }
-      console.log('[STATUS MODULE] Final systemHealth AFTER update:', this.systemHealth);
     } catch (error) {
-      console.error('[STATUS MODULE] ERROR in checkRebuildStatus:', error);
-      console.error('[STATUS MODULE] Stack trace:', error.stack);
+      console.error('Error checking rebuild status:', error);
     }
   }
 
@@ -301,7 +294,6 @@ class StatusModule extends LitElement {
   }
 
   getStatusTitle() {
-    console.log('[STATUS MODULE] getStatusTitle() called, systemHealth:', this.systemHealth);
     switch (this.systemHealth) {
       case 'healthy':
         return 'System Healthy';
@@ -329,7 +321,6 @@ class StatusModule extends LitElement {
   }
 
   render() {
-    console.log('[STATUS MODULE] RENDER called, systemHealth:', this.systemHealth);
     return html`
       <div class="module-container">
         <!-- Status Header -->
