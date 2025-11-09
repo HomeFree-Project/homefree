@@ -37,6 +37,9 @@
       include = {
         path = "~/.gitconfig.local";
       };
+      safe = {
+        directory = "/etc/nixos";
+      };
 
       #==========================
       # Diff settings

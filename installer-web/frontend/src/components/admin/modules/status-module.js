@@ -207,18 +207,39 @@ class StatusModule extends LitElement {
         this.systemHealth = 'building';
         this.rebuildStatus = {
           running: true,
-          message: status.output ? 'Building system...' : 'Starting build...',
+          message: 'Building system...',
           lastUpdate: null
         };
-      } else if (status.exit_code !== null && status.exit_code !== undefined) {
-        // Build finished
-        const success = status.exit_code === 0;
-        this.systemHealth = success ? 'healthy' : 'unhealthy';
-        this.rebuildStatus = {
-          running: false,
-          message: success ? 'Build completed successfully' : `Build failed (exit code ${status.exit_code})`,
-          lastUpdate: { success }
-        };
+      } else {
+        // Build finished (not running)
+        if (status.exit_code !== null && status.exit_code !== undefined) {
+          const success = status.exit_code === 0;
+          this.systemHealth = success ? 'healthy' : 'unhealthy';
+          this.rebuildStatus = {
+            running: false,
+            message: success ? 'Build completed successfully' : `Build failed (exit code ${status.exit_code})`,
+            lastUpdate: { success }
+          };
+        } else {
+          // No exit code and not running - either no rebuild ever ran, or there was an early failure
+          // If there's output, it's likely an error
+          if (status.output && status.output.trim()) {
+            this.systemHealth = 'unhealthy';
+            this.rebuildStatus = {
+              running: false,
+              message: 'Build failed',
+              lastUpdate: { success: false }
+            };
+          } else {
+            // No rebuild has run yet - keep healthy default
+            this.systemHealth = 'healthy';
+            this.rebuildStatus = {
+              running: false,
+              message: 'System is healthy',
+              lastUpdate: { success: true }
+            };
+          }
+        }
       }
     } catch (error) {
       console.error('Error checking rebuild status:', error);

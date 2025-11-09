@@ -29,6 +29,8 @@ class NixOperations:
     _current_rebuild_process = None
     _current_rebuild_output_file = None
     _current_rebuild_output_offset = 0
+    _last_rebuild_error = None
+    _last_rebuild_exit_code = None
 
     @staticmethod
     def dry_activate() -> Dict[str, Any]:
@@ -90,6 +92,10 @@ class NixOperations:
             Dictionary with operation status and output
         """
         try:
+            # Clear any previous error state
+            NixOperations._last_rebuild_error = None
+            NixOperations._last_rebuild_exit_code = None
+
             # Create a temporary file to capture output
             output_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
             output_path = output_file.name
@@ -120,6 +126,11 @@ class NixOperations:
 
         except Exception as e:
             logger.error(f"Error starting rebuild: {e}")
+            # Set process to None and ensure we can report the error
+            NixOperations._current_rebuild_process = None
+            NixOperations._current_rebuild_output_file = None
+            NixOperations._last_rebuild_error = str(e)
+            NixOperations._last_rebuild_exit_code = 1  # Indicate failure
             return {
                 'success': False,
                 'message': str(e),
@@ -141,6 +152,16 @@ class NixOperations:
         output_file = NixOperations._current_rebuild_output_file
 
         if process is None:
+            # No active rebuild process
+            # Check if there was a previous rebuild error
+            if NixOperations._last_rebuild_exit_code is not None:
+                error_msg = NixOperations._last_rebuild_error or ''
+                exit_code = NixOperations._last_rebuild_exit_code
+                return {
+                    'running': False,
+                    'output': error_msg,
+                    'exit_code': exit_code
+                }
             return {
                 'running': False,
                 'output': '',
