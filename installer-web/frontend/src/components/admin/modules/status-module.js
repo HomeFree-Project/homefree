@@ -196,9 +196,18 @@ class StatusModule extends LitElement {
 
       // Detect new build starting: running changed from false → true
       if (status.running && !this.previousRunningState) {
-        // New build started - clear old logs and reset status
-        this.buildLogs = [];
+        // New build starting - reset status
         this.systemHealth = 'building';
+        this.rebuildStatus = {
+          running: true,
+          message: 'Building system...',
+          lastUpdate: null
+        };
+        // Only clear logs if we have new output to replace them with
+        // This prevents empty log area during silent evaluation phase
+        if (status.output) {
+          this.buildLogs = [];
+        }
       }
       this.previousRunningState = status.running;
 

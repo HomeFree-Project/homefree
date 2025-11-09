@@ -141,9 +141,15 @@ class NixOperations:
             output_path = output_file.name
             output_file.close()
 
-            # Run rebuild in background, return immediately
-            # Redirect output to file for streaming
+            # Write initial status message to ensure output exists immediately
             with open(output_path, 'w') as f:
+                f.write("Starting NixOS rebuild...\n")
+                f.write("Evaluating configuration and downloading dependencies...\n")
+                f.flush()
+
+            # Run rebuild in background, return immediately
+            # Redirect output to file for streaming (append mode)
+            with open(output_path, 'a') as f:
                 process = subprocess.Popen(
                     ["nixos-rebuild", "switch", "--flake", str(NixOperations.FLAKE_DIR)],
                     stdout=f,

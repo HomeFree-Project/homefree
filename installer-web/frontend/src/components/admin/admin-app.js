@@ -291,6 +291,7 @@ class AdminApp extends LitElement {
     this.loading = true;
     this.error = null;
     this.sidebarCollapsed = false;
+    this.systemHealth = 'healthy';
     this.rebuildStatus = {
       running: false,
       message: '',
@@ -389,6 +390,7 @@ class AdminApp extends LitElement {
 
       // If rebuild is running, restore state and start polling
       if (status.running) {
+        this.systemHealth = 'building';
         this.rebuildStatus = {
           running: true,
           message: 'Rebuild in progress...',
@@ -401,6 +403,15 @@ class AdminApp extends LitElement {
         // Build has finished - restore final state
         const success = status.exit_code === 0;
         const partialSuccess = status.partial_success || false;
+
+        // Set systemHealth based on exit code (same logic as status-module)
+        if (success) {
+          this.systemHealth = 'healthy';
+        } else if (partialSuccess) {
+          this.systemHealth = 'warning';
+        } else {
+          this.systemHealth = 'unhealthy';
+        }
 
         this.rebuildStatus = {
           running: false,
@@ -437,15 +448,12 @@ class AdminApp extends LitElement {
   }
 
   getStatusBadgeClass() {
+    // Use systemHealth directly (same as status-module.js)
+    // This ensures left nav badge matches status page title
     if (this.rebuildStatus.running) {
       return 'building';
-    } else if (this.rebuildStatus.lastUpdate) {
-      if (this.rebuildStatus.lastUpdate.warning) {
-        return 'warning';
-      }
-      return this.rebuildStatus.lastUpdate.success ? 'healthy' : 'unhealthy';
     }
-    return 'healthy'; // Default to healthy if no rebuild has run
+    return this.systemHealth || 'healthy';
   }
 
   handleConfigChange(e) {
@@ -531,6 +539,7 @@ class AdminApp extends LitElement {
 
           // Update header status with last line
           const lastLine = newLines[newLines.length - 1] || 'Building...';
+          this.systemHealth = 'building';
           this.rebuildStatus = {
             running: true,
             message: lastLine.substring(0, 50) + (lastLine.length > 50 ? '...' : ''),
@@ -544,6 +553,7 @@ class AdminApp extends LitElement {
           const partialSuccess = status.partial_success || false;
 
           if (success) {
+            this.systemHealth = 'healthy';
             this.rebuildStatus = {
               running: false,
               message: 'Rebuild completed successfully',
@@ -555,6 +565,7 @@ class AdminApp extends LitElement {
               this.loadConfig();
             }, 2000);
           } else if (partialSuccess) {
+            this.systemHealth = 'warning';
             // Partial success: generation activated but services failed
             this.rebuildStatus = {
               running: false,
@@ -567,6 +578,7 @@ class AdminApp extends LitElement {
               this.loadConfig();
             }, 2000);
           } else {
+            this.systemHealth = 'unhealthy';
             // Show error status
             const errorLines = allOutput.slice(-20);
             this.rebuildStatus = {
@@ -575,7 +587,7 @@ class AdminApp extends LitElement {
               lastUpdate: { success: false, output: errorLines.join('\n') }
             };
           }
-          return; // Stop polling
+          // Don't stop polling - keep syncing with status-module
         }
 
         // Continue polling every 2 seconds
