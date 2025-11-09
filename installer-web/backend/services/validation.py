@@ -265,13 +265,19 @@ class ValidationService:
         """Validate backups configuration"""
         errors = []
 
-        # Validate backup path
+        # Only validate if backups are enabled
+        if not backups_config.get('enable', False):
+            return errors
+
+        # Validate backup path when backups are enabled
         if 'to_path' in backups_config:
             path = backups_config['to_path']
             if not path:
                 errors.append("Backup path cannot be empty when backups are enabled")
             elif not path.startswith('/'):
                 errors.append(f"Backup path must be absolute: {path}")
+        else:
+            errors.append("Backup path is required when backups are enabled")
 
         # Validate Backblaze config
         if backups_config.get('backblaze_enable'):

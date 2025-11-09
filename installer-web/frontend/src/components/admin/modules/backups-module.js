@@ -18,7 +18,7 @@ class BackupsModule extends LitElement {
     }
 
     .module-container {
-      max-width: 800px;
+      width: 100%;
     }
 
     .field-row {

@@ -18,7 +18,7 @@ class DnsModule extends LitElement {
     }
 
     .module-container {
-      max-width: 1000px;
+      width: 100%;
     }
   `;
 

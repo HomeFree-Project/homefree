@@ -17,7 +17,7 @@ class ServicesModule extends LitElement {
     }
 
     .module-container {
-      max-width: 1200px;
+      width: 100%;
     }
 
     .services-grid {

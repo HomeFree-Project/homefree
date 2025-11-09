@@ -21,7 +21,7 @@ class NetworkModule extends LitElement {
     }
 
     .module-container {
-      max-width: 1000px;
+      width: 100%;
     }
 
     .field-row {
@@ -85,10 +85,21 @@ class NetworkModule extends LitElement {
         value: iface.name,
         label: `${iface.name} (${iface.type})`
       }));
+      // Force update after interfaces load to ensure select values are set
+      this.requestUpdate();
     } catch (error) {
       console.error('Failed to load network interfaces:', error);
       // Fallback to empty list
       this.interfaces = [];
+    }
+  }
+
+  updated(changedProperties) {
+    super.updated(changedProperties);
+
+    // If interfaces just loaded and we have config values, force re-render
+    if (changedProperties.has('interfaces') && this.interfaces.length > 0) {
+      this.requestUpdate();
     }
   }
 

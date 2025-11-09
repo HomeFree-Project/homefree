@@ -194,14 +194,14 @@ in
               +Last-Modified
             }
 
-            # CSS files - Aggressive caching with revalidation
+            # CSS files - No aggressive caching for development/admin UIs
             @css {
               file
               path *.css
             }
             header @css {
-              # Cache for 1 year, but allow revalidation
-              Cache-Control "public, max-age=31536000, stale-while-revalidate=86400"
+              # No caching - always revalidate
+              Cache-Control "no-cache, must-revalidate"
               ETag
               +Last-Modified
               Vary Accept-Encoding
@@ -213,8 +213,8 @@ in
               path *.js *.png *.jpg *.jpeg *.gif *.svg *.woff *.woff2
             }
             header @assets {
-              # Cache for 1 hour, but allow revalidation
-              Cache-Control "public, max-age=3600, must-revalidate"
+              # No aggressive caching - always revalidate for JS
+              Cache-Control "no-cache, must-revalidate"
               # Add ETag for conditional requests
               ETag
               # Add Last-Modified header

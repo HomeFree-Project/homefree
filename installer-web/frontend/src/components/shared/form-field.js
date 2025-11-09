@@ -164,9 +164,9 @@ class FormField extends LitElement {
           class="${this.error ? 'error' : ''}"
           @change=${this.handleInput}
         >
-          ${this.placeholder ? html`<option value="">${this.placeholder}</option>` : ''}
+          ${this.placeholder ? html`<option value="" ?selected=${!this.value}>${this.placeholder}</option>` : ''}
           ${this.options.map(opt => html`
-            <option value="${opt.value}">${opt.label}</option>
+            <option value="${opt.value}" ?selected=${opt.value === this.value}>${opt.label}</option>
           `)}
         </select>
       `;

@@ -7,6 +7,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from enum import Enum
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,9 @@ class NixOperations:
     """Service for NixOS operations"""
 
     FLAKE_DIR = Path("/etc/nixos")
+    _current_rebuild_process = None
+    _current_rebuild_output_file = None
+    _current_rebuild_output_offset = 0
 
     @staticmethod
     def dry_activate() -> Dict[str, Any]:
@@ -85,17 +90,27 @@ class NixOperations:
             Dictionary with operation status and output
         """
         try:
-            # Run rebuild in background, return immediately
-            # Frontend will poll for progress
-            process = subprocess.Popen(
-                ["nixos-rebuild", "switch", "--flake", str(NixOperations.FLAKE_DIR)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
+            # Create a temporary file to capture output
+            output_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
+            output_path = output_file.name
+            output_file.close()
 
-            # Store process for later progress monitoring
+            # Run rebuild in background, return immediately
+            # Redirect output to file for streaming
+            with open(output_path, 'w') as f:
+                process = subprocess.Popen(
+                    ["nixos-rebuild", "switch", "--flake", str(NixOperations.FLAKE_DIR)],
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+
+            # Store process and output file for later progress monitoring
             NixOperations._current_rebuild_process = process
+            NixOperations._current_rebuild_output_file = output_path
+            NixOperations._current_rebuild_output_offset = 0
+
+            logger.info(f"Started rebuild process {process.pid}, logging to {output_path}")
 
             return {
                 'success': True,
@@ -119,10 +134,11 @@ class NixOperations:
         Returns:
             Dictionary with:
                 - running: bool
-                - output: str (accumulated output)
+                - output: str (new output since last call)
                 - exit_code: Optional[int]
         """
-        process = getattr(NixOperations, '_current_rebuild_process', None)
+        process = NixOperations._current_rebuild_process
+        output_file = NixOperations._current_rebuild_output_file
 
         if process is None:
             return {
@@ -134,23 +150,42 @@ class NixOperations:
         # Check if process is still running
         exit_code = process.poll()
 
+        # Read new output from file
+        new_output = ''
+        if output_file and os.path.exists(output_file):
+            try:
+                with open(output_file, 'r') as f:
+                    # Seek to last read position
+                    f.seek(NixOperations._current_rebuild_output_offset)
+                    new_output = f.read()
+                    # Update offset for next read
+                    NixOperations._current_rebuild_output_offset = f.tell()
+            except Exception as e:
+                logger.error(f"Error reading rebuild output: {e}")
+
         if exit_code is None:
-            # Still running, read available output
-            # Note: This is a simplified version. For production, use a proper
-            # streaming mechanism or log file monitoring
+            # Still running
             return {
                 'running': True,
-                'output': '',  # Would need proper buffering
+                'output': new_output,
                 'exit_code': None
             }
         else:
-            # Process finished, read all output
-            output, _ = process.communicate()
+            # Process finished, clean up
             NixOperations._current_rebuild_process = None
+
+            # Clean up temp file after a delay (allow final reads)
+            if output_file:
+                try:
+                    # Don't delete immediately - frontend might still be polling
+                    # In production, implement proper cleanup
+                    pass
+                except Exception as e:
+                    logger.error(f"Error cleaning up output file: {e}")
 
             return {
                 'running': False,
-                'output': output or '',
+                'output': new_output,
                 'exit_code': exit_code
             }
 

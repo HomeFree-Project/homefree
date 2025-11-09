@@ -20,7 +20,7 @@ class SystemModule extends LitElement {
     }
 
     .module-container {
-      max-width: 800px;
+      width: 100%;
     }
 
     .field-row {
@@ -131,10 +131,11 @@ class SystemModule extends LitElement {
     try {
       const tzRegions = await getTimezones();
       // Flatten timezone regions into a single list
+      // Note: zones already include the region (e.g., "America/Los_Angeles")
       this.timezones = tzRegions.flatMap(region =>
         region.zones.map(zone => ({
-          value: `${region.region}/${zone}`,
-          label: `${region.region}/${zone}`
+          value: zone,
+          label: zone
         }))
       );
     } catch (error) {

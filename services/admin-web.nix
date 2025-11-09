@@ -48,7 +48,7 @@ in
 
         # Environment
         Environment = [
-          "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git ]}"
+          "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd ]}"
         ];
       };
     };
@@ -93,6 +93,13 @@ in
             handle @api {
               reverse_proxy localhost:8000
             }
+
+            # Override default caching for JS/CSS - disable aggressive caching
+            # This runs after the default @assets matcher, overriding those headers
+            @jscss {
+              path *.js *.css
+            }
+            header @jscss Cache-Control "no-cache, must-revalidate"
           '';
         };
       }

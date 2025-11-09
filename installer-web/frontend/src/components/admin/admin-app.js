@@ -1,6 +1,12 @@
 import { LitElement, html, css } from 'lit';
 import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges } from '../../api/client.js';
 import './modules/system-module.js';
+import './modules/network-module.js';
+import './modules/dns-module.js';
+import './modules/services-module.js';
+import './modules/backups-module.js';
+import './modules/status-module.js';
+import '../shared/progress-modal.js';
 
 class AdminApp extends LitElement {
   static properties = {
@@ -8,7 +14,8 @@ class AdminApp extends LitElement {
     currentModule: { type: String },
     loading: { type: Boolean },
     error: { type: String },
-    sidebarCollapsed: { type: Boolean }
+    sidebarCollapsed: { type: Boolean },
+    rebuildStatus: { type: Object }
   };
 
   static styles = css`
@@ -146,7 +153,7 @@ class AdminApp extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 32px;
+      padding: 0 24px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
 
@@ -188,10 +195,49 @@ class AdminApp extends LitElement {
       background: #5568d3;
     }
 
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinner-tiny {
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .status-badge {
+      margin-left: auto;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-badge.healthy {
+      background: #10b981;
+    }
+
+    .status-badge.unhealthy {
+      background: #ef4444;
+    }
+
+    .status-badge.building {
+      background: transparent;
+      width: auto;
+      height: auto;
+    }
+
+    .sidebar.collapsed .status-badge {
+      display: none;
+    }
+
     .content-area {
       flex: 1;
       overflow-y: auto;
-      padding: 32px;
+      padding: 0;
     }
 
     .loading-overlay {
@@ -209,13 +255,15 @@ class AdminApp extends LitElement {
       padding: 16px;
       border-radius: 8px;
       border-left: 4px solid #ffc107;
+      margin: 32px;
     }
 
     .module-content {
       background: white;
-      border-radius: 12px;
-      padding: 32px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      border-radius: 0;
+      padding: 24px;
+      box-shadow: none;
+      min-height: 100%;
     }
 
     /* Responsive */
@@ -239,6 +287,11 @@ class AdminApp extends LitElement {
     this.loading = true;
     this.error = null;
     this.sidebarCollapsed = false;
+    this.rebuildStatus = {
+      running: false,
+      message: '',
+      lastUpdate: null
+    };
 
     // Navigation modules
     this.modules = [
@@ -277,13 +330,41 @@ class AdminApp extends LitElement {
         title: 'Advanced',
         icon: '🔧',
         section: 'System'
+      },
+      {
+        id: 'status',
+        title: 'Status',
+        icon: '📊',
+        section: 'System'
       }
     ];
   }
 
   async connectedCallback() {
     super.connectedCallback();
+
+    // Read initial route from hash
+    this.loadRouteFromHash();
+
+    // Listen for hash changes (back/forward buttons)
+    window.addEventListener('hashchange', () => {
+      this.loadRouteFromHash();
+    });
+
     await this.loadConfig();
+
+    // Check if a rebuild is already in progress
+    await this.checkRebuildStatus();
+  }
+
+  loadRouteFromHash() {
+    const hash = window.location.hash.slice(2); // Remove '#/'
+    if (hash && this.modules.find(m => m.id === hash)) {
+      this.currentModule = hash;
+    } else if (!hash) {
+      // Default to system if no hash
+      this.currentModule = 'system';
+    }
   }
 
   async loadConfig() {
@@ -297,8 +378,32 @@ class AdminApp extends LitElement {
     }
   }
 
+  async checkRebuildStatus() {
+    try {
+      const response = await fetch('/api/config/rebuild-status');
+      const status = await response.json();
+
+      // If rebuild is running, restore state and start polling
+      if (status.running) {
+        this.rebuildStatus = {
+          running: true,
+          message: 'Rebuild in progress...',
+          lastUpdate: null
+        };
+
+        // Start polling to show live updates
+        this.pollRebuildStatus();
+      }
+    } catch (error) {
+      console.error('Error checking rebuild status:', error);
+      // Don't throw - just continue with normal loading
+    }
+  }
+
   handleModuleClick(moduleId) {
     this.currentModule = moduleId;
+    // Update URL hash to maintain state
+    window.location.hash = `#/${moduleId}`;
   }
 
   toggleSidebar() {
@@ -310,60 +415,153 @@ class AdminApp extends LitElement {
     return module ? module.title : 'HomeFree Admin';
   }
 
+  getStatusBadgeClass() {
+    if (this.rebuildStatus.running) {
+      return 'building';
+    } else if (this.rebuildStatus.lastUpdate) {
+      return this.rebuildStatus.lastUpdate.success ? 'healthy' : 'unhealthy';
+    }
+    return 'healthy'; // Default to healthy if no rebuild has run
+  }
+
   handleConfigChange(e) {
     // Update local config when module changes it
     this.config = e.detail.config;
   }
 
   async handleSaveChanges() {
-    if (!confirm('Save and apply configuration changes?')) {
-      return;
-    }
+    const modal = this.shadowRoot.querySelector('progress-modal');
 
     try {
-      // First validate
+      // Show modal and start validation
+      modal.show('Saving Configuration', 'Validating configuration...', 'progress');
+
+      // Validate configuration
       const validation = await validateConfig(this.config);
 
       if (!validation.valid) {
-        alert(`Validation errors:\n${validation.errors.join('\n')}`);
+        modal.updateStatus('error', 'Validation Failed',
+          validation.errors.map(e => ({ message: e, type: 'error' }))
+        );
         return;
       }
 
-      // Show warnings if any
+      // Show warnings if any (using modal, not browser alert)
       if (validation.warnings && validation.warnings.length > 0) {
-        if (!confirm(`Warnings:\n${validation.warnings.join('\n')}\n\nContinue anyway?`)) {
-          return;
-        }
+        const warningsHtml = validation.warnings.map(w => `⚠️ ${w}`).join('<br>');
+        modal.updateStatus('warning', 'Configuration Warnings',
+          [{ message: warningsHtml }, { message: 'Continue anyway?' }]
+        );
+        // TODO: Add modal buttons for Continue/Cancel instead of relying on modal close
+        // For now, just show warnings and continue after 3 seconds
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
-      // Preview changes
-      const preview = await previewConfigChanges(this.config);
-
-      if (!preview.success) {
-        alert(`Preview failed:\n${preview.errors.join('\n')}`);
-        return;
-      }
-
-      // Show preview and confirm
-      const confirmMsg = `Changes detected:\n${preview.changes.join('\n')}\n\nApply these changes?`;
-      if (!confirm(confirmMsg)) {
-        return;
-      }
-
-      // Apply changes
+      // Apply changes (skip preview/dry-activate step)
+      modal.updateStatus('progress', 'Saving configuration and starting rebuild...');
       const result = await applyConfigChanges(this.config);
 
-      if (result.success) {
-        alert('Configuration applied successfully! System is rebuilding...');
-        // Could poll rebuild status here
-      } else {
-        alert(`Failed to apply configuration: ${result.message}`);
+      if (!result.success) {
+        modal.updateStatus('error', 'Failed to Apply Configuration',
+          [{ message: result.message || 'Unknown error', type: 'error' }]
+        );
+        return;
       }
+
+      // Close modal and show status in header
+      modal.updateStatus('success', 'Rebuild Started',
+        [{ message: 'Configuration saved and rebuild started in background' },
+         { message: 'You can close this dialog and continue working' }]
+      );
+
+      // Set rebuild status
+      this.rebuildStatus = {
+        running: true,
+        message: 'Starting system rebuild...',
+        lastUpdate: null
+      };
+
+      // Start background polling
+      this.pollRebuildStatus();
 
     } catch (error) {
       console.error('Error saving changes:', error);
-      alert(`Error: ${error.message}`);
+      modal.updateStatus('error', 'An Error Occurred',
+        [{ message: error.message || 'Unknown error', type: 'error' }]
+      );
     }
+  }
+
+  async pollRebuildStatus() {
+    let allOutput = []; // Accumulate all output lines
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch('/api/config/rebuild-status');
+        const status = await response.json();
+
+        if (status.output) {
+          // Accumulate output
+          const newLines = status.output.split('\n').filter(l => l.trim());
+          allOutput.push(...newLines);
+
+          // Update header status with last line
+          const lastLine = newLines[newLines.length - 1] || 'Building...';
+          this.rebuildStatus = {
+            running: true,
+            message: lastLine.substring(0, 50) + (lastLine.length > 50 ? '...' : ''),
+            lastUpdate: { success: null }
+          };
+        }
+
+        if (!status.running) {
+          // Rebuild finished
+          if (status.exit_code === 0) {
+            this.rebuildStatus = {
+              running: false,
+              message: 'Rebuild completed successfully',
+              lastUpdate: { success: true }
+            };
+
+            // Clear success message after 10 seconds
+            setTimeout(() => {
+              this.rebuildStatus = {
+                running: false,
+                message: '',
+                lastUpdate: null
+              };
+            }, 10000);
+
+            // Reload config after success
+            setTimeout(() => {
+              this.loadConfig();
+            }, 2000);
+          } else {
+            // Show error status
+            const errorLines = allOutput.slice(-20);
+            this.rebuildStatus = {
+              running: false,
+              message: `Rebuild failed (exit code ${status.exit_code}) - Click to view logs`,
+              lastUpdate: { success: false, output: errorLines.join('\n') }
+            };
+          }
+          return; // Stop polling
+        }
+
+        // Continue polling every 2 seconds
+        setTimeout(checkStatus, 2000);
+      } catch (error) {
+        console.error('Error polling rebuild status:', error);
+        this.rebuildStatus = {
+          running: false,
+          message: 'Lost connection to rebuild process',
+          lastUpdate: { success: false }
+        };
+      }
+    };
+
+    // Start polling
+    checkStatus();
   }
 
   renderModule() {
@@ -393,11 +591,43 @@ class AdminApp extends LitElement {
           ></system-module>
         `;
 
-      default:
+      case 'network':
+        return html`
+          <network-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></network-module>
+        `;
+
+      case 'dns':
+        return html`
+          <dns-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></dns-module>
+        `;
+
+      case 'services':
+        return html`
+          <services-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></services-module>
+        `;
+
+      case 'backups':
+        return html`
+          <backups-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></backups-module>
+        `;
+
+      case 'advanced':
         return html`
           <div class="module-content">
-            <h3>${this.getCurrentModuleTitle()} Configuration</h3>
-            <p>This module is under construction.</p>
+            <h3>Advanced Configuration</h3>
+            <p>Advanced configuration options will be available in a future update.</p>
 
             ${this.config ? html`
               <details style="margin-top: 20px;">
@@ -409,6 +639,21 @@ ${JSON.stringify(this.config, null, 2)}
                 </pre>
               </details>
             ` : ''}
+          </div>
+        `;
+
+      case 'status':
+        return html`
+          <status-module
+            .rebuildStatus=${this.rebuildStatus}
+          ></status-module>
+        `;
+
+      default:
+        return html`
+          <div class="module-content">
+            <h3>${this.getCurrentModuleTitle()} Configuration</h3>
+            <p>This module is under construction.</p>
           </div>
         `;
     }
@@ -445,6 +690,11 @@ ${JSON.stringify(this.config, null, 2)}
                 >
                   <span class="nav-item-icon">${module.icon}</span>
                   <span class="nav-item-text">${module.title}</span>
+                  ${module.id === 'status' ? html`
+                    <span class="status-badge ${this.getStatusBadgeClass()}">
+                      ${this.rebuildStatus.running ? html`<div class="spinner-tiny"></div>` : ''}
+                    </span>
+                  ` : ''}
                 </div>
               `)}
             `)}
@@ -455,6 +705,7 @@ ${JSON.stringify(this.config, null, 2)}
         <div class="main-content">
           <div class="top-bar">
             <h2>${this.getCurrentModuleTitle()}</h2>
+
             <div class="top-bar-actions">
               <button class="btn" @click=${this.loadConfig}>
                 Refresh
@@ -470,6 +721,9 @@ ${JSON.stringify(this.config, null, 2)}
           </div>
         </div>
       </div>
+
+      <!-- Progress Modal -->
+      <progress-modal></progress-modal>
     `;
   }
 }
