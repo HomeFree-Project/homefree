@@ -22,6 +22,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    ## @TODO: Remove - this is part of nixpkgs now
     authentik-nix = {
       # url = "github:nix-community/authentik-nix";
       # url = "github:nix-community/authentik-nix/version/2024.10.4";
@@ -75,6 +76,7 @@
       default = homefree;
       lan-client = import ./lan-client.nix { inherit homefree-inputs; inherit system; };
     };
+
     nixosConfigurations = {
       # Note that this uses unstable
       homefree = inputs.nixpkgs-unstable.lib.nixosSystem {
