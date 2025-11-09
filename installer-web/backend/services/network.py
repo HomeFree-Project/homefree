@@ -34,11 +34,12 @@ class NetworkService:
         for device in context.list_devices(subsystem='net'):
             interface_name = device.sys_name
 
-            # Skip loopback and virtual interfaces
-            if interface_name == 'lo' or interface_name.startswith(('veth', 'docker', 'br-', 'virbr')):
+            # Skip loopback interface
+            if interface_name == 'lo':
                 continue
 
             # Check if it's a physical ethernet device
+            # This filters out virtual interfaces (podman, veth, bridges, etc.)
             if not NetworkService._is_ethernet(device):
                 continue
 
@@ -65,21 +66,38 @@ class NetworkService:
         return interfaces
 
     @staticmethod
-    def _is_ethernet(device) -> bool:
-        """Check if device is an ethernet adapter"""
-        # Check device type
-        devtype = device.get('DEVTYPE')
-        if devtype and devtype != 'wlan':
-            # Check if it has an ethernet driver
-            driver = device.get('ID_NET_DRIVER')
-            if driver and driver not in ['bridge', 'tun', 'tap']:
-                return True
+    def _is_physical_interface(interface_name: str) -> bool:
+        """
+        Check if interface is a physical (not virtual) network device.
 
-        # Alternative check using sys/class/net
+        Physical interfaces have a 'device' symlink in /sys/class/net/ that
+        points to the actual hardware (PCI, USB, etc.). Virtual interfaces
+        (bridges, veth pairs, tun/tap, podman, docker, etc.) do not have this.
+
+        Returns:
+            True if physical hardware interface, False if virtual or doesn't exist
+        """
+        device_path = Path(f'/sys/class/net/{interface_name}/device')
+        return device_path.exists()
+
+    @staticmethod
+    def _is_ethernet(device) -> bool:
+        """Check if device is a physical ethernet adapter"""
+        interface_name = device.sys_name
+
+        # First check: Must be a physical interface (not virtual)
+        if not NetworkService._is_physical_interface(interface_name):
+            return False
+
+        # Second check: Filter out wireless devices
+        devtype = device.get('DEVTYPE')
+        if devtype == 'wlan':
+            return False
+
+        # Third check: Must be ethernet type (type == 1, ARPHRD_ETHER)
         sys_path = Path(device.sys_path)
         if (sys_path / 'type').exists():
             try:
-                # Type 1 is ethernet
                 net_type = int((sys_path / 'type').read_text().strip())
                 return net_type == 1
             except:
