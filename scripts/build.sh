@@ -156,7 +156,7 @@ log_info "Action: $ACTION"
 
 # Update flake inputs before building
 log_info "Updating homefree-local and homefree-base flake inputs..."
-FLAKE_UPDATE_CMD="nix flake lock --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
+FLAKE_UPDATE_CMD="nix flake lock --allow-dirty --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
 if [[ $EUID -ne 0 ]]; then
     FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
 fi

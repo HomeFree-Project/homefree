@@ -644,9 +644,7 @@ ${JSON.stringify(this.config, null, 2)}
 
       case 'status':
         return html`
-          <status-module
-            .rebuildStatus=${this.rebuildStatus}
-          ></status-module>
+          <status-module></status-module>
         `;
 
       default:

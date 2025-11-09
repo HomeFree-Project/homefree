@@ -178,7 +178,7 @@ in
     kanidm-script
   ];
 
-  system.activationScripts.kanidmUserConfig = lib.optionalAttrs config.homefree.services.kanidm.enable {
+  system.activationScripts.kanidmUserConfig = lib.mkIf config.homefree.services.kanidm.enable {
     text = ''
       mkdir -p ${user-config-path}
       cat > ${user-config-path}/kanidm << 'EOF'

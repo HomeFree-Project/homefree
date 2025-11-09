@@ -303,9 +303,7 @@ class StatusModule extends LitElement {
           <h3 class="logs-header">Build Logs</h3>
           <div class="logs-content">
             ${this.buildLogs.length > 0 ? html`
-              ${this.buildLogs.map(line => html`
-                <div class="log-line ${this.classifyLogLine(line)}">${line}</div>
-              `)}
+              ${this.buildLogs.map(line => html`<div class="log-line ${this.classifyLogLine(line)}">${line}</div>`)}
             ` : html`
               <div class="empty-logs">
                 No build logs available. Logs will appear here when a build is running.

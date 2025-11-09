@@ -3,8 +3,12 @@ let
   version = "0.17.1";
   configVersion = "0.17-1";
   containerDataPath = "/var/lib/frigate";
-  mediaPath = config.homefree.services.frigate.media-path or "${containerDataPath}/media";
-  cameras-filtered = lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras;
+  mediaPath = if config.homefree.services.frigate.media-path == null
+    then "${containerDataPath}/media"
+    else config.homefree.services.frigate.media-path;
+  cameras-filtered = if config.homefree.services.frigate.cameras != null
+    then lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras
+    else [];
   cameras-go2rtc = lib.filter (camera: camera.direct-stream == false) cameras-filtered;
   retain = config.homefree.services.frigate.retain;
 
@@ -172,8 +176,9 @@ in
         "--shm-size=512M"
         # "--network=bridge"
         "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
-        "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
-        "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
+        # "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
+        # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
+        "--device=/dev/dri:/dev/dri"
         "--cap-add=CAP_PERFMON" # For GPU statistics
         "--privileged"
       ];

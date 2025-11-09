@@ -606,7 +606,8 @@
 
         cameras = lib.mkOption {
           description = "list of cameras";
-          type = with lib.types; listOf (submodule {
+          default = null;
+          type = with lib.types; nullOr (listOf (submodule {
             options = {
               enable = lib.mkOption {
                 type = lib.types.bool;
@@ -642,7 +643,7 @@
                 description = "Don't use go2rtc by default. Addresses certain issues, such as audio delay in recordings";
               };
             };
-          });
+          }));
         };
       };
 
@@ -814,7 +815,7 @@
       kanidm = {
         enable = lib.mkOption {
           type = lib.types.bool;
-          default = true;
+          default = false;
           description = "enable Kanidm";
         };
 
