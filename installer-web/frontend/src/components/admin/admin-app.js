@@ -336,6 +336,7 @@ class AdminApp extends LitElement {
       message: '',
       lastUpdate: null
     };
+    this.statusPollInterval = null;
 
     // Navigation modules
     this.modules = [
@@ -399,6 +400,18 @@ class AdminApp extends LitElement {
 
     // Check if a rebuild is already in progress
     await this.checkRebuildStatus();
+
+    // Start continuous polling to keep status icon up-to-date
+    // This ensures the icon updates even after backend restarts or external rebuilds
+    this.statusPollInterval = setInterval(() => this.checkRebuildStatus(), 3000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    // Clean up polling interval
+    if (this.statusPollInterval) {
+      clearInterval(this.statusPollInterval);
+    }
   }
 
   loadRouteFromHash() {
