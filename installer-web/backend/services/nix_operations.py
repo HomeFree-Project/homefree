@@ -32,6 +32,12 @@ class NixOperations:
     LATEST_STATUS = LOG_DIR / "latest-status.json"
     MAX_LOGS_TO_KEEP = 10
 
+    # Persistent rebuild state (survives service restarts)
+    REBUILD_STATE_DIR = Path("/var/lib/homefree-admin")
+    REBUILD_PID_FILE = REBUILD_STATE_DIR / "rebuild.pid"
+    REBUILD_LOG_FILE_REF = REBUILD_STATE_DIR / "rebuild.log"
+    REBUILD_OFFSET_FILE = REBUILD_STATE_DIR / "rebuild.offset"
+
     _current_rebuild_process = None
     _current_rebuild_output_file = None
     _current_rebuild_output_offset = 0
@@ -184,6 +190,9 @@ class NixOperations:
             NixOperations._current_rebuild_output_file = output_path
             NixOperations._current_rebuild_output_offset = 0
 
+            # Persist state to disk (survives service restarts)
+            NixOperations._save_rebuild_state(process.pid, output_path, 0)
+
             logger.info(f"Started rebuild process {process.pid}, logging to {output_path}")
 
             return {
@@ -219,6 +228,28 @@ class NixOperations:
         """
         process = NixOperations._current_rebuild_process
         output_file = NixOperations._current_rebuild_output_file
+
+        # Try to restore from persistent state if process is None (service restart)
+        if process is None:
+            saved_state = NixOperations._load_rebuild_state()
+            if saved_state:
+                pid, log_file, offset = saved_state
+                # Restore process reference (re-attach to running process)
+                try:
+                    # Create a pseudo-process object that we can poll
+                    # We can't recreate the Popen object, but we can track the PID
+                    NixOperations._current_rebuild_process = type('Process', (), {
+                        'pid': pid,
+                        'poll': lambda: None  # Always return None (still running)
+                    })()
+                    NixOperations._current_rebuild_output_file = log_file
+                    NixOperations._current_rebuild_output_offset = offset
+                    process = NixOperations._current_rebuild_process
+                    output_file = log_file
+                    logger.info(f"Restored rebuild process {pid} from persistent state")
+                except Exception as e:
+                    logger.error(f"Error restoring rebuild process: {e}")
+                    NixOperations._clear_rebuild_state()
 
         if process is None:
             # No active rebuild process
@@ -279,6 +310,14 @@ class NixOperations:
                     new_output = f.read()
                     # Update offset for next read
                     NixOperations._current_rebuild_output_offset = f.tell()
+
+                    # Persist updated offset to disk (for service restart recovery)
+                    if new_output:  # Only update if we read something
+                        NixOperations._save_rebuild_state(
+                            process.pid,
+                            output_file,
+                            NixOperations._current_rebuild_output_offset
+                        )
             except Exception as e:
                 logger.error(f"Error reading rebuild output: {e}")
 
@@ -334,6 +373,12 @@ class NixOperations:
 
                 # Cleanup old logs
                 NixOperations._cleanup_old_logs()
+
+                # Clear rebuild state files (rebuild complete)
+                NixOperations._clear_rebuild_state()
+
+                # Check if admin-api service changed and restart if needed
+                NixOperations._restart_admin_if_changed()
             except Exception as e:
                 logger.error(f"Error saving rebuild status to persistent storage: {e}")
 
@@ -443,6 +488,102 @@ class NixOperations:
                     logger.info(f"Cleaned up old rebuild log: {old_log}")
         except Exception as e:
             logger.error(f"Error cleaning up old logs: {e}")
+
+    @staticmethod
+    def _save_rebuild_state(pid: int, log_file: str, offset: int):
+        """Persist rebuild state to disk (survives service restarts)"""
+        try:
+            NixOperations.REBUILD_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            NixOperations.REBUILD_PID_FILE.write_text(str(pid))
+            NixOperations.REBUILD_LOG_FILE_REF.write_text(log_file)
+            NixOperations.REBUILD_OFFSET_FILE.write_text(str(offset))
+            logger.info(f"Saved rebuild state: pid={pid}, log={log_file}, offset={offset}")
+        except Exception as e:
+            logger.error(f"Error saving rebuild state: {e}")
+
+    @staticmethod
+    def _load_rebuild_state() -> Optional[tuple]:
+        """Load rebuild state from disk if exists and PID is still running"""
+        try:
+            if not all([
+                NixOperations.REBUILD_PID_FILE.exists(),
+                NixOperations.REBUILD_LOG_FILE_REF.exists(),
+                NixOperations.REBUILD_OFFSET_FILE.exists()
+            ]):
+                return None
+
+            pid = int(NixOperations.REBUILD_PID_FILE.read_text().strip())
+            log_file = NixOperations.REBUILD_LOG_FILE_REF.read_text().strip()
+            offset = int(NixOperations.REBUILD_OFFSET_FILE.read_text().strip())
+
+            # Check if PID is still running
+            try:
+                os.kill(pid, 0)  # Signal 0 doesn't kill, just checks if process exists
+                logger.info(f"Restored rebuild state: pid={pid}, log={log_file}, offset={offset}")
+                return (pid, log_file, offset)
+            except OSError:
+                # Process not running anymore
+                logger.info(f"Rebuild process {pid} no longer running, clearing stale state")
+                NixOperations._clear_rebuild_state()
+                return None
+
+        except (ValueError, FileNotFoundError) as e:
+            logger.warning(f"Error loading rebuild state: {e}")
+            NixOperations._clear_rebuild_state()
+            return None
+
+    @staticmethod
+    def _clear_rebuild_state():
+        """Clear rebuild state files"""
+        try:
+            for f in [
+                NixOperations.REBUILD_PID_FILE,
+                NixOperations.REBUILD_LOG_FILE_REF,
+                NixOperations.REBUILD_OFFSET_FILE
+            ]:
+                if f.exists():
+                    f.unlink()
+            logger.info("Cleared rebuild state files")
+        except Exception as e:
+            logger.error(f"Error clearing rebuild state: {e}")
+
+    @staticmethod
+    def _restart_admin_if_changed():
+        """Restart admin-api service if it changed during rebuild"""
+        try:
+            # Check if admin-api needs daemon reload (unit file changed)
+            result = subprocess.run(
+                ["systemctl", "show", "admin-api", "--property=NeedDaemonReload"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            needs_reload = "yes" in result.stdout.lower()
+
+            if needs_reload:
+                logger.info("admin-api service changed, restarting...")
+
+                # Reload systemd daemon
+                subprocess.run(
+                    ["systemctl", "daemon-reload"],
+                    capture_output=True,
+                    timeout=10
+                )
+
+                # Restart admin-api service
+                subprocess.run(
+                    ["systemctl", "restart", "admin-api"],
+                    capture_output=True,
+                    timeout=10
+                )
+
+                logger.info("admin-api service restarted successfully")
+            else:
+                logger.info("admin-api service unchanged, no restart needed")
+
+        except Exception as e:
+            logger.error(f"Error checking/restarting admin-api: {e}")
 
 
 # Initialize process tracking

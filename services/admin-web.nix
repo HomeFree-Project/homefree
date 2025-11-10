@@ -138,6 +138,10 @@ in
         Environment = [
           "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd ]}"
         ];
+
+        # Prevent automatic restart during system activation
+        # Admin service will be manually restarted after rebuild if it changed
+        X-RestartIfChanged = false;
       };
     };
 
