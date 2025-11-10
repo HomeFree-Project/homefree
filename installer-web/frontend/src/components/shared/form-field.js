@@ -52,6 +52,8 @@ class FormField extends LitElement {
       color: #1d1d1f;
       font-family: inherit;
       transition: border-color 0.2s;
+      max-width: 500px;
+      width: 100%;
     }
 
     input[type="text"]:focus,

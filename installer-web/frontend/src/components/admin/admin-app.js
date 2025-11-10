@@ -43,7 +43,7 @@ class AdminApp extends LitElement {
     }
 
     .sidebar.collapsed {
-      width: 60px;
+      width: 70px;
     }
 
     .sidebar-header {
@@ -241,7 +241,7 @@ class AdminApp extends LitElement {
     .content-area {
       flex: 1;
       overflow-y: auto;
-      padding: 0;
+      padding: 24px;
     }
 
     .loading-overlay {
@@ -251,6 +251,37 @@ class AdminApp extends LitElement {
       height: 100%;
       font-size: 18px;
       color: #86868b;
+    }
+
+    /* Full-screen loading overlay for initial load */
+    .fullscreen-loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #f5f5f7;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(102, 126, 234, 0.1);
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    .loading-text {
+      font-size: 16px;
+      color: #86868b;
+      font-weight: 500;
     }
 
     .error-message {
@@ -607,14 +638,6 @@ class AdminApp extends LitElement {
   }
 
   renderModule() {
-    if (this.loading) {
-      return html`
-        <div class="loading-overlay">
-          <div>Loading configuration...</div>
-        </div>
-      `;
-    }
-
     if (this.error) {
       return html`
         <div class="error-message">
@@ -700,6 +723,16 @@ ${JSON.stringify(this.config, null, 2)}
   }
 
   render() {
+    // Show full-screen loading spinner on initial load
+    if (this.loading) {
+      return html`
+        <div class="fullscreen-loading">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">Loading configuration...</div>
+        </div>
+      `;
+    }
+
     // Group modules by section
     const sections = {};
     this.modules.forEach(module => {

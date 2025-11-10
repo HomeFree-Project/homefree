@@ -40,6 +40,7 @@ class BackupsModule extends LitElement {
       border-radius: 8px;
       margin-bottom: 20px;
       color: #1565c0;
+      max-width: 1200px;
     }
 
     .info-box strong {

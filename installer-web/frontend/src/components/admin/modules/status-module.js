@@ -30,6 +30,7 @@ class StatusModule extends LitElement {
       border-radius: 12px;
       margin-bottom: 24px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      max-width: 1200px;
     }
 
     .status-indicator {
@@ -97,6 +98,7 @@ class StatusModule extends LitElement {
       border-radius: 12px;
       padding: 24px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      max-width: 1200px;
     }
 
     .logs-header {

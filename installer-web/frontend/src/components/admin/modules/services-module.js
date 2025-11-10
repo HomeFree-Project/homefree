@@ -25,6 +25,7 @@ class ServicesModule extends LitElement {
       grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
       gap: 20px;
       margin-top: 20px;
+      max-width: 1200px;
     }
 
     .service-card {
@@ -158,14 +159,17 @@ class ServicesModule extends LitElement {
       margin-bottom: 20px;
       font-size: 14px;
       color: #1d1d1f;
+      max-width: 1200px;
     }
 
     .search-box {
       margin-bottom: 20px;
+      max-width: 1200px;
     }
 
     .search-box input {
       width: 100%;
+      max-width: 500px;
       padding: 12px 16px;
       font-size: 14px;
       border: 1px solid #d2d2d7;
