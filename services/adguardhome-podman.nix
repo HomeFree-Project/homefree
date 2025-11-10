@@ -197,7 +197,44 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.adguard.enable {
+  options.homefree.service-options.adguard = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "enable AdGuard Home Ad Blocking";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "adguard";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Ad Blocker";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "AdGuard Home";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.adguard.enable {
     adguardhome = {
       image = image;
 
@@ -260,7 +297,7 @@ in
     nameserver 127.0.0.1:53530
   '';
 
-  systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.services.adguard.enable {
+  systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.service-options.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
     serviceConfig = {
@@ -275,29 +312,26 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.adguard.enable [
-    {
-      label = "adguard";
-      name = "Ad Blocker";
-      project-name = "AdGuard Home";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.adguard) label name project-name;
       systemd-service-names = [
         "podman-adguardhome"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.adguard.enable;
         subdomains = [ "adguard" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.adguard.public;
+        public = config.homefree.service-options.adguard.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

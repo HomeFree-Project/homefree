@@ -14,8 +14,44 @@ let
   '';
 in
 {
+  options.homefree.service-options.linkwarden = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable linkwarden service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "linkwarden";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "linkwarden";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "linkwarden";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   ## Copied from nixpkgs
-  services.postgresql = lib.optionalAttrs config.homefree.services.linkwarden.enable {
+  services.postgresql = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -28,7 +64,7 @@ in
   };
 
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.linkwarden.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     linkwarden = {
       image = "ghcr.io/linkwarden/linkwarden:${version}";
 
@@ -58,7 +94,7 @@ in
       };
 
       environmentFiles = [
-        config.homefree.services.linkwarden.secrets.environment
+        config.homefree.service-options.linkwarden.secrets.environment
       ];
     };
 
@@ -83,7 +119,7 @@ in
 
   };
 
-  systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.services.linkwarden.enable {
+  systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf = [ "nftables.service" ];
@@ -92,7 +128,7 @@ in
     };
   };
 
-  systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.services.linkwarden.enable {
+  systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -101,24 +137,21 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.linkwarden.enable [
-    {
-      label = "linkwarden";
-      name = "Bookmark Manager";
-      project-name = "linkwarden";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.linkwarden) label name project-name;
       systemd-service-names = [
         "podman-linkwarden"
         "podman-meilisearch"
         "postgresql"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.linkwarden.enable;
         subdomains = [ "links" "linkwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.linkwarden.public;
+        public = config.homefree.service-options.linkwarden.public;
       };
       backup = {
         paths = [
@@ -128,6 +161,6 @@ in
           database-name
         ];
       };
-    }
-  ];
+    }];
+  };
 }

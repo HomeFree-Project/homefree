@@ -4,7 +4,7 @@ let
   containerImageName = "hadogenes/screeenly";
   containerHash = "sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f";
   port = 4201;
-  enabled = config.homefree.services.screeenly.enable == true || config.homefree.services.nextcloud.enable == true;
+  enabled = config.homefree.service-options.screeenly.enable == true || config.homefree.services.nextcloud.enable == true;
   database-type = "mysql";
   database-name = "screeenly";
   database-user = "screeenly";
@@ -26,6 +26,42 @@ let
   '';
 in
 {
+  options.homefree.service-options.screeenly = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Screeenly service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "screeenly";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "screeenly";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Screeenly";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   services.mysql = lib.optionalAttrs enabled {
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -88,27 +124,25 @@ in
 
   homefree.service-config = lib.optionals enabled [
     {
-      label = "screeenly";
-      name = "Screeenly";
-      project-name = "Screeenly";
+      inherit (config.homefree.service-options.screeenly) label name project-name;
       systemd-service-names = [
         "podman-screeenly"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.screeenly.enable;
         subdomains = [ "screeenly" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.screeenly.public;
+        public = config.homefree.service-options.screeenly.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

@@ -688,6 +688,12 @@
           description = "enable Headscale vpn service";
         };
 
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "UI open to public on WAN port";
+        };
+
         stun-port = lib.mkOption {
           type = lib.types.int;
           description = "DERP STUN relay port";
@@ -950,6 +956,12 @@
           description = "enable MediaWiki";
         };
 
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+
         sites = lib.mkOption {
           description = "Wiki site config";
           default = [];
@@ -1032,6 +1044,12 @@
           type = lib.types.bool;
           default = false;
           description = "enable Minecraft servers";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
         };
 
         secrets = {
@@ -1283,6 +1301,20 @@
         };
       };
 
+      postgres-vectorchord = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable VectorChord PostgreSQL service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       radicale = {
         enable = lib.mkOption {
           type = lib.types.bool;
@@ -1424,6 +1456,42 @@
             type = lib.types.path;
             description = "Location of Zitadel environment var file. Contains ZITADEL_MASTERKEY. Should not be a file included in your source repo.";
           };
+        };
+      };
+
+      admin = {
+        # Note: admin service is always enabled - the enable option exists for config consistency
+        # but the service will run regardless of this setting
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable admin interface (always enabled, this option exists for config consistency)";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port (not recommended)";
+        };
+      };
+
+      landing-page = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable landing page";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Open to public on WAN port";
+        };
+
+        path = lib.mkOption {
+          type = lib.types.path;
+          default = "${pkgs.homefree-site}/lib/node_modules/homefree-site/public";
+          description = "Path to landing page";
         };
       };
     };
@@ -1650,22 +1718,6 @@
       };
     };
 
-    admin-page = {
-      public = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Open to public on WAN port (not recommended)";
-      };
-    };
-
-    landing-page = {
-      path = lib.mkOption {
-        type = lib.types.path;
-        default = "${pkgs.homefree-site}/lib/node_modules/homefree-site/public";
-        description = "Path to landing page";
-      };
-    };
-
     backups = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -1798,6 +1850,114 @@
       }
     ];
 
+    # Map user-facing service options to internal service-options
+    homefree.service-options.adguard.enable = config.homefree.services.adguard.enable;
+    homefree.service-options.adguard.public = config.homefree.services.adguard.public;
+
+    homefree.service-options.baikal.enable = config.homefree.services.baikal.enable;
+    homefree.service-options.baikal.public = config.homefree.services.baikal.public;
+
+    homefree.service-options.cryptpad.enable = config.homefree.services.cryptpad.enable;
+    homefree.service-options.cryptpad.public = config.homefree.services.cryptpad.public;
+    homefree.service-options.cryptpad.adminKeys = config.homefree.services.cryptpad.adminKeys;
+
+    homefree.service-options.forgejo.enable = config.homefree.services.forgejo.enable;
+    homefree.service-options.forgejo.public = config.homefree.services.forgejo.public;
+    homefree.service-options.forgejo.disable-registration = config.homefree.services.forgejo.disable-registration;
+
+    homefree.service-options.freshrss.enable = config.homefree.services.freshrss.enable;
+    homefree.service-options.freshrss.public = config.homefree.services.freshrss.public;
+
+    homefree.service-options.frigate.enable = config.homefree.services.frigate.enable;
+    homefree.service-options.frigate.public = config.homefree.services.frigate.public;
+    homefree.service-options.frigate.media-path = config.homefree.services.frigate.media-path;
+    homefree.service-options.frigate.enable-backup-media = config.homefree.services.frigate.enable-backup-media;
+    homefree.service-options.frigate.retain = config.homefree.services.frigate.retain;
+    homefree.service-options.frigate.cameras = config.homefree.services.frigate.cameras;
+
+    homefree.service-options.grocy.enable = config.homefree.services.grocy.enable;
+    homefree.service-options.grocy.public = config.homefree.services.grocy.public;
+
+    homefree.service-options.home-assistant.enable = config.homefree.services.homeassistant.enable;
+    homefree.service-options.home-assistant.public = config.homefree.services.homeassistant.public;
+
+    homefree.service-options.homebox.enable = config.homefree.services.homebox.enable;
+    homefree.service-options.homebox.public = config.homefree.services.homebox.public;
+
+    homefree.service-options.immich.enable = config.homefree.services.immich.enable;
+    homefree.service-options.immich.public = config.homefree.services.immich.public;
+
+    homefree.service-options.jellyfin.enable = config.homefree.services.jellyfin.enable;
+    homefree.service-options.jellyfin.public = config.homefree.services.jellyfin.public;
+
+    homefree.service-options.joplin.enable = config.homefree.services.joplin.enable;
+    homefree.service-options.joplin.public = config.homefree.services.joplin.public;
+
+    homefree.service-options.kanidm.enable = config.homefree.services.kanidm.enable;
+    homefree.service-options.kanidm.public = config.homefree.services.kanidm.public;
+
+    homefree.service-options.lidarr.enable = config.homefree.services.lidarr.enable;
+    homefree.service-options.lidarr.public = config.homefree.services.lidarr.public;
+    homefree.service-options.lidarr.media-path = config.homefree.services.lidarr.media-path;
+    homefree.service-options.lidarr.downloads-path = config.homefree.services.lidarr.downloads-path;
+    homefree.service-options.lidarr.enable-backup-media = config.homefree.services.lidarr.enable-backup-media;
+
+    homefree.service-options.linkwarden.enable = config.homefree.services.linkwarden.enable;
+    homefree.service-options.linkwarden.public = config.homefree.services.linkwarden.public;
+
+    homefree.service-options.logseq.enable = config.homefree.services.logseq.enable;
+    homefree.service-options.logseq.public = config.homefree.services.logseq.public;
+
+    homefree.service-options.matrix.enable = config.homefree.services.matrix.enable;
+    homefree.service-options.matrix.public = config.homefree.services.matrix.public;
+    homefree.service-options.matrix.enable-federation = config.homefree.services.matrix.enable-federation;
+    homefree.service-options.matrix.federation-domain-whitelist = config.homefree.services.matrix.federation-domain-whitelist;
+    homefree.service-options.matrix.admin-account = config.homefree.services.matrix.admin-account;
+    homefree.service-options.matrix.secrets = config.homefree.services.matrix.secrets;
+
+    homefree.service-options.mediawiki.enable = config.homefree.services.mediawiki.enable;
+    homefree.service-options.mediawiki.public = config.homefree.services.mediawiki.public;
+    homefree.service-options.mediawiki.sites = config.homefree.services.mediawiki.sites;
+
+    homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
+    homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
+    homefree.service-options.minecraft.secrets = config.homefree.services.minecraft.secrets;
+    homefree.service-options.minecraft.instances = config.homefree.services.minecraft.instances;
+
+    homefree.service-options.nextcloud.enable = config.homefree.services.nextcloud.enable;
+    homefree.service-options.nextcloud.public = config.homefree.services.nextcloud.public;
+    homefree.service-options.nextcloud.secrets = config.homefree.services.nextcloud.secrets;
+
+    homefree.service-options.nzbget.enable = config.homefree.services.nzbget.enable;
+    homefree.service-options.nzbget.public = config.homefree.services.nzbget.public;
+
+    homefree.service-options.ollama.enable = config.homefree.services.ollama.enable;
+    homefree.service-options.ollama.public = config.homefree.services.ollama.public;
+
+    homefree.service-options.postgres-vectorchord.enable = config.homefree.services.postgres-vectorchord.enable;
+    homefree.service-options.postgres-vectorchord.public = config.homefree.services.postgres-vectorchord.public;
+
+    homefree.service-options.radicale.enable = config.homefree.services.radicale.enable;
+    homefree.service-options.radicale.public = config.homefree.services.radicale.public;
+
+    homefree.service-options.screeenly.enable = config.homefree.services.screeenly.enable;
+    homefree.service-options.screeenly.public = config.homefree.services.screeenly.public;
+
+    homefree.service-options.snipe-it.enable = config.homefree.services.snipe-it.enable;
+    homefree.service-options.snipe-it.public = config.homefree.services.snipe-it.public;
+
+    homefree.service-options.unifi.enable = config.homefree.services.unifi.enable;
+    homefree.service-options.unifi.public = config.homefree.services.unifi.public;
+
+    homefree.service-options.vaultwarden.enable = config.homefree.services.vaultwarden.enable;
+    homefree.service-options.vaultwarden.public = config.homefree.services.vaultwarden.public;
+
+    homefree.service-options.webdav.enable = config.homefree.services.webdav.enable;
+    homefree.service-options.webdav.public = config.homefree.services.webdav.public;
+
+    homefree.service-options.zitadel.enable = config.homefree.services.zitadel.enable;
+    homefree.service-options.zitadel.public = config.homefree.services.zitadel.public;
+
     warnings =
       (if config.homefree.backups.enable == false then [
         ''
@@ -1817,11 +1977,11 @@
         ''
       ] else [])
     ++
-      (if config.homefree.landing-page.path == options.homefree.landing-page.path.default then [
+      (if config.homefree.services.landing-page.path == options.homefree.services.landing-page.path.default then [
         ''
           Landing page is set to the default Homefree project landing page.
 
-            homefree.landing-page.path = "<path to html root>";
+            homefree.services.landing-page.path = "<path to html root>";
         ''
       ] else [])
     ++

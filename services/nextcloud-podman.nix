@@ -199,8 +199,68 @@ let
   '';
 in
 {
-  # Database setup - only if using local postgres (not podman postgres)
-  services.postgresql = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  options.homefree.service-options.nextcloud = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Nextcloud media server";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    secrets = {
+      admin-password = lib.mkOption {
+        type = lib.types.path;
+        description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
+      };
+
+      env = lib.mkOption {
+        type = lib.types.path;
+        description = ''
+          Location of docker env file. Contains:
+
+          NEXTCLOUD_ADMIN_PASSWORD=<password>
+
+          Should not be a file included in your source repo.
+        '';
+      };
+
+      secret-file = lib.mkOption {
+        type = lib.types.path;
+        description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
+      };
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "nextcloud";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Cloud Storage";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Nextcloud";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    # Database setup - only if using local postgres (not podman postgres)
+    services.postgresql = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     ensureDatabases = [ database-name ];
     ensureUsers = [
       {
@@ -211,7 +271,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     nextcloud = {
       image = "nextcloud:${version}-apache";
 
@@ -260,7 +320,7 @@ in
 
       ## @TODO: this shouldn't need to be exposed to user config
       environmentFiles = [
-        config.homefree.services.nextcloud.secrets.env
+        config.homefree.service-options.nextcloud.secrets.env
       ];
     };
 
@@ -347,7 +407,7 @@ in
     };
   };
 
-  systemd.services.podman-nextcloud = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  systemd.services.podman-nextcloud = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
     wants = [ "postgresql.service" ];
@@ -358,29 +418,26 @@ in
     };
   };
 
-  systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf = [ "nftables.service" ];
   };
 
-  systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "podman-nextcloud.service" ];
   };
 
-  systemd.services.podman-nextcloud-cron = lib.optionalAttrs config.homefree.services.nextcloud.enable {
+  systemd.services.podman-nextcloud-cron = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "nftables.service" ];
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.nextcloud.enable [
-    {
-      label = "nextcloud";
-      name = "Nextcloud";
-      project-name = "Nextcloud";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.nextcloud) label name project-name;
       release-tracking = {
         type = "github";
         project = "nextcloud/server";
@@ -393,13 +450,13 @@ in
         "postgresql"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.nextcloud.enable;
         subdomains = [ "nextcloud" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.nextcloud.public;
+        public = config.homefree.service-options.nextcloud.public;
         extraCaddyConfig = ''
           # Nextcloud specific headers
           header {
@@ -480,7 +537,7 @@ in
           database-name
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

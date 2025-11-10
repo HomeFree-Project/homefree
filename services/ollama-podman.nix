@@ -10,11 +10,47 @@ let
   port = 3014;
 in
 {
-  environment.systemPackages = lib.optionals config.homefree.services.ollama.enable [
+  options.homefree.service-options.ollama = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Ollama service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "ollama";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Ollama";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Ollama";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  environment.systemPackages = lib.optionals config.homefree.service-options.ollama.enable [
     pkgs.ollama
   ];
 
-  services.ollama = lib.optionalAttrs config.homefree.services.ollama.enable {
+  services.ollama = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     enable = true;
     ## Default: 11434
     port = 11434;
@@ -24,7 +60,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.ollama.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     ollama-webui = {
       image = "ghcr.io/open-webui/open-webui:main";
 
@@ -61,7 +97,7 @@ in
     };
   };
 
-  systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.services.ollama.enable {
+  systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -70,30 +106,27 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.ollama.enable [
-    {
-      label = "ollama";
-      name = "Ollama";
-      project-name = "Ollama";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.ollama) label name project-name;
       ## @TODO: Why is this not a list?
       systemd-service-names = [
         "ollama"
         "podman-ollama-webui"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.ollama.enable;
         subdomains = [ "ollama" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.ollama.public;
+        public = config.homefree.service-options.ollama.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }

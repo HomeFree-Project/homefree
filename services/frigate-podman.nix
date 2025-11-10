@@ -3,14 +3,14 @@ let
   version = "0.17.1";
   configVersion = "0.17-1";
   containerDataPath = "/var/lib/frigate";
-  mediaPath = if config.homefree.services.frigate.media-path == null
+  mediaPath = if config.homefree.service-options.frigate.media-path == null
     then "${containerDataPath}/media"
-    else config.homefree.services.frigate.media-path;
-  cameras-filtered = if config.homefree.services.frigate.cameras != null
-    then lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras
+    else config.homefree.service-options.frigate.media-path;
+  cameras-filtered = if config.homefree.service-options.frigate.cameras != null
+    then lib.filter (camera: camera.enable == true) config.homefree.service-options.frigate.cameras
     else [];
   cameras-go2rtc = lib.filter (camera: camera.direct-stream == false) cameras-filtered;
-  retain = config.homefree.services.frigate.retain;
+  retain = config.homefree.service-options.frigate.retain;
 
   frigate-config = {
     version = configVersion;
@@ -158,12 +158,72 @@ let
   '';
 in
   {
+  options.homefree.service-options.frigate = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Frigate service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    media-path = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Location to save recording";
+    };
+
+    enable-backup-media = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether to backup records";
+    };
+
+    retain = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
+      description = "If specified, how long in DAYS to keep files before deleting";
+    };
+
+    cameras = lib.mkOption {
+      type = lib.types.nullOr (lib.types.listOf lib.types.attrs);
+      default = null;
+      description = "List of cameras";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "frigate";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "NVR (Network Video Recorer)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Frigate";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
     environment.systemPackages= [
     ## Google Coral (Edge TPU) USB Support
     pkgs.libedgetpu
   ];
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.frigate.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.frigate.enable {
     frigate = {
       image = "ghcr.io/blakeblackshear/frigate:${version}";
 
@@ -203,7 +263,7 @@ in
     };
   };
 
-  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.services.frigate.enable {
+  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -247,16 +307,13 @@ in
   #   '';
   # };
 
-  homefree.service-config = lib.optionals config.homefree.services.frigate.enable [
-    {
-      label = "frigate";
-      name = "NVR (Network Video Recorer)";
-      project-name = "Frigate";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.frigate) label name project-name;
       systemd-service-names = [
         "podman-frigate"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.frigate.enable;
         subdomains = [ "nvr" "frigate" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -264,14 +321,14 @@ in
         port = 8971;
         ssl = true;
         ssl-no-verify = true;
-        public = config.homefree.services.frigate.public;
+        public = config.homefree.service-options.frigate.public;
       };
-      backup = if config.homefree.services.frigate.enable-backup-media then {
+      backup = if config.homefree.service-options.frigate.enable-backup-media then {
         paths = [
           mediaPath
         ];
       } else {};
-    }
-  ];
+    }];
+  };
 }
 

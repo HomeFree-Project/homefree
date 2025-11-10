@@ -13,7 +13,7 @@ let
 
   SYNAPSE_CONFIG_DIR = "/data";
 
-  registration-shared-secret-path = config.homefree.services.matrix.secrets.registration-shared-secret;
+  registration-shared-secret-path = config.homefree.service-options.matrix.secrets.registration-shared-secret;
 
   settings = {
     ## server_name is used for user logins, e.g. @user:homefree.host, rather than @user:matrix.homefree.host
@@ -21,7 +21,7 @@ let
     public_baseurl = "https://matrix.${config.homefree.system.domain}";
     serve_server_wellknown = true;
     ## Set empty whitelist if federation is disabled
-    federation_domain_whitelist = if config.homefree.services.matrix.enable-federation == false then [] else config.homefree.services.matrix.federation-domain-whitelist;
+    federation_domain_whitelist = if config.homefree.service-options.matrix.enable-federation == false then [] else config.homefree.service-options.matrix.federation-domain-whitelist;
     extra_well_known_server_content = {
       m.homeserver = {
         base_url = "https://matrix.${config.homefree.system.domain}";
@@ -80,8 +80,8 @@ let
   preStart = ''
     mkdir -p ${containerDataPath}
 
-    mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.admin-account-password}"
-    mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.registration-shared-secret}"
+    mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.admin-account-password}"
+    mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.registration-shared-secret}"
 
     ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
       DO
@@ -116,21 +116,86 @@ let
     EOF
   '';
 
-  postStart = (if config.homefree.services.matrix.admin-account != null then ''
+  postStart = (if config.homefree.service-options.matrix.admin-account != null then ''
     ${pkgs.podman}/bin/podman exec \
     -it ${image}:${version} \
-    -v "${SYNAPSE_CONFIG_DIR}/data/admin-account-password-file:${config.homefree.services.matrix.secrets.admin-account-password}" \
+    -v "${SYNAPSE_CONFIG_DIR}/data/admin-account-password-file:${config.homefree.service-options.matrix.secrets.admin-account-password}" \
     register_new_matrix_user http://localhost:${toString port} \
     -c /data/homeserver.yaml \
     --exists-ok \
     --admin \
-    --user ${config.homefree.services.matrix.admin-account} \
+    --user ${config.homefree.service-options.matrix.admin-account} \
     --password-file /data/admin-account-password-file
   '' else "");
 in
 {
+  options.homefree.service-options.matrix = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Matrix-Synapse service";
+    };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.matrix.enable {
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    enable-federation = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Matrix federation";
+    };
+
+    federation-domain-whitelist = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Federation domain whitelist";
+    };
+
+    admin-account = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Admin account username";
+    };
+
+    secrets = {
+      registration-shared-secret = lib.mkOption {
+        type = lib.types.path;
+        description = "Path to registration shared secret file";
+      };
+      admin-account-password = lib.mkOption {
+        type = lib.types.path;
+        description = "Path to admin account password file";
+      };
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "matrix";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "matrix-synapse";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Matrix-Synapse";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.matrix.enable {
     matrix-synapse = {
       image = "${image}:${version}";
 
@@ -171,7 +236,7 @@ in
     # }
   };
 
-  systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.services.matrix.enable {
+  systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -184,7 +249,7 @@ in
   };
 
   # services.coturn = rec {
-  #   enable = config.homefree.services.matrix.enable;
+  #   enable = config.homefree.service-options.matrix.enable;
   #   no-cli = true;
   #   no-tcp-relay = true;
   #   min-port = 49000;
@@ -232,7 +297,7 @@ in
   # };
 
   ## These are blocked by adguardhome
-  services.adguardhome.settings.user_rules = lib.optionals config.homefree.services.matrix.enable [
+  services.adguardhome.settings.user_rules = lib.optionals config.homefree.service-options.matrix.enable [
     # "@@||_matrix._tcp.bchn.foo^"
     # "@@||_matrix-fed._tcp.bchn.foo^"
     # "@@||_matrix._tcp.mastersh.pro^"
@@ -242,8 +307,8 @@ in
     # "@@||dea.monster^"
   ];
 
-  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.services.matrix.enable {
-    enable = config.homefree.services.matrix.enable;
+  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.service-options.matrix.enable {
+    enable = config.homefree.service-options.matrix.enable;
     # environmentFile = /etc/keyring/matrix-appservice-discord/tokens.env;
     # The appservice is pre-configured to use SQLite by default.
     # It's also possible to use PostgreSQL.
@@ -266,8 +331,8 @@ in
   # systemd.services.matrix-synapse =
   # let
   #   preStart = ''
-  #     mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.admin-account-password}"
-  #     mkdir -p "${builtins.dirOf config.homefree.services.matrix.secrets.registration-shared-secret}"
+  #     mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.admin-account-password}"
+  #     mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.registration-shared-secret}"
   #
   #     ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
   #       DO
@@ -302,8 +367,8 @@ in
   #     EOF
   #   '';
   #
-  #   postStart = (if config.homefree.services.matrix.admin-account != null then ''
-  #     /run/current-system/sw/bin/matrix-synapse-register_new_matrix_user --exists-ok --admin --user ${config.homefree.services.matrix.admin-account} --password-file ${config.homefree.services.matrix.secrets.admin-account-password}
+  #   postStart = (if config.homefree.service-options.matrix.admin-account != null then ''
+  #     /run/current-system/sw/bin/matrix-synapse-register_new_matrix_user --exists-ok --admin --user ${config.homefree.service-options.matrix.admin-account} --password-file ${config.homefree.service-options.matrix.secrets.admin-account-password}
   #   '' else "");
   # in
   # {
@@ -316,29 +381,26 @@ in
   #     ];
   #     ## Make sure service can read the secrets, as it's heavily sandboxed.
   #     BindReadOnlyPaths = [
-  #       config.homefree.services.matrix.secrets.admin-account-password
-  #       config.homefree.services.matrix.secrets.registration-shared-secret
+  #       config.homefree.service-options.matrix.secrets.admin-account-password
+  #       config.homefree.service-options.matrix.secrets.registration-shared-secret
   #     ];
   #   };
   # };
 
-  homefree.service-config = lib.optionals config.homefree.services.matrix.enable [
-    {
-      label = "matrix";
-      name = "Matrix Chat";
-      project-name = "Matrix-Synapse";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.matrix) label name project-name;
       systemd-service-names = [
         "matrix-synapse"
         "matrix-synapse-discord"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.matrix.enable;
         subdomains = [ "matrix" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.matrix.public;
+        public = config.homefree.service-options.matrix.public;
         extraCaddyConfig = ''
           # Matrix Synapse settings
           respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
@@ -367,6 +429,6 @@ in
           "/var/lib/private/matrix-appservice-discord"
         ];
       };
-    }
-  ];
+    }];
+  };
 }

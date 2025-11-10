@@ -122,7 +122,43 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.webdav.enable {
+  options.homefree.service-options.webdav = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable hacdias webdav service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "webdav";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "WebDAV";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "hacdias webdav";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.webdav.enable {
     webdav = {
       image = "hacdias/webdav:${version}";
 
@@ -148,7 +184,7 @@ in
     };
   };
 
-  systemd.services.podman-webdav = lib.optionalAttrs config.homefree.services.webdav.enable {
+  systemd.services.podman-webdav = lib.optionalAttrs config.homefree.service-options.webdav.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -157,22 +193,19 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.webdav.enable [
-    {
-      label = "webdav";
-      name = "WebDAV";
-      project-name = "hacdias webdav";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.webdav) label name project-name;
       systemd-service-names = [
         "podman-webdav"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.webdav.enable;
         subdomains = [ "webdav" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.webdav.public;
+        public = config.homefree.service-options.webdav.public;
         oauth2 = true;
         # basic-auth = true;
       };
@@ -181,7 +214,6 @@ in
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
-

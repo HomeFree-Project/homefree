@@ -4,6 +4,42 @@ let
   port = 4185;
 in
 {
+  options.homefree.service-options.goidc-proxy = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable goidc-proxy service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "goidc-proxy";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "goidc proxy (for Basic Auth)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "goidc-proxy";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     goidc-proxy = {
       image = "???/goidc-proxy:${version}";
@@ -36,14 +72,12 @@ in
 
   homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
-      label = "goidc-proxy";
-      name = "goidc proxy (for Basic Auth)";
-      project-name = "goidc-proxy";
+      inherit (config.homefree.service-options.goidc-proxy) label name project-name;
       systemd-service-names = [
         "podman-goidc-proxy"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.goidc-proxy.enable;
         subdomains = [ "auth" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];

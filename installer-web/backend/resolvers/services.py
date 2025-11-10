@@ -14,43 +14,8 @@ logger = logging.getLogger(__name__)
 
 CONFIG_JSON_PATH = "/run/homefree/admin/config.json"
 HOMEFREE_CONFIG_PATH = "/etc/nixos/homefree-config.json"
-
-# Complete list of all services defined in module.nix
-# This is the authoritative list of services that can be configured
-ALL_SERVICES = [
-    "adguard",
-    "authentik",
-    "baikal",
-    "cryptpad",
-    "forgejo",
-    "freshrss",
-    "frigate",
-    "gitea",
-    "grocy",
-    "headscale",
-    "homeassistant",
-    "homebox",
-    "immich",
-    "jellyfin",
-    "joplin",
-    "kanidm",
-    "lidarr",
-    "linkwarden",
-    "logseq",
-    "matrix",
-    "mediawiki",
-    "minecraft",
-    "nextcloud",
-    "nzbget",
-    "ollama",
-    "radicale",
-    "screeenly",
-    "snipe-it",
-    "unifi",
-    "vaultwarden",
-    "webdav",
-    "zitadel",
-]
+ALL_SERVICES_JSON_PATH = "/run/homefree/admin/all-services.json"
+SERVICE_METADATA_JSON_PATH = "/run/homefree/admin/service-metadata.json"
 
 
 class ServicesResolver:
@@ -59,14 +24,15 @@ class ServicesResolver:
         """Get list of all services with their runtime status and configuration"""
 
         # Read configurations
+        all_services = ServicesResolver._read_all_services()
         homefree_config = ServicesResolver._read_homefree_config()
         services_config_map = ServicesResolver._read_service_config_map()
 
         services_status = []
         processed_labels = set()
 
-        # First, process all services from homefree config
-        for service_label in ALL_SERVICES:
+        # First, process all services from the generated list
+        for service_label in all_services:
             service_settings = homefree_config.get("services", {}).get(service_label, {})
             enabled = service_settings.get("enable", False)
             public = service_settings.get("public", False)
@@ -141,14 +107,47 @@ class ServicesResolver:
             services_status.append(service_status)
             processed_labels.add(service_label)
 
-        # Sort: running services first, then by name
+        # Sort: running services first, then starting/transitioning, then disabled/stopped, then by name
         def sort_key(service):
             is_running = service.active_state == "active" and service.sub_state == "running"
-            return (not is_running, service.name.lower())
+            is_transitioning = (
+                service.active_state in ("activating", "reloading", "deactivating") or
+                service.sub_state in ("start", "stop", "reloading", "auto-restart")
+            )
+            is_disabled = not service.enabled or (service.active_state == "inactive" and service.sub_state == "dead")
+
+            # Priority: 0 = running, 1 = transitioning/starting, 2 = disabled/stopped, 3 = other
+            if is_running:
+                priority = 0
+            elif is_transitioning:
+                priority = 1
+            elif is_disabled:
+                priority = 2
+            else:
+                priority = 3
+
+            return (priority, service.name.lower())
 
         services_status.sort(key=sort_key)
 
         return services_status
+
+    @staticmethod
+    def _read_all_services() -> List[str]:
+        """Read list of all available services from generated JSON file"""
+        try:
+            config_path = Path(ALL_SERVICES_JSON_PATH)
+            if not config_path.exists():
+                logger.warning(f"All services list not found at {ALL_SERVICES_JSON_PATH}, using empty list")
+                return []
+
+            with open(config_path, 'r') as f:
+                services = json.load(f)
+                logger.info(f"Loaded {len(services)} services from {ALL_SERVICES_JSON_PATH}")
+                return services
+        except Exception as e:
+            logger.error(f"Error reading all services list: {e}")
+            return []
 
     @staticmethod
     def _read_homefree_config() -> Dict[str, Any]:

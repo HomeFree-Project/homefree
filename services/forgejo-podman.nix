@@ -10,12 +10,55 @@ let
   '';
 in
 {
-  environment.systemPackages = [
-    ## Installs "gitea" executable
-    pkgs.forgejo
-  ];
+  options.homefree.service-options.forgejo = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Forgejo git service";
+    };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.forgejo.enable {
+    disable-registration = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Disable user registration";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "forgejo";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Git";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Forgejo";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    environment.systemPackages = [
+      ## Installs "gitea" executable
+      pkgs.forgejo
+    ];
+
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
     forgejo = {
       image = "codeberg.org/forgejo/forgejo:${version}";
 
@@ -50,7 +93,7 @@ in
         FORGEJO__server__ROOT_URL = "https://git.${config.homefree.system.domain}";
 
         ## app.ini service config
-        FORGEJO__service__DISABLE_REGISTRATION = if config.homefree.services.forgejo.disable-registration == true then "true" else "false";
+        FORGEJO__service__DISABLE_REGISTRATION = if config.homefree.service-options.forgejo.disable-registration == true then "true" else "false";
 
         ## app.ini migrations config
         FORGEJO__migrations__ALLOWED_DOMAINS = "*";
@@ -77,7 +120,7 @@ in
     };
   };
 
-  systemd.services.podman-forgejo = lib.optionalAttrs config.homefree.services.forgejo.enable {
+    systemd.services.podman-forgejo = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -86,22 +129,19 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.forgejo.enable [
-    {
-      label = "forgejo";
-      name = "Git";
-      project-name = "Forgejo";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.forgejo) label name project-name;
       systemd-service-names = [
         "podman-forgejo"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.forgejo.enable;
         subdomains = [ "git" "forgejo" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.forgejo.public;
+        public = config.homefree.service-options.forgejo.public;
       };
       firewall = {
         open-ports = {
@@ -113,7 +153,7 @@ in
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

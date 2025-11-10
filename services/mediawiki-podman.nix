@@ -3,7 +3,7 @@ let
   ## Update extension versions below when this is updated
   version = "1.45.3";
 
-  databases = lib.map (site: "mediawiki_${site.subdomain}") config.homefree.services.mediawiki.sites;
+  databases = lib.map (site: "mediawiki_${site.subdomain}") config.homefree.service-options.mediawiki.sites;
 
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 7036;
@@ -232,8 +232,50 @@ let
   '';
 in
 {
+  options.homefree.service-options.mediawiki = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable MediaWiki";
+    };
 
-  services.mysql = {
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    sites = lib.mkOption {
+      description = "Wiki site config";
+      default = [];
+      type = with lib.types; listOf (submodule {
+        options = {
+          public = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Open to public on WAN port";
+          };
+          subdomain = lib.mkOption {
+            type = lib.types.str;
+            default = "wiki";
+            description = "Subdomain for wiki (must be unique)";
+          };
+          name = lib.mkOption {
+            type = lib.types.str;
+            default = "Wiki";
+            description = "Name for site";
+          };
+          logo-path = lib.mkOption {
+            type = lib.types.path;
+            description = "Location of MediaWiki logo file";
+          };
+        };
+      });
+    };
+  };
+
+  config = {
+    services.mysql = {
   ensureDatabases = databases;
 
   ensureUsers = [
@@ -246,7 +288,7 @@ in
   ];
 };
 
-virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.mediawiki.enable
+virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.mediawiki.enable
   (lib.listToAttrs
     (lib.imap0 (index: site:
     let
@@ -299,7 +341,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
 
         ## @TODO: this shouldn't need to be exposed to user config
         environmentFiles = [
-          config.homefree.services.mediawiki.secrets.env
+          config.homefree.service-options.mediawiki.secrets.env
         ];
 
         environment = {
@@ -317,10 +359,10 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           # MEDIAWIKI_DB_PASSWORD = "admin123";
         };
       };
-    }) config.homefree.services.mediawiki.sites)
+    }) config.homefree.service-options.mediawiki.sites)
   );
 
-  systemd.services = lib.optionalAttrs config.homefree.services.mediawiki.enable
+  systemd.services = lib.optionalAttrs config.homefree.service-options.mediawiki.enable
   (lib.listToAttrs (
     lib.map (site:
     let
@@ -376,10 +418,10 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
         ## MySQL setup is not currently site specific, so it is being run
         ## for each site, even though it only needs to currently be run once.
         ## Leaving it here though as each DB for each site should have its own perms.
-        MYSQL_PASSWORD_RAW=$(cat ${config.homefree.services.mediawiki.secrets.mysql-password})
+        MYSQL_PASSWORD_RAW=$(cat ${config.homefree.service-options.mediawiki.secrets.mysql-password})
         # Escape single quotes
         MYSQL_PASSWORD="''${MYSQL_PASSWORD_RAW//\'/\\\'}"
-        WG_SECRET_KEY=$(cat ${config.homefree.services.mediawiki.secrets.wgSecretKey})
+        WG_SECRET_KEY=$(cat ${config.homefree.service-options.mediawiki.secrets.wgSecretKey})
 
         ## @TODO: reduce privileges here. mediawiki shouldn't be admin
         ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'mediawiki'@'localhost'"
@@ -425,10 +467,10 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           ExecStartPost = [ "!${pkgs.writeShellScript "${site-id}-poststart" postStart}" ];
         };
       };
-    }) config.homefree.services.mediawiki.sites)
+    }) config.homefree.service-options.mediawiki.sites)
   );
 
-  homefree.service-config = lib.optionals config.homefree.services.mediawiki.enable
+  homefree.service-config = lib.optionals config.homefree.service-options.mediawiki.enable
   (lib.imap0 (index: site:
   let
     site-id = "mediawiki_${site.subdomain}";
@@ -443,7 +485,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
       "mysql"
     ];
     reverse-proxy = {
-      enable = true;
+      enable = config.homefree.service-options.mediawiki.enable;
       subdomains = [ site.subdomain ];
       http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
       https-domains = [ config.homefree.system.domain ];
@@ -459,6 +501,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
         site-id
       ];
     };
-  }) config.homefree.services.mediawiki.sites);
+  }) config.homefree.service-options.mediawiki.sites);
+  };
 }
 

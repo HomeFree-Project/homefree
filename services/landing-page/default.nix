@@ -19,13 +19,13 @@ in
         "caddy"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.services.landing-page.enable;
         rootDomain = true;
         subdomains = [ "www" "homefree" ];
         http-domains = [ config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        static-path = config.homefree.landing-page.path;
-        public = true;
+        static-path = config.homefree.services.landing-page.path;
+        public = config.homefree.services.landing-page.public;
         extraCaddyConfig = ''
           # Matrix Synapse settings
           header /.well-known/matrix/* Content-Type application/json

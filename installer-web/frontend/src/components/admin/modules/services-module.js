@@ -325,15 +325,43 @@ class ServicesModule extends LitElement {
     this.error = null;
     this.searchQuery = '';
     this.modified = false;
+    this.pollInterval = null;
+    this.pollIntervalMs = 5000; // Poll every 5 seconds
   }
 
   async connectedCallback() {
     super.connectedCallback();
     await this.loadServices();
+    this.startPolling();
   }
 
-  async loadServices() {
-    this.loading = true;
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.stopPolling();
+  }
+
+  startPolling() {
+    // Clear any existing interval
+    this.stopPolling();
+
+    // Start polling for service status updates
+    this.pollInterval = setInterval(async () => {
+      await this.loadServices(false); // Don't show loading spinner on polls
+    }, this.pollIntervalMs);
+  }
+
+  stopPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+
+  async loadServices(showLoadingSpinner = true) {
+    // Only show loading spinner on initial load, not on polling updates
+    if (showLoadingSpinner && this.services.length === 0) {
+      this.loading = true;
+    }
     this.error = null;
 
     try {
@@ -346,6 +374,7 @@ class ServicesModule extends LitElement {
       }
 
       // Populate config with current service states
+      // But don't overwrite user's pending changes
       services.forEach(service => {
         if (!this.config.services[service.label]) {
           this.config.services[service.label] = {
@@ -453,6 +482,10 @@ class ServicesModule extends LitElement {
     const isEnabled = service.enabled;
     const isPublic = service.public;
 
+    // Admin service can't be disabled (no enable toggle)
+    const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
+    const isAdminApi = service.label === 'admin-api';
+
     return html`
       <div class="service-row ${isEnabled ? 'enabled' : ''}">
         <div class="status-indicator">
@@ -476,19 +509,21 @@ class ServicesModule extends LitElement {
         </div>
 
         <div class="service-controls">
-          <div class="toggle-container">
-            <span class="toggle-label">Enable</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                .checked=${isEnabled}
-                @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
+          ${!cannotDisable ? html`
+            <div class="toggle-container">
+              <span class="toggle-label">Enable</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  .checked=${isEnabled}
+                  @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          ` : ''}
 
-          ${isEnabled ? html`
+          ${isEnabled && !isAdminApi ? html`
             <div class="toggle-container">
               <span class="toggle-label">Public (WAN)</span>
               <label class="toggle-switch">
@@ -499,6 +534,12 @@ class ServicesModule extends LitElement {
                 />
                 <span class="toggle-slider"></span>
               </label>
+            </div>
+          ` : ''}
+
+          ${cannotDisable ? html`
+            <div class="toggle-label" style="color: #86868b; font-size: 12px;">
+              ${isAdminApi ? 'System service' : 'System service (always enabled)'}
             </div>
           ` : ''}
         </div>

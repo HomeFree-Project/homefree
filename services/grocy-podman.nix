@@ -11,10 +11,47 @@ let
   port = 3018;
 in
 {
-  ## @NOTE: Default username and password: admin, admin
-  ## @TODO: Setup LDAP login (see /var/lib/grocy/data/config.php)
-  ##        Can this be set up with env vars?
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.grocy.enable {
+  options.homefree.service-options.grocy = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Grocy service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "grocy";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Grocy";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Grocy";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    ## @NOTE: Default username and password: admin, admin
+    ## @TODO: Setup LDAP login (see /var/lib/grocy/data/config.php)
+    ##        Can this be set up with env vars?
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.grocy.enable {
     grocy = {
       image = "lscr.io/linuxserver/grocy:${version}";
 
@@ -39,7 +76,7 @@ in
     };
   };
 
-  systemd.services.podman-grocy = lib.optionalAttrs config.homefree.services.grocy.enable {
+  systemd.services.podman-grocy = lib.optionalAttrs config.homefree.service-options.grocy.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -48,29 +85,26 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.grocy.enable [
-    {
-      label = "grocy";
-      name = "Grocy";
-      project-name = "Grocy";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.grocy) label name project-name;
       systemd-service-names = [
         "podman-grocy"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.grocy.enable;
         subdomains = [ "grocy" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.grocy.public;
+        public = config.homefree.service-options.grocy.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

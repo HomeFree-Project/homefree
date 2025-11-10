@@ -48,7 +48,43 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.unifi.enable {
+  options.homefree.service-options.unifi = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Unifi Controller service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "unifi";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Unifi Controller";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Unifi Controller";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.unifi.enable {
     unifi-db = {
       image = "mongo:${mongo-version}";
       # image = "mongodb/mongodb-community-server:${version}";
@@ -142,7 +178,7 @@ in
     };
   };
 
-  systemd.services.podman-unifi-db = lib.optionalAttrs config.homefree.services.unifi.enable {
+  systemd.services.podman-unifi-db = lib.optionalAttrs config.homefree.service-options.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -151,7 +187,7 @@ in
     };
   };
 
-  systemd.services.podman-unifi = lib.optionalAttrs config.homefree.services.unifi.enable {
+  systemd.services.podman-unifi = lib.optionalAttrs config.homefree.service-options.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -160,16 +196,13 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.unifi.enable [
-    {
-      label = "unifi";
-      name = "Unifi Controller";
-      project-name = "Unifi Controller";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.unifi) label name project-name;
       systemd-service-names = [
         "podman-unifi"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.unifi.enable;
         subdomains = [ "unifi" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -177,7 +210,7 @@ in
         port = port;
         ssl = true;
         ssl-no-verify = true;
-        public = config.homefree.services.unifi.public;
+        public = config.homefree.service-options.unifi.public;
       };
       backup = {
         paths = [
@@ -185,7 +218,6 @@ in
           mongo-containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
-

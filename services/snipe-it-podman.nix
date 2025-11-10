@@ -5,7 +5,7 @@ let
   preStart = ''
     mkdir -p ${containerDataPath}
 
-    MYSQL_PASSWORD=$(cat ${config.homefree.services.snipe-it.secrets.mysql-password})
+    MYSQL_PASSWORD=$(cat ${config.homefree.service-options.snipe-it.secrets.mysql-password})
 
     ## @TODO: reduce privileges here. snipeit shouldn't be admin
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
@@ -21,8 +21,44 @@ let
   port = 3017;
 in
 {
+  options.homefree.service-options.snipe-it = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Snipe-IT service";
+    };
 
-  services.mysql = lib.optionalAttrs config.homefree.services.snipe-it.enable {
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "snipe-it";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "snipeit";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Snipe-IT";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+
+  services.mysql = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
     ensureDatabases = [
       "snipeit"
     ];
@@ -37,7 +73,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.snipe-it.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
     snipe-it = {
       image = "snipe/snipe-it:${version}";
 
@@ -58,7 +94,7 @@ in
 
       ## @TODO: this shouldn't need to be exposed to user config
       environmentFiles = [
-        config.homefree.services.snipe-it.secrets.env
+        config.homefree.service-options.snipe-it.secrets.env
       ];
 
       environment = {
@@ -240,7 +276,7 @@ in
     };
   };
 
-  systemd.services.podman-snipe-it = lib.optionalAttrs config.homefree.services.snipe-it.enable {
+  systemd.services.podman-snipe-it = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -249,23 +285,20 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.snipe-it.enable [
-    {
-      label = "snipe-it";
-      name = "Snipe-IT";
-      project-name = "Snipe-IT";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.snipe-it) label name project-name;
       systemd-service-names = [
         "podman-snipe-it"
         "mysql"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.snipe-it.enable;
         subdomains = [ "snipeit" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.snipe-it.public;
+        public = config.homefree.service-options.snipe-it.public;
       };
       backup = {
         paths = [
@@ -275,7 +308,6 @@ in
           "snipeit"
         ];
       };
-    }
-  ];
+    }];
+  };
 }
-

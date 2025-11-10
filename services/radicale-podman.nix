@@ -9,7 +9,43 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.radicale.enable {
+  options.homefree.service-options.radicale = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Radicale service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "radicale";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Contacts/Calendar (CalDAV/CardDAV)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Radicale";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.radicale.enable {
     radicale = {
       image = "tomsquest/docker-radicale:${version}";
 
@@ -34,7 +70,7 @@ in
     };
   };
 
-  systemd.services.podman-radicale = lib.optionalAttrs config.homefree.services.radicale.enable  {
+  systemd.services.podman-radicale = lib.optionalAttrs config.homefree.service-options.radicale.enable  {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -43,22 +79,19 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.radicale.enable [
-    {
-      label = "radicale";
-      name = "Contacts/Calendar (CalDAV/CardDAV)";
-      project-name = "Radicale";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.radicale) label name project-name;
       systemd-service-names = [
         "podman-radicale"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.radicale.enable;
         subdomains = [ "radicale" "dav" "caldav" "carddav" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.radicale.public;
+        public = config.homefree.service-options.radicale.public;
         # basic-auth = true;
       };
       backup = {
@@ -66,7 +99,6 @@ in
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
-

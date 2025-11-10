@@ -6,7 +6,62 @@ let
   initialPort = 25565;
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.minecraft.enable (
+  options.homefree.service-options.minecraft = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Minecraft servers";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    secrets = {
+      curseforge-api-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of Curseforge API Key";
+      };
+      env = lib.mkOption {
+        type = lib.types.path;
+        description = "Location of docker env file";
+      };
+      secret-file = lib.mkOption {
+        type = lib.types.path;
+        description = "Location of Nextcloud secrets file";
+      };
+    };
+
+    instances = lib.mkOption {
+      description = "Minecraft instance config";
+      default = [];
+      type = with lib.types; listOf (submodule {
+        options = {
+          public = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Open to public on WAN port";
+          };
+          subdomain = lib.mkOption {
+            type = lib.types.str;
+            default = "minecraft";
+            description = "Subdomain for Minecraft instance (must be unique)";
+          };
+          name = lib.mkOption {
+            type = lib.types.str;
+            default = "Minecraft";
+            description = "Name for instance";
+          };
+        };
+      });
+    };
+  };
+
+  config = {
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.minecraft.enable (
     lib.listToAttrs (lib.imap0 (index: instance:
       let
         instance-id = "minecraft_${instance.subdomain}";
@@ -85,10 +140,10 @@ in
           };
         };
       }
-    ) config.homefree.services.minecraft.instances)
+    ) config.homefree.service-options.minecraft.instances)
   );
 
-  systemd.services = lib.optionalAttrs config.homefree.services.minecraft.enable
+  systemd.services = lib.optionalAttrs config.homefree.service-options.minecraft.enable
   (lib.listToAttrs (
     lib.map (instance:
     let
@@ -98,8 +153,8 @@ in
       preStart = ''
         mkdir -p ${containerDataPath}/data
         mkdir -p ${containerDataPath}/downloads
-      '' + (lib.optionalString (config.homefree.services.minecraft.secrets.curseforge-api-key != null) ''
-        echo "CF_API_KEY=$(cat ${config.homefree.services.minecraft.secrets.curseforge-api-key})" > ${containerDataPath}/env
+      '' + (lib.optionalString (config.homefree.service-options.minecraft.secrets.curseforge-api-key != null) ''
+        echo "CF_API_KEY=$(cat ${config.homefree.service-options.minecraft.secrets.curseforge-api-key})" > ${containerDataPath}/env
       '');
     in
     {
@@ -112,10 +167,10 @@ in
           ExecStartPre = [ "!${pkgs.writeShellScript "${instance-id}-prestart" preStart}" ];
         };
       };
-    }) config.homefree.services.minecraft.instances)
+    }) config.homefree.service-options.minecraft.instances)
   );
 
-  homefree.service-config = lib.optionals config.homefree.services.minecraft.enable
+  homefree.service-config = lib.optionals config.homefree.service-options.minecraft.enable
   (lib.imap0 (index: instance:
   let
     instance-id = "minecraft_${instance.subdomain}";
@@ -131,7 +186,7 @@ in
     ];
     # @TODO: Get rid of reverse-proxy
     reverse-proxy = {
-      enable = true;
+      enable = config.homefree.service-options.minecraft.enable;
       subdomains = [ instance.subdomain ];
       http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
       https-domains = [ config.homefree.system.domain ];
@@ -149,6 +204,7 @@ in
         containerDataPath
       ];
     };
-  }) config.homefree.services.minecraft.instances);
+  }) config.homefree.service-options.minecraft.instances);
+  };
 }
 

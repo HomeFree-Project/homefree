@@ -4,14 +4,50 @@ let
   port = 6799;
   containerDataPath = "/var/lib/nzbget";
   configPath = "${containerDataPath}/config";
-  downloadsPath = config.homefree.services.nzbget.downloads-path or "${containerDataPath}/downloads";
+  downloadsPath = config.homefree.service-options.nzbget.downloads-path or "${containerDataPath}/downloads";
   preStart = ''
     mkdir -p ${configPath}
     mkdir -p ${downloadsPath}
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.nzbget.enable {
+  options.homefree.service-options.nzbget = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable NZBGet service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "nzbet";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "NZB Downloader";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "NZBGet";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
     nzbget = {
       image = "lscr.io/linuxserver/nzbget:${version}";
 
@@ -41,7 +77,7 @@ in
     };
   };
 
-  systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.services.nzbget.enable {
+  systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -50,28 +86,25 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.nzbget.enable [
-    {
-      label = "nzbet";
-      name = "NZB Downloader";
-      project-name = "NZBGet";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.nzbget) label name project-name;
       systemd-service-names = [
         "podman-nzbget"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.nzbget.enable;
         subdomains = [ "nzbget" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.nzbget.public;
+        public = config.homefree.service-options.nzbget.public;
       };
-      backup = lib.optionalAttrs {
+      backup = {
         paths = [
           downloadsPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }

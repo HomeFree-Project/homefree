@@ -52,6 +52,7 @@ in
     ./services/linkwarden-podman.nix
     ./services/logseq-podman.nix
     ./services/lidarr-podman.nix
+    ./services/matrix-podman.nix
     ./services/mediawiki-podman.nix
     ./services/minecraft-podman.nix
     # ./services/mongo-podman.nix
@@ -75,7 +76,7 @@ in
     ## @TODO: Move to podman
     ## Otherwise entire system needs to be upgraded to upgrade individual app
     # ./services/authentik.nix
-    ./services/matrix.nix
+    # ./services/matrix.nix
     # ./services/nextcloud.nix
   ];
 

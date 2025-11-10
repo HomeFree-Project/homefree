@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   # image = "postgres";
   # version = "16.9";
@@ -69,6 +69,42 @@ let
   '';
 in
 {
+  options.homefree.service-options.postgres-vectorchord = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable VectorChord PostgreSQL service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "postgres-vectorchord";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "VectorChord PostgreSQL";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "VectorChord PostgreSQL";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   virtualisation.oci-containers.containers = {
     postgres-vectorchord = {
       image = "${image}:${version}";
@@ -106,11 +142,8 @@ in
     };
   };
 
-  homefree.service-config = [
-    {
-      label = "postgres-vectorchord";
-      name = "VectorChord PostgreSQL";
-      project-name = "VectorChord PostgreSQL";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.postgres-vectorchord) label name project-name;
       systemd-service-names = [
         "podman-postgres-vectorchord"
       ];
@@ -122,6 +155,6 @@ in
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }

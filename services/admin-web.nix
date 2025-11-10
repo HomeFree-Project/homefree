@@ -26,27 +26,80 @@ let
     exec ${pythonEnv}/bin/python simple_main.py
   '';
 
+  # Generate list of all available service names from homefree.services
+  # This extracts all top-level service names that have an 'enable' option
+  all-services-list = builtins.attrNames (lib.filterAttrs
+    (name: value: value ? enable)
+    cfg.services
+  );
+  all-services-json = (pkgs.formats.json {}).generate "all-services.json" all-services-list;
+
+  # Generate service metadata map for ALL services (enabled or not)
+  # This maps service labels to their display names and project names
+  # First, get metadata from service-config for enabled services
+  service-config-map = builtins.listToAttrs (
+    map (sc: {
+      name = sc.label;
+      value = {
+        name = sc.name;
+        project-name = sc.project-name;
+      };
+    }) cfg.service-config
+  );
+
+  # Generate metadata for ALL services from service-options
+  # This includes services that are disabled, ensuring metadata is always available
+  default-service-metadata = builtins.listToAttrs (
+    lib.filter (entry: entry != null) (
+      map (service-name:
+        let
+          service-opts = cfg.service-options.${service-name} or null;
+        in
+        if service-opts != null && service-opts ? name && service-opts ? project-name then
+          {
+            name = service-opts.label or service-name;
+            value = {
+              name = service-opts.name;
+              project-name = service-opts.project-name;
+            };
+          }
+        else
+          null
+      ) all-services-list
+    )
+  );
+
+  # Merge: prefer service-config metadata, fall back to defaults
+  all-service-metadata = default-service-metadata // service-config-map;
+  service-metadata-json = (pkgs.formats.json {}).generate "service-metadata.json" all-service-metadata;
+
   # Generate service configuration JSON
   admin-config = {
     wanInterface = cfg.network.wan-interface;
     lanInterface = cfg.network.lan-interface;
     services =
     let
-      filtered = lib.filter (service-config: service-config.admin.show == true && service-config.reverse-proxy.enable == true) cfg.service-config;
+      # Include all service-configs that should be shown in admin UI
+      filtered = lib.filter (service-config: service-config.admin.show == true) cfg.service-config;
       compareByName = a: b: a.name < b.name;
       sorted = builtins.sort compareByName filtered;
     in
     lib.map (service-config:
       let
         path = if service-config.admin.urlPathOverride != null then service-config.admin.urlPathOverride else "";
-        subdomain = builtins.head service-config.reverse-proxy.subdomains;
-        domain = if (builtins.length service-config.reverse-proxy.https-domains > 0) then (builtins.head service-config.reverse-proxy.https-domains)
-                 else if (builtins.length service-config.reverse-proxy.http-domains > 0) then (builtins.head service-config.reverse-proxy.http-domains)
-                 else "";
+        # Only generate URL if reverse-proxy is enabled and has subdomains
+        hasReverseProxy = service-config.reverse-proxy.enable && (builtins.length service-config.reverse-proxy.subdomains > 0);
+        subdomain = if hasReverseProxy then builtins.head service-config.reverse-proxy.subdomains else "";
+        domain = if hasReverseProxy then (
+          if (builtins.length service-config.reverse-proxy.https-domains > 0) then (builtins.head service-config.reverse-proxy.https-domains)
+          else if (builtins.length service-config.reverse-proxy.http-domains > 0) then (builtins.head service-config.reverse-proxy.http-domains)
+          else ""
+        ) else "";
+        url = if hasReverseProxy && domain != "" then ''https://${subdomain}.${domain}${path}'' else "";
       in
       {
         service-config = service-config;
-        url = ''https://${subdomain}.${domain}${path}'';
+        url = url;
       }
     ) sorted;
   };
@@ -55,11 +108,14 @@ let
   preStart = ''
     ${pkgs.coreutils}/bin/mkdir -p /run/homefree/admin
     ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
+    ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
+    ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
   '';
 
 in
 {
-  config = mkIf (cfg.admin-page.enable or true) {
+  # Admin service is always enabled - no enable check needed
+  config = {
 
     # Admin API backend service
     systemd.services.admin-api = {
@@ -98,7 +154,7 @@ in
         ];
 
         admin = {
-          show = false;  # Don't show itself in admin UI
+          show = true;
         };
 
         reverse-proxy = {
@@ -115,7 +171,7 @@ in
           static-path = "${installerWebPath}/frontend";
 
           # Admin UI public access setting
-          public = cfg.admin-page.public;
+          public = cfg.services.admin.public;
 
           extraCaddyConfig = ''
             # Override default behavior - proxy API first, then serve static files

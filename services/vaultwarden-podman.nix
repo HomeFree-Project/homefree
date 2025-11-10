@@ -10,7 +10,43 @@ let
   version = "1.36.0";
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.vaultwarden.enable {
+  options.homefree.service-options.vaultwarden = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Vaultwarden service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "vaultwarden";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Password Manager";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Vaultwarden";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
     vaultwarden = {
       image = "vaultwarden/server:${version}";
 
@@ -35,7 +71,7 @@ in
     };
   };
 
-  systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.services.vaultwarden.enable {
+  systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -44,28 +80,25 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.vaultwarden.enable [
-    {
-      label = "vaultwarden";
-      name = "Password Manager";
-      project-name = "Vaultwarden";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.vaultwarden) label name project-name;
       systemd-service-names = [
         "podman-vaultwarden"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.vaultwarden.enable;
         subdomains = [ "vaultwarden" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.vaultwarden.public;
+        public = config.homefree.service-options.vaultwarden.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }

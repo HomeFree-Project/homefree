@@ -42,14 +42,51 @@ let
   '';
 in
 {
-  ## @TODO: Move to scripts run from containers
-  environment.systemPackages = lib.optionals config.homefree.services.immich.enable [
-    pkgs.unstable.immich-cli
-    pkgs.unstable.immich-go
-  ];
+  options.homefree.service-options.immich = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Immich photo management service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "immich";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Photos";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Immich";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    ## @TODO: Move to scripts run from containers
+    environment.systemPackages = lib.optionals config.homefree.service-options.immich.enable [
+      pkgs.unstable.immich-cli
+      pkgs.unstable.immich-go
+    ];
 
   # ## Copied from nixpkgs
-  # services.postgresql = if config.homefree.services.immich.enable then {
+  # services.postgresql = if config.homefree.service-options.immich.enable then {
   #   enable = true;
   #   ensureDatabases = [ database-name ];
   #   ensureUsers = [
@@ -117,13 +154,13 @@ in
       ALTER EXTENSION vectors UPDATE;
     '';
   in
-  lib.optionals config.homefree.services.immich.enable
+  lib.optionals config.homefree.service-options.immich.enable
   [
     preStart
     '' ${lib.getExe' config.services.postgresql.package "psql"} -d "${database-name}" -f "${sqlFile}" ''
   ];
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.immich.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.immich.enable {
     immich-server = {
       image = "ghcr.io/immich-app/immich-server:${version}";
 
@@ -219,7 +256,7 @@ in
     };
   };
 
-  systemd.services.podman-immich-server = lib.optionalAttrs config.homefree.services.immich.enable {
+  systemd.services.podman-immich-server = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -228,23 +265,20 @@ in
     };
   };
 
-  systemd.services.podman-immich-machine-learning = lib.optionalAttrs config.homefree.services.immich.enable {
+  systemd.services.podman-immich-machine-learning = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  systemd.services.podman-immich-redis = lib.optionalAttrs config.homefree.services.immich.enable {
+  systemd.services.podman-immich-redis = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.immich.enable [
-    {
-      label = "immich";
-      name = "Photos";
-      project-name = "Immich";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.immich) label name project-name;
       release-tracking = {
         type = "github";
         project = "immich-app/immich";
@@ -256,13 +290,13 @@ in
         "podman-postgresql-vectorchord"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.immich.enable;
         subdomains = [ "photos" "immich" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = config.services.immich.port;
-        public = config.homefree.services.immich.public;
+        public = config.homefree.service-options.immich.public;
       };
       backup = {
         paths = [
@@ -272,6 +306,6 @@ in
         #   database-name
         # ];
       };
-    }
-  ];
+    }];
+  };
 }

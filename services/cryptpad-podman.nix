@@ -32,7 +32,7 @@ let
       //enforceMFA: false,
       //logIP: false,
       adminKeys: [
-        ${lib.concatStringsSep "," (lib.map (key: ''"${key}"'') config.homefree.services.cryptpad.adminKeys)}
+        ${lib.concatStringsSep "," (lib.map (key: ''"${key}"'') config.homefree.service-options.cryptpad.adminKeys)}
       ],
       //inactiveTime: 90, // days
       //archiveRetentionTime: 15,
@@ -73,7 +73,50 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.cryptpad.enable {
+  options.homefree.service-options.cryptpad = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Cryptpad Document service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    adminKeys = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Public keys that have access to admin panel";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "cryptpad";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Docs/Office Suite";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Cryptpad";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.cryptpad.enable {
     cryptpad = {
       image = "cryptpad/cryptpad:${version}";
 
@@ -113,7 +156,7 @@ in
     };
   };
 
-  systemd.services.podman-cryptpad = lib.optionalAttrs config.homefree.services.cryptpad.enable {
+  systemd.services.podman-cryptpad = lib.optionalAttrs config.homefree.service-options.cryptpad.enable {
     after = [ "dns-ready.service" ];
     requires =[ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -122,28 +165,25 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.cryptpad.enable [
-    {
-      label = "cryptpad";
-      name = "Docs/Office Suite";
-      project-name = "Cryptpad";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.cryptpad) label name project-name;
       systemd-service-names = [
         "podman-cryptpad"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.cryptpad.enable;
         subdomains = [ "docs" "docs-sandbox" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.cryptpad.public;
+        public = config.homefree.service-options.cryptpad.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }

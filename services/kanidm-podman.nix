@@ -174,11 +174,47 @@ let
   '';
 in
 {
-  environment.systemPackages = lib.optionals config.homefree.services.kanidm.enable [
+  options.homefree.service-options.kanidm = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Kanidm service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "kanidm";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Kanidm Authentication";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Kanidm";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  environment.systemPackages = lib.optionals config.homefree.service-options.kanidm.enable [
     kanidm-script
   ];
 
-  system.activationScripts.kanidmUserConfig = lib.mkIf config.homefree.services.kanidm.enable {
+  system.activationScripts.kanidmUserConfig = lib.mkIf config.homefree.service-options.kanidm.enable {
     text = ''
       mkdir -p ${user-config-path}
       cat > ${user-config-path}/kanidm << 'EOF'
@@ -190,7 +226,7 @@ in
     '';
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.kanidm.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.kanidm.enable {
     kanidm = {
       image = "docker.io/kanidm/server:${version}";
 
@@ -216,7 +252,7 @@ in
     };
   };
 
-  systemd.services = lib.optionalAttrs config.homefree.services.kanidm.enable {
+  systemd.services = lib.optionalAttrs config.homefree.service-options.kanidm.enable {
     podman-kanidm = {
       after = [ "dns-ready.service" ];
       requires = [ "dns-ready.service" ];
@@ -227,16 +263,13 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.kanidm.enable [
-    {
-      label = "kanidm";
-      name = "Kanidm Authentication";
-      project-name = "Kanidm";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.kanidm) label name project-name;
       systemd-service-names = [
         "podman-kanidm"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.kanidm.enable;
         subdomains = [ "idm" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -244,14 +277,14 @@ in
         port = port;
         ssl = true;
         ssl-no-verify = true;
-        public = config.homefree.services.kanidm.public;
+        public = config.homefree.service-options.kanidm.public;
       };
       backup = {
         paths = [
           "${containerDataPath}"
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

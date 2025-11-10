@@ -62,6 +62,42 @@ let
   '';
 in
 {
+  options.homefree.service-options.home-assistant = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Home Assistant service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "homeassistant";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Home Assistant";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Home Assistant";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     homeassistant = {
       image = "ghcr.io/home-assistant/home-assistant:${version}";
@@ -97,14 +133,12 @@ in
 
   homefree.service-config = lib.optionals config.homefree.services.homeassistant.enable [
     {
-      label = "homeassistant";
-      name = "Home Assistant";
-      project-name = "Home Assistant";
+      inherit (config.homefree.service-options.home-assistant) label name project-name;
       systemd-service-names = [
         "podman-homeassistant"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.home-assistant.enable;
         subdomains = [ "homeassistant" "ha" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -119,4 +153,5 @@ in
       };
     }
   ];
+  };
 }

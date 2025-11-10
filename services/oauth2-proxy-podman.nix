@@ -4,6 +4,42 @@ let
   port = 4180;
 in
 {
+  options.homefree.service-options.oauth2-proxy = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Oauth2 Proxy service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "oauth2proxy";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Oauth2 Proxy";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Oauth2 Proxy";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
     oauth2-proxy = {
       image = "oauth2-proxy/oauth2-proxy:${version}";
@@ -47,7 +83,7 @@ in
 
       ## @TODO: this shouldn't need to be exposed to user config
       environmentFiles = [
-        config.homefree.services.oauth2-proxy.secrets.env
+        config.homefree.service-options.oauth2-proxy.secrets.env
       ];
     };
   };
@@ -60,14 +96,12 @@ in
 
   homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
     {
-      label = "oauth2proxy";
-      name = "Oauth2 Proxy";
-      project-name = "Oauth2 Proxy";
+      inherit (config.homefree.service-options.oauth2-proxy) label name project-name;
       systemd-service-names = [
         "podman-oauth2-proxy"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.oauth2-proxy.enable;
         subdomains = [ "auth" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -76,7 +110,7 @@ in
         # public = config.homefree.services.zitadel.public;
         public = false;
       };
-    }
-  ];
+    }];
+  };
 }
 

@@ -6,7 +6,43 @@ let
   database-user = "joplin";
 in
 {
-  services.postgresql = lib.optionalAttrs config.homefree.services.joplin.enable {
+  options.homefree.service-options.joplin = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Joplin service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "joplin";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "joplin";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Joplin";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  services.postgresql = lib.optionalAttrs config.homefree.service-options.joplin.enable {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [
@@ -18,7 +54,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.joplin.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.joplin.enable {
     joplin = {
       image = "joplin/server:${version}";
 
@@ -49,35 +85,32 @@ in
     };
   };
 
-  systemd.services.podman-joplin = lib.optionalAttrs config.homefree.services.joplin.enable {
+  systemd.services.podman-joplin = lib.optionalAttrs config.homefree.service-options.joplin.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.joplin.enable [
-    {
-      label = "joplin";
-      name = "Joplin Notes";
-      project-name = "Joplin";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.joplin) label name project-name;
       systemd-service-names = [
         "podman-joplin"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.joplin.enable;
         subdomains = [ "joplin" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.joplin.public;
+        public = config.homefree.service-options.joplin.public;
       };
       backup = {
         postgres-databases = [
           database-name
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

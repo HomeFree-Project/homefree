@@ -51,8 +51,16 @@ class ConfigWriter:
                 current_config['dns'].update(config['dns'])
 
             if 'services' in config:
+                # Special services that shouldn't be saved to config (no user-configurable options)
+                # admin-api is for monitoring only and has no config options
+                special_services = {'admin-api'}
+
                 # Merge services - add new ones, update existing ones
+                # Filter out special services that aren't configurable
                 for service_name, service_config in config['services'].items():
+                    if service_name in special_services:
+                        continue  # Skip special services
+
                     if service_name not in current_config['services']:
                         current_config['services'][service_name] = {}
                     current_config['services'][service_name].update(service_config)

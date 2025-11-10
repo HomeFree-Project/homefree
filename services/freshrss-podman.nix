@@ -23,7 +23,44 @@ let
   ADMIN_PASSWORD = "changeme";
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.freshrss.enable {
+  options.homefree.service-options.freshrss = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable FreshRSS service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    # Metadata - always available, not user-configurable
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "freshrss";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "FreshRSS";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "FreshRSS";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
     freshrss = {
       image = "${image}:${version}";
 
@@ -77,7 +114,7 @@ in
     };
   };
 
-  systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.services.freshrss.enable {
+  systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -86,22 +123,19 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.freshrss.enable [
-    {
-      label = "freshrss";
-      name = "FreshRSS";
-      project-name = "FreshRSS";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.freshrss) label name project-name;
       systemd-service-names = [
         "podman-freshrss"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.freshrss.enable;
         subdomains = [ "freshrss" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.freshrss.public;
+        public = config.homefree.service-options.freshrss.public;
       };
       backup = {
         paths = [
@@ -111,7 +145,7 @@ in
           DB_BASE
         ];
       };
-    }
-  ];
+    }];
+  };
 }
 

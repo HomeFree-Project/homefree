@@ -13,7 +13,43 @@ let
   '';
 in
 {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zitadel.enable {
+  options.homefree.service-options.zitadel = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Zitadel service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "zitadel";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Single Sign-on (SSO)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Zitadel";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.zitadel.enable {
     zitadel = {
       image = "ghcr.io/zitadel/zitadel:${version}";
 
@@ -59,12 +95,12 @@ in
       };
 
       environmentFiles = [
-        config.homefree.services.zitadel.secrets.env
+        config.homefree.service-options.zitadel.secrets.env
       ];
     };
   };
 
-  systemd.services.podman-zitadel = lib.optionalAttrs config.homefree.services.zitadel.enable {
+  systemd.services.podman-zitadel = lib.optionalAttrs config.homefree.service-options.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -73,22 +109,19 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [
-    {
-      label = "zitadel";
-      name = "Single Sign-on (SSO)";
-      project-name = "Zitadel";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.zitadel) label name project-name;
       systemd-service-names = [
         "podman-zitadel"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.zitadel.enable;
         subdomains = [ "sso" "zitadel" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.zitadel.public;
+        public = config.homefree.service-options.zitadel.public;
       };
       backup = {
         paths = [
@@ -98,7 +131,6 @@ in
           "zitadel"
         ];
       };
-    }
-  ];
+    }];
+  };
 }
-

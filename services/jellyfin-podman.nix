@@ -1,9 +1,9 @@
 { config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/jellyfin-podman";
-  media-path = if config.homefree.services.jellyfin.media-path == null
+  media-path = if config.homefree.service-options.jellyfin.media-path == null
     then "${containerDataPath}/media"
-    else config.homefree.services.jellyfin.media-path;
+    else config.homefree.service-options.jellyfin.media-path;
 
   preStart = ''
     mkdir -p ${containerDataPath}
@@ -14,6 +14,42 @@ let
   version = "2021.12.16";
 in
 {
+  options.homefree.service-options.jellyfin = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Jellyfin service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "jellyfin";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Streaming Media";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Jellyfin";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
   ##--------------------------------------------------------------------------------
   ## Enable hardware transcoding
   ## Only works on Intel
@@ -22,11 +58,11 @@ in
   ##--------------------------------------------------------------------------------
 
   ## enable vaapi on OS-level
-  nixpkgs.config.packageOverrides = pkgs: (lib.optionalAttrs config.homefree.services.jellyfin.enable {
+  nixpkgs.config.packageOverrides = pkgs: (lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     vaapiIntel = pkgs.vaapiIntel.override { enableHybridCodec = true; };
   });
 
-  hardware.graphics = lib.optionalAttrs config.homefree.services.jellyfin.enable {
+  hardware.graphics = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     enable = true;
     extraPackages = with pkgs; [
       intel-media-driver
@@ -40,7 +76,7 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.jellyfin.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     jellyfin = {
       image = "lscr.io/linuxserver/jellyfin:${version}";
 
@@ -79,7 +115,7 @@ in
     };
   };
 
-  systemd.services.podman-jellyfin = lib.optionalAttrs config.homefree.services.jellyfin.enable {
+  systemd.services.podman-jellyfin = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     partOf =  [ "nftables.service" ];
@@ -88,28 +124,25 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.jellyfin.enable [
-    {
-      label = "jellyfin";
-      name = "Streaming Media";
-      project-name = "Jellyfin";
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.jellyfin) label name project-name;
       systemd-service-names = [
         "podman-jellyfin"
       ];
       reverse-proxy = {
-        enable = true;
+        enable = config.homefree.service-options.jellyfin.enable;
         subdomains = [ "media" "video" "jellyfin" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.jellyfin.public;
+        public = config.homefree.service-options.jellyfin.public;
       };
       backup = {
         paths = [
           containerDataPath
         ];
       };
-    }
-  ];
+    }];
+  };
 }
