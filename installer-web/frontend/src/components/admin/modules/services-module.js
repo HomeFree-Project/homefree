@@ -8,12 +8,13 @@ import '../../shared/config-section.js';
  */
 class ServicesModule extends LitElement {
   static properties = {
-    services: { type: Array },
-    config: { type: Object },
+    services: { type: Array },           // Display array (merged view for UI)
+    serverConfig: { type: Object },      // Server/deployed state (from parent)
+    pendingConfig: { type: Object },     // Pending changes (from parent)
     loading: { type: Boolean },
     error: { type: String },
     searchQuery: { type: String },
-    modified: { type: Boolean }
+    apiUnavailable: { type: Boolean }    // Track if API is temporarily down
   };
 
   static styles = css`
@@ -40,6 +41,25 @@ class ServicesModule extends LitElement {
 
     .info-text {
       flex: 1;
+    }
+
+    .warning-box {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #856404;
+      max-width: 1200px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .warning-box::before {
+      content: '⚠️';
+      font-size: 16px;
     }
 
     .search-box {
@@ -320,11 +340,12 @@ class ServicesModule extends LitElement {
   constructor() {
     super();
     this.services = [];
-    this.config = { services: {} };
+    this.serverConfig = null;
+    this.pendingConfig = {};
     this.loading = true;
     this.error = null;
     this.searchQuery = '';
-    this.modified = false;
+    this.apiUnavailable = false;
     this.pollInterval = null;
     this.pollIntervalMs = 5000; // Poll every 5 seconds
   }
@@ -362,95 +383,71 @@ class ServicesModule extends LitElement {
     if (showLoadingSpinner && this.services.length === 0) {
       this.loading = true;
     }
-    this.error = null;
+    // Don't clear error on retry - let it persist until successful load
+    // this.error = null;
 
     try {
       const services = await getServices();
 
-      // If user has made changes, preserve their pending changes in the UI
-      // while updating runtime status from the server
-      if (this.modified) {
-        // Keep user's pending enabled/public state but update runtime status
-        this.services = services.map(service => {
-          const userConfig = this.config.services[service.label];
-          if (userConfig) {
-            return {
-              ...service,
-              enabled: userConfig.enable,
-              public: userConfig.public
-            };
-          }
-          return service;
-        });
-      } else {
-        // No pending changes, use server data directly
-        this.services = services;
-      }
+      // Clear error and API unavailable flag on successful load
+      this.error = null;
+      this.apiUnavailable = false;
 
-      // Initialize config from loaded services
-      if (!this.config.services) {
-        this.config = { services: {} };
-      }
-
-      // Populate config with current service states
-      // But don't overwrite user's pending changes (modified = true means user has made changes)
-      if (!this.modified) {
-        services.forEach(service => {
-          this.config.services[service.label] = {
-            enable: service.enabled,
-            public: service.public
+      // Merge server services with pending changes for display
+      // Pending changes from parent override server state
+      this.services = services.map(service => {
+        const pendingService = this.pendingConfig?.services?.[service.label];
+        if (pendingService) {
+          // Use pending values for enabled/public, but keep runtime status from server
+          return {
+            ...service,
+            enabled: pendingService.enable,
+            public: pendingService.public
           };
-        });
-      }
+        }
+        // No pending changes for this service, use server data
+        return service;
+      });
     } catch (error) {
       console.error('Error loading services:', error);
-      this.error = error.message || 'Failed to load services';
+      // Only show error if we have no services to display (first load failed)
+      // Otherwise, keep showing stale data during temporary API unavailability
+      if (this.services.length === 0) {
+        this.error = error.message || 'Failed to load services';
+        this.apiUnavailable = false;
+      } else {
+        // Mark API as temporarily unavailable but keep showing cached data
+        this.apiUnavailable = true;
+        console.warn('API temporarily unavailable, showing cached service list');
+      }
     } finally {
       this.loading = false;
     }
   }
 
   handleServiceToggle(serviceLabel, enabled) {
-    const newConfig = { ...this.config };
-    if (!newConfig.services[serviceLabel]) {
-      newConfig.services[serviceLabel] = { enable: false, public: false };
-    }
-    newConfig.services[serviceLabel].enable = enabled;
-
-    this.config = newConfig;
-    this.modified = true;
-
     // Update local services array for immediate UI feedback
     this.services = this.services.map(s =>
       s.label === serviceLabel ? { ...s, enabled } : s
     );
 
-    // Emit change event to parent
-    this.dispatchEvent(new CustomEvent('config-change', {
-      detail: { config: newConfig },
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('service-toggle', {
+      detail: { serviceLabel, enabled },
       bubbles: true,
       composed: true
     }));
   }
 
   handlePublicToggle(serviceLabel, isPublic) {
-    const newConfig = { ...this.config };
-    if (!newConfig.services[serviceLabel]) {
-      newConfig.services[serviceLabel] = { enable: false, public: false };
-    }
-    newConfig.services[serviceLabel].public = isPublic;
-
-    this.config = newConfig;
-    this.modified = true;
-
     // Update local services array for immediate UI feedback
     this.services = this.services.map(s =>
       s.label === serviceLabel ? { ...s, public: isPublic } : s
     );
 
-    // Emit change event to parent
-    this.dispatchEvent(new CustomEvent('config-change', {
-      detail: { config: newConfig },
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('service-public-toggle', {
+      detail: { serviceLabel, isPublic },
       bubbles: true,
       composed: true
     }));
@@ -462,14 +459,6 @@ class ServicesModule extends LitElement {
 
   async handleRefresh() {
     await this.loadServices();
-  }
-
-  /**
-   * Reset the modified flag - should be called after a successful save
-   * This allows polling to resume updating the config from the server
-   */
-  resetModified() {
-    this.modified = false;
   }
 
   getStatusClass(activeState, subState) {
@@ -615,6 +604,12 @@ class ServicesModule extends LitElement {
 
     return html`
       <div class="module-container">
+        ${this.apiUnavailable ? html`
+          <div class="warning-box">
+            API temporarily unavailable (possibly due to system rebuild). Showing cached service list. Status updates will resume automatically.
+          </div>
+        ` : ''}
+
         <div class="info-box">
           <div class="info-text">
             <strong>${runningCount} running / ${enabledCount} enabled / ${this.services.length} total services</strong>

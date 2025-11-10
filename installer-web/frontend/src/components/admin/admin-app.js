@@ -10,12 +10,16 @@ import '../shared/progress-modal.js';
 
 class AdminApp extends LitElement {
   static properties = {
-    config: { type: Object },
+    serverConfig: { type: Object },    // Actual deployed/server state
+    pendingConfig: { type: Object },   // User's uncommitted changes
+    dirtyModules: { type: Object },    // Track which modules have unsaved changes
+    config: { type: Object },          // Computed merged config (for backward compatibility)
     currentModule: { type: String },
     loading: { type: Boolean },
     error: { type: String },
     sidebarCollapsed: { type: Boolean },
-    rebuildStatus: { type: Object }
+    rebuildStatus: { type: Object },
+    buildLogs: { type: Array }         // Build output logs
   };
 
   static styles = css`
@@ -317,12 +321,16 @@ class AdminApp extends LitElement {
 
   constructor() {
     super();
-    this.config = null;
+    this.serverConfig = null;
+    this.pendingConfig = {};
+    this.config = {};  // Initialize merged config
+    this.dirtyModules = new Set();
     this.currentModule = 'system';
     this.loading = true;
     this.error = null;
     this.sidebarCollapsed = false;
     this.systemHealth = 'healthy';
+    this.buildLogs = [];
     this.rebuildStatus = {
       running: false,
       message: '',
@@ -405,7 +413,14 @@ class AdminApp extends LitElement {
 
   async loadConfig() {
     try {
-      this.config = await getCurrentConfig();
+      this.serverConfig = await getCurrentConfig();
+      // Initialize pending config as empty on first load
+      // Pending changes will be added as user makes modifications
+      if (Object.keys(this.pendingConfig).length === 0) {
+        this.pendingConfig = {};
+      }
+      // Update merged config for legacy modules
+      this.updateMergedConfig();
       this.loading = false;
     } catch (error) {
       console.error('Failed to load config:', error);
@@ -488,8 +503,109 @@ class AdminApp extends LitElement {
   }
 
   handleConfigChange(e) {
-    // Update local config when module changes it
-    this.config = e.detail.config;
+    // Legacy handler for modules that still use config-change event
+    // TODO: Migrate all modules to use specific action events
+    const moduleName = e.detail.module || 'unknown';
+    this.pendingConfig = { ...this.pendingConfig, ...e.detail.config };
+    this.dirtyModules.add(moduleName);
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  handleServiceToggle(e) {
+    const { serviceLabel, enabled } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current service config from server or pending
+    const currentConfig = this.pendingConfig.services[serviceLabel] ||
+                          this.serverConfig?.services?.[serviceLabel] ||
+                          { enable: false, public: false };
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [serviceLabel]: {
+          ...currentConfig,
+          enable: enabled
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  handleServicePublicToggle(e) {
+    const { serviceLabel, isPublic } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current service config from server or pending
+    const currentConfig = this.pendingConfig.services[serviceLabel] ||
+                          this.serverConfig?.services?.[serviceLabel] ||
+                          { enable: false, public: false };
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [serviceLabel]: {
+          ...currentConfig,
+          public: isPublic
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  /**
+   * Merge server config with pending changes to get the config to save
+   * Pending changes override server config
+   */
+  getMergedConfig() {
+    if (!this.serverConfig) {
+      return this.pendingConfig;
+    }
+
+    // Deep merge: pending changes override server config
+    const merged = { ...this.serverConfig };
+
+    // Merge services section
+    if (this.pendingConfig.services) {
+      merged.services = {
+        ...(this.serverConfig.services || {}),
+        ...this.pendingConfig.services
+      };
+    }
+
+    // Merge other sections as they're added
+    // TODO: Add other config sections as modules are migrated
+
+    return merged;
+  }
+
+  /**
+   * Update the merged config property for backward compatibility
+   * Call this whenever serverConfig or pendingConfig changes
+   */
+  updateMergedConfig() {
+    this.config = this.getMergedConfig();
   }
 
   async handleSaveChanges() {
@@ -499,8 +615,11 @@ class AdminApp extends LitElement {
       // Show modal and start validation
       modal.show('Saving Configuration', 'Validating configuration...', 'progress');
 
+      // Merge server config with pending changes for validation and submission
+      const configToSave = this.getMergedConfig();
+
       // Validate configuration
-      const validation = await validateConfig(this.config);
+      const validation = await validateConfig(configToSave);
 
       if (!validation.valid) {
         modal.updateStatus('error', 'Validation Failed',
@@ -522,7 +641,7 @@ class AdminApp extends LitElement {
 
       // Apply changes (skip preview/dry-activate step)
       modal.updateStatus('progress', 'Saving configuration and starting rebuild...');
-      const result = await applyConfigChanges(this.config);
+      const result = await applyConfigChanges(configToSave);
 
       if (!result.success) {
         modal.updateStatus('error', 'Failed to Apply Configuration',
@@ -537,11 +656,10 @@ class AdminApp extends LitElement {
          { message: 'You can close this dialog and continue working' }]
       );
 
-      // Reset modified flags on all modules so polling can resume
-      const servicesModule = this.shadowRoot.querySelector('services-module');
-      if (servicesModule && typeof servicesModule.resetModified === 'function') {
-        servicesModule.resetModified();
-      }
+      // Clear pending changes and dirty flags after successful save
+      this.pendingConfig = {};
+      this.dirtyModules.clear();
+      this.updateMergedConfig();
 
       // Set rebuild status
       this.rebuildStatus = {
@@ -562,7 +680,8 @@ class AdminApp extends LitElement {
   }
 
   async pollRebuildStatus() {
-    let allOutput = []; // Accumulate all output lines
+    // Reset build logs at start of new build
+    this.buildLogs = [];
 
     const checkStatus = async () => {
       try {
@@ -572,7 +691,7 @@ class AdminApp extends LitElement {
         if (status.output) {
           // Accumulate output (trim to remove leading/trailing whitespace)
           const newLines = status.output.trim().split('\n').filter(l => l.trim());
-          allOutput.push(...newLines);
+          this.buildLogs = [...this.buildLogs, ...newLines];
 
           // Update header status with last line
           const lastLine = newLines[newLines.length - 1] || 'Building...';
@@ -616,12 +735,11 @@ class AdminApp extends LitElement {
             }, 2000);
           } else {
             this.systemHealth = 'unhealthy';
-            // Show error status
-            const errorLines = allOutput.slice(-20);
+            // Show error status - logs are already in this.buildLogs
             this.rebuildStatus = {
               running: false,
               message: `Rebuild failed (exit code ${status.exit_code}) - Click to view logs`,
-              lastUpdate: { success: false, output: errorLines.join('\n') }
+              lastUpdate: { success: false }
             };
           }
           // Don't stop polling - keep syncing with status-module
@@ -631,11 +749,18 @@ class AdminApp extends LitElement {
         setTimeout(checkStatus, 2000);
       } catch (error) {
         console.error('Error polling rebuild status:', error);
+        // Reset systemHealth to last known good state or warning
+        // Don't leave it as 'building' since we lost connection
+        if (this.systemHealth === 'building') {
+          this.systemHealth = 'warning';
+        }
         this.rebuildStatus = {
           running: false,
           message: 'Lost connection to rebuild process',
           lastUpdate: { success: false }
         };
+        // Continue polling to recover connection
+        setTimeout(checkStatus, 2000);
       }
     };
 
@@ -681,8 +806,10 @@ class AdminApp extends LitElement {
       case 'services':
         return html`
           <services-module
-            .config=${this.config}
-            @config-change=${this.handleConfigChange}
+            .serverConfig=${this.serverConfig}
+            .pendingConfig=${this.pendingConfig}
+            @service-toggle=${this.handleServiceToggle}
+            @service-public-toggle=${this.handleServicePublicToggle}
           ></services-module>
         `;
 
@@ -715,7 +842,11 @@ ${JSON.stringify(this.config, null, 2)}
 
       case 'status':
         return html`
-          <status-module></status-module>
+          <status-module
+            .rebuildStatus=${this.rebuildStatus}
+            .systemHealth=${this.systemHealth}
+            .buildLogs=${this.buildLogs}
+          ></status-module>
         `;
 
       default:

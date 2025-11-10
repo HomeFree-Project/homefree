@@ -26,7 +26,7 @@ in
 
     label = lib.mkOption {
       type = lib.types.str;
-      default = "nzbet";
+      default = "nzbget";
       internal = true;
       description = "Service label";
     };
