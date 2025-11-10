@@ -338,6 +338,7 @@ class AdminApp extends LitElement {
       lastUpdate: null
     };
     this.statusPollInterval = null;
+    this._pollRebuildActive = false;
 
     // Navigation modules
     this.modules = [
@@ -464,8 +465,11 @@ class AdminApp extends LitElement {
           lastUpdate: null
         };
 
-        // Start polling to show live updates
-        this.pollRebuildStatus();
+        // Start polling to show live updates (only if not already active)
+        if (!this._pollRebuildActive) {
+          this._pollRebuildActive = true;
+          this.pollRebuildStatus();
+        }
       } else if (status.exit_code !== null && status.exit_code !== undefined) {
         // Build has finished - restore final state
         const success = status.exit_code === 0;
@@ -711,7 +715,8 @@ class AdminApp extends LitElement {
   }
 
   async pollRebuildStatus() {
-    // Reset build logs at start of new build
+    // Reset build logs ONLY when starting a NEW poll (not on repeated calls from statusPollInterval)
+    // The flag ensures we only reset once per build
     this.buildLogs = [];
 
     const checkStatus = async () => {
@@ -741,7 +746,10 @@ class AdminApp extends LitElement {
         }
 
         if (!status.running) {
-          // Rebuild finished - only update systemHealth if we have actual exit code
+          // Rebuild finished - mark polling as inactive
+          this._pollRebuildActive = false;
+
+          // Only update systemHealth if we have actual exit code
           // If exit_code is null, backend doesn't know about the rebuild (external rebuild)
           if (status.exit_code !== null && status.exit_code !== undefined) {
             const success = status.exit_code === 0;
@@ -783,13 +791,18 @@ class AdminApp extends LitElement {
             }
           }
           // If exit_code is null, keep previous systemHealth (don't change it)
-          // Don't stop polling - keep syncing with status-module
+
+          // Stop polling - build is complete
+          return;
         }
 
         // Continue polling every 2 seconds
         setTimeout(checkStatus, 2000);
       } catch (error) {
         console.error('Error polling rebuild status:', error);
+        // Reset polling flag on error
+        this._pollRebuildActive = false;
+
         // Reset systemHealth to last known good state or warning
         // Don't leave it as 'building' since we lost connection
         if (this.systemHealth === 'building') {
@@ -800,8 +813,8 @@ class AdminApp extends LitElement {
           message: 'Lost connection to rebuild process',
           lastUpdate: { success: false }
         };
-        // Continue polling to recover connection
-        setTimeout(checkStatus, 2000);
+        // Don't continue polling on error - stop the loop
+        return;
       }
     };
 
