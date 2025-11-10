@@ -537,6 +537,12 @@ class AdminApp extends LitElement {
          { message: 'You can close this dialog and continue working' }]
       );
 
+      // Reset modified flags on all modules so polling can resume
+      const servicesModule = this.shadowRoot.querySelector('services-module');
+      if (servicesModule && typeof servicesModule.resetModified === 'function') {
+        servicesModule.resetModified();
+      }
+
       // Set rebuild status
       this.rebuildStatus = {
         running: true,

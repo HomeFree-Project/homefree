@@ -366,7 +366,26 @@ class ServicesModule extends LitElement {
 
     try {
       const services = await getServices();
-      this.services = services;
+
+      // If user has made changes, preserve their pending changes in the UI
+      // while updating runtime status from the server
+      if (this.modified) {
+        // Keep user's pending enabled/public state but update runtime status
+        this.services = services.map(service => {
+          const userConfig = this.config.services[service.label];
+          if (userConfig) {
+            return {
+              ...service,
+              enabled: userConfig.enable,
+              public: userConfig.public
+            };
+          }
+          return service;
+        });
+      } else {
+        // No pending changes, use server data directly
+        this.services = services;
+      }
 
       // Initialize config from loaded services
       if (!this.config.services) {
@@ -374,15 +393,15 @@ class ServicesModule extends LitElement {
       }
 
       // Populate config with current service states
-      // But don't overwrite user's pending changes
-      services.forEach(service => {
-        if (!this.config.services[service.label]) {
+      // But don't overwrite user's pending changes (modified = true means user has made changes)
+      if (!this.modified) {
+        services.forEach(service => {
           this.config.services[service.label] = {
             enable: service.enabled,
             public: service.public
           };
-        }
-      });
+        });
+      }
     } catch (error) {
       console.error('Error loading services:', error);
       this.error = error.message || 'Failed to load services';
@@ -443,6 +462,14 @@ class ServicesModule extends LitElement {
 
   async handleRefresh() {
     await this.loadServices();
+  }
+
+  /**
+   * Reset the modified flag - should be called after a successful save
+   * This allows polling to resume updating the config from the server
+   */
+  resetModified() {
+    this.modified = false;
   }
 
   getStatusClass(activeState, subState) {
