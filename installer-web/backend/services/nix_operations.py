@@ -9,6 +9,8 @@ from pathlib import Path
 from enum import Enum
 import tempfile
 import os
+import json
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,10 @@ class NixOperations:
     """Service for NixOS operations"""
 
     FLAKE_DIR = Path("/etc/nixos")
+    LOG_DIR = Path("/var/lib/homefree-admin/rebuild-logs")
+    LATEST_STATUS = LOG_DIR / "latest-status.json"
+    MAX_LOGS_TO_KEEP = 10
+
     _current_rebuild_process = None
     _current_rebuild_output_file = None
     _current_rebuild_output_offset = 0
@@ -149,10 +155,13 @@ class NixOperations:
             NixOperations._last_rebuild_partial_success = False
             NixOperations._last_rebuild_output = None
 
-            # Create a temporary file to capture output
-            output_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
-            output_path = output_file.name
-            output_file.close()
+            # Ensure log directory exists
+            NixOperations.LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+            # Create timestamped log file in persistent location
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            log_file = NixOperations.LOG_DIR / f"rebuild-{timestamp}.log"
+            output_path = str(log_file)
 
             # Write initial status message to ensure output exists immediately
             with open(output_path, 'w') as f:
@@ -213,15 +222,42 @@ class NixOperations:
 
         if process is None:
             # No active rebuild process
-            # Return saved state from previous rebuild (for persistence)
+            # CHECK PERSISTENT STORAGE FIRST (survives service restarts)
+            if NixOperations.LATEST_STATUS.exists():
+                try:
+                    with open(NixOperations.LATEST_STATUS, 'r') as f:
+                        saved_status = json.load(f)
+
+                    # Read full output from log file
+                    log_file = Path(saved_status.get('log_file', ''))
+                    full_output = ''
+                    if log_file.exists():
+                        with open(log_file, 'r') as f:
+                            full_output = f.read()
+                        logger.debug(f"Loaded rebuild logs from persistent storage: {log_file} ({len(full_output)} chars)")
+                    else:
+                        logger.warning(f"Log file not found: {log_file}")
+
+                    return {
+                        'running': False,
+                        'output': full_output,
+                        'exit_code': saved_status.get('exit_code'),
+                        'partial_success': saved_status.get('partial_success', False)
+                    }
+                except Exception as e:
+                    logger.error(f"Error reading saved rebuild status from {NixOperations.LATEST_STATUS}: {e}")
+
+            # Fallback to in-memory state (for backwards compatibility during process lifetime)
             if NixOperations._last_rebuild_exit_code is not None:
-                logger.debug(f"Returning saved rebuild state: exit_code={NixOperations._last_rebuild_exit_code}, partial_success={NixOperations._last_rebuild_partial_success}")
+                logger.debug(f"Returning in-memory rebuild state: exit_code={NixOperations._last_rebuild_exit_code}, partial_success={NixOperations._last_rebuild_partial_success}")
                 return {
                     'running': False,
                     'output': NixOperations._last_rebuild_output or '',
                     'exit_code': NixOperations._last_rebuild_exit_code,
                     'partial_success': NixOperations._last_rebuild_partial_success
                 }
+
+            # No rebuild has been run yet
             logger.debug("No rebuild has been run yet, returning initial state")
             return {
                 'running': False,
@@ -281,19 +317,28 @@ class NixOperations:
             NixOperations._last_rebuild_partial_success = partial_success
             NixOperations._last_rebuild_output = full_output
 
-            logger.info(f"Rebuild status saved: exit_code={exit_code}, partial_success={partial_success}")
+            # SAVE TO PERSISTENT STORAGE (survives service restarts)
+            try:
+                status_data = {
+                    "exit_code": exit_code,
+                    "partial_success": partial_success,
+                    "timestamp": datetime.now().isoformat(),
+                    "log_file": output_file,
+                    "output_length": len(full_output)
+                }
+
+                with open(NixOperations.LATEST_STATUS, 'w') as f:
+                    json.dump(status_data, f, indent=2)
+
+                logger.info(f"Rebuild status persisted to {NixOperations.LATEST_STATUS}: exit_code={exit_code}, partial_success={partial_success}")
+
+                # Cleanup old logs
+                NixOperations._cleanup_old_logs()
+            except Exception as e:
+                logger.error(f"Error saving rebuild status to persistent storage: {e}")
 
             # Clean up process reference
             NixOperations._current_rebuild_process = None
-
-            # Clean up temp file after a delay (allow final reads)
-            if output_file:
-                try:
-                    # Don't delete immediately - frontend might still be polling
-                    # In production, implement proper cleanup
-                    pass
-                except Exception as e:
-                    logger.error(f"Error cleaning up output file: {e}")
 
             return {
                 'running': False,
@@ -383,6 +428,21 @@ class NixOperations:
                 errors.append(line.strip())
 
         return errors
+
+    @staticmethod
+    def _cleanup_old_logs():
+        """Keep only the last N rebuild logs"""
+        try:
+            if not NixOperations.LOG_DIR.exists():
+                return
+
+            log_files = sorted(NixOperations.LOG_DIR.glob("rebuild-*.log"))
+            if len(log_files) > NixOperations.MAX_LOGS_TO_KEEP:
+                for old_log in log_files[:-NixOperations.MAX_LOGS_TO_KEEP]:
+                    old_log.unlink()
+                    logger.info(f"Cleaned up old rebuild log: {old_log}")
+        except Exception as e:
+            logger.error(f"Error cleaning up old logs: {e}")
 
 
 # Initialize process tracking
