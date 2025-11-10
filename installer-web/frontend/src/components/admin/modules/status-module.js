@@ -166,6 +166,8 @@ class StatusModule extends LitElement {
 
   constructor() {
     super();
+    // Initialize properties with defaults
+    // These will be overridden by parent via property binding
     this.rebuildStatus = {
       running: false,
       message: 'System is healthy',
@@ -173,126 +175,17 @@ class StatusModule extends LitElement {
     };
     this.buildLogs = [];
     this.systemHealth = 'healthy';
-    this.pollInterval = null;
-    this.previousRunningState = false;
   }
 
-  connectedCallback() {
-    super.connectedCallback();
-    this.checkRebuildStatus();
-    // Poll for updates every 2 seconds
-    this.pollInterval = setInterval(() => this.checkRebuildStatus(), 2000);
-  }
+  updated(changedProperties) {
+    super.updated(changedProperties);
 
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-    }
-  }
-
-  async checkRebuildStatus() {
-    try {
-      const response = await fetch('/api/config/rebuild-status');
-
-      // Check if response is OK before parsing JSON
-      if (!response.ok) {
-        console.error('Failed to fetch rebuild status:', response.status);
-        return;
+    // Auto-scroll to bottom when logs change
+    if (changedProperties.has('buildLogs') && this.buildLogs.length > 0) {
+      const logsContent = this.shadowRoot.querySelector('.logs-content');
+      if (logsContent) {
+        logsContent.scrollTop = logsContent.scrollHeight;
       }
-
-      const status = await response.json();
-
-      // Detect new build starting: running changed from false → true
-      if (status.running && !this.previousRunningState) {
-        // New build starting - reset status
-        this.systemHealth = 'building';
-        this.rebuildStatus = {
-          running: true,
-          message: 'Building system...',
-          lastUpdate: null
-        };
-        // Only clear logs if we have new output to replace them with
-        // This prevents empty log area during silent evaluation phase
-        if (status.output) {
-          this.buildLogs = [];
-        }
-      }
-      this.previousRunningState = status.running;
-
-      if (status.output) {
-        // Append new output lines (trim to remove leading/trailing whitespace)
-        const newLines = status.output.trim().split('\n').filter(l => l.trim());
-
-        // If not running, replace logs (saved state) instead of appending
-        // If running, append new logs (streaming)
-        if (!status.running) {
-          this.buildLogs = newLines;
-        } else {
-          this.buildLogs = [...this.buildLogs, ...newLines];
-        }
-
-        // Auto-scroll to bottom after next render
-        await this.updateComplete;
-        const logsContent = this.shadowRoot.querySelector('.logs-content');
-        if (logsContent) {
-          logsContent.scrollTop = logsContent.scrollHeight;
-        }
-      }
-
-      // Update status
-      if (status.running) {
-        this.systemHealth = 'building';
-        this.rebuildStatus = {
-          running: true,
-          message: 'Building system...',
-          lastUpdate: null
-        };
-      } else if (status.exit_code !== null && status.exit_code !== undefined) {
-        // Build finished - restore final state
-        const success = status.exit_code === 0;
-        const partialSuccess = status.partial_success || false;
-
-        // Set health: success = healthy, partial = warning, failure = unhealthy
-        if (success) {
-          this.systemHealth = 'healthy';
-        } else if (partialSuccess) {
-          this.systemHealth = 'warning';
-        } else {
-          this.systemHealth = 'unhealthy';
-        }
-
-        this.rebuildStatus = {
-          running: false,
-          message: success
-            ? 'Build completed successfully'
-            : partialSuccess
-              ? `Build completed with warnings (exit code ${status.exit_code})`
-              : `Build failed (exit code ${status.exit_code})`,
-          lastUpdate: { success: success || partialSuccess }
-        };
-      } else {
-        // No exit code and not running - either no rebuild ever ran, or there was an early failure
-        // If there's output, it's likely an error
-        if (status.output && status.output.trim()) {
-          this.systemHealth = 'unhealthy';
-          this.rebuildStatus = {
-            running: false,
-            message: 'Build failed',
-            lastUpdate: { success: false }
-          };
-        } else {
-          // No rebuild has run yet - keep healthy default
-          this.systemHealth = 'healthy';
-          this.rebuildStatus = {
-            running: false,
-            message: 'System is healthy',
-            lastUpdate: { success: true }
-          };
-        }
-      }
-    } catch (error) {
-      console.error('Error checking rebuild status:', error);
     }
   }
 
