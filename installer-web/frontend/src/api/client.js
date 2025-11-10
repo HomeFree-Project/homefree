@@ -110,6 +110,9 @@ export const previewConfigChanges = (config) => post('/api/config/preview', conf
 export const applyConfigChanges = (config) => post('/api/config/apply', config);
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
 
+// Services
+export const getServices = () => get('/api/services');
+
 // =============================================================================
 // Polling Helper for Installation Progress
 // =============================================================================

@@ -26,6 +26,37 @@ let
     exec ${pythonEnv}/bin/python simple_main.py
   '';
 
+  # Generate service configuration JSON
+  admin-config = {
+    wanInterface = cfg.network.wan-interface;
+    lanInterface = cfg.network.lan-interface;
+    services =
+    let
+      filtered = lib.filter (service-config: service-config.admin.show == true && service-config.reverse-proxy.enable == true) cfg.service-config;
+      compareByName = a: b: a.name < b.name;
+      sorted = builtins.sort compareByName filtered;
+    in
+    lib.map (service-config:
+      let
+        path = if service-config.admin.urlPathOverride != null then service-config.admin.urlPathOverride else "";
+        subdomain = builtins.head service-config.reverse-proxy.subdomains;
+        domain = if (builtins.length service-config.reverse-proxy.https-domains > 0) then (builtins.head service-config.reverse-proxy.https-domains)
+                 else if (builtins.length service-config.reverse-proxy.http-domains > 0) then (builtins.head service-config.reverse-proxy.http-domains)
+                 else "";
+      in
+      {
+        service-config = service-config;
+        url = ''https://${subdomain}.${domain}${path}'';
+      }
+    ) sorted;
+  };
+  config-json = (pkgs.formats.json {}).generate "admin-config.json" admin-config;
+
+  preStart = ''
+    ${pkgs.coreutils}/bin/mkdir -p /run/homefree/admin
+    ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
+  '';
+
 in
 {
   config = mkIf (cfg.admin-page.enable or true) {
@@ -42,6 +73,7 @@ in
         Group = "root";
         StateDirectory = "homefree-admin";
         WorkingDirectory = "/var/lib/homefree-admin";
+        ExecStartPre = [ "!${pkgs.writeShellScript "homefree-admin-prestart" preStart}" ];
         ExecStart = "${admin-backend}/bin/homefree-admin-backend";
         Restart = "always";
         RestartSec = "10s";

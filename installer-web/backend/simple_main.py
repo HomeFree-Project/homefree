@@ -28,6 +28,7 @@ from resolvers.system import SystemResolver
 from resolvers.network import NetworkResolver
 from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
+from resolvers.services import ServicesResolver
 
 # Configure logging
 logging.basicConfig(
@@ -244,6 +245,18 @@ async def is_virtualized():
         return JSONResponse(content={"isVirtualized": is_vm})
     except Exception as e:
         logger.error(f"Error detecting virtualization: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Services Endpoints
+
+@app.get("/api/services")
+async def get_services():
+    """Get list of services with their runtime status"""
+    try:
+        services = ServicesResolver.get_services()
+        return JSONResponse(content=[to_dict(service) for service in services])
+    except Exception as e:
+        logger.error(f"Error getting services: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Network Endpoints

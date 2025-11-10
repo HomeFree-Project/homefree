@@ -1,13 +1,18 @@
 import { LitElement, html, css } from 'lit';
+import { getServices } from '../../../api/client.js';
 import '../../shared/config-section.js';
 
 /**
  * Services configuration module
- * Handles: Service enable/disable toggles and public access settings
+ * Displays all services with runtime status, enable/disable toggles, and public access settings
  */
 class ServicesModule extends LitElement {
   static properties = {
+    services: { type: Array },
     config: { type: Object },
+    loading: { type: Boolean },
+    error: { type: String },
+    searchQuery: { type: String },
     modified: { type: Boolean }
   };
 
@@ -20,47 +25,177 @@ class ServicesModule extends LitElement {
       width: 100%;
     }
 
-    .services-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 20px;
-      margin-top: 20px;
+    .info-box {
+      background: #f5f5f7;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      color: #1d1d1f;
+      max-width: 1200px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .info-text {
+      flex: 1;
+    }
+
+    .search-box {
+      margin-bottom: 20px;
       max-width: 1200px;
     }
 
-    .service-card {
+    .search-box input {
+      width: 100%;
+      max-width: 500px;
+      padding: 12px 16px;
+      font-size: 14px;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      font-family: inherit;
+    }
+
+    .search-box input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .services-list {
+      max-width: 1200px;
+    }
+
+    .service-row {
       background: white;
       border: 1px solid #e5e5e7;
       border-radius: 12px;
       padding: 20px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
       transition: all 0.2s;
     }
 
-    .service-card:hover {
+    .service-row:hover {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 
-    .service-card.enabled {
+    .service-row.enabled {
       border-color: #667eea;
-      background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
     }
 
-    .service-header {
+    .status-indicator {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      margin-bottom: 16px;
+      gap: 8px;
+      min-width: 120px;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.running {
+      background: #34c759;
+      box-shadow: 0 0 8px rgba(52, 199, 89, 0.5);
+    }
+
+    .status-dot.stopped {
+      background: #8e8e93;
+    }
+
+    .status-dot.failed {
+      background: #ff3b30;
+      box-shadow: 0 0 8px rgba(255, 59, 48, 0.5);
+    }
+
+    .status-dot.starting {
+      background: #ff9500;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .status-dot.unknown {
+      background: #d1d1d6;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    .status-text {
+      font-size: 13px;
+      font-weight: 500;
+      color: #86868b;
+    }
+
+    .status-text.running { color: #34c759; }
+    .status-text.failed { color: #ff3b30; }
+    .status-text.starting { color: #ff9500; }
+
+    .service-info {
+      flex: 1;
+      min-width: 0;
     }
 
     .service-name {
       font-size: 16px;
       font-weight: 600;
       color: #1d1d1f;
-      text-transform: capitalize;
+      margin-bottom: 4px;
     }
 
-    .service-card.enabled .service-name {
+    .service-project {
+      font-size: 13px;
+      color: #86868b;
+      margin-bottom: 4px;
+    }
+
+    .service-url {
+      font-size: 12px;
       color: #667eea;
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .service-url:hover {
+      text-decoration: underline;
+    }
+
+    .service-systemd {
+      font-size: 11px;
+      color: #8e8e93;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      margin-top: 4px;
+    }
+
+    .service-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: flex-end;
+    }
+
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      color: #86868b;
+      min-width: 90px;
+      text-align: right;
     }
 
     .toggle-switch {
@@ -107,142 +242,140 @@ class ServicesModule extends LitElement {
       transform: translateX(20px);
     }
 
-    .service-options {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #e5e5e7;
+    input:disabled + .toggle-slider {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
-    .service-option {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 0;
-    }
-
-    .option-label {
-      font-size: 14px;
+    .loading-spinner {
+      text-align: center;
+      padding: 40px;
       color: #86868b;
     }
 
-    .option-toggle {
-      position: relative;
-      width: 36px;
-      height: 20px;
-    }
-
-    .option-toggle input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .option-toggle .toggle-slider {
-      border-radius: 20px;
-    }
-
-    .option-toggle .toggle-slider:before {
-      height: 14px;
-      width: 14px;
-      left: 3px;
-      bottom: 3px;
-    }
-
-    .option-toggle input:checked + .toggle-slider:before {
-      transform: translateX(16px);
-    }
-
-    .info-box {
-      background: #f5f5f7;
+    .error-box {
+      background: #fff3f3;
+      border: 1px solid #ffccc7;
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 20px;
-      font-size: 14px;
-      color: #1d1d1f;
+      color: #d32f2f;
       max-width: 1200px;
     }
 
-    .search-box {
-      margin-bottom: 20px;
-      max-width: 1200px;
+    .no-results {
+      text-align: center;
+      padding: 40px;
+      color: #86868b;
     }
 
-    .search-box input {
-      width: 100%;
-      max-width: 500px;
-      padding: 12px 16px;
-      font-size: 14px;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      font-family: inherit;
+    .refresh-button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-left: 12px;
+      transition: background 0.2s;
     }
 
-    .search-box input:focus {
-      outline: none;
-      border-color: #667eea;
+    .refresh-button:hover {
+      background: #5568d3;
+    }
+
+    .refresh-button:disabled {
+      background: #d2d2d7;
+      cursor: not-allowed;
     }
 
     @media (max-width: 768px) {
-      .services-grid {
-        grid-template-columns: 1fr;
+      .service-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .status-indicator {
+        width: 100%;
+      }
+
+      .service-controls {
+        width: 100%;
+        align-items: flex-start;
+      }
+
+      .toggle-container {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .toggle-label {
+        text-align: left;
       }
     }
   `;
 
   constructor() {
     super();
-    this.config = {
-      services: {}
-    };
-    this.modified = false;
+    this.services = [];
+    this.config = { services: {} };
+    this.loading = true;
+    this.error = null;
     this.searchQuery = '';
-
-    // List of all available services
-    this.servicesList = [
-      { id: 'adguard', name: 'AdGuard Home', description: 'Network-wide ad blocker' },
-      { id: 'authentik', name: 'Authentik', description: 'Identity provider and SSO' },
-      { id: 'baikal', name: 'Baïkal', description: 'CalDAV/CardDAV server' },
-      { id: 'cryptpad', name: 'CryptPad', description: 'Encrypted collaborative documents' },
-      { id: 'freshrss', name: 'FreshRSS', description: 'RSS feed aggregator' },
-      { id: 'forgejo', name: 'Forgejo', description: 'Git hosting service' },
-      { id: 'frigate', name: 'Frigate', description: 'Network video recorder with AI' },
-      { id: 'grocy', name: 'Grocy', description: 'Groceries & household management' },
-      { id: 'headscale', name: 'Headscale', description: 'Self-hosted Tailscale control server' },
-      { id: 'homeassistant', name: 'Home Assistant', description: 'Home automation platform' },
-      { id: 'homebox', name: 'Homebox', description: 'Home inventory system' },
-      { id: 'immich', name: 'Immich', description: 'Photo and video backup' },
-      { id: 'jellyfin', name: 'Jellyfin', description: 'Media server' },
-      { id: 'joplin', name: 'Joplin', description: 'Note-taking application' },
-      { id: 'kanidm', name: 'Kanidm', description: 'Identity management system' },
-      { id: 'lidarr', name: 'Lidarr', description: 'Music collection manager' },
-      { id: 'logseq', name: 'Logseq', description: 'Knowledge base and note-taking' },
-      { id: 'linkwarden', name: 'Linkwarden', description: 'Bookmark manager' },
-      { id: 'matrix', name: 'Matrix Synapse', description: 'Decentralized chat server' },
-      { id: 'mediawiki', name: 'MediaWiki', description: 'Wiki software' },
-      { id: 'minecraft', name: 'Minecraft', description: 'Minecraft server' },
-      { id: 'nextcloud', name: 'Nextcloud', description: 'File sync and share' },
-      { id: 'nzbget', name: 'NZBGet', description: 'Usenet downloader' },
-      { id: 'oauth2-proxy', name: 'OAuth2 Proxy', description: 'Authentication proxy' },
-      { id: 'ollama', name: 'Ollama', description: 'Local AI models' },
-      { id: 'radicale', name: 'Radicale', description: 'CalDAV/CardDAV server' },
-      { id: 'screeenly', name: 'Screeenly', description: 'Screenshot service' },
-      { id: 'snipe-it', name: 'Snipe-IT', description: 'IT asset management' },
-      { id: 'unifi', name: 'UniFi Controller', description: 'Network management' },
-      { id: 'vaultwarden', name: 'Vaultwarden', description: 'Password manager' },
-      { id: 'webdav', name: 'WebDAV', description: 'File access protocol' },
-      { id: 'zitadel', name: 'Zitadel', description: 'Identity infrastructure' }
-    ];
+    this.modified = false;
   }
 
-  handleServiceToggle(serviceId, enabled) {
-    const newConfig = { ...this.config };
-    if (!newConfig.services[serviceId]) {
-      newConfig.services[serviceId] = { enable: false, public: false };
+  async connectedCallback() {
+    super.connectedCallback();
+    await this.loadServices();
+  }
+
+  async loadServices() {
+    this.loading = true;
+    this.error = null;
+
+    try {
+      const services = await getServices();
+      this.services = services;
+
+      // Initialize config from loaded services
+      if (!this.config.services) {
+        this.config = { services: {} };
+      }
+
+      // Populate config with current service states
+      services.forEach(service => {
+        if (!this.config.services[service.label]) {
+          this.config.services[service.label] = {
+            enable: service.enabled,
+            public: service.public
+          };
+        }
+      });
+    } catch (error) {
+      console.error('Error loading services:', error);
+      this.error = error.message || 'Failed to load services';
+    } finally {
+      this.loading = false;
     }
-    newConfig.services[serviceId].enable = enabled;
+  }
+
+  handleServiceToggle(serviceLabel, enabled) {
+    const newConfig = { ...this.config };
+    if (!newConfig.services[serviceLabel]) {
+      newConfig.services[serviceLabel] = { enable: false, public: false };
+    }
+    newConfig.services[serviceLabel].enable = enabled;
 
     this.config = newConfig;
     this.modified = true;
+
+    // Update local services array for immediate UI feedback
+    this.services = this.services.map(s =>
+      s.label === serviceLabel ? { ...s, enabled } : s
+    );
 
     // Emit change event to parent
     this.dispatchEvent(new CustomEvent('config-change', {
@@ -252,15 +385,20 @@ class ServicesModule extends LitElement {
     }));
   }
 
-  handlePublicToggle(serviceId, isPublic) {
+  handlePublicToggle(serviceLabel, isPublic) {
     const newConfig = { ...this.config };
-    if (!newConfig.services[serviceId]) {
-      newConfig.services[serviceId] = { enable: false, public: false };
+    if (!newConfig.services[serviceLabel]) {
+      newConfig.services[serviceLabel] = { enable: false, public: false };
     }
-    newConfig.services[serviceId].public = isPublic;
+    newConfig.services[serviceLabel].public = isPublic;
 
     this.config = newConfig;
     this.modified = true;
+
+    // Update local services array for immediate UI feedback
+    this.services = this.services.map(s =>
+      s.label === serviceLabel ? { ...s, public: isPublic } : s
+    );
 
     // Emit change event to parent
     this.dispatchEvent(new CustomEvent('config-change', {
@@ -272,86 +410,174 @@ class ServicesModule extends LitElement {
 
   handleSearch(e) {
     this.searchQuery = e.target.value.toLowerCase();
-    this.requestUpdate();
   }
 
-  renderServiceCard(service) {
-    const serviceConfig = this.config.services[service.id] || { enable: false, public: false };
-    const isEnabled = serviceConfig.enable;
-    const isPublic = serviceConfig.public;
+  async handleRefresh() {
+    await this.loadServices();
+  }
+
+  getStatusClass(activeState, subState) {
+    if (activeState === 'active' && subState === 'running') {
+      return 'running';
+    } else if (activeState === 'failed') {
+      return 'failed';
+    } else if (activeState === 'activating' || subState === 'start') {
+      return 'starting';
+    } else if (activeState === 'inactive' || subState === 'dead') {
+      return 'stopped';
+    }
+    return 'unknown';
+  }
+
+  getStatusText(activeState, subState, enabled) {
+    if (!enabled) {
+      return 'Disabled';
+    }
+    if (activeState === 'active' && subState === 'running') {
+      return 'Running';
+    } else if (activeState === 'failed') {
+      return 'Failed';
+    } else if (activeState === 'activating') {
+      return 'Starting';
+    } else if (activeState === 'inactive' && subState === 'dead') {
+      return 'Stopped';
+    } else if (activeState === 'reloading') {
+      return 'Reloading';
+    }
+    return `${activeState} (${subState})`;
+  }
+
+  renderServiceRow(service) {
+    const statusClass = this.getStatusClass(service.active_state, service.sub_state);
+    const statusText = this.getStatusText(service.active_state, service.sub_state, service.enabled);
+    const isEnabled = service.enabled;
+    const isPublic = service.public;
 
     return html`
-      <div class="service-card ${isEnabled ? 'enabled' : ''}">
-        <div class="service-header">
-          <div>
-            <div class="service-name">${service.name}</div>
-            <div style="font-size: 12px; color: #86868b; margin-top: 4px;">
-              ${service.description}
-            </div>
-          </div>
-          <label class="toggle-switch">
-            <input
-              type="checkbox"
-              .checked=${isEnabled}
-              @change=${(e) => this.handleServiceToggle(service.id, e.target.checked)}
-            />
-            <span class="toggle-slider"></span>
-          </label>
+      <div class="service-row ${isEnabled ? 'enabled' : ''}">
+        <div class="status-indicator">
+          <div class="status-dot ${statusClass}"></div>
+          <div class="status-text ${statusClass}">${statusText}</div>
         </div>
 
-        ${isEnabled ? html`
-          <div class="service-options">
-            <div class="service-option">
-              <span class="option-label">Public Access (WAN)</span>
-              <label class="option-toggle">
+        <div class="service-info">
+          <div class="service-name">${service.name}</div>
+          <div class="service-project">${service.project_name}</div>
+          ${service.url && isEnabled ? html`
+            <a href="${service.url}" target="_blank" class="service-url">
+              ${service.url}
+            </a>
+          ` : ''}
+          ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
+            <div class="service-systemd">
+              systemd: ${service.systemd_services.join(', ')}
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="service-controls">
+          <div class="toggle-container">
+            <span class="toggle-label">Enable</span>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                .checked=${isEnabled}
+                @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          ${isEnabled ? html`
+            <div class="toggle-container">
+              <span class="toggle-label">Public (WAN)</span>
+              <label class="toggle-switch">
                 <input
                   type="checkbox"
                   .checked=${isPublic}
-                  @change=${(e) => this.handlePublicToggle(service.id, e.target.checked)}
+                  @change=${(e) => this.handlePublicToggle(service.label, e.target.checked)}
                 />
                 <span class="toggle-slider"></span>
               </label>
             </div>
-          </div>
-        ` : ''}
+          ` : ''}
+        </div>
       </div>
     `;
   }
 
   render() {
-    // Filter services based on search query
-    const filteredServices = this.servicesList.filter(service =>
-      service.name.toLowerCase().includes(this.searchQuery) ||
-      service.description.toLowerCase().includes(this.searchQuery)
-    );
+    if (this.loading) {
+      return html`
+        <div class="module-container">
+          <div class="loading-spinner">
+            Loading services...
+          </div>
+        </div>
+      `;
+    }
 
-    const enabledCount = this.servicesList.filter(s =>
-      this.config.services[s.id]?.enable
+    if (this.error) {
+      return html`
+        <div class="module-container">
+          <div class="error-box">
+            <strong>Error loading services:</strong> ${this.error}
+            <button class="refresh-button" @click=${this.handleRefresh}>
+              Retry
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Filter services based on search query
+    const filteredServices = this.services.filter(service => {
+      const searchLower = this.searchQuery.toLowerCase();
+      return (
+        service.name.toLowerCase().includes(searchLower) ||
+        service.project_name.toLowerCase().includes(searchLower) ||
+        service.label.toLowerCase().includes(searchLower)
+      );
+    });
+
+    const enabledCount = this.services.filter(s => s.enabled).length;
+    const runningCount = this.services.filter(s =>
+      s.active_state === 'active' && s.sub_state === 'running'
     ).length;
 
     return html`
       <div class="module-container">
         <div class="info-box">
-          <strong>${enabledCount} of ${this.servicesList.length} services enabled</strong>
-          <div style="margin-top: 8px; font-size: 13px;">
-            Enable the services you want to run on your HomeFree system. Services marked as "Public Access" will be accessible from the internet.
+          <div class="info-text">
+            <strong>${runningCount} running / ${enabledCount} enabled / ${this.services.length} total services</strong>
+            <div style="margin-top: 8px; font-size: 13px;">
+              Enable/disable services and configure public WAN access. Running services appear at the top.
+            </div>
           </div>
+          <button
+            class="refresh-button"
+            @click=${this.handleRefresh}
+            ?disabled=${this.loading}
+          >
+            Refresh
+          </button>
         </div>
 
         <div class="search-box">
           <input
             type="text"
             placeholder="Search services..."
+            .value=${this.searchQuery}
             @input=${this.handleSearch}
           />
         </div>
 
-        <div class="services-grid">
-          ${filteredServices.map(service => this.renderServiceCard(service))}
+        <div class="services-list">
+          ${filteredServices.map(service => this.renderServiceRow(service))}
         </div>
 
         ${filteredServices.length === 0 ? html`
-          <div style="text-align: center; padding: 40px; color: #86868b;">
+          <div class="no-results">
             No services found matching "${this.searchQuery}"
           </div>
         ` : ''}

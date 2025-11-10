@@ -131,3 +131,17 @@ class ConfigDiff:
     """Configuration diff"""
     has_changes: bool
     diff: str
+
+
+@dataclass
+class ServiceStatus:
+    """Service runtime status"""
+    label: str
+    name: str
+    project_name: str
+    enabled: bool
+    public: bool
+    active_state: str
+    sub_state: str
+    systemd_services: List[str]
+    url: Optional[str] = None

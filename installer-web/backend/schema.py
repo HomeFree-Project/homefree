@@ -9,9 +9,34 @@ from resolvers.system import SystemResolver
 from resolvers.network import NetworkResolver
 from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
+from resolvers.services import ServicesResolver
 
 
 # Type Definitions
+
+# Service status enums
+@strawberry.enum
+class ServiceActiveState:
+    ACTIVE = "active"
+    RELOADING = "reloading"
+    INACTIVE = "inactive"
+    FAILED = "failed"
+    ACTIVATING = "activating"
+    DEACTIVATING = "deactivating"
+    MAINTENANCE = "maintenance"
+    UNKNOWN = "unknown"
+
+@strawberry.enum
+class ServiceSubState:
+    RUNNING = "running"
+    DEAD = "dead"
+    FAILED = "failed"
+    EXITED = "exited"
+    RELOADING = "reloading"
+    AUTO_RESTART = "auto-restart"
+    START = "start"
+    STOP = "stop"
+    UNKNOWN = "unknown"
 
 @strawberry.type
 class DiskInfo:
@@ -77,6 +102,19 @@ class MutationResult:
     success: bool
     message: str
 
+@strawberry.type
+class ServiceStatus:
+    """Runtime status of a service"""
+    label: str
+    name: str
+    project_name: str
+    enabled: bool
+    public: bool
+    active_state: ServiceActiveState
+    sub_state: ServiceSubState
+    systemd_services: List[str]
+    url: Optional[str] = None
+
 
 # Query Type
 
@@ -111,6 +149,11 @@ class Query:
     def install_progress(self) -> InstallProgress:
         """Get current installation progress"""
         return InstallResolver.get_progress()
+
+    @strawberry.field
+    def services(self) -> List[ServiceStatus]:
+        """Get list of services with their runtime status"""
+        return ServicesResolver.get_services()
 
 
 # Mutation Type
