@@ -87,15 +87,15 @@ let
     lib.map (service-config:
       let
         path = if service-config.admin.urlPathOverride != null then service-config.admin.urlPathOverride else "";
-        # Only generate URL if reverse-proxy is enabled and has subdomains
-        hasReverseProxy = service-config.reverse-proxy.enable && (builtins.length service-config.reverse-proxy.subdomains > 0);
-        subdomain = if hasReverseProxy then builtins.head service-config.reverse-proxy.subdomains else "";
-        domain = if hasReverseProxy then (
+        # Generate URL if reverse-proxy has subdomains configured (regardless of enable state)
+        hasReverseProxyConfig = (builtins.length service-config.reverse-proxy.subdomains > 0);
+        subdomain = if hasReverseProxyConfig then builtins.head service-config.reverse-proxy.subdomains else "";
+        domain = if hasReverseProxyConfig then (
           if (builtins.length service-config.reverse-proxy.https-domains > 0) then (builtins.head service-config.reverse-proxy.https-domains)
           else if (builtins.length service-config.reverse-proxy.http-domains > 0) then (builtins.head service-config.reverse-proxy.http-domains)
           else ""
         ) else "";
-        url = if hasReverseProxy && domain != "" then ''https://${subdomain}.${domain}${path}'' else "";
+        url = if hasReverseProxyConfig && domain != "" then ''https://${subdomain}.${domain}${path}'' else "";
       in
       {
         service-config = service-config;

@@ -647,26 +647,6 @@
         };
       };
 
-      gitea = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Gitea git service";
-        };
-
-        disable-registration = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "Disable user registration";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-      };
-
       grocy = {
         enable = lib.mkOption {
           type = lib.types.bool;

@@ -154,6 +154,26 @@ log_info "Building NixOS configuration: $CONFIG_NAME"
 log_info "Flake directory: $FLAKE_DIR"
 log_info "Action: $ACTION"
 
+# Scrub homefree-local from flake.lock to force refresh (workaround for dirty git+file inputs)
+LOCK_FILE="$FLAKE_DIR/flake.lock"
+if [[ -f "$LOCK_FILE" ]]; then
+    log_info "Removing homefree-local from flake.lock to force refresh..."
+    # Use a temp file to avoid permission issues
+    TEMP_LOCK=$(mktemp)
+    # Remove the homefree-local node and all references to it
+    if command -v jq &> /dev/null; then
+        REMOVE_CMD="jq 'del(.nodes.\"homefree-local\") | walk(if type == \"object\" and has(\"inputs\") then .inputs |= del(.\"homefree-local\") else . end)' '$LOCK_FILE' > '$TEMP_LOCK'"
+        if [[ $EUID -ne 0 ]]; then
+            eval "$REMOVE_CMD" && sudo mv "$TEMP_LOCK" "$LOCK_FILE" && sudo chmod 644 "$LOCK_FILE"
+        else
+            eval "$REMOVE_CMD" && mv "$TEMP_LOCK" "$LOCK_FILE" && chmod 644 "$LOCK_FILE"
+        fi
+    else
+        log_warning "jq not found, skipping flake.lock scrubbing"
+        rm -f "$TEMP_LOCK"
+    fi
+fi
+
 # Update flake inputs before building
 log_info "Updating homefree-local and homefree-base flake inputs..."
 FLAKE_UPDATE_CMD="nix flake lock --allow-dirty --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
