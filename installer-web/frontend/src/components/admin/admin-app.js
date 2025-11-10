@@ -491,6 +491,16 @@ class AdminApp extends LitElement {
             warning: partialSuccess
           }
         };
+      } else {
+        // No exit code and not running - backend doesn't know about rebuild
+        // This happens after external rebuilds or backend restarts
+        if (status.output && status.output.trim()) {
+          // If there's output, it's likely an error
+          this.systemHealth = 'unhealthy';
+        } else {
+          // No output, no rebuild tracked - system is healthy
+          this.systemHealth = 'healthy';
+        }
       }
     } catch (error) {
       console.error('Error checking rebuild status:', error);
