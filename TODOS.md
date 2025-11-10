@@ -1,14 +1,14 @@
 ## TODOS
 
-Instructions: Complete the next bullet under Admin UI. Create a plan for this item only. Once you have completed the item, and I have confirmed that you are complete, mark off the item in TODOS.md with a strike through or check, then await further instructions.
+Instructions: Complete the next bullet in TODOS.md. Create a plan for this item only. Once you have completed the item, and I have confirmed that you are complete, mark off the item in TODOS.md with a strike through or check, then await further instructions.
 
 ### Admin UI
 
 - ✅ ~~On first load, the layout is different until the content is loaded. Hide the content and show a loading spinner in the middle of the screen until the page is loaded and ready~~
 - ✅ ~~In each section page, "config-section" content is flush against the nav panel on the left and the right side of the page. Add margin. Same with the class "warning-box".~~
 - ✅ ~~I have a 5k wide monitor. Fields are stretched ALL the way across the page. for example the hostname input box in the System page/section is about 4000px wide. Keep the admin site full screen width, but update all the pages and fields to be of reasonable max-width.~~
-- Update the services page to be one service per row, with a status on whether the service is running or not
-- The colored status icon seems to have disappeard from the "Status" entry in the left navigation area. The spinner stills shows up while building though.
+- ✅ ~~Update the services page to be one service per row, with a status on whether the service is running or not~~
+- The colored status icon next to "Status" in the left navigation area is not correct. It usually shows red even if the build succeeded.
 - The "Save & Apply" process is not good. Instead of a modal, it instead should show a non-blocking toast notification on the bottom left of the screen that auto-dismisses after 5 seconds, then flashes the "Status" entry in the left nav for a couple seconds. Also, if the build fails, the "Status" entry in the left nav should flash until the user clicks on it.
 - For the status page, make the build log collapsable, and expand it automatically on load if a build is runninr or if the last build failed/status is failed.
 - For the status page, add various system details, the same as those in the old admin UI at services/admin/site/components/hf-system-status.js
