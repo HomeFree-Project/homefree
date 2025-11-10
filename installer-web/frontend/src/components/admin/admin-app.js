@@ -496,6 +496,12 @@ class AdminApp extends LitElement {
             warning: partialSuccess
           }
         };
+
+        // Restore build logs from backend's saved output
+        // Backend returns full output when build is finished
+        if (status.output && status.output.trim()) {
+          this.buildLogs = status.output.trim().split('\n').filter(l => l.trim());
+        }
       } else {
         // No exit code and not running - backend doesn't know about rebuild
         // This happens after external rebuilds or backend restarts
