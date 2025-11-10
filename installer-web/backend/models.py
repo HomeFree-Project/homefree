@@ -124,6 +124,7 @@ class RebuildStatus:
     output: str
     exit_code: Optional[int]
     success: bool
+    partial_success: bool = False
 
 
 @dataclass

@@ -455,6 +455,10 @@ class AdminApp extends LitElement {
       }
 
       const status = await response.json();
+      console.log('[DEBUG] checkRebuildStatus - status:', status);
+      console.log('[DEBUG] checkRebuildStatus - output length:', status.output?.length || 0);
+      console.log('[DEBUG] checkRebuildStatus - exit_code:', status.exit_code);
+      console.log('[DEBUG] checkRebuildStatus - running:', status.running);
 
       // If rebuild is running, restore state and start polling
       if (status.running) {
@@ -501,6 +505,11 @@ class AdminApp extends LitElement {
         // Backend returns full output when build is finished
         if (status.output && status.output.trim()) {
           this.buildLogs = status.output.trim().split('\n').filter(l => l.trim());
+          console.log('[DEBUG] checkRebuildStatus - populated buildLogs, length:', this.buildLogs.length);
+          // Force Lit to detect the change and re-render
+          this.requestUpdate();
+        } else {
+          console.log('[DEBUG] checkRebuildStatus - NO output to populate buildLogs');
         }
       } else {
         // No exit code and not running - backend doesn't know about rebuild

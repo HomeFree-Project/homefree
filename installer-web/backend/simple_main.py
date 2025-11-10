@@ -635,7 +635,8 @@ async def get_rebuild_status():
             running=status['running'],
             output=status['output'],
             exit_code=status['exit_code'],
-            success=status['exit_code'] == 0 if status['exit_code'] is not None else False
+            success=status['exit_code'] == 0 if status['exit_code'] is not None else False,
+            partial_success=status.get('partial_success', False)
         )
 
         return JSONResponse(content=to_dict(result))
