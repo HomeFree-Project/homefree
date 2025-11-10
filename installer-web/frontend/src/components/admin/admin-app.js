@@ -200,6 +200,15 @@ class AdminApp extends LitElement {
       background: #5568d3;
     }
 
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn:disabled:hover {
+      background: #667eea;
+    }
+
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
@@ -989,7 +998,11 @@ ${JSON.stringify(this.config, null, 2)}
               <button class="btn" @click=${this.loadConfig}>
                 Refresh
               </button>
-              <button class="btn btn-primary" @click=${this.handleSaveChanges}>
+              <button
+                class="btn btn-primary"
+                @click=${this.handleSaveChanges}
+                ?disabled=${this.rebuildStatus.running}
+              >
                 Save & Apply
               </button>
             </div>

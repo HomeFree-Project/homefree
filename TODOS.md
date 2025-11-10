@@ -12,6 +12,7 @@ Note: In order to udpate flakes properly, don't use nixos-rebuild directly, but 
 - ✅ ~~I have a 5k wide monitor. Fields are stretched ALL the way across the page. for example the hostname input box in the System page/section is about 4000px wide. Keep the admin site full screen width, but update all the pages and fields to be of reasonable max-width.~~
 - ✅ ~~Update the services page to be one service per row, with a status on whether the service is running or not~~
 - ✅ ~~The colored status icon next to "Status" in the left navigation area is not correct. It usually shows red even if the build succeeded.~~
+- ✅ ~~Why does the admin service restart on rebuild even if there are no changes to it?~~
 - The "Save & Apply" button should be disabled when a build is running. If somehow it is enabled due to a race condition, the backend should check whether a build is already running, and ignore the request if so.
 - The "Save & Apply" process is not good. Instead of a modal, it instead should show a non-blocking toast notification on the bottom left of the screen that auto-dismisses after 5 seconds, then flashes the "Status" entry in the left nav for a couple seconds. Also, if the build fails, the "Status" entry in the left nav should flash until the user clicks on it.
 - For the status page, make the build log collapsable, and expand it automatically on load if a build is running or if the last build failed/status is failed.

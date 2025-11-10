@@ -584,6 +584,16 @@ async def apply_config_changes(config: dict):
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
+        # Check if a rebuild is already running
+        rebuild_status = NixOperations.get_rebuild_status()
+        if rebuild_status['running']:
+            from models import ApplyResult
+            result = ApplyResult(
+                success=False,
+                message="A rebuild is already in progress. Please wait for it to complete."
+            )
+            return JSONResponse(content=to_dict(result))
+
         # Validate first
         is_valid, errors = ValidationService.validate_config(config)
 
