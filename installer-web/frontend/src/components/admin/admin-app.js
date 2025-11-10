@@ -717,44 +717,48 @@ class AdminApp extends LitElement {
         }
 
         if (!status.running) {
-          // Rebuild finished
-          const success = status.exit_code === 0;
-          const partialSuccess = status.partial_success || false;
+          // Rebuild finished - only update systemHealth if we have actual exit code
+          // If exit_code is null, backend doesn't know about the rebuild (external rebuild)
+          if (status.exit_code !== null && status.exit_code !== undefined) {
+            const success = status.exit_code === 0;
+            const partialSuccess = status.partial_success || false;
 
-          if (success) {
-            this.systemHealth = 'healthy';
-            this.rebuildStatus = {
-              running: false,
-              message: 'Rebuild completed successfully',
-              lastUpdate: { success: true }
-            };
+            if (success) {
+              this.systemHealth = 'healthy';
+              this.rebuildStatus = {
+                running: false,
+                message: 'Rebuild completed successfully',
+                lastUpdate: { success: true }
+              };
 
-            // Reload config after success
-            setTimeout(() => {
-              this.loadConfig();
-            }, 2000);
-          } else if (partialSuccess) {
-            this.systemHealth = 'warning';
-            // Partial success: generation activated but services failed
-            this.rebuildStatus = {
-              running: false,
-              message: `Rebuild completed with warnings (exit code ${status.exit_code}) - Click to view logs`,
-              lastUpdate: { success: true, warning: true }
-            };
+              // Reload config after success
+              setTimeout(() => {
+                this.loadConfig();
+              }, 2000);
+            } else if (partialSuccess) {
+              this.systemHealth = 'warning';
+              // Partial success: generation activated but services failed
+              this.rebuildStatus = {
+                running: false,
+                message: `Rebuild completed with warnings (exit code ${status.exit_code}) - Click to view logs`,
+                lastUpdate: { success: true, warning: true }
+              };
 
-            // Reload config after partial success
-            setTimeout(() => {
-              this.loadConfig();
-            }, 2000);
-          } else {
-            this.systemHealth = 'unhealthy';
-            // Show error status - logs are already in this.buildLogs
-            this.rebuildStatus = {
-              running: false,
-              message: `Rebuild failed (exit code ${status.exit_code}) - Click to view logs`,
-              lastUpdate: { success: false }
-            };
+              // Reload config after partial success
+              setTimeout(() => {
+                this.loadConfig();
+              }, 2000);
+            } else {
+              this.systemHealth = 'unhealthy';
+              // Show error status - logs are already in this.buildLogs
+              this.rebuildStatus = {
+                running: false,
+                message: `Rebuild failed (exit code ${status.exit_code}) - Click to view logs`,
+                lastUpdate: { success: false }
+              };
+            }
           }
+          // If exit_code is null, keep previous systemHealth (don't change it)
           // Don't stop polling - keep syncing with status-module
         }
 
