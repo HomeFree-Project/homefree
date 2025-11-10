@@ -46,20 +46,26 @@ class NixOperations:
         Returns:
             True if generation was activated but services failed
         """
+        # Exit code 0 is ALWAYS complete success - no need to check output
         if exit_code == 0:
-            # Complete success
+            logger.info("Rebuild succeeded with exit code 0")
             return False
 
         if not output:
+            logger.warning(f"No output available for rebuild with exit code {exit_code}")
             return False
 
         output_lower = output.lower()
 
         # Look for activation success indicators
-        activation_success = (
-            'activating the configuration' in output_lower or
-            'activation script' in output_lower
-        )
+        # More comprehensive patterns to catch various NixOS output formats
+        activation_success = any([
+            'activating the configuration' in output_lower,
+            'activation script' in output_lower,
+            'setting up /etc' in output_lower,
+            'reloading user units' in output_lower,
+            'building the system configuration' in output_lower and 'activat' in output_lower
+        ])
 
         # Look for service failure indicators
         service_failure = (
@@ -68,7 +74,14 @@ class NixOperations:
         )
 
         # Partial success: activation worked but services failed
-        return activation_success and service_failure
+        result = activation_success and service_failure
+
+        if result:
+            logger.warning(f"Detected partial success: exit_code={exit_code}, activation succeeded but services failed")
+        else:
+            logger.error(f"Rebuild failed with exit code {exit_code}, no partial success detected")
+
+        return result
 
     @staticmethod
     def dry_activate() -> Dict[str, Any]:
@@ -202,12 +215,14 @@ class NixOperations:
             # No active rebuild process
             # Return saved state from previous rebuild (for persistence)
             if NixOperations._last_rebuild_exit_code is not None:
+                logger.debug(f"Returning saved rebuild state: exit_code={NixOperations._last_rebuild_exit_code}, partial_success={NixOperations._last_rebuild_partial_success}")
                 return {
                     'running': False,
                     'output': NixOperations._last_rebuild_output or '',
                     'exit_code': NixOperations._last_rebuild_exit_code,
                     'partial_success': NixOperations._last_rebuild_partial_success
                 }
+            logger.debug("No rebuild has been run yet, returning initial state")
             return {
                 'running': False,
                 'output': '',
@@ -236,10 +251,13 @@ class NixOperations:
             return {
                 'running': True,
                 'output': new_output,
-                'exit_code': None
+                'exit_code': None,
+                'partial_success': False  # Not applicable while running
             }
         else:
             # Process finished
+            logger.info(f"Rebuild process finished with exit code: {exit_code}")
+
             # Read full output to detect partial success
             full_output = ''
             if output_file and os.path.exists(output_file):
@@ -250,12 +268,20 @@ class NixOperations:
                     logger.error(f"Error reading full rebuild output: {e}")
 
             # Detect partial success: generation activated but services failed
+            # This will return False for exit_code 0 (complete success)
             partial_success = NixOperations._detect_partial_success(full_output, exit_code)
+
+            # Double-check: exit code 0 should NEVER have partial_success=True
+            if exit_code == 0 and partial_success:
+                logger.error("BUG: partial_success incorrectly set to True for exit_code 0! Correcting...")
+                partial_success = False
 
             # Save state for subsequent requests (persistence across page refreshes)
             NixOperations._last_rebuild_exit_code = exit_code
             NixOperations._last_rebuild_partial_success = partial_success
             NixOperations._last_rebuild_output = full_output
+
+            logger.info(f"Rebuild status saved: exit_code={exit_code}, partial_success={partial_success}")
 
             # Clean up process reference
             NixOperations._current_rebuild_process = None

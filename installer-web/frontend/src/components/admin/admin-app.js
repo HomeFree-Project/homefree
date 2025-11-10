@@ -432,6 +432,13 @@ class AdminApp extends LitElement {
   async checkRebuildStatus() {
     try {
       const response = await fetch('/api/config/rebuild-status');
+
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        console.error('Failed to fetch rebuild status:', response.status);
+        return;
+      }
+
       const status = await response.json();
 
       // If rebuild is running, restore state and start polling
@@ -686,6 +693,12 @@ class AdminApp extends LitElement {
     const checkStatus = async () => {
       try {
         const response = await fetch('/api/config/rebuild-status');
+
+        // Check if response is OK before parsing JSON
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const status = await response.json();
 
         if (status.output) {

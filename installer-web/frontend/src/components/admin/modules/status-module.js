@@ -194,6 +194,13 @@ class StatusModule extends LitElement {
   async checkRebuildStatus() {
     try {
       const response = await fetch('/api/config/rebuild-status');
+
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        console.error('Failed to fetch rebuild status:', response.status);
+        return;
+      }
+
       const status = await response.json();
 
       // Detect new build starting: running changed from false → true
