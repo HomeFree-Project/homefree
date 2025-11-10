@@ -19,7 +19,8 @@ class AdminApp extends LitElement {
     error: { type: String },
     sidebarCollapsed: { type: Boolean },
     rebuildStatus: { type: Object },
-    buildLogs: { type: Array }         // Build output logs
+    buildLogs: { type: Array },        // Build output logs
+    systemHealth: { type: String }     // System health status for left nav icon
   };
 
   static styles = css`
