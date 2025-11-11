@@ -47,6 +47,12 @@ in
       internal = true;
       description = "Project name";
     };
+
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for linkwarden service";
+    };
   };
 
   config = {
@@ -93,9 +99,9 @@ in
         DATABASE_URL = "postgresql://${database-user}@${config.homefree.network.lan-address}:5432/${database-name}";
       };
 
-      environmentFiles = [
-        config.homefree.service-options.linkwarden.secrets.environment
-      ];
+      environmentFiles = lib.optional
+        (config.homefree.service-options.linkwarden.secrets.environment != null)
+        config.homefree.service-options.linkwarden.secrets.environment;
     };
 
     meilisearch = {

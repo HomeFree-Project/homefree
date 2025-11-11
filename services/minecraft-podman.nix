@@ -26,11 +26,13 @@ in
         description = "Location of Curseforge API Key";
       };
       env = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.path;
+        default = null;
         description = "Location of docker env file";
       };
       secret-file = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.path;
+        default = null;
         description = "Location of Nextcloud secrets file";
       };
     };

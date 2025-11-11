@@ -126,7 +126,12 @@
       authorizedKeys = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
-        description = "SSH authorized keys for the system admin";
+        description = ''
+          SSH authorized keys for the system admin.
+
+          Note: The first key will also be used for encrypting secrets with sops-nix.
+          You'll need the corresponding private key to decrypt and manage secrets.
+        '';
       };
     };
 
@@ -865,7 +870,8 @@
 
         secrets = {
           environment = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Linkwarden environment variables file. Should not be a file included in your source repo.";
           };
         };
@@ -885,55 +891,55 @@
         };
       };
 
-      matrix = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Matrix chat service";
-        };
-
-        enable-federation = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Matrix federation";
-        };
-
-        federation-domain-whitelist = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [
-            "matrix.org"
-            "nixos.org"
-            "homefree.host"
-            "rycee.net" # home-manager room
-            "gnome.org"
-          ];
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-
-        admin-account = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "Admin user for matrix synapse server";
-        };
-
-        secrets = {
-          registration-shared-secret = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of Matrix Synapse shared secret file. Should not be a file included in your source repo.";
-          };
-          admin-account-password = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of admin account password. Should not be a file included in your source repo.";
-          };
-        };
-      };
+      # matrix = {
+      #   enable = lib.mkOption {
+      #     type = lib.types.bool;
+      #     default = false;
+      #     description = "enable Matrix chat service";
+      #   };
+      #
+      #   enable-federation = lib.mkOption {
+      #     type = lib.types.bool;
+      #     default = false;
+      #     description = "enable Matrix federation";
+      #   };
+      #
+      #   federation-domain-whitelist = lib.mkOption {
+      #     type = lib.types.listOf lib.types.str;
+      #     default = [
+      #       "matrix.org"
+      #       "nixos.org"
+      #       "homefree.host"
+      #       "rycee.net" # home-manager room
+      #       "gnome.org"
+      #     ];
+      #   };
+      #
+      #   public = lib.mkOption {
+      #     type = lib.types.bool;
+      #     default = false;
+      #     description = "Open to public on WAN port";
+      #   };
+      #
+      #   admin-account = lib.mkOption {
+      #     type = lib.types.nullOr lib.types.str;
+      #     default = null;
+      #     description = "Admin user for matrix synapse server";
+      #   };
+      #
+      #   secrets = {
+      #     registration-shared-secret = lib.mkOption {
+      #       type = lib.types.nullOr lib.types.path;
+      #       default = null;
+      #       description = "Location of Matrix Synapse shared secret file. Should not be a file included in your source repo.";
+      #     };
+      #     admin-account-password = lib.mkOption {
+      #       type = lib.types.nullOr lib.types.path;
+      #       default = null;
+      #       description = "Location of admin account password. Should not be a file included in your source repo.";
+      #     };
+      #   };
+      # };
 
       mediawiki = {
         enable = lib.mkOption {
@@ -1011,15 +1017,18 @@
 
         secrets = {
           mysql-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of MediaWiki mysql password file. Should not be a file included in your source repo.";
           };
           wgSecretKey = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of MediaWiki wgSecretKey file. Should not be a file included in your source repo.";
           };
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of MediaWiki env file. Contains DB_PASSWORD";
           };
         };
@@ -1051,7 +1060,8 @@
           };
 
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = ''
               Location of docker env file. Contains:
 
@@ -1062,7 +1072,8 @@
           };
 
           secret-file = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
           };
         };
@@ -1194,12 +1205,14 @@
 
         secrets = {
           admin-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
           };
 
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = ''
               Location of docker env file. Contains:
 
@@ -1210,7 +1223,8 @@
           };
 
           secret-file = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
           };
         };
@@ -1259,7 +1273,8 @@
       oauth2-proxy = {
         secrets = {
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = ''
               Location of oauth2-proxy env file. Contains:
 
@@ -1344,11 +1359,13 @@
 
         secrets = {
           mysql-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Snipe-IT mysql password file. Should not be a file included in your source repo.";
           };
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Snipe-IT env file. Contains DB_PASSWORD, which is the same as mysql-password above, and APP_KEY. Should not be a file included in your source repo.";
           };
         };
@@ -1439,7 +1456,8 @@
 
         secrets = {
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Zitadel environment var file. Contains ZITADEL_MASTERKEY. Should not be a file included in your source repo.";
           };
         };
@@ -1890,20 +1908,22 @@
 
     homefree.service-options.linkwarden.enable = config.homefree.services.linkwarden.enable;
     homefree.service-options.linkwarden.public = config.homefree.services.linkwarden.public;
+    homefree.service-options.linkwarden.secrets = config.homefree.services.linkwarden.secrets;
 
     homefree.service-options.logseq.enable = config.homefree.services.logseq.enable;
     homefree.service-options.logseq.public = config.homefree.services.logseq.public;
 
-    homefree.service-options.matrix.enable = config.homefree.services.matrix.enable;
-    homefree.service-options.matrix.public = config.homefree.services.matrix.public;
-    homefree.service-options.matrix.enable-federation = config.homefree.services.matrix.enable-federation;
-    homefree.service-options.matrix.federation-domain-whitelist = config.homefree.services.matrix.federation-domain-whitelist;
-    homefree.service-options.matrix.admin-account = config.homefree.services.matrix.admin-account;
-    homefree.service-options.matrix.secrets = config.homefree.services.matrix.secrets;
+    # homefree.service-options.matrix.enable = config.homefree.services.matrix.enable;
+    # homefree.service-options.matrix.public = config.homefree.services.matrix.public;
+    # homefree.service-options.matrix.enable-federation = config.homefree.services.matrix.enable-federation;
+    # homefree.service-options.matrix.federation-domain-whitelist = config.homefree.services.matrix.federation-domain-whitelist;
+    # homefree.service-options.matrix.admin-account = config.homefree.services.matrix.admin-account;
+    # homefree.service-options.matrix.secrets = config.homefree.services.matrix.secrets;
 
     homefree.service-options.mediawiki.enable = config.homefree.services.mediawiki.enable;
     homefree.service-options.mediawiki.public = config.homefree.services.mediawiki.public;
     homefree.service-options.mediawiki.sites = config.homefree.services.mediawiki.sites;
+    homefree.service-options.mediawiki.secrets = config.homefree.services.mediawiki.secrets;
 
     homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
     homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
@@ -1931,6 +1951,7 @@
 
     homefree.service-options.snipe-it.enable = config.homefree.services.snipe-it.enable;
     homefree.service-options.snipe-it.public = config.homefree.services.snipe-it.public;
+    homefree.service-options.snipe-it.secrets = config.homefree.services.snipe-it.secrets;
 
     homefree.service-options.unifi.enable = config.homefree.services.unifi.enable;
     homefree.service-options.unifi.public = config.homefree.services.unifi.public;
@@ -1943,6 +1964,7 @@
 
     homefree.service-options.zitadel.enable = config.homefree.services.zitadel.enable;
     homefree.service-options.zitadel.public = config.homefree.services.zitadel.public;
+    homefree.service-options.zitadel.secrets = config.homefree.services.zitadel.secrets;
 
     warnings =
       (if config.homefree.backups.enable == false then [

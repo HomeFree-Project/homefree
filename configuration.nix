@@ -12,6 +12,7 @@ in
     ./profiles/git.nix
     ./profiles/hardware-configuration.nix
     ./profiles/router.nix
+    ./profiles/secrets.nix
     ./profiles/traffic-control.nix
     ./profiles/virtualisation.nix
 
@@ -52,7 +53,7 @@ in
     ./services/linkwarden-podman.nix
     ./services/logseq-podman.nix
     ./services/lidarr-podman.nix
-    ./services/matrix-podman.nix
+    # ./services/matrix-podman.nix
     ./services/mediawiki-podman.nix
     ./services/minecraft-podman.nix
     # ./services/mongo-podman.nix

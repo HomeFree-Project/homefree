@@ -46,6 +46,12 @@ in
       internal = true;
       description = "Project name";
     };
+
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for Zitadel service";
+    };
   };
 
   config = {
@@ -94,9 +100,9 @@ in
         ZITADEL_TLS_ENABLED = "false";
       };
 
-      environmentFiles = [
-        config.homefree.service-options.zitadel.secrets.env
-      ];
+      environmentFiles = lib.optional
+        (config.homefree.service-options.zitadel.secrets.env != null)
+        config.homefree.service-options.zitadel.secrets.env;
     };
   };
 

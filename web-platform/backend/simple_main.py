@@ -30,6 +30,9 @@ from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
 from resolvers.services import ServicesResolver
 
+# Import API routers
+from resolvers.secrets import router as secrets_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +101,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register API routers
+app.include_router(secrets_router)
 
 # Request/Response Models
 class NetworkConfigRequest(BaseModel):

@@ -16,6 +16,7 @@ let
     psutil
     pyudev
     pydantic
+    pyyaml
   ]);
 
   # Admin backend service package
@@ -73,6 +74,31 @@ let
   all-service-metadata = default-service-metadata // service-config-map;
   service-metadata-json = (pkgs.formats.json {}).generate "service-metadata.json" all-service-metadata;
 
+  # Generate secrets schema for all services
+  # This extracts secrets options from service-options for each service
+  secrets-schema = builtins.listToAttrs (
+    lib.filter (entry: entry != null) (
+      map (service-name:
+        let
+          service-opts = cfg.service-options.${service-name} or null;
+          secrets = if service-opts != null && service-opts ? secrets then service-opts.secrets else null;
+        in
+        if secrets != null then
+          {
+            name = service-opts.label or service-name;
+            value = builtins.mapAttrs (secret-key: secret-opt: {
+              type = secret-opt.type.name or "path";
+              description = secret-opt.description or "";
+              required = !(secret-opt ? default) || secret-opt.default == null;
+            }) secrets;
+          }
+        else
+          null
+      ) all-services-list
+    )
+  );
+  secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
+
   # Generate service configuration JSON
   admin-config = {
     wanInterface = cfg.network.wan-interface;
@@ -110,6 +136,7 @@ let
     ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
     ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
+    ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
   '';
 
 in
@@ -136,7 +163,7 @@ in
 
         # Environment
         Environment = [
-          "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd ]}"
+          "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd pkgs.sops pkgs.ssh-to-age ]}"
         ];
 
         # Prevent automatic restart during system activation

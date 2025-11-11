@@ -214,12 +214,14 @@ in
 
     secrets = {
       admin-password = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.path;
+        default = null;
         description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
       };
 
       env = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.path;
+        default = null;
         description = ''
           Location of docker env file. Contains:
 
@@ -230,7 +232,8 @@ in
       };
 
       secret-file = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.path;
+        default = null;
         description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
       };
     };

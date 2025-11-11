@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { getServices } from '../../../api/client.js';
 import '../../shared/config-section.js';
+import '../secrets-input.js';
 
 /**
  * Services configuration module
@@ -14,7 +15,11 @@ class ServicesModule extends LitElement {
     loading: { type: Boolean },
     error: { type: String },
     searchQuery: { type: String },
-    apiUnavailable: { type: Boolean }    // Track if API is temporarily down
+    apiUnavailable: { type: Boolean },   // Track if API is temporarily down
+    secretsSchema: { type: Object },     // Secrets schema for all services
+    secretsStatus: { type: Object },     // Status of which secrets are set
+    userKeyConfigured: { type: Boolean }, // Whether user SSH key is configured
+    expandedServices: { type: Set, state: true } // Track which services have secrets expanded
   };
 
   static styles = css`
@@ -348,11 +353,18 @@ class ServicesModule extends LitElement {
     this.apiUnavailable = false;
     this.pollInterval = null;
     this.pollIntervalMs = 5000; // Poll every 5 seconds
+    this.secretsSchema = {};
+    this.secretsStatus = {};
+    this.userKeyConfigured = false;
+    this.expandedServices = new Set();
   }
 
   async connectedCallback() {
     super.connectedCallback();
-    await this.loadServices();
+    await Promise.all([
+      this.loadServices(),
+      this.loadSecretsData()
+    ]);
     this.startPolling();
   }
 
@@ -423,6 +435,49 @@ class ServicesModule extends LitElement {
     } finally {
       this.loading = false;
     }
+  }
+
+  async loadSecretsData() {
+    try {
+      // Load secrets schema
+      const schemaResponse = await fetch('/api/secrets/schema');
+      if (schemaResponse.ok) {
+        const schemaData = await schemaResponse.json();
+        this.secretsSchema = schemaData.schema || {};
+      }
+
+      // Load secrets status
+      const statusResponse = await fetch('/api/secrets/status');
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        this.secretsStatus = statusData.secrets || {};
+      }
+
+      // Check if user key is configured
+      const userKeyResponse = await fetch('/api/secrets/keys/user');
+      if (userKeyResponse.ok) {
+        const userKeyData = await userKeyResponse.json();
+        this.userKeyConfigured = userKeyData.exists || false;
+      }
+    } catch (error) {
+      console.error('Error loading secrets data:', error);
+      // Non-fatal - secrets UI will show appropriate disabled state
+    }
+  }
+
+  toggleSecretsExpanded(serviceLabel) {
+    const expanded = new Set(this.expandedServices);
+    if (expanded.has(serviceLabel)) {
+      expanded.delete(serviceLabel);
+    } else {
+      expanded.add(serviceLabel);
+    }
+    this.expandedServices = expanded;
+  }
+
+  async handleSecretUpdated(event) {
+    // Reload secrets status after a secret is updated
+    await this.loadSecretsData();
   }
 
   handleServiceToggle(serviceLabel, enabled) {
@@ -559,6 +614,69 @@ class ServicesModule extends LitElement {
             </div>
           ` : ''}
         </div>
+
+        ${this.renderSecretsSection(service)}
+      </div>
+    `;
+  }
+
+  renderSecretsSection(service) {
+    const secrets = this.secretsSchema[service.label];
+    if (!secrets || Object.keys(secrets).length === 0) {
+      return ''; // No secrets for this service
+    }
+
+    const isExpanded = this.expandedServices.has(service.label);
+    const secretsCount = Object.keys(secrets).length;
+    const statusObj = this.secretsStatus[service.label] || {};
+    const setCount = Object.values(statusObj).filter(v => v).length;
+
+    return html`
+      <div class="secrets-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e5e7;">
+        <button
+          class="secrets-toggle-btn"
+          @click=${() => this.toggleSecretsExpanded(service.label)}
+          style="
+            background: none;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #667eea;
+            padding: 8px 0;
+            width: 100%;
+            text-align: left;
+          "
+        >
+          <span style="transform: rotate(${isExpanded ? '90deg' : '0deg'}); transition: transform 0.2s;">▶</span>
+          <span>Secrets (${setCount}/${secretsCount} configured)</span>
+          ${!this.userKeyConfigured ? html`
+            <span style="color: #ff3b30; font-size: 12px; margin-left: 8px;">⚠️ SSH key required</span>
+          ` : ''}
+        </button>
+
+        ${isExpanded ? html`
+          <div class="secrets-content" style="margin-top: 12px; padding-left: 24px;">
+            ${Object.entries(secrets).map(([secretKey, secretInfo]) => {
+              const exists = statusObj[secretKey] || false;
+              return html`
+                <secrets-input
+                  .serviceLabel=${service.label}
+                  .secretKey=${secretKey}
+                  .label=${secretKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                  .description=${secretInfo.description || ''}
+                  .required=${secretInfo.required || false}
+                  .disabled=${!this.userKeyConfigured}
+                  .exists=${exists}
+                  @secret-updated=${this.handleSecretUpdated}
+                ></secrets-input>
+              `;
+            })}
+          </div>
+        ` : ''}
       </div>
     `;
   }

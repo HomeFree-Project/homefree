@@ -255,6 +255,7 @@
     powertop
     sops
     sqlite
+    ssh-to-age
     sshpass
     steampipe
     tmux

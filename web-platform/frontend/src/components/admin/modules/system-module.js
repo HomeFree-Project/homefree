@@ -353,6 +353,11 @@ class SystemModule extends LitElement {
               + Add SSH Key
             </button>
           </div>
+
+          <div style="margin-top: 16px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px; font-size: 13px; color: #1d1d1f;">
+            <strong>💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
+            You'll need its corresponding private key to manage secrets through the admin UI.
+          </div>
         </config-section>
       </div>
     `;

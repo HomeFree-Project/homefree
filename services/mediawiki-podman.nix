@@ -272,6 +272,12 @@ in
         };
       });
     };
+
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for MediaWiki service";
+    };
   };
 
   config = {
@@ -340,9 +346,9 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
         ] else []);
 
         ## @TODO: this shouldn't need to be exposed to user config
-        environmentFiles = [
-          config.homefree.service-options.mediawiki.secrets.env
-        ];
+        environmentFiles = lib.optional
+          (config.homefree.service-options.mediawiki.secrets.env != null)
+          config.homefree.service-options.mediawiki.secrets.env;
 
         environment = {
           TZ = config.homefree.system.timeZone;

@@ -54,6 +54,12 @@ in
       internal = true;
       description = "Project name";
     };
+
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for Snipe-IT service";
+    };
   };
 
   config = {
@@ -93,9 +99,9 @@ in
       ];
 
       ## @TODO: this shouldn't need to be exposed to user config
-      environmentFiles = [
-        config.homefree.service-options.snipe-it.secrets.env
-      ];
+      environmentFiles = lib.optional
+        (config.homefree.service-options.snipe-it.secrets.env != null)
+        config.homefree.service-options.snipe-it.secrets.env;
 
       environment = {
         TZ = config.homefree.system.timeZone;
