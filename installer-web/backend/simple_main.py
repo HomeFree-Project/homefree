@@ -126,6 +126,9 @@ class PartitioningRequest(BaseModel):
 class DevelopmentModeRequest(BaseModel):
     enabled: bool
 
+class DomainRequest(BaseModel):
+    domain: str
+
 # Utility function to convert resolver objects to dicts
 def to_dict(obj):
     """Convert dataclass/strawberry objects to dictionaries"""
@@ -384,6 +387,16 @@ async def get_development_mode():
         return JSONResponse(content={"enabled": is_dev_mode})
     except Exception as e:
         logger.error(f"Error getting development mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config/domain")
+async def set_domain(request: DomainRequest):
+    """Set domain for HomeFree instance"""
+    try:
+        result = ConfigResolver.set_domain(request.domain)
+        return JSONResponse(content=to_dict(result))
+    except Exception as e:
+        logger.error(f"Error setting domain: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Installation Endpoints

@@ -94,6 +94,9 @@ export const setDevelopmentMode = (enabled) =>
 
 export const getDevelopmentMode = () => get('/api/config/development-mode');
 
+export const setDomain = (domain) =>
+  post('/api/config/domain', { domain });
+
 // Installation
 export const startInstallation = () => post('/api/install/start', {});
 export const getInstallStatus = () => get('/api/install/status');

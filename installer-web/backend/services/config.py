@@ -11,6 +11,7 @@ class ConfigService:
     # In-memory storage for installation configuration
     _config: Dict[str, Any] = {
         'hostname': 'homefree',
+        'domain': 'homefree.host',
         'timezone': 'America/Los_Angeles',
         'locale': 'en_US.UTF-8',
         'keymap': 'us',
@@ -26,6 +27,11 @@ class ConfigService:
     def set_hostname(hostname: str):
         """Set system hostname"""
         ConfigService._config['hostname'] = hostname
+
+    @staticmethod
+    def set_domain(domain: str):
+        """Set domain for HomeFree instance"""
+        ConfigService._config['domain'] = domain
 
     @staticmethod
     def set_timezone(timezone: str):

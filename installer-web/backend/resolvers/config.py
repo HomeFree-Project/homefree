@@ -171,6 +171,21 @@ class ConfigResolver:
             )
 
     @staticmethod
+    def set_domain(domain: str) -> MutationResult:
+        """Set domain for HomeFree instance"""
+        try:
+            ConfigService.set_domain(domain)
+            return MutationResult(
+                success=True,
+                message=f"Domain set: {domain}"
+            )
+        except Exception as e:
+            return MutationResult(
+                success=False,
+                message=f"Failed to set domain: {str(e)}"
+            )
+
+    @staticmethod
     def get_install_summary() -> InstallSummary:
         """Get installation configuration summary"""
         config = ConfigService.get_config()

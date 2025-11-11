@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getNetworkInterfaces, configureNetwork, isVirtualized, setDevelopmentMode, getDevelopmentMode } from '../api/client.js';
+import { getNetworkInterfaces, configureNetwork, isVirtualized, setDevelopmentMode, getDevelopmentMode, setDomain } from '../api/client.js';
 
 class NetworkStep extends LitElement {
   static properties = {
@@ -8,6 +8,7 @@ class NetworkStep extends LitElement {
     loading: { type: Boolean },
     wanInterface: { type: String },
     lanInterface: { type: String },
+    domain: { type: String },
     error: { type: String },
     isVirtualized: { type: Boolean },
     developmentMode: { type: Boolean },
@@ -86,6 +87,47 @@ class NetworkStep extends LitElement {
       color: #666;
       margin-top: 4px;
       margin-left: 24px;
+    }
+
+    .domain-section {
+      margin-top: 32px;
+      padding: 24px;
+      background: #f8f9fa;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+    }
+
+    .domain-section h3 {
+      margin: 0 0 8px 0;
+      color: #333;
+      font-size: 18px;
+    }
+
+    .domain-section .help-text {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .domain-input {
+      width: 100%;
+      max-width: 400px;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 16px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .domain-input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .domain-input::placeholder {
+      color: #999;
     }
 
     .info-box {
@@ -184,6 +226,7 @@ class NetworkStep extends LitElement {
     this.loading = true;
     this.wanInterface = '';
     this.lanInterface = '';
+    this.domain = '';
     this.error = '';
     this.isVirtualized = false;
     this.developmentMode = false;
@@ -288,6 +331,7 @@ class NetworkStep extends LitElement {
       detail: {
         wanInterface: this.wanInterface,
         lanInterface: this.lanInterface,
+        domain: this.domain,
       }
     }));
   }
@@ -322,6 +366,20 @@ class NetworkStep extends LitElement {
     } catch (err) {
       console.error('Failed to save development mode setting:', err);
       this.error = 'Failed to save development mode setting: ' + err.message;
+    }
+  }
+
+  async handleDomainChange(event) {
+    this.domain = event.target.value;
+    await this.saveDomain();
+  }
+
+  async saveDomain() {
+    try {
+      await setDomain(this.domain);
+    } catch (err) {
+      console.error('Failed to save domain setting:', err);
+      this.error = 'Failed to save domain setting: ' + err.message;
     }
   }
 
@@ -414,6 +472,21 @@ class NetworkStep extends LitElement {
                 `)}
               </div>
             </div>
+        </div>
+
+        <div class="domain-section">
+          <h3>Domain Configuration (Optional)</h3>
+          <div class="help-text">
+            Specify a custom domain for your HomeFree instance. This domain is used for HTTPS certificates
+            and public-facing services. If left blank, the default domain "homefree.host" will be used.
+          </div>
+          <input
+            type="text"
+            class="domain-input"
+            placeholder="homefree.host"
+            .value="${this.domain}"
+            @input="${this.handleDomainChange}"
+          />
         </div>
 
         <div class="info-box">
