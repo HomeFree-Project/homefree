@@ -63,29 +63,254 @@ class InstallationService:
 }
 """
 
-    HOMEFREE_CONFIG_TEMPLATE = """{ ... }:
+    # JSON configuration template - this is written to homefree-config.json
+    HOMEFREE_JSON_TEMPLATE = """{
+  "system": {
+    "domain": "@@domain@@",
+    "hostName": "@@hostname@@",
+    "timeZone": "@@timezone@@",
+    "defaultLocale": "@@locale@@",
+    "countryCode": "@@country_code@@",
+    "keyMap": "@@vconsole@@",
+    "adminUsername": "@@username@@",
+    "adminDescription": "@@fullname@@",
+    "localDomain": "lan",
+    "additionalDomains": [],
+    "authorizedKeys": []
+  },
+  "network": {
+    "wan_interface": "@@wan_interface@@",
+    "lan_interface": "@@lan_interface@@",
+    "router_enable": @@router_enable@@,
+    "lan_address": "@@lan_address@@",
+    "lan_subnet": "@@lan_subnet@@",
+    "dhcp_range_start": "@@dhcp_range_start@@",
+    "dhcp_range_end": "@@dhcp_range_end@@",
+    "enable_adblock": false,
+    "wan_bitrate_mbps_down": null,
+    "wan_bitrate_mbps_up": null,
+    "static_ips": []
+  },
+  "dns": {
+    "overrides": []
+  },
+  "services": {
+    "adguard": {
+      "enable": true,
+      "public": false
+    },
+    "landing-page": {
+      "enable": true,
+      "public": false
+    },
+    "headscale": {
+      "enable": false,
+      "public": false
+    },
+    "admin": {
+      "enable": true,
+      "public": false
+    },
+    "postgres-vectorchord": {
+      "enable": true,
+      "public": false
+    },
+    "lidarr": {
+      "enable": false,
+      "public": false
+    },
+    "vaultwarden": {
+      "enable": false,
+      "public": false
+    },
+    "webdav": {
+      "enable": false,
+      "public": false
+    },
+    "linkwarden": {
+      "enable": false,
+      "public": false
+    },
+    "joplin": {
+      "enable": false,
+      "public": false
+    },
+    "homeassistant": {
+      "enable": false,
+      "public": false
+    },
+    "nextcloud": {
+      "enable": false,
+      "public": false
+    },
+    "snipe-it": {
+      "enable": false,
+      "public": false
+    },
+    "frigate": {
+      "enable": false,
+      "public": false
+    },
+    "unifi": {
+      "enable": false,
+      "public": false
+    },
+    "cryptpad": {
+      "enable": false,
+      "public": false
+    },
+    "forgejo": {
+      "enable": false,
+      "public": false
+    },
+    "jellyfin": {
+      "enable": false,
+      "public": false
+    },
+    "nzbget": {
+      "enable": false,
+      "public": false
+    },
+    "kanidm": {
+      "enable": false,
+      "public": false
+    },
+    "radicale": {
+      "enable": false,
+      "public": false
+    },
+    "freshrss": {
+      "enable": false,
+      "public": false
+    },
+    "minecraft": {
+      "enable": false,
+      "public": false
+    },
+    "logseq": {
+      "enable": false,
+      "public": false
+    },
+    "homebox": {
+      "enable": false,
+      "public": false
+    },
+    "ollama": {
+      "enable": false,
+      "public": false
+    },
+    "grocy": {
+      "enable": false,
+      "public": false
+    },
+    "zitadel": {
+      "enable": false,
+      "public": false
+    },
+    "matrix": {
+      "enable": false,
+      "public": false
+    },
+    "authentik": {
+      "enable": false,
+      "public": false
+    },
+    "immich": {
+      "enable": false,
+      "public": false
+    },
+    "mediawiki": {
+      "enable": false,
+      "public": false
+    },
+    "screeenly": {
+      "enable": false,
+      "public": false
+    },
+    "baikal": {
+      "enable": false,
+      "public": false
+    }
+  },
+  "backups": {
+    "enable": false,
+    "to_path": "",
+    "backblaze_enable": false,
+    "backblaze_bucket": ""
+  }
+}
+"""
+
+    # Nix configuration template - imports JSON configuration
+    HOMEFREE_CONFIG_TEMPLATE = """{ config, lib, pkgs, ... }:
+
+let
+  # Load configuration from JSON file in the same directory as flake.nix
+  # This uses a relative path which works in pure evaluation mode
+  jsonData = builtins.fromJSON (builtins.readFile ./homefree-config.json);
+
+  # Helper to convert snake_case to camelCase for Nix attribute names
+  # Note: We'll keep the JSON in snake_case for Python compatibility
+  # and convert here for Nix
+in
 {
   homefree = {
     system = {
-      # System identity
-      hostName = "@@hostname@@";
-      timeZone = "@@timezone@@";
-      defaultLocale = "@@locale@@";
-      keyMap = "@@vconsole@@";
-
-      # Admin user
-      adminUsername = "@@username@@";
-      adminDescription = "@@fullname@@";
+      domain = jsonData.system.domain;
+      hostName = jsonData.system.hostName;
+      timeZone = jsonData.system.timeZone;
+      defaultLocale = jsonData.system.defaultLocale;
+      countryCode = jsonData.system.countryCode;
+      keyMap = jsonData.system.keyMap;
+      adminUsername = jsonData.system.adminUsername;
+      adminDescription = jsonData.system.adminDescription;
+      localDomain = jsonData.system.localDomain;
+      additionalDomains = jsonData.system.additionalDomains;
+      authorizedKeys = jsonData.system.authorizedKeys;
     };
 
     network = {
-@@router_config@@
+      wan-interface = jsonData.network.wan_interface;
+      lan-interface = jsonData.network.lan_interface;
+      router.enable = jsonData.network.router_enable;
+      lan-address = jsonData.network.lan_address;
+      lan-subnet = jsonData.network.lan_subnet;
+      dhcp-range-start = jsonData.network.dhcp_range_start;
+      dhcp-range-end = jsonData.network.dhcp_range_end;
+      enable-adblock = jsonData.network.enable_adblock;
+      wan-bitrate-mbps-down = jsonData.network.wan_bitrate_mbps_down;
+      wan-bitrate-mbps-up = jsonData.network.wan_bitrate_mbps_up;
+
+      # Static IPs conversion
+      static-ips = map (ip: {
+        mac-address = ip.mac_address;
+        hostname = ip.hostname;
+        ip = ip.ip;
+        wan-access = ip.wan_access or true;
+      }) jsonData.network.static_ips;
     };
 
-    ## @TODO: Rename? e.g. user-services; optional-services? web-services?  There are other services besides these.
-    services = {
-      adguard = {
-        enable = true;
+    dns = {
+      local = {
+        overrides = map (override: {
+          hostname = override.hostname;
+          domain = override.domain;
+          ip = override.ip;
+        }) jsonData.dns.overrides;
+      };
+    };
+
+    services = lib.mapAttrs (name: value: {
+      enable = value.enable or false;
+      public = value.public or false;
+    }) jsonData.services;
+
+    backups = {
+      enable = jsonData.backups.enable;
+      to-path = if jsonData.backups.to_path == "" then null else jsonData.backups.to_path;
+      backblaze = {
+        enable = jsonData.backups.backblaze_enable;
+        bucket = if jsonData.backups.backblaze_bucket == "" then null else jsonData.backups.backblaze_bucket;
       };
     };
   };
@@ -647,16 +872,54 @@ class InstallationService:
             homefree_inputs = "homefree-base.inputs"
             dev_import = ""
 
+        # Determine network configuration values for JSON
+        if wan_interface and lan_interface:
+            router_enable = "true"
+            if is_dev_mode:
+                # In router mode with dev mode, use 10.1.2.x for LAN subnet (bridge network)
+                lan_address = "10.1.2.1"
+                lan_subnet = "10.1.2.0/24"
+                dhcp_range_start = "10.1.2.100"
+                dhcp_range_end = "10.1.2.200"
+            else:
+                # Default router mode values
+                lan_address = "10.0.0.1"
+                lan_subnet = "10.0.0.0/24"
+                dhcp_range_start = "10.0.0.100"
+                dhcp_range_end = "10.0.0.200"
+        else:
+            # Router mode disabled
+            router_enable = "false"
+            if is_dev_mode:
+                # In non-router mode with dev mode, use 10.0.2.x (QEMU user networking)
+                lan_address = "10.0.2.15"
+                lan_subnet = "10.0.2.0/24"
+                dhcp_range_start = "10.0.2.100"
+                dhcp_range_end = "10.0.2.200"
+            else:
+                # Fallback values when router is disabled
+                lan_address = "10.0.0.1"
+                lan_subnet = "10.0.0.0/24"
+                dhcp_range_start = "10.0.0.100"
+                dhcp_range_end = "10.0.0.200"
+
         # Template variables
         variables = {
             'hostname': config.get('hostname', 'homefree'),
+            'domain': config.get('domain', 'homefree.host'),
             'timezone': config.get('timezone', 'America/Los_Angeles'),
             'locale': config.get('locale', 'en_US.UTF-8'),
+            'country_code': config.get('country_code', 'US'),
             'vconsole': config.get('vconsole', 'us'),
             'username': username,
             'fullname': config.get('fullname', 'HomeFree Admin'),
             'wan_interface': wan_interface,
             'lan_interface': lan_interface,
+            'router_enable': router_enable,
+            'lan_address': lan_address,
+            'lan_subnet': lan_subnet,
+            'dhcp_range_start': dhcp_range_start,
+            'dhcp_range_end': dhcp_range_end,
             'nixosversion': version,
             'bootloader': bootloader,
             'router_config': router_config,
@@ -669,6 +932,14 @@ class InstallationService:
             'dev_import': dev_import,
         }
 
+        # Generate homefree-config.json first
+        json_content = InstallationService.HOMEFREE_JSON_TEMPLATE
+        for key, value in variables.items():
+            json_content = json_content.replace(f"@@{key}@@", str(value))
+
+        write_file_privileged(str(nixos_dir / "homefree-config.json"), json_content)
+        logger.info("Generated homefree-config.json")
+
         # Generate flake.nix
         flake_content = InstallationService.FLAKE_TEMPLATE
         for key, value in variables.items():
@@ -676,7 +947,7 @@ class InstallationService:
 
         write_file_privileged(str(nixos_dir / "flake.nix"), flake_content)
 
-        # Generate homefree-configuration.nix
+        # Generate homefree-configuration.nix (now imports from JSON)
         homefree_config = InstallationService.HOMEFREE_CONFIG_TEMPLATE
         for key, value in variables.items():
             homefree_config = homefree_config.replace(f"@@{key}@@", str(value))
