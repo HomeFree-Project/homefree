@@ -269,6 +269,16 @@ async def get_services():
         logger.error(f"Error getting services: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/services/options/schema")
+async def get_service_options_schema():
+    """Get schema of all configurable service options"""
+    try:
+        schema = ServicesResolver.get_service_options_schema()
+        return JSONResponse(content={"schema": schema})
+    except Exception as e:
+        logger.error(f"Error getting service options schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Network Endpoints
 
 @app.get("/api/network/interfaces")

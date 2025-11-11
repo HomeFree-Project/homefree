@@ -99,6 +99,44 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
+  # Generate service options schema (for all configurable options beyond just enable/public)
+  # This extracts ALL options from service-options for each service, excluding internal ones
+  service-options-schema = builtins.listToAttrs (
+    lib.filter (entry: entry != null) (
+      map (service-name:
+        let
+          service-opts = cfg.service-options.${service-name} or null;
+        in
+        if service-opts != null then
+          {
+            name = service-opts.label or service-name;
+            value = builtins.listToAttrs (
+              lib.filter (opt-entry: opt-entry != null) (
+                lib.mapAttrsToList (opt-name: opt-config:
+                  # Skip internal options (label, name, project-name, secrets)
+                  if (opt-config.internal or false) || opt-name == "secrets" then
+                    null
+                  else
+                    {
+                      name = opt-name;
+                      value = {
+                        type = opt-config.type.name or "unknown";
+                        description = opt-config.description or "";
+                        default = opt-config.default or null;
+                        example = opt-config.example or null;
+                      };
+                    }
+                ) service-opts
+              )
+            );
+          }
+        else
+          null
+      ) all-services-list
+    )
+  );
+  service-options-schema-json = (pkgs.formats.json {}).generate "service-options-schema.json" service-options-schema;
+
   # Generate service configuration JSON
   admin-config = {
     wanInterface = cfg.network.wan-interface;
@@ -137,6 +175,7 @@ let
     ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
+    ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
   '';
 
 in

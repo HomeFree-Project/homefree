@@ -16,6 +16,7 @@ CONFIG_JSON_PATH = "/run/homefree/admin/config.json"
 HOMEFREE_CONFIG_PATH = "/etc/nixos/homefree-config.json"
 ALL_SERVICES_JSON_PATH = "/run/homefree/admin/all-services.json"
 SERVICE_METADATA_JSON_PATH = "/run/homefree/admin/service-metadata.json"
+SERVICE_OPTIONS_SCHEMA_PATH = "/run/homefree/admin/service-options-schema.json"
 
 
 class ServicesResolver:
@@ -280,3 +281,23 @@ class ServicesResolver:
                 worst_sub = "unknown"
 
         return worst_active, worst_sub
+
+    @staticmethod
+    def get_service_options_schema() -> Dict[str, Dict[str, Any]]:
+        """
+        Get service options schema from generated JSON file.
+        Returns a mapping of service labels to their configurable options.
+        """
+        try:
+            schema_path = Path(SERVICE_OPTIONS_SCHEMA_PATH)
+            if not schema_path.exists():
+                logger.warning(f"Service options schema not found at {SERVICE_OPTIONS_SCHEMA_PATH}")
+                return {}
+
+            with open(schema_path, 'r') as f:
+                schema = json.load(f)
+                logger.info(f"Loaded service options schema for {len(schema)} services")
+                return schema
+        except Exception as e:
+            logger.error(f"Error loading service options schema: {e}")
+            return {}
