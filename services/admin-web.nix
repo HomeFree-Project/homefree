@@ -99,44 +99,61 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
-  # Generate service options schema by reading from homefree.services options in module.nix
-  # This uses the user-facing service options directly
+  # Generate service options schema
+  # Since accessing option definitions at evaluation time is complex in Nix,
+  # we define a schema map here that corresponds to options in module.nix
+  # When you add new service options to module.nix, add them here too
+  service-options-schema-map = {
+    # Services with just enable/public (most services)
+    default-options = {
+      enable = { type = "bool"; description = "Enable this service"; default = false; };
+      public = { type = "bool"; description = "Open to public on WAN port"; default = false; };
+    };
+
+    # Services with additional options beyond enable/public
+    jellyfin = {
+      media-path = { type = "nullOr string"; description = "Path to media files"; default = null; };
+    };
+    frigate = {
+      media-path = { type = "nullOr string"; description = "Path to media files"; default = null; };
+      enable-backup-media = { type = "bool"; description = "Backup media files"; default = false; };
+      retain = { type = "nullOr int"; description = "Days to retain recordings"; default = null; };
+    };
+    lidarr = {
+      media-path = { type = "nullOr string"; description = "Path to media library"; default = null; };
+      downloads-path = { type = "nullOr string"; description = "Path to downloads directory"; default = null; };
+      enable-backup-media = { type = "bool"; description = "Backup media files"; default = false; };
+    };
+    nzbget = {
+      downloads-path = { type = "nullOr string"; description = "Path to downloads directory"; default = null; };
+      enable-backup-media = { type = "bool"; description = "Backup downloads"; default = false; };
+    };
+    forgejo = {
+      disable-registration = { type = "bool"; description = "Disable user registration"; default = false; };
+    };
+    homebox = {
+      disable-registration = { type = "bool"; description = "Disable user registration"; default = false; };
+    };
+    cryptpad = {
+      adminKeys = { type = "listOf string"; description = "Admin public keys"; default = []; };
+    };
+    headscale = {
+      stun-port = { type = "int"; description = "STUN server port"; default = 3478; };
+    };
+  };
+
+  # Build final schema by merging default options with service-specific options
   service-options-schema = builtins.listToAttrs (
-    lib.filter (entry: entry != null) (
-      map (service-name:
-        let
-          # Access the service definition from cfg.services
-          service-def = cfg.services.${service-name} or null;
-          # Get corresponding option definition
-          service-opts = config.options.homefree.services.${service-name} or null;
-        in
-        if service-def != null && service-opts != null then
-          {
-            name = service-name;
-            value = builtins.listToAttrs (
-              lib.filter (opt-entry: opt-entry != null) (
-                lib.mapAttrsToList (opt-name: opt-def:
-                  # Skip secrets options - they're handled separately
-                  if opt-name == "secrets" then
-                    null
-                  else
-                    {
-                      name = opt-name;
-                      value = {
-                        type = opt-def.type.name or "unknown";
-                        description = opt-def.description or "";
-                        default = if opt-def ? default then opt-def.default else null;
-                        example = if opt-def ? example then opt-def.example else null;
-                      };
-                    }
-                ) service-opts
-              )
-            );
-          }
-        else
-          null
-      ) all-services-list
-    )
+    map (service-name:
+      let
+        service-specific = service-options-schema-map.${service-name} or {};
+        all-options = service-options-schema-map.default-options // service-specific;
+      in
+      {
+        name = service-name;
+        value = all-options;
+      }
+    ) all-services-list
   );
   service-options-schema-json = (pkgs.formats.json {}).generate "service-options-schema.json" service-options-schema;
 
