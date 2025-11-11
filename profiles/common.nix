@@ -66,8 +66,6 @@
         keep-outputs = true
       '';
 
-    # registry.nixpkgs.flake = homefree-inputs.nixpkgs;
-
     # Garbage collection - deletes all unreachable paths in Nix store.
     gc = {
       # Run garbage collection automatically

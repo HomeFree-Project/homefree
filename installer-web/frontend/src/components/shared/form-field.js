@@ -42,6 +42,7 @@ class FormField extends LitElement {
     }
 
     input[type="text"],
+    input[type="email"],
     input[type="number"],
     select {
       padding: 10px 12px;
@@ -57,6 +58,7 @@ class FormField extends LitElement {
     }
 
     input[type="text"]:focus,
+    input[type="email"]:focus,
     input[type="number"]:focus,
     select:focus {
       outline: none;
@@ -64,6 +66,7 @@ class FormField extends LitElement {
     }
 
     input[type="text"]:disabled,
+    input[type="email"]:disabled,
     input[type="number"]:disabled,
     select:disabled {
       background: #f5f5f7;
@@ -72,6 +75,7 @@ class FormField extends LitElement {
     }
 
     input[type="text"].error,
+    input[type="email"].error,
     input[type="number"].error,
     select.error {
       border-color: #ff3b30;

@@ -96,7 +96,7 @@ class ConfigResolver:
             )
 
     @staticmethod
-    def set_user(username: str, fullname: str, password: str) -> MutationResult:
+    def set_user(username: str, fullname: str, email: str, password: str) -> MutationResult:
         """Set user account information"""
         try:
             # Validate username
@@ -106,6 +106,13 @@ class ConfigResolver:
                     message="Username must be at least 3 characters"
                 )
 
+            # Validate email (basic format check)
+            if email and '@' not in email:
+                return MutationResult(
+                    success=False,
+                    message="Invalid email format"
+                )
+
             # Validate password
             if not password or len(password) < 8:
                 return MutationResult(
@@ -113,7 +120,7 @@ class ConfigResolver:
                     message="Password must be at least 8 characters"
                 )
 
-            ConfigService.set_user(username, fullname, password)
+            ConfigService.set_user(username, fullname, email, password)
             return MutationResult(
                 success=True,
                 message=f"User configured: {username}"

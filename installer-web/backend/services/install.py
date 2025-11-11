@@ -74,6 +74,7 @@ class InstallationService:
     "keyMap": "@@vconsole@@",
     "adminUsername": "@@username@@",
     "adminDescription": "@@fullname@@",
+    "adminEmail": "@@email@@",
     "localDomain": "lan",
     "additionalDomains": [],
     "authorizedKeys": []
@@ -913,6 +914,7 @@ in
             'vconsole': config.get('vconsole', 'us'),
             'username': username,
             'fullname': config.get('fullname', 'HomeFree Admin'),
+            'email': config.get('email', ''),
             'wan_interface': wan_interface,
             'lan_interface': lan_interface,
             'router_enable': router_enable,

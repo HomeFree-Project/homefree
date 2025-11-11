@@ -41,6 +41,11 @@
         directory = "/etc/nixos";
       };
 
+      user = {
+        name = config.homefree.system.adminDescription;
+        email = config.homefree.system.adminEmail;
+      };
+
       #==========================
       # Diff settings
       #==========================

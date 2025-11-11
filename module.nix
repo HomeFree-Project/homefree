@@ -107,6 +107,12 @@
         description = "Username for the system admin";
       };
 
+      adminEmail = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Email address for the system admin";
+      };
+
       adminHashedPassword = lib.mkOption {
         type = lib.types.str;
         default = "";

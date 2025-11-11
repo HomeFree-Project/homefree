@@ -18,6 +18,7 @@ class ConfigService:
         'vconsole': 'us',
         'username': 'admin',
         'fullname': 'HomeFree Admin',
+        'email': '',
         'password': '',
         'partitioning': None,
         'development_mode': False,
@@ -50,10 +51,11 @@ class ConfigService:
         ConfigService._config['vconsole'] = vconsole
 
     @staticmethod
-    def set_user(username: str, fullname: str, password: str):
+    def set_user(username: str, fullname: str, email: str, password: str):
         """Set user account information"""
         ConfigService._config['username'] = username
         ConfigService._config['fullname'] = fullname
+        ConfigService._config['email'] = email
         ConfigService._config['password'] = password
 
     @staticmethod

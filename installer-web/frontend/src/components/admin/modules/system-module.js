@@ -114,6 +114,7 @@ class SystemModule extends LitElement {
         keyMap: 'us',
         countryCode: '',
         adminUsername: '',
+        adminEmail: '',
         authorizedKeys: []
       }
     };
@@ -303,6 +304,15 @@ class SystemModule extends LitElement {
             help="Username for system administrator"
             required
             @field-change=${(e) => this.handleFieldChange('system.adminUsername', e.detail.value)}
+          ></form-field>
+
+          <form-field
+            label="Admin Email"
+            type="email"
+            .value=${system.adminEmail}
+            placeholder="admin@example.com"
+            help="Email for git commits and notifications"
+            @field-change=${(e) => this.handleFieldChange('system.adminEmail', e.detail.value)}
           ></form-field>
 
           <div class="ssh-keys-container">

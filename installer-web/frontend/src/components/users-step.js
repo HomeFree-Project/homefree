@@ -6,6 +6,7 @@ class UsersStep extends LitElement {
     data: { type: Object },
     username: { type: String },
     fullname: { type: String },
+    email: { type: String },
     password: { type: String },
     confirmPassword: { type: String },
     hostname: { type: String },
@@ -125,6 +126,7 @@ class UsersStep extends LitElement {
     super();
     this.username = '';
     this.fullname = '';
+    this.email = '';
     this.password = '';
     this.confirmPassword = '';
     this.hostname = 'homefree';
@@ -142,8 +144,10 @@ class UsersStep extends LitElement {
   }
 
   get isValid() {
+    const emailValid = !this.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email);
     return this.username.length >= 3 &&
            this.fullname.length >= 2 &&
+           emailValid &&
            this.password.length >= 8 &&
            this.password === this.confirmPassword &&
            this.hostname.length >= 2 &&
@@ -158,6 +162,7 @@ class UsersStep extends LitElement {
       detail: {
         username: this.username,
         fullname: this.fullname,
+        email: this.email,
         password: this.password,
         confirmPassword: this.confirmPassword,
         hostname: this.hostname,
@@ -169,8 +174,8 @@ class UsersStep extends LitElement {
     // Only save if all required fields are filled
     if (this.username.length >= 3 && this.fullname.length >= 2 && this.password.length >= 8) {
       try {
-        await setUser(this.username, this.fullname, this.password);
-        console.log('User config saved:', { username: this.username, fullname: this.fullname });
+        await setUser(this.username, this.fullname, this.email, this.password);
+        console.log('User config saved:', { username: this.username, fullname: this.fullname, email: this.email });
 
         // Also save hostname
         const response = await fetch('/api/config/hostname', {
@@ -209,6 +214,25 @@ class UsersStep extends LitElement {
             }}"
           />
           <div class="description">Your display name</div>
+        </div>
+
+        <div class="form-group">
+          <label for="email">Email (optional)</label>
+          <input
+            type="email"
+            id="email"
+            placeholder="admin@example.com"
+            .value="${this.email}"
+            @input="${(e) => {
+              this.email = e.target.value;
+              this.notifyParent();
+            }}"
+            class="${!this.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email) ? '' : 'error'}"
+          />
+          <div class="description">For git commits and notifications</div>
+          ${this.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email) ? html`
+            <div class="error-message">Invalid email format</div>
+          ` : ''}
         </div>
 
         <div class="form-group">

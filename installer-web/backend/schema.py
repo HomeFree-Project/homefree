@@ -176,9 +176,9 @@ class Mutation:
         return ConfigResolver.set_keyboard(layout, vconsole)
 
     @strawberry.mutation
-    def set_user(self, username: str, fullname: str, password: str) -> MutationResult:
+    def set_user(self, username: str, fullname: str, email: str, password: str) -> MutationResult:
         """Set user account information"""
-        return ConfigResolver.set_user(username, fullname, password)
+        return ConfigResolver.set_user(username, fullname, email, password)
 
     @strawberry.mutation
     def set_hostname(self, hostname: str) -> MutationResult:

@@ -81,8 +81,8 @@ export const setLocation = (timezone, locale) =>
 export const setKeyboard = (layout, vconsole) =>
   post('/api/config/keyboard', { layout, vconsole });
 
-export const setUser = (username, fullname, password) =>
-  post('/api/config/user', { username, fullname, password });
+export const setUser = (username, fullname, email, password) =>
+  post('/api/config/user', { username, fullname, email, password });
 
 export const setPartitioning = (config) =>
   post('/api/config/partitioning', { config });

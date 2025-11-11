@@ -118,6 +118,7 @@ class KeyboardRequest(BaseModel):
 class UserRequest(BaseModel):
     username: str
     fullname: str
+    email: str
     password: str
 
 class PartitioningRequest(BaseModel):
@@ -342,7 +343,7 @@ async def set_keyboard(request: KeyboardRequest):
 async def set_user(request: UserRequest):
     """Set user account information"""
     try:
-        result = ConfigResolver.set_user(request.username, request.fullname, request.password)
+        result = ConfigResolver.set_user(request.username, request.fullname, request.email, request.password)
         return JSONResponse(content=to_dict(result))
     except Exception as e:
         logger.error(f"Error setting user: {e}")
