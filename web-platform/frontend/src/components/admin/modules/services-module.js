@@ -115,26 +115,37 @@ class ServicesModule extends LitElement {
     }
 
     .expand-arrow {
-      background: none;
-      border: none;
+      background: #f5f5f7;
+      border: 1px solid #d2d2d7;
+      border-radius: 6px;
       cursor: pointer;
-      padding: 4px;
+      padding: 8px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: #667eea;
-      font-size: 12px;
-      transition: transform 0.2s;
+      font-size: 16px;
+      transition: all 0.2s;
       flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+    }
+
+    .expand-arrow:hover {
+      background: #e5e5e7;
+      border-color: #667eea;
     }
 
     .expand-arrow.expanded {
       transform: rotate(90deg);
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
     }
 
-    .expand-arrow:disabled {
-      opacity: 0;
-      cursor: default;
+    .expand-arrow.expanded:hover {
+      background: #5568d3;
+      border-color: #5568d3;
     }
 
     .status-indicator {
@@ -603,8 +614,9 @@ class ServicesModule extends LitElement {
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
 
-    // Check if service has secrets
+    // Check if service has configuration options (secrets, etc.)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
+    const hasConfig = hasSecrets; // Will add other config types later
     const isExpanded = this.expandedServices.has(service.label);
 
     return html`
@@ -613,10 +625,11 @@ class ServicesModule extends LitElement {
           <button
             class="expand-arrow ${isExpanded ? 'expanded' : ''}"
             @click=${() => this.toggleSecretsExpanded(service.label)}
-            ?disabled=${!hasSecrets}
-            title="${hasSecrets ? (isExpanded ? 'Collapse' : 'Expand') : 'No secrets'}"
+            ?disabled=${!hasConfig}
+            title="${hasConfig ? (isExpanded ? 'Hide configuration' : 'Show configuration') : 'No configuration options'}"
+            style="${hasConfig ? '' : 'visibility: hidden;'}"
           >
-            ${hasSecrets ? '▶' : ''}
+            ▶
           </button>
 
           <div class="status-indicator">
