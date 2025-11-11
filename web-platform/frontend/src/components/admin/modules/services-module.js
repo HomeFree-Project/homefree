@@ -139,7 +139,7 @@ class ServicesModule extends LitElement {
     }
 
     .config-expander.expanded .config-expander-arrow {
-      transform: rotate(180deg);
+      transform: rotate(90deg);
     }
 
     .status-indicator {
@@ -686,7 +686,7 @@ class ServicesModule extends LitElement {
         class="config-expander ${isExpanded ? 'expanded' : ''}"
         @click=${() => this.toggleSecretsExpanded(service.label)}
       >
-        <span class="config-expander-arrow">▼</span>
+        <span class="config-expander-arrow">▶</span>
         <span>${isExpanded ? 'Hide settings' : 'More settings...'}</span>
       </div>
 
