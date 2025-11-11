@@ -100,54 +100,64 @@ let
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
   # Generate service options schema
-  # Since accessing option definitions at evaluation time is complex in Nix,
-  # we define a schema map here that corresponds to options in module.nix
-  # When you add new service options to module.nix, add them here too
-  service-options-schema-map = {
-    # Services with just enable/public (most services)
-    default-options = {
-      enable = { type = "bool"; description = "Enable this service"; default = false; };
-      public = { type = "bool"; description = "Open to public on WAN port"; default = false; };
-    };
+  # Automatically extracts schema from service-options definitions
+  # This introspects the actual option declarations to build the schema
+  # No manual maintenance required - new options are picked up automatically
 
-    # Services with additional options beyond enable/public
-    jellyfin = {
-      media-path = { type = "nullOr string"; description = "Path to media files"; default = null; };
-    };
-    frigate = {
-      media-path = { type = "nullOr string"; description = "Path to media files"; default = null; };
-      enable-backup-media = { type = "bool"; description = "Backup media files"; default = false; };
-      retain = { type = "nullOr int"; description = "Days to retain recordings"; default = null; };
-    };
-    lidarr = {
-      media-path = { type = "nullOr string"; description = "Path to media library"; default = null; };
-      downloads-path = { type = "nullOr string"; description = "Path to downloads directory"; default = null; };
-      enable-backup-media = { type = "bool"; description = "Backup media files"; default = false; };
-    };
-    nzbget = {
-      downloads-path = { type = "nullOr string"; description = "Path to downloads directory"; default = null; };
-      enable-backup-media = { type = "bool"; description = "Backup downloads"; default = false; };
-    };
-    forgejo = {
-      disable-registration = { type = "bool"; description = "Disable user registration"; default = false; };
-    };
-    homebox = {
-      disable-registration = { type = "bool"; description = "Disable user registration"; default = false; };
-    };
-    cryptpad = {
-      adminKeys = { type = "listOf string"; description = "Admin public keys"; default = []; };
-    };
-    headscale = {
-      stun-port = { type = "int"; description = "STUN server port"; default = 3478; };
-    };
-  };
+  # Helper: Normalize NixOS type names to UI-friendly strings
+  normalizeTypeName = typeName:
+    let
+      # Handle nullOr types recursively
+      nullOrMatch = builtins.match "null or (.*)" typeName;
+      # Handle list types recursively
+      listMatch = builtins.match "list of (.*)" typeName;
+    in
+    if nullOrMatch != null then
+      "nullOr " + (normalizeTypeName (builtins.head nullOrMatch))
+    else if listMatch != null then
+      "listOf " + (normalizeTypeName (builtins.head listMatch))
+    else if typeName == "string" || typeName == "str" then "string"
+    else if typeName == "signed integer" || typeName == "positive integer, meaning >0" then "int"
+    else if typeName == "boolean" then "bool"
+    else if typeName == "path" then "path"
+    else typeName;
 
-  # Build final schema by merging default options with service-specific options
+  # Helper: Check if an option should be excluded from the schema
+  # (internal metadata options, not user-facing configuration)
+  isInternalOption = optName:
+    builtins.elem optName ["label" "name" "project-name" "secrets" "_uiSchema"];
+
+  # Helper: Extract type name from an option definition
+  getTypeName = opt:
+    if opt ? type then
+      if opt.type ? name then normalizeTypeName opt.type.name
+      else if opt.type ? description then normalizeTypeName opt.type.description
+      else "unknown"
+    else "unknown";
+
+  # Build schema by introspecting service-options for each service
   service-options-schema = builtins.listToAttrs (
     map (service-name:
       let
-        service-specific = service-options-schema-map.${service-name} or {};
-        all-options = service-options-schema-map.default-options // service-specific;
+        service-opts = cfg.service-options.${service-name} or null;
+
+        # Extract schema for all non-internal options
+        extracted-options = if service-opts != null then
+          lib.mapAttrs (optName: optDef: {
+            type = getTypeName optDef;
+            description = optDef.description or "";
+            default = if optDef ? default then optDef.default else null;
+          }) (lib.filterAttrs (optName: optDef: !(isInternalOption optName)) service-opts)
+        else {};
+
+        # Standard options present in all services (fallback if not extracted)
+        default-options = {
+          enable = { type = "bool"; description = "Enable this service"; default = false; };
+          public = { type = "bool"; description = "Open to public on WAN port"; default = false; };
+        };
+
+        # Merge: use extracted values, fall back to defaults for enable/public
+        all-options = default-options // extracted-options;
       in
       {
         name = service-name;
