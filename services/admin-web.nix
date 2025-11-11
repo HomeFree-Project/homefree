@@ -99,26 +99,25 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
-  # Generate service options schema from service-options option definitions
-  # Reads from config.options (option definitions with metadata), not config values
+  # Generate service options schema by reading from homefree.services options in module.nix
+  # This uses the user-facing service options directly
   service-options-schema = builtins.listToAttrs (
     lib.filter (entry: entry != null) (
       map (service-name:
         let
-          # Access option DEFINITIONS (not values) from config.options
-          service-opts-def = config.options.homefree.service-options.${service-name} or null;
+          # Access the service definition from cfg.services
+          service-def = cfg.services.${service-name} or null;
+          # Get corresponding option definition
+          service-opts = config.options.homefree.services.${service-name} or null;
         in
-        if service-opts-def != null then
+        if service-def != null && service-opts != null then
           {
             name = service-name;
             value = builtins.listToAttrs (
               lib.filter (opt-entry: opt-entry != null) (
                 lib.mapAttrsToList (opt-name: opt-def:
-                  # Skip internal options (label, name, project-name) and secrets
-                  let
-                    isInternal = opt-def.internal or false;
-                  in
-                  if isInternal || opt-name == "secrets" then
+                  # Skip secrets options - they're handled separately
+                  if opt-name == "secrets" then
                     null
                   else
                     {
@@ -130,7 +129,7 @@ let
                         example = if opt-def ? example then opt-def.example else null;
                       };
                     }
-                ) service-opts-def
+                ) service-opts
               )
             );
           }
