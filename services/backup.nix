@@ -16,7 +16,8 @@ let
         ## Add mysql database backup paths
         ++ (if (lib.length entry.backup.mysql-databases) > 0 then [ "/var/backup/mysql-homefree/${entry.label}" ] else []);
     }) config.homefree.service-config)
-    ++ [{ label = "extra-paths"; paths = config.homefree.backups.extra-from-paths; }];
+    ## Backup the config
+    ++ [{ label = "extra-paths"; paths = [ "/etc/nixos" ] ++ config.homefree.backups.extra-from-paths; }];
   ## filter out any entries without backup paths
   filtered-backup-from-paths = lib.filter (entry: (lib.length entry.paths) > 0) backup-from-paths-all;
   ## Only populate paths if backups enabled

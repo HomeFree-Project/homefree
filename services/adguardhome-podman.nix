@@ -175,25 +175,23 @@ let
 
     cp ${config-yaml} ${containerDataPath}/conf/AdGuardHome.yaml
 
-    ## Kill any existing socat instances from previous failed starts
-    pkill -f "socat.*127.0.0.1:53.*127.0.0.1:53530" || true
+    ## There is no DNS running yet at port 53, so start a temporary
+    ## proxy service (managed by systemd) so that podman pull works
 
-    ## There is no DNS running yet at port 53, so create a temporary
-    ## proxy so that podman pull works
-    # Start a temporary socat proxy from 53 to 53530
-    ${pkgs.socat}/bin/socat UDP4-LISTEN:53,fork,bind=127.0.0.1 UDP4:127.0.0.1:53530 &
-    SOCAT_PID=$!
+    # Start the DNS proxy service (systemd manages its lifecycle)
+    systemctl start adguardhome-dns-proxy.service
 
-    # Ensure socat is killed even if the script fails
-    trap "kill $SOCAT_PID 2>/dev/null || true" EXIT
+    # Ensure the proxy is stopped even if the script fails
+    trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
 
-    # Give the proxy a moment to start
+    # Give the proxy a moment to start listening
     sleep 1
 
+    # Pull the container image (DNS now available via proxy)
     ${pkgs.podman}/bin/podman pull ${image}
 
-    # Kill socat (trap will also handle this on exit)
-    kill $SOCAT_PID 2>/dev/null || true
+    # Stop the proxy service (AdGuard Home will take over port 53)
+    systemctl stop adguardhome-dns-proxy.service
   '';
 in
 {
@@ -297,11 +295,40 @@ in
     nameserver 127.0.0.1:53530
   '';
 
+  # Dedicated systemd service for temporary DNS proxy during image pull
+  # Not auto-started; manually controlled by preStart script
+  systemd.services.adguardhome-dns-proxy = lib.optionalAttrs config.homefree.service-options.adguard.enable {
+    description = "Temporary DNS proxy for AdGuard Home startup";
+    after = [ "unbound.service" ];
+    wants = [ "unbound.service" ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${pkgs.socat}/bin/socat UDP4-LISTEN:53,fork,bind=127.0.0.1 UDP4:127.0.0.1:53530";
+      Restart = "no";
+      # Ensure all child processes are killed when service stops
+      KillMode = "mixed";
+      KillSignal = "SIGTERM";
+      # Short timeout for clean shutdown
+      TimeoutStopSec = 5;
+      # Treat exit code 143 (SIGTERM: 128+15) as successful completion, not failure
+      SuccessExitStatus = 143;
+    };
+  };
+
   systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.service-options.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
+      # Cleanup any leftover socat processes on service stop/restart/failure
+      ExecStopPost = [
+        "${pkgs.writeShellScript "adguardhome-cleanup" ''
+          # Stop the DNS proxy service if it's still running
+          systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true
+          # Kill any leftover socat processes (belt and suspenders)
+          ${pkgs.procps}/bin/pkill -f "socat.*127.0.0.1:53.*127.0.0.1:53530" || true
+        ''}"
+      ];
       ## Bump ulimit
       LimitNOFILE = 65535;
       ## Limit restart attempts to prevent socat accumulation
