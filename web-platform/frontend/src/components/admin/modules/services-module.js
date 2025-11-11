@@ -114,38 +114,32 @@ class ServicesModule extends LitElement {
       gap: 16px;
     }
 
-    .expand-arrow {
-      background: #f5f5f7;
-      border: 1px solid #d2d2d7;
-      border-radius: 6px;
+    .config-expander {
+      padding: 12px 16px;
+      border-top: 1px solid #e5e5e7;
+      background: #fafafa;
       cursor: pointer;
-      padding: 8px;
       display: flex;
       align-items: center;
-      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
       color: #667eea;
-      font-size: 16px;
       transition: all 0.2s;
-      flex-shrink: 0;
-      width: 32px;
-      height: 32px;
+      user-select: none;
     }
 
-    .expand-arrow:hover {
-      background: #e5e5e7;
-      border-color: #667eea;
+    .config-expander:hover {
+      background: #f0f0f2;
+      color: #5568d3;
     }
 
-    .expand-arrow.expanded {
-      transform: rotate(90deg);
-      background: #667eea;
-      color: white;
-      border-color: #667eea;
+    .config-expander-arrow {
+      font-size: 10px;
+      transition: transform 0.2s;
     }
 
-    .expand-arrow.expanded:hover {
-      background: #5568d3;
-      border-color: #5568d3;
+    .config-expander.expanded .config-expander-arrow {
+      transform: rotate(180deg);
     }
 
     .status-indicator {
@@ -310,9 +304,7 @@ class ServicesModule extends LitElement {
     }
 
     .secrets-section {
-      margin-top: 16px;
-      padding-top: 16px;
-      border-top: 1px solid #e5e5e7;
+      padding: 16px;
     }
 
     .secrets-header {
@@ -622,16 +614,6 @@ class ServicesModule extends LitElement {
     return html`
       <div class="service-row ${isEnabled ? 'enabled' : ''}">
         <div class="service-row-main">
-          <button
-            class="expand-arrow ${isExpanded ? 'expanded' : ''}"
-            @click=${() => this.toggleSecretsExpanded(service.label)}
-            ?disabled=${!hasConfig}
-            title="${hasConfig ? (isExpanded ? 'Hide configuration' : 'Show configuration') : 'No configuration options'}"
-            style="${hasConfig ? '' : 'visibility: hidden;'}"
-          >
-            ▶
-          </button>
-
           <div class="status-indicator">
             <div class="status-dot ${statusClass}"></div>
             <div class="status-text ${statusClass}">${statusText}</div>
@@ -689,8 +671,26 @@ class ServicesModule extends LitElement {
           </div>
         </div>
 
-        ${this.renderSecretsSection(service)}
+        ${this.renderConfigSection(service, hasConfig, isExpanded)}
       </div>
+    `;
+  }
+
+  renderConfigSection(service, hasConfig, isExpanded) {
+    if (!hasConfig) {
+      return ''; // No config options for this service
+    }
+
+    return html`
+      <div
+        class="config-expander ${isExpanded ? 'expanded' : ''}"
+        @click=${() => this.toggleSecretsExpanded(service.label)}
+      >
+        <span class="config-expander-arrow">▼</span>
+        <span>${isExpanded ? 'Hide settings' : 'More settings...'}</span>
+      </div>
+
+      ${isExpanded ? this.renderSecretsSection(service) : ''}
     `;
   }
 
@@ -698,11 +698,6 @@ class ServicesModule extends LitElement {
     const secrets = this.secretsSchema[service.label];
     if (!secrets || Object.keys(secrets).length === 0) {
       return ''; // No secrets for this service
-    }
-
-    const isExpanded = this.expandedServices.has(service.label);
-    if (!isExpanded) {
-      return ''; // Don't render anything if not expanded
     }
 
     const secretsCount = Object.keys(secrets).length;
