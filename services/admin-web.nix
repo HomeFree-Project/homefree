@@ -5,9 +5,9 @@ with lib;
 let
   cfg = config.homefree;
 
-  # Path to installer-web directory in this repository
+  # Path to web-platform directory in this repository
   # This works because the whole homefree repo is in the nix store when building
-  installerWebPath = ../installer-web;
+  installerWebPath = ../web-platform;
 
   # Python environment with required packages
   pythonEnv = pkgs.python3.withPackages (ps: with ps; [
@@ -19,7 +19,7 @@ let
   ]);
 
   # Admin backend service package
-  # Uses the same installer-web backend, but in admin mode
+  # Uses the same web-platform backend, but in admin mode
   admin-backend = pkgs.writeShellScriptBin "homefree-admin-backend" ''
     #!/usr/bin/env bash
     cd ${installerWebPath}/backend

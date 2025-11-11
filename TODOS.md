@@ -4,7 +4,7 @@ Instructions: Complete the next bullet in TODOS.md. Create a plan for this item 
 
 ### Admin UI
 
-Note: The admin UI is now in ./installer-web. The code at ./services/admin is deprecated.
+Note: The admin UI is now in ./web-platform. The code at ./services/admin is deprecated. The ./installer directory is a stub that imports web-platform for semantic clarity in flake.nix.
 Note: In order to udpate flakes properly, don't use nixos-rebuild directly, but rather ./scripts/build.sh
 
 - ✅ ~~On first load, the layout is different until the content is loaded. Hide the content and show a loading spinner in the middle of the screen until the page is loaded and ready~~
@@ -21,9 +21,9 @@ Note: In order to udpate flakes properly, don't use nixos-rebuild directly, but 
 - ✅ ~~An update was made so that the service config on the Services pane is written out to a JSON file at /etc/nixos/homefree-config.json.  During this update, /etc/nixos/homefree-configuration.nix was updated to import the JSON values then set them in the nix config. Apparently the JSON config and the updates to homefree-configuration.nix were not aded to the templates for these files in the installer. Add them.~~
 - ✅ ~~Update config so that git user.email and user.name are set automatically~~
 - ✅ ~~Everything in /etc/nixos should be backed up as part of the backup bundle. Ad it to the backup.nix module.~~
-- When podman-adguardhome starts, it uses socat as a proxy so that DNS is available, but if it fails and restarts, it leaves an additional socat process behind. Fix this.
-- Confirm that the installer works identically or at least very closely to the one in the "build-image" branch which this branch is based on. The original instructions were to make the admin page and web installer use the same framework and code, and I want to make sure the installer wasn't broken in the refactor.
-- Having all the code in ./installer-web is not accurate. The code that is shared between the installer and the admin page should be in a shared components folder. the admin service should be moved to ./services/admin, and ./installer-web should be renamed to ./installer.
+- ✅ ~~When podman-adguardhome starts, it uses socat as a proxy so that DNS is available, but if it fails and restarts, it leaves an additional socat process behind. Fix this.~~
+- ✅ ~~Confirm that the installer works identically or at least very closely to the one in the "build-image" branch which this branch is based on. The original instructions were to make the admin page and web installer use the same framework and code, and I want to make sure the installer wasn't broken in the refactor.~~
+- ✅ ~~Having all the code in ./installer-web is not accurate. The code that is shared between the installer and the admin page should be in a shared components folder. the admin service should be moved to ./services/admin, and ./installer-web should be renamed to ./installer.~~ (Renamed to web-platform with installer stub for semantic clarity. Shared components already in web-platform/frontend/src/components/shared/.)
 - For the status page, add various system details, the same as those in the old admin UI at services/deprecated/admin/site/components/hf-system-status.js
 - The status of the system on the Status page is too simple, and only takes into account the last build. Create a system health module that takes into account the last build status, as well as whether any systemd services have failed, low disk space, lack of connectivity, and SMART status. Have it return a list of issues as warnings and errors, and a status, with error if there is at least one error, warning if there are no errorrs and at least one warning, and healthy otherwise. and display them on the Status page
 - The admin-api service is often restarted when enabling/disabling services on the admin page. The service config is probably a build input into the admin api nix config. Either figure out a way to decouple this, or figure out a way to get nixos-rebuild to not restart the admin-api until after the build is complete, if it is not already the case.

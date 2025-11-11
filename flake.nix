@@ -123,21 +123,6 @@
         system = system;
         modules = [
           ## HomeFree web-based installer
-          ./installer-web
-        ];
-        specialArgs = {
-          system = system;
-          inherit homefree-inputs;
-        };
-      };
-
-      # Legacy Calamares installer (backup, use: nix build .#nixosConfigurations.homefree-installer-calamares.config.system.build.isoImage)
-      homefree-installer-calamares = inputs.nixpkgs.lib.nixosSystem {
-        system = system;
-        modules = [
-          ## Official NixOS GNOME installer with Calamares
-          "${inputs.nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-gnome.nix"
-          ## HomeFree installer customizations
           ./installer
         ];
         specialArgs = {
