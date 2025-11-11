@@ -54,7 +54,7 @@ in
 
   config = {
     environment.systemPackages = [
-      ## Installs "gitea" executable
+      ## Installs "forgejo" executable
       pkgs.forgejo
     ];
 

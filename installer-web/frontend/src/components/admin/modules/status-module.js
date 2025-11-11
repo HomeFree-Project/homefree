@@ -9,7 +9,8 @@ class StatusModule extends LitElement {
   static properties = {
     rebuildStatus: { type: Object },
     buildLogs: { type: Array },
-    systemHealth: { type: String }
+    systemHealth: { type: String },
+    logsCollapsed: { type: Boolean }
   };
 
   static styles = css`
@@ -106,6 +107,32 @@ class StatusModule extends LitElement {
       font-weight: 600;
       margin: 0 0 16px 0;
       color: #1d1d1f;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.2s ease;
+    }
+
+    .logs-header:hover {
+      color: #667eea;
+    }
+
+    .logs-header-text {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chevron {
+      font-size: 14px;
+      transition: transform 0.3s ease;
+      color: #86868b;
+    }
+
+    .chevron.collapsed {
+      transform: rotate(-90deg);
     }
 
     .logs-content {
@@ -120,6 +147,11 @@ class StatusModule extends LitElement {
       overflow-y: auto;
       white-space: pre-wrap;
       word-wrap: break-word;
+      transition: opacity 0.2s ease;
+    }
+
+    .logs-content.collapsed {
+      display: none;
     }
 
     .logs-content::-webkit-scrollbar {
@@ -175,13 +207,26 @@ class StatusModule extends LitElement {
     };
     this.buildLogs = [];
     this.systemHealth = 'healthy';
+    this.logsCollapsed = true; // Default to collapsed
+  }
+
+  toggleLogsCollapsed() {
+    this.logsCollapsed = !this.logsCollapsed;
   }
 
   updated(changedProperties) {
     super.updated(changedProperties);
 
-    // Auto-scroll to bottom when logs change
-    if (changedProperties.has('buildLogs') && this.buildLogs.length > 0) {
+    // Auto-expand when build starts or fails
+    if (changedProperties.has('systemHealth')) {
+      if (this.systemHealth === 'building' || this.systemHealth === 'unhealthy') {
+        this.logsCollapsed = false;
+      }
+      // Don't auto-collapse on success - let user control
+    }
+
+    // Auto-scroll to bottom when logs change (only if not collapsed)
+    if (changedProperties.has('buildLogs') && this.buildLogs.length > 0 && !this.logsCollapsed) {
       const logsContent = this.shadowRoot.querySelector('.logs-content');
       if (logsContent) {
         logsContent.scrollTop = logsContent.scrollHeight;
@@ -247,8 +292,13 @@ class StatusModule extends LitElement {
 
         <!-- Build Logs -->
         <div class="logs-container">
-          <h3 class="logs-header">Build Logs</h3>
-          <div class="logs-content">
+          <h3 class="logs-header" @click=${this.toggleLogsCollapsed}>
+            <span class="logs-header-text">
+              <span class="chevron ${this.logsCollapsed ? 'collapsed' : ''}">▼</span>
+              Build Logs
+            </span>
+          </h3>
+          <div class="logs-content ${this.logsCollapsed ? 'collapsed' : ''}">
             ${this.buildLogs.length > 0 ? html`
               ${this.buildLogs.map(line => html`<div class="log-line ${this.classifyLogLine(line)}">${line}</div>`)}
             ` : html`

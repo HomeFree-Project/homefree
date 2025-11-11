@@ -7,6 +7,7 @@ import './modules/services-module.js';
 import './modules/backups-module.js';
 import './modules/status-module.js';
 import '../shared/progress-modal.js';
+import '../shared/toast-notification.js';
 
 class AdminApp extends LitElement {
   static properties = {
@@ -20,7 +21,10 @@ class AdminApp extends LitElement {
     sidebarCollapsed: { type: Boolean },
     rebuildStatus: { type: Object },
     buildLogs: { type: Array },        // Build output logs
-    systemHealth: { type: String }     // System health status for left nav icon
+    systemHealth: { type: String },    // System health status for left nav icon
+    toasts: { type: Array },           // Toast notifications stack
+    statusFlashing: { type: Boolean }, // Status nav item flash animation
+    statusNeedsAttention: { type: Boolean } // Persistent flash until user clicks Status
   };
 
   static styles = css`
@@ -252,6 +256,22 @@ class AdminApp extends LitElement {
       display: none;
     }
 
+    /* Status nav item flashing animation */
+    @keyframes statusFlash {
+      0%, 100% {
+        background: rgba(255, 255, 255, 0.15);
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+      }
+      50% {
+        background: rgba(255, 255, 255, 0.25);
+        box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.6);
+      }
+    }
+
+    .nav-item.flashing {
+      animation: statusFlash 1s ease-in-out infinite;
+    }
+
     .content-area {
       flex: 1;
       overflow-y: auto;
@@ -348,6 +368,10 @@ class AdminApp extends LitElement {
     };
     this.statusPollInterval = null;
     this._pollRebuildActive = false;
+    this.toasts = [];
+    this.statusFlashing = false;
+    this.statusNeedsAttention = false;
+    this._toastIdCounter = 0;
 
     // Navigation modules
     this.modules = [
@@ -541,6 +565,52 @@ class AdminApp extends LitElement {
     this.currentModule = moduleId;
     // Update URL hash to maintain state
     window.location.hash = `#/${moduleId}`;
+
+    // If clicking Status nav, clear the needs attention flag
+    if (moduleId === 'status') {
+      this.statusNeedsAttention = false;
+    }
+  }
+
+  /**
+   * Show a toast notification
+   * @param {string} message - The message to display
+   * @param {string} type - Type: 'success', 'error', 'warning', 'info'
+   * @param {number} duration - Auto-dismiss duration in ms (default: 5000)
+   */
+  showToast(message, type = 'info', duration = 5000) {
+    const id = this._toastIdCounter++;
+    const toast = { id, message, type, duration };
+    this.toasts = [...this.toasts, toast];
+    this.requestUpdate();
+  }
+
+  /**
+   * Remove a toast notification
+   * @param {number} id - Toast ID to remove
+   */
+  removeToast(id) {
+    this.toasts = this.toasts.filter(t => t.id !== id);
+    this.requestUpdate();
+  }
+
+  /**
+   * Flash the Status nav item for a specified duration
+   * @param {number} duration - Duration in ms (default: 2000)
+   */
+  flashStatus(duration = 2000) {
+    this.statusFlashing = true;
+    setTimeout(() => {
+      this.statusFlashing = false;
+    }, duration);
+  }
+
+  /**
+   * Set or clear the persistent attention flag for Status nav
+   * @param {boolean} needs - Whether Status needs attention
+   */
+  setStatusNeedsAttention(needs) {
+    this.statusNeedsAttention = needs;
   }
 
   toggleSidebar() {
@@ -668,12 +738,7 @@ class AdminApp extends LitElement {
   }
 
   async handleSaveChanges() {
-    const modal = this.shadowRoot.querySelector('progress-modal');
-
     try {
-      // Show modal and start validation
-      modal.show('Saving Configuration', 'Validating configuration...', 'progress');
-
       // Merge server config with pending changes for validation and submission
       const configToSave = this.getMergedConfig();
 
@@ -681,39 +746,32 @@ class AdminApp extends LitElement {
       const validation = await validateConfig(configToSave);
 
       if (!validation.valid) {
-        modal.updateStatus('error', 'Validation Failed',
-          validation.errors.map(e => ({ message: e, type: 'error' }))
-        );
+        // Show error toast with first error
+        const firstError = validation.errors[0] || 'Validation failed';
+        this.showToast(`Validation failed: ${firstError}`, 'error', 7000);
         return;
       }
 
-      // Show warnings if any (using modal, not browser alert)
+      // Show warnings if any
       if (validation.warnings && validation.warnings.length > 0) {
-        const warningsHtml = validation.warnings.map(w => `⚠️ ${w}`).join('<br>');
-        modal.updateStatus('warning', 'Configuration Warnings',
-          [{ message: warningsHtml }, { message: 'Continue anyway?' }]
-        );
-        // TODO: Add modal buttons for Continue/Cancel instead of relying on modal close
-        // For now, just show warnings and continue after 3 seconds
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Show warning toast but continue
+        const firstWarning = validation.warnings[0];
+        this.showToast(`Warning: ${firstWarning}`, 'warning', 5000);
       }
 
       // Apply changes (skip preview/dry-activate step)
-      modal.updateStatus('progress', 'Saving configuration and starting rebuild...');
       const result = await applyConfigChanges(configToSave);
 
       if (!result.success) {
-        modal.updateStatus('error', 'Failed to Apply Configuration',
-          [{ message: result.message || 'Unknown error', type: 'error' }]
-        );
+        this.showToast(`Failed to apply configuration: ${result.message || 'Unknown error'}`, 'error', 7000);
         return;
       }
 
-      // Close modal and show status in header
-      modal.updateStatus('success', 'Rebuild Started',
-        [{ message: 'Configuration saved and rebuild started in background' },
-         { message: 'You can close this dialog and continue working' }]
-      );
+      // Show success toast
+      this.showToast('Configuration saved successfully', 'success', 5000);
+
+      // Flash Status nav item for 2 seconds
+      this.flashStatus(2000);
 
       // Clear pending changes and dirty flags after successful save
       this.pendingConfig = {};
@@ -732,9 +790,7 @@ class AdminApp extends LitElement {
 
     } catch (error) {
       console.error('Error saving changes:', error);
-      modal.updateStatus('error', 'An Error Occurred',
-        [{ message: error.message || 'Unknown error', type: 'error' }]
-      );
+      this.showToast(`Error: ${error.message || 'Unknown error'}`, 'error', 7000);
     }
   }
 
@@ -787,6 +843,9 @@ class AdminApp extends LitElement {
                 lastUpdate: { success: true }
               };
 
+              // Flash Status nav for 2 seconds on success
+              this.flashStatus(2000);
+
               // Reload config after success
               setTimeout(() => {
                 this.loadConfig();
@@ -800,6 +859,9 @@ class AdminApp extends LitElement {
                 lastUpdate: { success: true, warning: true }
               };
 
+              // Flash Status nav for 2 seconds on partial success
+              this.flashStatus(2000);
+
               // Reload config after partial success
               setTimeout(() => {
                 this.loadConfig();
@@ -812,6 +874,9 @@ class AdminApp extends LitElement {
                 message: `Rebuild failed (exit code ${status.exit_code}) - Click to view logs`,
                 lastUpdate: { success: false }
               };
+
+              // Set persistent flash on failure - will continue until user clicks Status
+              this.setStatusNeedsAttention(true);
             }
           }
           // If exit_code is null, keep previous systemHealth (don't change it)
@@ -973,7 +1038,7 @@ ${JSON.stringify(this.config, null, 2)}
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`
                 <div
-                  class="nav-item ${this.currentModule === module.id ? 'active' : ''}"
+                  class="nav-item ${this.currentModule === module.id ? 'active' : ''} ${module.id === 'status' && (this.statusFlashing || this.statusNeedsAttention) ? 'flashing' : ''}"
                   @click=${() => this.handleModuleClick(module.id)}
                 >
                   <span class="nav-item-icon">${module.icon}</span>
@@ -1016,6 +1081,18 @@ ${JSON.stringify(this.config, null, 2)}
 
       <!-- Progress Modal -->
       <progress-modal></progress-modal>
+
+      <!-- Toast Notifications Container -->
+      <div class="toast-container">
+        ${this.toasts.map(toast => html`
+          <toast-notification
+            .message=${toast.message}
+            .type=${toast.type}
+            .duration=${toast.duration}
+            @toast-close=${() => this.removeToast(toast.id)}
+          ></toast-notification>
+        `)}
+      </div>
     `;
   }
 }

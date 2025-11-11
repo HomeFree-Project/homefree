@@ -161,6 +161,12 @@ class NixOperations:
             NixOperations._last_rebuild_partial_success = False
             NixOperations._last_rebuild_output = None
 
+            # Sync homefree-config.json with module.nix schema before rebuild
+            sync_result = NixOperations._sync_config()
+            if not sync_result['success']:
+                logger.warning(f"Config sync failed or had warnings: {sync_result.get('message', 'Unknown error')}")
+                # Continue anyway - the sync script has already logged details
+
             # Ensure log directory exists
             NixOperations.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -584,6 +590,79 @@ class NixOperations:
 
         except Exception as e:
             logger.error(f"Error checking/restarting admin-api: {e}")
+
+    @staticmethod
+    def _sync_config() -> Dict[str, Any]:
+        """
+        Sync homefree-config.json with module.nix schema.
+        Removes obsolete options, adds new options with defaults, preserves user values.
+
+        Returns:
+            Dictionary with:
+                - success: bool
+                - message: str
+                - changes: List[str] (if any changes were made)
+        """
+        try:
+            sync_script = Path("/home/erahhal/homefree/scripts/sync-config.sh")
+            config_file = NixOperations.FLAKE_DIR / "homefree-config.json"
+
+            # Check if files exist
+            if not sync_script.exists():
+                logger.warning(f"Sync script not found at {sync_script}")
+                return {
+                    'success': False,
+                    'message': f'Sync script not found at {sync_script}'
+                }
+
+            if not config_file.exists():
+                logger.info(f"Config file {config_file} does not exist, skipping sync")
+                return {
+                    'success': True,
+                    'message': 'Config file does not exist, skipping sync'
+                }
+
+            # Run sync script
+            logger.info(f"Running config sync: {sync_script}")
+            result = subprocess.run(
+                [str(sync_script), "-f", str(NixOperations.FLAKE_DIR)],
+                capture_output=True,
+                text=True,
+                timeout=60  # 1 minute timeout
+            )
+
+            output = result.stdout + result.stderr
+
+            if result.returncode == 0:
+                logger.info("Config sync completed successfully")
+                if output:
+                    logger.info(f"Sync output:\n{output}")
+                return {
+                    'success': True,
+                    'message': 'Config synced successfully',
+                    'output': output
+                }
+            else:
+                logger.error(f"Config sync failed with exit code {result.returncode}")
+                logger.error(f"Sync output:\n{output}")
+                return {
+                    'success': False,
+                    'message': f'Sync failed with exit code {result.returncode}',
+                    'output': output
+                }
+
+        except subprocess.TimeoutExpired:
+            logger.error("Config sync timed out")
+            return {
+                'success': False,
+                'message': 'Config sync timed out after 60 seconds'
+            }
+        except Exception as e:
+            logger.error(f"Error running config sync: {e}")
+            return {
+                'success': False,
+                'message': str(e)
+            }
 
 
 # Initialize process tracking
