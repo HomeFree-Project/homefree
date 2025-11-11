@@ -745,7 +745,8 @@ class ServicesModule extends LitElement {
         <div class="secrets-content">
           ${extraOptions.map(optionKey => {
             const optionDef = serviceOptions[optionKey];
-            const currentValue = this.pendingConfig[service.label]?.[optionKey];
+            const currentValue = this.pendingConfig.services?.[service.label]?.[optionKey]
+              ?? this.serverConfig?.services?.[service.label]?.[optionKey];
             const label = optionKey
               .split('-')
               .map(word => word.charAt(0).toUpperCase() + word.slice(1))
