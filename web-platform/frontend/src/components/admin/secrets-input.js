@@ -287,14 +287,14 @@ class SecretsInput extends LitElement {
         ` : ''}
 
         <div class="input-row">
-          <input
-            type="${this.showValue ? 'text' : 'password'}"
+          <textarea
+            class="${this.showValue ? '' : 'masked'}"
             .value=${this.inputValue}
             placeholder="${this.exists ? '(secret is set)' : 'Enter secret value...'}"
             ?disabled=${this.disabled || this.saving}
             @input=${(e) => { this.inputValue = e.target.value; }}
-            @keypress=${(e) => { if (e.key === 'Enter') this.handleSet(); }}
-          />
+            rows="3"
+          ></textarea>
           <button
             class="btn btn-toggle"
             @click=${this.toggleShow}

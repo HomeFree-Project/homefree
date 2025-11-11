@@ -95,11 +95,8 @@ class ServicesModule extends LitElement {
       background: white;
       border: 1px solid #e5e5e7;
       border-radius: 12px;
-      padding: 20px;
+      padding: 16px;
       margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 20px;
       transition: all 0.2s;
     }
 
@@ -109,6 +106,35 @@ class ServicesModule extends LitElement {
 
     .service-row.enabled {
       border-color: #667eea;
+    }
+
+    .service-row-main {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .expand-arrow {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #667eea;
+      font-size: 12px;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+    }
+
+    .expand-arrow.expanded {
+      transform: rotate(90deg);
+    }
+
+    .expand-arrow:disabled {
+      opacity: 0;
+      cursor: default;
     }
 
     .status-indicator {
@@ -270,6 +296,26 @@ class ServicesModule extends LitElement {
     input:disabled + .toggle-slider {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    .secrets-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e5e7;
+    }
+
+    .secrets-header {
+      font-size: 14px;
+      font-weight: 500;
+      color: #667eea;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .secrets-content {
+      padding-left: 24px;
     }
 
     .loading-spinner {
@@ -557,62 +603,77 @@ class ServicesModule extends LitElement {
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
 
+    // Check if service has secrets
+    const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
+    const isExpanded = this.expandedServices.has(service.label);
+
     return html`
       <div class="service-row ${isEnabled ? 'enabled' : ''}">
-        <div class="status-indicator">
-          <div class="status-dot ${statusClass}"></div>
-          <div class="status-text ${statusClass}">${statusText}</div>
-        </div>
+        <div class="service-row-main">
+          <button
+            class="expand-arrow ${isExpanded ? 'expanded' : ''}"
+            @click=${() => this.toggleSecretsExpanded(service.label)}
+            ?disabled=${!hasSecrets}
+            title="${hasSecrets ? (isExpanded ? 'Collapse' : 'Expand') : 'No secrets'}"
+          >
+            ${hasSecrets ? '▶' : ''}
+          </button>
 
-        <div class="service-info">
-          <div class="service-name">${service.name}</div>
-          <div class="service-project">${service.project_name}</div>
-          ${service.url && isEnabled ? html`
-            <a href="${service.url}" target="_blank" class="service-url">
-              ${service.url}
-            </a>
-          ` : ''}
-          ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
-            <div class="service-systemd">
-              systemd: ${service.systemd_services.join(', ')}
-            </div>
-          ` : ''}
-        </div>
+          <div class="status-indicator">
+            <div class="status-dot ${statusClass}"></div>
+            <div class="status-text ${statusClass}">${statusText}</div>
+          </div>
 
-        <div class="service-controls">
-          ${!cannotDisable ? html`
-            <div class="toggle-container">
-              <span class="toggle-label">Enable</span>
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  .checked=${isEnabled}
-                  @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          ` : ''}
+          <div class="service-info">
+            <div class="service-name">${service.name}</div>
+            <div class="service-project">${service.project_name}</div>
+            ${service.url && isEnabled ? html`
+              <a href="${service.url}" target="_blank" class="service-url">
+                ${service.url}
+              </a>
+            ` : ''}
+            ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
+              <div class="service-systemd">
+                systemd: ${service.systemd_services.join(', ')}
+              </div>
+            ` : ''}
+          </div>
 
-          ${isEnabled && !isAdminApi ? html`
-            <div class="toggle-container">
-              <span class="toggle-label">Public (WAN)</span>
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  .checked=${isPublic}
-                  @change=${(e) => this.handlePublicToggle(service.label, e.target.checked)}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          ` : ''}
+          <div class="service-controls">
+            ${!cannotDisable ? html`
+              <div class="toggle-container">
+                <span class="toggle-label">Enable</span>
+                <label class="toggle-switch">
+                  <input
+                    type="checkbox"
+                    .checked=${isEnabled}
+                    @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
+                  />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            ` : ''}
 
-          ${cannotDisable ? html`
-            <div class="toggle-label" style="color: #86868b; font-size: 12px;">
-              ${isAdminApi ? 'System service' : 'System service (always enabled)'}
-            </div>
-          ` : ''}
+            ${isEnabled && !isAdminApi ? html`
+              <div class="toggle-container">
+                <span class="toggle-label">Public (WAN)</span>
+                <label class="toggle-switch">
+                  <input
+                    type="checkbox"
+                    .checked=${isPublic}
+                    @change=${(e) => this.handlePublicToggle(service.label, e.target.checked)}
+                  />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            ` : ''}
+
+            ${cannotDisable ? html`
+              <div class="toggle-label" style="color: #86868b; font-size: 12px;">
+                ${isAdminApi ? 'System service' : 'System service (always enabled)'}
+              </div>
+            ` : ''}
+          </div>
         </div>
 
         ${this.renderSecretsSection(service)}
@@ -627,56 +688,40 @@ class ServicesModule extends LitElement {
     }
 
     const isExpanded = this.expandedServices.has(service.label);
+    if (!isExpanded) {
+      return ''; // Don't render anything if not expanded
+    }
+
     const secretsCount = Object.keys(secrets).length;
     const statusObj = this.secretsStatus[service.label] || {};
     const setCount = Object.values(statusObj).filter(v => v).length;
 
     return html`
-      <div class="secrets-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e5e7;">
-        <button
-          class="secrets-toggle-btn"
-          @click=${() => this.toggleSecretsExpanded(service.label)}
-          style="
-            background: none;
-            border: none;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            color: #667eea;
-            padding: 8px 0;
-            width: 100%;
-            text-align: left;
-          "
-        >
-          <span style="transform: rotate(${isExpanded ? '90deg' : '0deg'}); transition: transform 0.2s;">▶</span>
+      <div class="secrets-section">
+        <div class="secrets-header">
           <span>Secrets (${setCount}/${secretsCount} configured)</span>
           ${!this.userKeyConfigured ? html`
-            <span style="color: #ff3b30; font-size: 12px; margin-left: 8px;">⚠️ SSH key required</span>
+            <span style="color: #ff3b30; font-size: 12px;">⚠️ SSH key required</span>
           ` : ''}
-        </button>
+        </div>
 
-        ${isExpanded ? html`
-          <div class="secrets-content" style="margin-top: 12px; padding-left: 24px;">
-            ${Object.entries(secrets).map(([secretKey, secretInfo]) => {
-              const exists = statusObj[secretKey] || false;
-              return html`
-                <secrets-input
-                  .serviceLabel=${service.label}
-                  .secretKey=${secretKey}
-                  .label=${secretKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                  .description=${secretInfo.description || ''}
-                  .required=${secretInfo.required || false}
-                  .disabled=${!this.userKeyConfigured}
-                  .exists=${exists}
-                  @secret-updated=${this.handleSecretUpdated}
-                ></secrets-input>
-              `;
-            })}
-          </div>
-        ` : ''}
+        <div class="secrets-content">
+          ${Object.entries(secrets).map(([secretKey, secretInfo]) => {
+            const exists = statusObj[secretKey] || false;
+            return html`
+              <secrets-input
+                .serviceLabel=${service.label}
+                .secretKey=${secretKey}
+                .label=${secretKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                .description=${secretInfo.description || ''}
+                .required=${secretInfo.required || false}
+                .disabled=${!this.userKeyConfigured}
+                .exists=${exists}
+                @secret-updated=${this.handleSecretUpdated}
+              ></secrets-input>
+            `;
+          })}
+        </div>
       </div>
     `;
   }
