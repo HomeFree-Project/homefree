@@ -703,6 +703,37 @@ class AdminApp extends LitElement {
     this.requestUpdate();
   }
 
+  handleServiceOptionChanged(e) {
+    const { serviceLabel, optionKey, value } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current service config from server or pending
+    const currentConfig = this.pendingConfig.services[serviceLabel] ||
+                          this.serverConfig?.services?.[serviceLabel] ||
+                          { enable: false, public: false };
+
+    // Update pending config immutably with the new option value
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [serviceLabel]: {
+          ...currentConfig,
+          [optionKey]: value
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
   /**
    * Merge server config with pending changes to get the config to save
    * Pending changes override server config
@@ -953,6 +984,7 @@ class AdminApp extends LitElement {
             .pendingConfig=${this.pendingConfig}
             @service-toggle=${this.handleServiceToggle}
             @service-public-toggle=${this.handleServicePublicToggle}
+            @service-option-changed=${this.handleServiceOptionChanged}
           ></services-module>
         `;
 
