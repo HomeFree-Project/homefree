@@ -1,7 +1,8 @@
 import { LitElement, html, css } from 'lit';
-import { getServices } from '../../../api/client.js';
+import { getServices, getServiceOptionsSchema } from '../../../api/client.js';
 import '../../shared/config-section.js';
 import '../secrets-input.js';
+import '../service-option-input.js';
 
 /**
  * Services configuration module
@@ -18,6 +19,7 @@ class ServicesModule extends LitElement {
     apiUnavailable: { type: Boolean },   // Track if API is temporarily down
     secretsSchema: { type: Object },     // Secrets schema for all services
     secretsStatus: { type: Object },     // Status of which secrets are set
+    optionsSchema: { type: Object },     // Service options schema for all services
     userKeyConfigured: { type: Boolean }, // Whether user SSH key is configured
     expandedServices: { type: Set, state: true } // Track which services have secrets expanded
   };
@@ -404,6 +406,7 @@ class ServicesModule extends LitElement {
     this.pollIntervalMs = 5000; // Poll every 5 seconds
     this.secretsSchema = {};
     this.secretsStatus = {};
+    this.optionsSchema = {};
     this.userKeyConfigured = false;
     this.expandedServices = new Set();
   }
@@ -412,7 +415,8 @@ class ServicesModule extends LitElement {
     super.connectedCallback();
     await Promise.all([
       this.loadServices(),
-      this.loadSecretsData()
+      this.loadSecretsData(),
+      this.loadOptionsSchema()
     ]);
     this.startPolling();
   }
@@ -514,6 +518,19 @@ class ServicesModule extends LitElement {
     }
   }
 
+  async loadOptionsSchema() {
+    try {
+      const response = await fetch('/api/services/options/schema');
+      if (response.ok) {
+        const data = await response.json();
+        this.optionsSchema = data.schema || {};
+      }
+    } catch (error) {
+      console.error('Error loading service options schema:', error);
+      // Non-fatal - options will just not display if schema fails to load
+    }
+  }
+
   toggleSecretsExpanded(serviceLabel) {
     const expanded = new Set(this.expandedServices);
     if (expanded.has(serviceLabel)) {
@@ -552,6 +569,15 @@ class ServicesModule extends LitElement {
     // Emit action event to parent - parent manages state
     this.dispatchEvent(new CustomEvent('service-public-toggle', {
       detail: { serviceLabel, isPublic },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  handleOptionChanged(serviceLabel, optionKey, value) {
+    // Emit action event to parent - parent manages all config state
+    this.dispatchEvent(new CustomEvent('service-option-changed', {
+      detail: { serviceLabel, optionKey, value },
       bubbles: true,
       composed: true
     }));
@@ -606,9 +632,13 @@ class ServicesModule extends LitElement {
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
 
-    // Check if service has configuration options (secrets, etc.)
+    // Check if service has configuration options (secrets, options)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
-    const hasConfig = hasSecrets; // Will add other config types later
+    const serviceOptions = this.optionsSchema[service.label] || {};
+    // Filter out standard enable/public options to check for "extra" options
+    const extraOptions = Object.keys(serviceOptions).filter(key => key !== 'enable' && key !== 'public');
+    const hasExtraOptions = extraOptions.length > 0;
+    const hasConfig = hasSecrets || hasExtraOptions;
     const isExpanded = this.expandedServices.has(service.label);
 
     return html`
@@ -690,7 +720,51 @@ class ServicesModule extends LitElement {
         <span>${isExpanded ? 'Hide settings' : 'More settings...'}</span>
       </div>
 
-      ${isExpanded ? this.renderSecretsSection(service) : ''}
+      ${isExpanded ? html`
+        ${this.renderOptionsSection(service)}
+        ${this.renderSecretsSection(service)}
+      ` : ''}
+    `;
+  }
+
+  renderOptionsSection(service) {
+    const serviceOptions = this.optionsSchema[service.label] || {};
+    // Filter out standard enable/public options - those are already in the main UI
+    const extraOptions = Object.keys(serviceOptions).filter(key => key !== 'enable' && key !== 'public');
+
+    if (extraOptions.length === 0) {
+      return ''; // No extra options for this service
+    }
+
+    return html`
+      <div class="secrets-section">
+        <div class="secrets-header">
+          <span>Configuration Options</span>
+        </div>
+
+        <div class="secrets-content">
+          ${extraOptions.map(optionKey => {
+            const optionDef = serviceOptions[optionKey];
+            const currentValue = this.pendingConfig[service.label]?.[optionKey];
+            const label = optionKey
+              .split('-')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+
+            return html`
+              <service-option-input
+                .optionKey=${optionKey}
+                .label=${label}
+                .description=${optionDef.description || ''}
+                .type=${optionDef.type}
+                .defaultValue=${optionDef.default}
+                .currentValue=${currentValue}
+                @option-changed=${(e) => this.handleOptionChanged(service.label, e.detail.optionKey, e.detail.value)}
+              ></service-option-input>
+            `;
+          })}
+        </div>
+      </div>
     `;
   }
 
