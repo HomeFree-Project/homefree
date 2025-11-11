@@ -99,34 +99,38 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
-  # Generate service options schema (for all configurable options beyond just enable/public)
-  # This extracts ALL options from service-options for each service, excluding internal ones
+  # Generate service options schema from service-options option definitions
+  # Reads from config.options (option definitions with metadata), not config values
   service-options-schema = builtins.listToAttrs (
     lib.filter (entry: entry != null) (
       map (service-name:
         let
-          service-opts = cfg.service-options.${service-name} or null;
+          # Access option DEFINITIONS (not values) from config.options
+          service-opts-def = config.options.homefree.service-options.${service-name} or null;
         in
-        if service-opts != null then
+        if service-opts-def != null then
           {
-            name = service-opts.label or service-name;
+            name = service-name;
             value = builtins.listToAttrs (
               lib.filter (opt-entry: opt-entry != null) (
-                lib.mapAttrsToList (opt-name: opt-config:
-                  # Skip internal options (label, name, project-name, secrets)
-                  if (opt-config.internal or false) || opt-name == "secrets" then
+                lib.mapAttrsToList (opt-name: opt-def:
+                  # Skip internal options (label, name, project-name) and secrets
+                  let
+                    isInternal = opt-def.internal or false;
+                  in
+                  if isInternal || opt-name == "secrets" then
                     null
                   else
                     {
                       name = opt-name;
                       value = {
-                        type = opt-config.type.name or "unknown";
-                        description = opt-config.description or "";
-                        default = opt-config.default or null;
-                        example = opt-config.example or null;
+                        type = opt-def.type.name or "unknown";
+                        description = opt-def.description or "";
+                        default = if opt-def ? default then opt-def.default else null;
+                        example = if opt-def ? example then opt-def.example else null;
                       };
                     }
-                ) service-opts
+                ) service-opts-def
               )
             );
           }
