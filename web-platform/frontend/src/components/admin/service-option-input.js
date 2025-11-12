@@ -436,7 +436,7 @@ class ServiceOptionInput extends LitElement {
   }
 
   render() {
-    const currentPath = this.currentValue || this.defaultValue || '/home';
+    const currentPath = this.currentValue || this.defaultValue || '/';
 
     return html`
       <div class="option-field ${this.disabled ? 'disabled' : ''}">

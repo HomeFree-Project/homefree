@@ -275,10 +275,30 @@ async def browse_filesystem(path: str = "/"):
         # Resolve real path (follows symlinks, resolves ..)
         real_path = os.path.realpath(path)
 
-        # Check if path starts with any allowed root
-        is_allowed = any(real_path.startswith(root) for root in ALLOWED_ROOTS)
+        # Check if path is allowed for browsing
+        # Allow if:
+        # 1. Path is root "/"
+        # 2. Path matches or is a child of a whitelisted root
+        # 3. Path is a PARENT of a whitelisted root (e.g., /var is parent of /var/lib)
+        def is_browseable(path):
+            if path == "/":
+                return True
 
-        if not is_allowed:
+            non_root_allowed = [r for r in ALLOWED_ROOTS if r != "/"]
+
+            # Check if path is under a whitelisted root
+            for root in non_root_allowed:
+                if path == root or path.startswith(root + "/"):
+                    return True
+
+            # Check if path is a parent of a whitelisted root
+            for root in non_root_allowed:
+                if root.startswith(path + "/"):
+                    return True
+
+            return False
+
+        if not is_browseable(real_path):
             raise HTTPException(
                 status_code=403,
                 detail=f"Access denied: Path must be under one of {', '.join(ALLOWED_ROOTS)}"
@@ -291,6 +311,17 @@ async def browse_filesystem(path: str = "/"):
         if not os.path.isdir(real_path):
             raise HTTPException(status_code=400, detail="Path is not a directory")
 
+        # Helper function to check if a path is selectable
+        def is_selectable(path):
+            """Check if a path can be selected (is in or under ALLOWED_ROOTS)"""
+            if path == "/":
+                return False  # Root itself cannot be selected
+            non_root_allowed = [r for r in ALLOWED_ROOTS if r != "/"]
+            return any(
+                path == root or path.startswith(root + "/")
+                for root in non_root_allowed
+            )
+
         # List directories only (not files)
         entries = []
         try:
@@ -302,7 +333,8 @@ async def browse_filesystem(path: str = "/"):
                     if os.access(full_path, os.R_OK):
                         entries.append({
                             "name": item,
-                            "path": full_path
+                            "path": full_path,
+                            "selectable": is_selectable(full_path)
                         })
         except PermissionError:
             # If we can't list directory contents, return empty list
@@ -315,13 +347,13 @@ async def browse_filesystem(path: str = "/"):
         parent = None
         if real_path != "/":
             parent_path = os.path.dirname(real_path)
-            # Only include parent if it's still in allowed roots
-            if any(parent_path.startswith(root) for root in ALLOWED_ROOTS):
-                parent = parent_path
+            # Always allow parent since "/" is in ALLOWED_ROOTS and we validate on entry
+            parent = parent_path
 
         return JSONResponse(content={
             "path": real_path,
             "parent": parent,
+            "selectable": is_selectable(real_path),
             "entries": entries
         })
 
@@ -352,8 +384,12 @@ async def create_directory(request: Request):
         # Resolve real path (follows symlinks, resolves ..)
         real_path = os.path.realpath(path)
 
-        # Check if path starts with any allowed root
-        is_allowed = any(real_path.startswith(root) for root in ALLOWED_ROOTS)
+        # Check if path is allowed (don't allow creating directories directly in root)
+        non_root_allowed = [r for r in ALLOWED_ROOTS if r != "/"]
+        is_allowed = any(
+            real_path == root or real_path.startswith(root + "/")
+            for root in non_root_allowed
+        )
 
         if not is_allowed:
             raise HTTPException(

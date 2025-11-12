@@ -14,7 +14,8 @@ class FileBrowser extends LitElement {
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
     creating: { type: Boolean, state: true },
-    newFolderName: { type: String, state: true }
+    newFolderName: { type: String, state: true },
+    currentPathSelectable: { type: Boolean, state: true }
   };
 
   static styles = css`
@@ -124,6 +125,14 @@ class FileBrowser extends LitElement {
       font-weight: 500;
     }
 
+    .directory-item.non-selectable {
+      opacity: 0.6;
+    }
+
+    .directory-item.non-selectable .directory-name {
+      color: #86868b;
+    }
+
     .directory-icon {
       font-size: 20px;
     }
@@ -147,6 +156,17 @@ class FileBrowser extends LitElement {
       border: 1px solid #ffccc7;
       border-radius: 8px;
       color: #d32f2f;
+    }
+
+    .info-message {
+      padding: 12px 20px;
+      background: #f0f7ff;
+      border-bottom: 1px solid #d0e7ff;
+      color: #0066cc;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .empty-message {
@@ -265,13 +285,14 @@ class FileBrowser extends LitElement {
   constructor() {
     super();
     this.open = false;
-    this.currentPath = '/home';
+    this.currentPath = '/';
     this.entries = [];
     this.parent = null;
     this.loading = false;
     this.error = null;
     this.creating = false;
     this.newFolderName = '';
+    this.currentPathSelectable = false;
   }
 
   async connectedCallback() {
@@ -297,6 +318,7 @@ class FileBrowser extends LitElement {
       this.currentPath = data.path;
       this.entries = data.entries || [];
       this.parent = data.parent;
+      this.currentPathSelectable = data.selectable || false;
     } catch (err) {
       this.error = err.message;
       console.error('Error loading directory:', err);
@@ -431,6 +453,12 @@ class FileBrowser extends LitElement {
             </div>
           `}
 
+          ${!this.loading && !this.error && !this.currentPathSelectable ? html`
+            <div class="info-message">
+              ℹ️ This directory cannot be selected. Navigate to a whitelisted path (home, mnt, var/lib, media, srv, opt) to enable selection.
+            </div>
+          ` : ''}
+
           <div class="modal-body">
             ${this.loading ? html`
               <div class="loading-indicator">Loading...</div>
@@ -448,8 +476,11 @@ class FileBrowser extends LitElement {
                 ${this.entries.length === 0 ? html`
                   <div class="empty-message">No subdirectories found</div>
                 ` : this.entries.map(entry => html`
-                  <li class="directory-item" @click=${() => this.handleDirectoryClick(entry.path)}>
-                    <span class="directory-icon">📁</span>
+                  <li
+                    class="directory-item ${entry.selectable ? '' : 'non-selectable'}"
+                    @click=${() => this.handleDirectoryClick(entry.path)}
+                  >
+                    <span class="directory-icon">${entry.selectable ? '📁' : '🔒'}</span>
                     <span class="directory-name">${entry.name}</span>
                   </li>
                 `)}
@@ -464,7 +495,7 @@ class FileBrowser extends LitElement {
             <button
               class="btn btn-select"
               @click=${this.handleSelect}
-              ?disabled=${this.loading}
+              ?disabled=${this.loading || !this.currentPathSelectable}
             >
               Select This Directory
             </button>
