@@ -269,7 +269,7 @@ async def browse_filesystem(path: str = "/"):
     import os
 
     # Security: Only allow whitelisted root paths
-    ALLOWED_ROOTS = ["/home", "/mnt", "/var/lib", "/media", "/srv", "/opt"]
+    ALLOWED_ROOTS = ["/", "/home", "/mnt", "/var/lib", "/media", "/srv", "/opt"]
 
     try:
         # Resolve real path (follows symlinks, resolves ..)
@@ -329,6 +329,63 @@ async def browse_filesystem(path: str = "/"):
         raise
     except Exception as e:
         logger.error(f"Error browsing filesystem at {path}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/filesystem/mkdir")
+async def create_directory(request: Request):
+    """
+    Create a new directory
+    Security: Only allows creation under whitelisted root paths
+    """
+    import os
+
+    # Reuse same security whitelist as browse endpoint
+    ALLOWED_ROOTS = ["/", "/home", "/mnt", "/var/lib", "/media", "/srv", "/opt"]
+
+    try:
+        data = await request.json()
+        path = data.get("path")
+
+        if not path:
+            raise HTTPException(status_code=400, detail="Path is required")
+
+        # Resolve real path (follows symlinks, resolves ..)
+        real_path = os.path.realpath(path)
+
+        # Check if path starts with any allowed root
+        is_allowed = any(real_path.startswith(root) for root in ALLOWED_ROOTS)
+
+        if not is_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied: Path must be under one of {', '.join(ALLOWED_ROOTS)}"
+            )
+
+        # Check if parent directory exists
+        parent_dir = os.path.dirname(real_path)
+        if not os.path.exists(parent_dir):
+            raise HTTPException(status_code=400, detail="Parent directory does not exist")
+
+        if not os.path.isdir(parent_dir):
+            raise HTTPException(status_code=400, detail="Parent path is not a directory")
+
+        # Check if directory already exists
+        if os.path.exists(real_path):
+            raise HTTPException(status_code=409, detail="Directory already exists")
+
+        # Create directory
+        os.makedirs(real_path, exist_ok=False)
+        logger.info(f"Created directory: {real_path}")
+
+        return JSONResponse(content={
+            "success": True,
+            "path": real_path
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating directory at {path}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Services Endpoints

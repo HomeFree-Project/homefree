@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { createFolder } from '../../api/client.js';
 
 /**
  * File browser modal component
@@ -11,7 +12,9 @@ class FileBrowser extends LitElement {
     entries: { type: Array, state: true },
     parent: { type: String, state: true },
     loading: { type: Boolean, state: true },
-    error: { type: String, state: true }
+    error: { type: String, state: true },
+    creating: { type: Boolean, state: true },
+    newFolderName: { type: String, state: true }
   };
 
   static styles = css`
@@ -193,6 +196,70 @@ class FileBrowser extends LitElement {
     .btn-select:hover:not(:disabled) {
       background: #5568d3;
     }
+
+    .create-folder-section {
+      padding: 16px 20px;
+      background: #f9f9f9;
+      border-bottom: 1px solid #e5e5e7;
+    }
+
+    .create-folder-form {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .create-folder-form input {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid #d2d2d7;
+      border-radius: 6px;
+      font-family: inherit;
+    }
+
+    .create-folder-form input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .create-folder-form .btn {
+      padding: 8px 16px;
+      white-space: nowrap;
+    }
+
+    .btn-create {
+      background: #34c759;
+      color: white;
+    }
+
+    .btn-create:hover:not(:disabled) {
+      background: #2da84a;
+    }
+
+    .create-folder-toggle {
+      padding: 12px 20px;
+      background: #f9f9f9;
+      border-bottom: 1px solid #e5e5e7;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .btn-toggle-create {
+      padding: 8px 16px;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      border: 1px solid #d2d2d7;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-toggle-create:hover:not(:disabled) {
+      background: #e5e5e7;
+    }
   `;
 
   constructor() {
@@ -203,6 +270,8 @@ class FileBrowser extends LitElement {
     this.parent = null;
     this.loading = false;
     this.error = null;
+    this.creating = false;
+    this.newFolderName = '';
   }
 
   async connectedCallback() {
@@ -269,6 +338,45 @@ class FileBrowser extends LitElement {
     }
   }
 
+  handleToggleCreate() {
+    this.creating = !this.creating;
+    this.newFolderName = '';
+    this.error = null;
+  }
+
+  async handleCreateSubmit() {
+    if (!this.newFolderName.trim()) {
+      this.error = 'Folder name cannot be empty';
+      return;
+    }
+
+    // Construct full path
+    const newPath = `${this.currentPath}/${this.newFolderName.trim()}`;
+
+    this.loading = true;
+    this.error = null;
+
+    try {
+      await createFolder(newPath);
+
+      // Success - reload directory and reset form
+      this.creating = false;
+      this.newFolderName = '';
+      await this.loadDirectory(this.currentPath);
+    } catch (err) {
+      this.error = err.message;
+      console.error('Error creating folder:', err);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  handleCreateCancel() {
+    this.creating = false;
+    this.newFolderName = '';
+    this.error = null;
+  }
+
   render() {
     return html`
       <div class="backdrop" @click=${this.handleBackdropClick}>
@@ -279,6 +387,49 @@ class FileBrowser extends LitElement {
           </div>
 
           <div class="breadcrumb">${this.currentPath}</div>
+
+          ${this.creating ? html`
+            <div class="create-folder-section">
+              <div class="create-folder-form">
+                <input
+                  type="text"
+                  placeholder="Enter folder name..."
+                  .value=${this.newFolderName}
+                  @input=${(e) => this.newFolderName = e.target.value}
+                  @keydown=${(e) => {
+                    if (e.key === 'Enter') this.handleCreateSubmit();
+                    if (e.key === 'Escape') this.handleCreateCancel();
+                  }}
+                  ?disabled=${this.loading}
+                  autofocus
+                />
+                <button
+                  class="btn btn-create"
+                  @click=${this.handleCreateSubmit}
+                  ?disabled=${this.loading || !this.newFolderName.trim()}
+                >
+                  Create
+                </button>
+                <button
+                  class="btn btn-cancel"
+                  @click=${this.handleCreateCancel}
+                  ?disabled=${this.loading}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ` : html`
+            <div class="create-folder-toggle">
+              <button
+                class="btn-toggle-create"
+                @click=${this.handleToggleCreate}
+                ?disabled=${this.loading}
+              >
+                ➕ New Folder
+              </button>
+            </div>
+          `}
 
           <div class="modal-body">
             ${this.loading ? html`

@@ -119,6 +119,7 @@ export const getServiceOptionsSchema = () => get('/api/services/options/schema')
 
 // Filesystem
 export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);
+export const createFolder = (path) => post('/api/filesystem/mkdir', { path });
 
 // =============================================================================
 // Polling Helper for Installation Progress
