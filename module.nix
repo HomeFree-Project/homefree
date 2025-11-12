@@ -598,7 +598,7 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location to save recording";
         };
@@ -789,7 +789,7 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of media files";
         };
@@ -837,13 +837,13 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of music media";
         };
 
         downloads-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of downloads";
         };
