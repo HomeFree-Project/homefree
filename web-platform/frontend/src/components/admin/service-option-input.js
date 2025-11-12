@@ -425,7 +425,7 @@ class ServiceOptionInput extends LitElement {
       return this.renderBoolInput();
     } else if (baseType === 'int') {
       return this.renderIntInput();
-    } else if (baseType === 'string' || baseType === 'path') {
+    } else if (baseType === 'str' || baseType === 'string' || baseType === 'path') {
       return this.renderStringInput();
     } else if (baseType.startsWith('listOf')) {
       return this.renderListInput();
