@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import '../shared/list-input.js';
+import '../shared/file-browser.js';
 
 /**
  * Service option input component
@@ -14,7 +15,8 @@ class ServiceOptionInput extends LitElement {
     type: { type: String },  // bool, string, int, path, nullOr string, nullOr int, listOf string, etc.
     defaultValue: { type: Object },  // Default value from schema
     currentValue: { type: Object },  // Current value from config
-    disabled: { type: Boolean }
+    disabled: { type: Boolean },
+    fileBrowserOpen: { type: Boolean, state: true }  // Track file browser modal state
   };
 
   static styles = css`
@@ -90,6 +92,38 @@ class ServiceOptionInput extends LitElement {
     input[type="number"]::placeholder {
       color: #c7c7cc;
       font-style: italic;
+    }
+
+    .input-with-browse {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .input-with-browse input {
+      flex: 1;
+    }
+
+    .btn-browse {
+      padding: 8px 16px;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      border: 1px solid #d2d2d7;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-browse:hover:not(:disabled) {
+      background: #e5e5e7;
+    }
+
+    .btn-browse:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     .toggle-container {
@@ -194,6 +228,7 @@ class ServiceOptionInput extends LitElement {
     this.defaultValue = null;
     this.currentValue = null;
     this.disabled = false;
+    this.fileBrowserOpen = false;
   }
 
   handleChange(value) {
@@ -211,6 +246,20 @@ class ServiceOptionInput extends LitElement {
   handleClear() {
     // For nullOr types, set value to null
     this.handleChange(null);
+  }
+
+  openFileBrowser() {
+    this.fileBrowserOpen = true;
+  }
+
+  closeFileBrowser() {
+    this.fileBrowserOpen = false;
+  }
+
+  handlePathSelected(e) {
+    const selectedPath = e.detail.path;
+    this.handleChange(selectedPath);
+    this.closeFileBrowser();
   }
 
   renderBoolInput() {
@@ -236,19 +285,36 @@ class ServiceOptionInput extends LitElement {
 
   renderStringInput() {
     const isNullOr = this.type.startsWith('nullOr');
+    const isPath = this.type.includes('path');
     const value = this.currentValue !== null && this.currentValue !== undefined
       ? this.currentValue
       : (this.defaultValue || '');
     const isNull = isNullOr && (this.currentValue === null || this.currentValue === undefined);
 
-    return html`
+    const inputField = html`
       <input
         type="text"
         .value=${isNull ? '' : String(value)}
-        placeholder="${isNull ? '(not set)' : 'Enter value...'}"
+        placeholder="${isNull ? '(not set)' : (isPath ? 'Enter path or click Browse...' : 'Enter value...')}"
         ?disabled=${this.disabled}
         @input=${(e) => this.handleChange(e.target.value || (isNullOr ? null : ''))}
       />
+    `;
+
+    return html`
+      ${isPath ? html`
+        <div class="input-with-browse">
+          ${inputField}
+          <button
+            class="btn-browse"
+            @click=${this.openFileBrowser}
+            ?disabled=${this.disabled}
+          >
+            📁 Browse
+          </button>
+        </div>
+      ` : inputField}
+
       ${isNullOr && !isNull ? html`
         <div class="null-indicator">
           <span>Value is set</span>
@@ -350,6 +416,8 @@ class ServiceOptionInput extends LitElement {
   }
 
   render() {
+    const currentPath = this.currentValue || this.defaultValue || '/home';
+
     return html`
       <div class="option-field ${this.disabled ? 'disabled' : ''}">
         <div class="field-header">
@@ -363,6 +431,15 @@ class ServiceOptionInput extends LitElement {
 
         ${this.renderInput()}
       </div>
+
+      ${this.fileBrowserOpen ? html`
+        <file-browser
+          ?open=${this.fileBrowserOpen}
+          .currentPath=${currentPath}
+          @path-selected=${this.handlePathSelected}
+          @close=${this.closeFileBrowser}
+        ></file-browser>
+      ` : ''}
     `;
   }
 }

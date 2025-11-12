@@ -117,6 +117,9 @@ export const getRebuildStatus = () => get('/api/config/rebuild-status');
 export const getServices = () => get('/api/services');
 export const getServiceOptionsSchema = () => get('/api/services/options/schema');
 
+// Filesystem
+export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);
+
 // =============================================================================
 // Polling Helper for Installation Progress
 // =============================================================================
