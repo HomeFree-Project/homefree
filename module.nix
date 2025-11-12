@@ -1989,6 +1989,7 @@
 
     homefree.service-options.jellyfin.enable = config.homefree.services.jellyfin.enable;
     homefree.service-options.jellyfin.public = config.homefree.services.jellyfin.public;
+    homefree.service-options.jellyfin.media-path = config.homefree.services.jellyfin.media-path;
 
     homefree.service-options.joplin.enable = config.homefree.services.joplin.enable;
     homefree.service-options.joplin.public = config.homefree.services.joplin.public;

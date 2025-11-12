@@ -27,6 +27,12 @@ in
       description = "Open to public on WAN port";
     };
 
+    media-path = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Location of media files";
+    };
+
     label = lib.mkOption {
       type = lib.types.str;
       default = "jellyfin";
