@@ -257,6 +257,80 @@ async def is_virtualized():
         logger.error(f"Error detecting virtualization: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Filesystem Endpoints
+
+@app.get("/api/filesystem/browse")
+async def browse_filesystem(path: str = "/"):
+    """
+    Browse server filesystem directories
+    Security: Only allows access to whitelisted root paths
+    Returns list of subdirectories for file picker UI
+    """
+    import os
+
+    # Security: Only allow whitelisted root paths
+    ALLOWED_ROOTS = ["/home", "/mnt", "/var/lib", "/media", "/srv", "/opt"]
+
+    try:
+        # Resolve real path (follows symlinks, resolves ..)
+        real_path = os.path.realpath(path)
+
+        # Check if path starts with any allowed root
+        is_allowed = any(real_path.startswith(root) for root in ALLOWED_ROOTS)
+
+        if not is_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied: Path must be under one of {', '.join(ALLOWED_ROOTS)}"
+            )
+
+        # Verify path exists and is a directory
+        if not os.path.exists(real_path):
+            raise HTTPException(status_code=404, detail="Path does not exist")
+
+        if not os.path.isdir(real_path):
+            raise HTTPException(status_code=400, detail="Path is not a directory")
+
+        # List directories only (not files)
+        entries = []
+        try:
+            for item in os.listdir(real_path):
+                full_path = os.path.join(real_path, item)
+                # Only include directories, skip files
+                if os.path.isdir(full_path):
+                    # Check if readable
+                    if os.access(full_path, os.R_OK):
+                        entries.append({
+                            "name": item,
+                            "path": full_path
+                        })
+        except PermissionError:
+            # If we can't list directory contents, return empty list
+            pass
+
+        # Sort entries by name
+        entries.sort(key=lambda x: x["name"].lower())
+
+        # Get parent directory (if not at root)
+        parent = None
+        if real_path != "/":
+            parent_path = os.path.dirname(real_path)
+            # Only include parent if it's still in allowed roots
+            if any(parent_path.startswith(root) for root in ALLOWED_ROOTS):
+                parent = parent_path
+
+        return JSONResponse(content={
+            "path": real_path,
+            "parent": parent,
+            "entries": entries
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error browsing filesystem at {path}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Services Endpoints
 
 @app.get("/api/services")
