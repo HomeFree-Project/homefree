@@ -113,6 +113,7 @@ let
     ui-hint = metadata.ui-hint or null;
     submodule-fields = if metadata.submodule-fields != null then
       (map (field: {
+        path = field.path;
         type = if field.nullable then "nullOr ${field.type}" else field.type;
         description = field.description;
         default = field.default;

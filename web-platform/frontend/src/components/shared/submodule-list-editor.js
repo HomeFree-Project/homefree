@@ -188,13 +188,20 @@ class SubmoduleListEditor extends LitElement {
   }
 
   handleAddItem() {
+    console.log('handleAddItem called');
+    console.log('submoduleFields:', this.submoduleFields);
+    console.log('current value:', this.value);
+
     // Create new item with default values
     const newItem = {};
     this.submoduleFields.forEach(field => {
       newItem[field.path] = field.default !== undefined ? field.default : null;
     });
 
+    console.log('newItem created:', newItem);
     const newValue = [...this.value, newItem];
+    console.log('newValue:', newValue);
+
     this.expandedItems = { ...this.expandedItems, [newValue.length - 1]: true };
     this.handleChange(newValue);
   }
@@ -232,11 +239,13 @@ class SubmoduleListEditor extends LitElement {
   }
 
   handleChange(value) {
+    console.log('handleChange called with value:', value);
     this.dispatchEvent(new CustomEvent('list-changed', {
       detail: { value },
       bubbles: true,
       composed: true
     }));
+    console.log('list-changed event dispatched');
   }
 
   getItemTitle(item, index) {
