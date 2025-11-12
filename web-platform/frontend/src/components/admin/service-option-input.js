@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import '../shared/list-input.js';
 
 /**
  * Service option input component
@@ -314,6 +315,22 @@ class ServiceOptionInput extends LitElement {
     `;
   }
 
+  renderListInput() {
+    // Extract item type from "listOf <type>" string
+    const itemType = this.type.replace(/^(nullOr )?listOf /, '');
+    const value = this.currentValue || this.defaultValue || [];
+
+    return html`
+      <list-input
+        .itemType=${itemType}
+        .value=${value}
+        ?disabled=${this.disabled}
+        @list-changed=${(e) => this.handleChange(e.detail.value)}
+      ></list-input>
+      ${this.renderDefaultHint()}
+    `;
+  }
+
   renderInput() {
     // Determine base type (strip nullOr prefix)
     const baseType = this.type.replace(/^nullOr /, '');
@@ -325,8 +342,7 @@ class ServiceOptionInput extends LitElement {
     } else if (baseType === 'string' || baseType === 'path') {
       return this.renderStringInput();
     } else if (baseType.startsWith('listOf')) {
-      // TODO: Implement list input (for future enhancement)
-      return html`<div class="field-description">List input not yet supported</div>`;
+      return this.renderListInput();
     } else {
       // Unknown type
       return html`<div class="field-description">Type "${this.type}" not yet supported</div>`;
