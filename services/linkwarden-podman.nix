@@ -167,6 +167,20 @@ in
           database-name
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Linkwarden bookmarks service";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+      ];
     }];
   };
 }

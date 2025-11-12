@@ -760,6 +760,8 @@ class ServicesModule extends LitElement {
                 .type=${optionDef.type}
                 .defaultValue=${optionDef.default}
                 .currentValue=${currentValue}
+                .submoduleFields=${optionDef['submodule-fields'] || []}
+                .uiHint=${optionDef['ui-hint'] || null}
                 @option-changed=${(e) => this.handleOptionChanged(service.label, e.detail.optionKey, e.detail.value)}
               ></service-option-input>
             `;

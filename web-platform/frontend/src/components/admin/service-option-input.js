@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import '../shared/list-input.js';
 import '../shared/file-browser.js';
+import '../shared/submodule-list-editor.js';
 
 /**
  * Service option input component
@@ -12,10 +13,12 @@ class ServiceOptionInput extends LitElement {
     optionKey: { type: String },
     label: { type: String },
     description: { type: String },
-    type: { type: String },  // bool, string, int, path, nullOr string, nullOr int, listOf string, etc.
+    type: { type: String },  // bool, string, int, path, nullOr string, nullOr int, listOf string, listOf submodule, etc.
     defaultValue: { type: Object },  // Default value from schema
     currentValue: { type: Object },  // Current value from config
     disabled: { type: Boolean },
+    submoduleFields: { type: Array },  // For listOf submodule types
+    uiHint: { type: Object },  // UI rendering hints
     fileBrowserOpen: { type: Boolean, state: true }  // Track file browser modal state
   };
 
@@ -228,6 +231,8 @@ class ServiceOptionInput extends LitElement {
     this.defaultValue = null;
     this.currentValue = null;
     this.disabled = false;
+    this.submoduleFields = [];
+    this.uiHint = null;
     this.fileBrowserOpen = false;
   }
 
@@ -386,6 +391,21 @@ class ServiceOptionInput extends LitElement {
     const itemType = this.type.replace(/^(nullOr )?listOf /, '');
     const value = this.currentValue || this.defaultValue || [];
 
+    // Check if this is a submodule list (complex type)
+    if (itemType === 'submodule' && this.submoduleFields && this.submoduleFields.length > 0) {
+      return html`
+        <submodule-list-editor
+          .label=${this.label}
+          .description=${this.description}
+          .submoduleFields=${this.submoduleFields}
+          .value=${value}
+          ?disabled=${this.disabled}
+          @list-changed=${(e) => this.handleChange(e.detail.value)}
+        ></submodule-list-editor>
+      `;
+    }
+
+    // Simple list (listOf str, listOf int, etc.)
     return html`
       <list-input
         .itemType=${itemType}

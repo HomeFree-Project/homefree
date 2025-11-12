@@ -104,6 +104,20 @@ in
           "${containerDataPath}/Specific"
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Baikal CalDAV/CardDAV service";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+      ];
     }];
   };
 }

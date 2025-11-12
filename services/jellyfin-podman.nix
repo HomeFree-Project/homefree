@@ -143,6 +143,28 @@ in
           containerDataPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Jellyfin media server";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "media-path";
+          type = "path";
+          nullable = true;
+          default = null;
+          description = "Location of media files";
+          ui-hint = "directory-picker";
+        }
+      ];
     }];
   };
 }

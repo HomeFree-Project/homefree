@@ -153,6 +153,26 @@ in
           containerDataPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Forgejo git hosting service";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "disable-registration";
+          type = "bool";
+          default = true;
+          description = "Disable user registration";
+        }
+      ];
     }];
   };
 }

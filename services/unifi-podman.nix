@@ -218,6 +218,20 @@ in
           mongo-containerDataPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Unifi controller";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+      ];
     }];
   };
 }

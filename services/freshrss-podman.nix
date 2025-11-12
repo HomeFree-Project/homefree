@@ -145,6 +145,20 @@ in
           DB_BASE
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable FreshRSS news reader API";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+      ];
     }];
   };
 }

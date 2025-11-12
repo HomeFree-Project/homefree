@@ -23,6 +23,12 @@ in
       description = "Open to public on WAN port";
     };
 
+    disable-registration = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Disable user registration";
+    };
+
     label = lib.mkOption {
       type = lib.types.str;
       default = "homebox";
@@ -69,6 +75,7 @@ in
         TZ = config.homefree.system.timeZone;
         HBOX_WEB_MAX_FILE_UPLOAD = "50";
         HBOX_OPTIONS_ALLOW_ANALYTICS = "false";
+        HBOX_OPTIONS_ALLOW_REGISTRATION = if config.homefree.service-options.homebox.disable-registration then "false" else "true";
       };
     };
   };
@@ -101,6 +108,26 @@ in
           containerDataPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Homebox inventory management";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "disable-registration";
+          type = "bool";
+          default = true;
+          description = "Disable user registration";
+        }
+      ];
     }];
   };
 }

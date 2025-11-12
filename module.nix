@@ -1698,6 +1698,102 @@
               description = "list of postgres databases to backup";
             };
           };
+
+          options-metadata = lib.mkOption {
+            type = with lib.types; listOf (submodule {
+              options = {
+                path = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Option path/key";
+                };
+
+                type = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Option type (bool, str, int, path, listOf str, listOf submodule, etc.)";
+                };
+
+                nullable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether option is nullable (nullOr type)";
+                };
+
+                default = lib.mkOption {
+                  type = lib.types.anything;
+                  default = null;
+                  description = "Default value for option";
+                };
+
+                description = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "Human-readable description";
+                };
+
+                required = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether option is required";
+                };
+
+                category = lib.mkOption {
+                  type = lib.types.str;
+                  default = "basic";
+                  description = "UI category (basic, advanced, secrets)";
+                };
+
+                ui-hint = lib.mkOption {
+                  type = lib.types.nullOr lib.types.anything;
+                  default = null;
+                  description = "UI rendering hints (string or attrs)";
+                };
+
+                submodule-fields = lib.mkOption {
+                  type = with lib.types; nullOr (listOf (submodule {
+                    options = {
+                      path = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Field path/key within submodule";
+                      };
+                      type = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Field type";
+                      };
+                      nullable = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether field is nullable";
+                      };
+                      default = lib.mkOption {
+                        type = lib.types.anything;
+                        default = null;
+                        description = "Default value";
+                      };
+                      description = lib.mkOption {
+                        type = lib.types.str;
+                        default = "";
+                        description = "Field description";
+                      };
+                      required = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether field is required";
+                      };
+                      ui-hint = lib.mkOption {
+                        type = lib.types.nullOr lib.types.anything;
+                        default = null;
+                        description = "UI rendering hints";
+                      };
+                    };
+                  }));
+                  default = null;
+                  description = "For listOf submodule types, defines the submodule fields";
+                };
+              };
+            });
+            default = [];
+            description = "Metadata for service options to enable admin UI configuration";
+          };
         };
       });
     };

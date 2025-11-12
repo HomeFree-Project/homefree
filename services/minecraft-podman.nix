@@ -60,6 +60,127 @@ in
         };
       });
     };
+
+    options-metadata = [
+      {
+        path = "enable";
+        type = "bool";
+        default = false;
+        description = "Enable Minecraft servers";
+      }
+      {
+        path = "public";
+        type = "bool";
+        default = false;
+        description = "Make service accessible from WAN";
+      }
+      {
+        path = "instances";
+        type = "listOf submodule";
+        nullable = true;
+        default = null;
+        description = "Minecraft server instance configurations";
+        submodule-fields = [
+          {
+            path = "public";
+            type = "bool";
+            default = false;
+            description = "Make this instance accessible from WAN";
+          }
+          {
+            path = "subdomain";
+            type = "str";
+            default = "minecraft";
+            description = "Subdomain for Minecraft instance (must be unique)";
+          }
+          {
+            path = "name";
+            type = "str";
+            default = "Minecraft";
+            description = "Display name for instance";
+          }
+          {
+            path = "memory";
+            type = "str";
+            nullable = true;
+            default = null;
+            description = "Memory for Java VM, e.g. 6G";
+            ui-hint = "memory-size";
+          }
+          {
+            path = "type";
+            type = "enum";
+            nullable = true;
+            default = null;
+            description = "Minecraft server type or mod platform";
+            enum-values = [
+              "AUTO_CURSEFORGE"
+              "CURSEFORGE"
+              "FTBA"
+              "GTNH"
+              "MODRINTH"
+              "SPIGOT"
+              "FABRIC"
+              "MAGMA"
+              "MAGMA_MAINTAINED"
+              "KETTING"
+              "MOHIST"
+              "YOUER"
+              "BANNER"
+              "CATSERVER"
+              "ARCLIGHT"
+              "SPONGEVANILLA"
+              "PAPER"
+              "PURPUR"
+              "LEAF"
+              "FOLIA"
+              "QUILT"
+            ];
+          }
+          {
+            path = "mod-pack";
+            type = "submodule";
+            description = "Mod pack configuration";
+            submodule-fields = [
+              {
+                path = "download-url";
+                type = "str";
+                required = true;
+                description = "Download URL for mod pack";
+                ui-hint = "url-input";
+              }
+              {
+                path = "project-slug";
+                type = "str";
+                required = true;
+                description = "Project slug identifier";
+              }
+            ];
+          }
+          {
+            path = "mods";
+            type = "listOf submodule";
+            default = [];
+            description = "Individual mod configurations";
+            submodule-fields = [
+              {
+                path = "download-url";
+                type = "str";
+                required = true;
+                description = "Download URL for mod";
+                ui-hint = "url-input";
+              }
+              {
+                path = "project-slug";
+                type = "str";
+                required = true;
+                description = "Project slug identifier";
+              }
+            ];
+          }
+        ];
+      }
+    ];
   };
 
   config = {

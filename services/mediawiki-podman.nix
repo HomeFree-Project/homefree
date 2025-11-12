@@ -278,6 +278,85 @@ in
       default = {};
       description = "Secrets for MediaWiki service";
     };
+
+    options-metadata = [
+      {
+        path = "enable";
+        type = "bool";
+        default = false;
+        description = "Enable MediaWiki service";
+      }
+      {
+        path = "public";
+        type = "bool";
+        default = false;
+        description = "Make service accessible from WAN";
+      }
+      {
+        path = "sites";
+        type = "listOf submodule";
+        nullable = true;
+        default = null;
+        description = "Wiki site configurations";
+        submodule-fields = [
+          {
+            path = "public";
+            type = "bool";
+            default = false;
+            description = "Make this site accessible from WAN";
+          }
+          {
+            path = "subdomain";
+            type = "str";
+            default = "wiki";
+            description = "Subdomain for wiki (must be unique)";
+          }
+          {
+            path = "name";
+            type = "str";
+            default = "Wiki";
+            description = "Display name for site";
+          }
+          {
+            path = "logo-path";
+            type = "path";
+            required = true;
+            description = "Location of MediaWiki logo file";
+            ui-hint = "file-picker";
+          }
+          {
+            path = "readonly";
+            type = "bool";
+            default = false;
+            description = "No one can edit wiki";
+          }
+          {
+            path = "disable-anonymous-editing";
+            type = "bool";
+            default = false;
+            description = "Only users can edit wiki";
+          }
+          {
+            path = "disable-anonymous-viewing";
+            type = "bool";
+            default = false;
+            description = "Only users can view wiki";
+          }
+          {
+            path = "disable-user-editing";
+            type = "bool";
+            default = false;
+            description = "Only admins can edit wiki";
+          }
+          {
+            path = "disable-user-registration";
+            type = "bool";
+            default = false;
+            description = "Only admins can register users";
+          }
+        ];
+      }
+    ];
   };
 
   config = {

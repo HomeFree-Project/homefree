@@ -284,6 +284,26 @@ in
           "/var/lib/headscale"
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Headscale VPN service";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "stun-port";
+          type = "int";
+          default = 3478;
+          description = "DERP STUN relay port";
+        }
+      ];
     }
   ];
   # Cache headscale DNS locally to reduce DNS queries from tailscaled DERP retries

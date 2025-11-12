@@ -184,6 +184,26 @@ in
           containerDataPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Cryptpad document collaboration platform";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "adminKeys";
+          type = "listOf str";
+          default = [];
+          description = "Public keys that have access to admin panel";
+        }
+      ];
     }];
   };
 }

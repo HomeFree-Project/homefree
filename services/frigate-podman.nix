@@ -328,6 +328,92 @@ in
           mediaPath
         ];
       } else {};
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Frigate video surveillance";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "media-path";
+          type = "path";
+          nullable = true;
+          default = null;
+          description = "Location for storing video recordings";
+          ui-hint = "directory-picker";
+        }
+        {
+          path = "enable-backup-media";
+          type = "bool";
+          default = false;
+          description = "Include media files in backups (can be large)";
+        }
+        {
+          path = "retain";
+          type = "int";
+          nullable = true;
+          default = null;
+          description = "Days to retain recordings before deletion";
+          ui-hint = {
+            min = 1;
+            max = 365;
+            unit = "days";
+          };
+        }
+        {
+          path = "cameras";
+          type = "listOf submodule";
+          nullable = true;
+          default = null;
+          description = "Camera configurations";
+          submodule-fields = [
+            {
+              path = "enable";
+              type = "bool";
+              default = true;
+              description = "Enable this camera";
+            }
+            {
+              path = "name";
+              type = "str";
+              required = true;
+              description = "Camera name/identifier";
+            }
+            {
+              path = "path";
+              type = "str";
+              required = true;
+              description = "RTSP URL or path to camera stream";
+              ui-hint = "url-input";
+            }
+            {
+              path = "width";
+              type = "int";
+              default = 1920;
+              description = "Video width in pixels";
+            }
+            {
+              path = "height";
+              type = "int";
+              default = 1080;
+              description = "Video height in pixels";
+            }
+            {
+              path = "direct-stream";
+              type = "bool";
+              default = false;
+              description = "Don't use go2rtc by default (addresses audio delay issues)";
+            }
+          ];
+        }
+      ];
     }];
   };
 }

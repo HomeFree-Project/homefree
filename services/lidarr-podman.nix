@@ -129,6 +129,42 @@ in
           downloadsPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Lidarr music collection manager";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "media-path";
+          type = "path";
+          nullable = true;
+          default = null;
+          description = "Location of music media";
+          ui-hint = "directory-picker";
+        }
+        {
+          path = "downloads-path";
+          type = "path";
+          nullable = true;
+          default = null;
+          description = "Location of downloads";
+          ui-hint = "directory-picker";
+        }
+        {
+          path = "enable-backup-media";
+          type = "bool";
+          default = true;
+          description = "Whether to backup media files";
+        }
+      ];
     }];
   };
 }

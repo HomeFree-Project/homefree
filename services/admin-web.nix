@@ -99,71 +99,51 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
-  # Generate service options schema
-  # Automatically extracts schema from service-options definitions
-  # This introspects the actual option declarations to build the schema
-  # No manual maintenance required - new options are picked up automatically
+  # Generate service options schema from options-metadata in service-config
+  # This extracts metadata from each service's service-config entry
+  # Metadata is defined in each service file alongside the service-config declaration
 
-  # Helper: Normalize NixOS type names to UI-friendly strings
-  normalizeTypeName = typeName:
-    let
-      # Handle nullOr types recursively
-      nullOrMatch = builtins.match "null or (.*)" typeName;
-      # Handle list types recursively
-      listMatch = builtins.match "list of (.*)" typeName;
-    in
-    if nullOrMatch != null then
-      "nullOr " + (normalizeTypeName (builtins.head nullOrMatch))
-    else if listMatch != null then
-      "listOf " + (normalizeTypeName (builtins.head listMatch))
-    else if typeName == "string" || typeName == "str" then "string"
-    else if typeName == "signed integer" || typeName == "positive integer, meaning >0" then "int"
-    else if typeName == "boolean" then "bool"
-    else if typeName == "path" then "path"
-    else typeName;
+  # Helper function to convert metadata entry to schema format
+  metadataToSchema = metadata: {
+    type = if metadata.nullable then "nullOr ${metadata.type}" else metadata.type;
+    description = metadata.description;
+    default = metadata.default;
+    required = metadata.required or false;
+    category = metadata.category or "basic";
+    ui-hint = metadata.ui-hint or null;
+    submodule-fields = if metadata.submodule-fields != null then
+      (map (field: {
+        type = if field.nullable then "nullOr ${field.type}" else field.type;
+        description = field.description;
+        default = field.default;
+        required = field.required or false;
+        ui-hint = field.ui-hint or null;
+      }) metadata.submodule-fields)
+    else null;
+  };
 
-  # Helper: Check if an option should be excluded from the schema
-  # (internal metadata options, not user-facing configuration)
-  isInternalOption = optName:
-    builtins.elem optName ["label" "name" "project-name" "secrets" "_uiSchema"];
-
-  # Helper: Extract type name from an option definition
-  getTypeName = opt:
-    if opt ? type then
-      if opt.type ? name then normalizeTypeName opt.type.name
-      else if opt.type ? description then normalizeTypeName opt.type.description
-      else "unknown"
-    else "unknown";
-
-  # Build schema by introspecting service-options for each service
+  # Extract metadata from service-config entries
   service-options-schema = builtins.listToAttrs (
-    map (service-name:
-      let
-        service-opts = cfg.service-options.${service-name} or null;
-
-        # Extract schema for all non-internal options
-        extracted-options = if service-opts != null then
-          lib.mapAttrs (optName: optDef: {
-            type = getTypeName optDef;
-            description = optDef.description or "";
-            default = if optDef ? default then optDef.default else null;
-          }) (lib.filterAttrs (optName: optDef: !(isInternalOption optName)) service-opts)
-        else {};
-
-        # Standard options present in all services (fallback if not extracted)
-        default-options = {
-          enable = { type = "bool"; description = "Enable this service"; default = false; };
-          public = { type = "bool"; description = "Open to public on WAN port"; default = false; };
-        };
-
-        # Merge: use extracted values, fall back to defaults for enable/public
-        all-options = default-options // extracted-options;
-      in
-      {
-        name = service-name;
-        value = all-options;
-      }
-    ) all-services-list
+    lib.filter (entry: entry != null) (
+      map (service-config:
+        let
+          label = service-config.label;
+          metadata = service-config.options-metadata or [];
+        in
+        if metadata != [] then
+          {
+            name = label;
+            value = builtins.listToAttrs (
+              map (opt: {
+                name = opt.path;
+                value = metadataToSchema opt;
+              }) metadata
+            );
+          }
+        else
+          null
+      ) cfg.service-config
+    )
   );
   service-options-schema-json = (pkgs.formats.json {}).generate "service-options-schema.json" service-options-schema;
 

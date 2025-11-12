@@ -4,7 +4,9 @@ let
   port = 6799;
   containerDataPath = "/var/lib/nzbget";
   configPath = "${containerDataPath}/config";
-  downloadsPath = config.homefree.service-options.nzbget.downloads-path or "${containerDataPath}/downloads";
+  downloadsPath = if config.homefree.service-options.nzbget.downloads-path != null
+    then config.homefree.service-options.nzbget.downloads-path
+    else "${containerDataPath}/downloads";
   preStart = ''
     mkdir -p ${configPath}
     mkdir -p ${downloadsPath}
@@ -22,6 +24,18 @@ in
       type = lib.types.bool;
       default = false;
       description = "Open to public on WAN port";
+    };
+
+    downloads-path = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Location of downloads";
+    };
+
+    enable-backup-media = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether to backup media";
     };
 
     label = lib.mkOption {
@@ -100,11 +114,39 @@ in
         port = port;
         public = config.homefree.service-options.nzbget.public;
       };
-      backup = {
+      backup = lib.optionalAttrs config.homefree.service-options.nzbget.enable-backup-media {
         paths = [
           downloadsPath
         ];
       };
+      options-metadata = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable NZBGet usenet downloader";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "downloads-path";
+          type = "path";
+          nullable = true;
+          default = null;
+          description = "Location of downloads";
+          ui-hint = "directory-picker";
+        }
+        {
+          path = "enable-backup-media";
+          type = "bool";
+          default = true;
+          description = "Whether to backup downloads";
+        }
+      ];
     }];
   };
 }
