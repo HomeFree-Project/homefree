@@ -804,8 +804,9 @@ class AdminApp extends LitElement {
       // Flash Status nav item for 2 seconds
       this.flashStatus(2000);
 
-      // Clear pending changes and dirty flags after successful save
-      this.pendingConfig = {};
+      // Keep pendingConfig during rebuild for optimistic updates
+      // Will be cleared after serverConfig is reloaded when rebuild completes
+      // this.pendingConfig = {};  // Don't clear yet - prevents flicker during rebuild
       this.dirtyModules.clear();
       this.updateMergedConfig();
 
@@ -877,9 +878,13 @@ class AdminApp extends LitElement {
               // Flash Status nav for 2 seconds on success
               this.flashStatus(2000);
 
-              // Reload config after success
-              setTimeout(() => {
-                this.loadConfig();
+              // Reload config after success, then clear pending changes
+              setTimeout(async () => {
+                await this.loadConfig();
+                // Now that serverConfig is updated, clear optimistic updates
+                this.pendingConfig = {};
+                this.updateMergedConfig();
+                this.requestUpdate();
               }, 2000);
             } else if (partialSuccess) {
               this.systemHealth = 'warning';
@@ -893,9 +898,13 @@ class AdminApp extends LitElement {
               // Flash Status nav for 2 seconds on partial success
               this.flashStatus(2000);
 
-              // Reload config after partial success
-              setTimeout(() => {
-                this.loadConfig();
+              // Reload config after partial success, then clear pending changes
+              setTimeout(async () => {
+                await this.loadConfig();
+                // Now that serverConfig is updated, clear optimistic updates
+                this.pendingConfig = {};
+                this.updateMergedConfig();
+                this.requestUpdate();
               }, 2000);
             } else {
               this.systemHealth = 'unhealthy';
