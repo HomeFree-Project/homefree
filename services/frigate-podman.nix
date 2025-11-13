@@ -11,12 +11,15 @@ let
     else [];
   cameras-go2rtc = lib.filter (camera: camera.direct-stream == false) cameras-filtered;
   retain = config.homefree.service-options.frigate.retain;
+  container-external-port = 5000;
+  authenticated-port = 8971;
+  unauthenticated-port = 5000;
 
   frigate-config = {
     version = configVersion;
 
     detectors = {
-      coral = {
+      coral = lib.mkIf config.homefree.service-options.frigate.enable-coral {
         type = "edgetpu";
         device = "usb";
         # num_threads = 3;
@@ -165,6 +168,12 @@ in
       description = "enable Frigate service";
     };
 
+    enable-coral = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Google Coral AI processor";
+    };
+
     public = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -215,120 +224,11 @@ in
       internal = true;
       description = "Project name";
     };
-  };
 
-  config = {
-    environment.systemPackages= [
-    ## Google Coral (Edge TPU) USB Support
-    pkgs.libedgetpu
-  ];
-
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.frigate.enable {
-    frigate = {
-      image = "ghcr.io/blakeblackshear/frigate:${version}";
-
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-        ## 1GB of memory, reduces SSD/SD Card wear
-        "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
-        "--shm-size=512M"
-        # "--network=bridge"
-        "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
-        # "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
-        # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
-        "--device=/dev/dri:/dev/dri"
-        "--cap-add=CAP_PERFMON" # For GPU statistics
-        "--privileged"
-      ];
-
-      ports = [
-        "0.0.0.0:8971:8971"
-        "8554:8554" # RTSP feeds
-        "8555:8555/tcp" # WebRTC over tcp
-        "8555:8555/udp" # WebRTC over udp
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/config:/config"
-        ## @TODO: make this configurable
-        "${mediaPath}:/media/frigate"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
-    };
-  };
-
-  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
-    };
-  };
-
-  systemd.services.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
-    wantedBy = [];  # Only ever start with timer
-    description = "Clean up Frigate files older than ${toString retain} days";
-    serviceConfig = {
-      Type = "oneshot";
-      User = "root";  # Change if you need different permissions
-      # ExecStart = ''${pkgs.findutils}/bin/find "${mediaPath}" -type f -mtime +${toString retain} -delete'';
-      ExecStart = ''${pkgs.bash}/bin/bash -c "${pkgs.findutils}/bin/find \"${mediaPath}\" -type f -mtime +30 -print -delete | ${pkgs.coreutils}/bin/wc -l | ${pkgs.findutils}/bin/xargs -I {} echo \"Deleted files: {}\""'';
-    };
-    # Optional: Add some safety and logging
-    serviceConfig.StandardOutput = "journal";
-    serviceConfig.StandardError = "journal";
-  };
-
-  systemd.timers.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
-    enable = true;
-    description = "Timer for cleaning up old Frigate files";
-    timerConfig = {
-      OnCalendar = "daily";
-      # Alternative specific time format:
-      # OnCalendar = "*-*-* 03:00:00";
-      Persistent = true;  # Run missed timers on boot
-      RandomizedDelaySec = "30min";  # Optional: add some randomization
-    };
-    wantedBy = [ "timers.target" ];
-  };
-
-  # systemd.services.podman-create-frigate-network = {
-  #   serviceConfig.Type = "oneshot";
-  #   wantedBy = [ "podman-frigate.service" ];
-  #   script = ''
-  #     podman network create -d ipvlan --subnet 10.0.0.0/24 --ip-range 10.0.99.0/24 --ipam-driver host-local podnet
-  #   '';
-  # };
-
-    homefree.service-config = [{
-      inherit (config.homefree.service-options.frigate) label name project-name;
-      systemd-service-names = [
-        "podman-frigate"
-      ];
-      reverse-proxy = {
-        enable = config.homefree.service-options.frigate.enable;
-        subdomains = [ "nvr" "frigate" ];
-        http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
-        https-domains = [ config.homefree.system.domain ];
-        host = config.homefree.network.lan-address;
-        port = 8971;
-        ssl = true;
-        ssl-no-verify = true;
-        public = config.homefree.service-options.frigate.public;
-      };
-      backup = if config.homefree.service-options.frigate.enable-backup-media then {
-        paths = [
-          mediaPath
-        ];
-      } else {};
-      options-metadata = [
+    options-metadata = lib.mkOption {
+      type = lib.types.listOf lib.types.attrs;
+      internal = true;
+      default = [
         {
           path = "enable";
           type = "bool";
@@ -340,6 +240,12 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "enable-coral";
+          type = "bool";
+          default = false;
+          description = "Enable Google Coral TPU support";
         }
         {
           path = "media-path";
@@ -414,6 +320,120 @@ in
           ];
         }
       ];
+    };
+  };
+
+  config = {
+    environment.systemPackages= [
+    ## Google Coral (Edge TPU) USB Support
+    pkgs.libedgetpu
+  ];
+
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.frigate.enable {
+    frigate = {
+      image = "ghcr.io/blakeblackshear/frigate:${version}";
+
+      autoStart = true;
+
+      extraOptions = [
+        # "--pull=always"
+        ## 1GB of memory, reduces SSD/SD Card wear
+        "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
+        "--shm-size=512M"
+        # "--network=bridge"
+        "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
+        # "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
+        # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
+        "--device=/dev/dri:/dev/dri"
+        "--cap-add=CAP_PERFMON" # For GPU statistics
+        "--privileged"
+      ];
+
+      ports = [
+        "0.0.0.0:${toString container-external-port}:${toString unauthenticated-port}"
+        "8554:8554" # RTSP feeds
+        "8555:8555/tcp" # WebRTC over tcp
+        "8555:8555/udp" # WebRTC over udp
+      ];
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}/config:/config"
+        ## @TODO: make this configurable
+        "${mediaPath}:/media/frigate"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+      };
+    };
+  };
+
+  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
+    after = [ "dns-ready.service" ];
+    requires = [ "dns-ready.service" ];
+    partOf =  [ "nftables.service" ];
+    serviceConfig = {
+      ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
+    };
+  };
+
+  systemd.services.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
+    wantedBy = [];  # Only ever start with timer
+    description = "Clean up Frigate files older than ${toString retain} days";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";  # Change if you need different permissions
+      # ExecStart = ''${pkgs.findutils}/bin/find "${mediaPath}" -type f -mtime +${toString retain} -delete'';
+      ExecStart = ''${pkgs.bash}/bin/bash -c "${pkgs.findutils}/bin/find \"${mediaPath}\" -type f -mtime +30 -print -delete | ${pkgs.coreutils}/bin/wc -l | ${pkgs.findutils}/bin/xargs -I {} echo \"Deleted files: {}\""'';
+    };
+    # Optional: Add some safety and logging
+    serviceConfig.StandardOutput = "journal";
+    serviceConfig.StandardError = "journal";
+  };
+
+  systemd.timers.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
+    enable = true;
+    description = "Timer for cleaning up old Frigate files";
+    timerConfig = {
+      OnCalendar = "daily";
+      # Alternative specific time format:
+      # OnCalendar = "*-*-* 03:00:00";
+      Persistent = true;  # Run missed timers on boot
+      RandomizedDelaySec = "30min";  # Optional: add some randomization
+    };
+    wantedBy = [ "timers.target" ];
+  };
+
+  # systemd.services.podman-create-frigate-network = {
+  #   serviceConfig.Type = "oneshot";
+  #   wantedBy = [ "podman-frigate.service" ];
+  #   script = ''
+  #     podman network create -d ipvlan --subnet 10.0.0.0/24 --ip-range 10.0.99.0/24 --ipam-driver host-local podnet
+  #   '';
+  # };
+
+    homefree.service-config = [{
+      inherit (config.homefree.service-options.frigate) label name project-name;
+      systemd-service-names = [
+        "podman-frigate"
+      ];
+      reverse-proxy = {
+        enable = config.homefree.service-options.frigate.enable;
+        subdomains = [ "nvr" "frigate" ];
+        http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
+        https-domains = [ config.homefree.system.domain ];
+        host = config.homefree.network.lan-address;
+        port = container-external-port;
+        ssl = true;
+        ssl-no-verify = true;
+        public = config.homefree.service-options.frigate.public;
+      };
+      backup = if config.homefree.service-options.frigate.enable-backup-media then {
+        paths = [
+          mediaPath
+        ];
+      } else {};
     }];
   };
 }

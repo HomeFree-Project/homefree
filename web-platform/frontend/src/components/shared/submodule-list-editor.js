@@ -280,6 +280,8 @@ class SubmoduleListEditor extends LitElement {
         .type=${field.type}
         .defaultValue=${field.default}
         .currentValue=${currentValue}
+        .enumValues=${field['enum-values'] || []}
+        .submoduleFields=${field['submodule-fields'] || []}
         ?disabled=${this.disabled}
         @option-changed=${(e) => this.handleFieldChange(index, e.detail.optionKey, e.detail.value)}
       ></service-option-input>

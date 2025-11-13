@@ -18,6 +18,7 @@ class ServiceOptionInput extends LitElement {
     currentValue: { type: Object },  // Current value from config
     disabled: { type: Boolean },
     submoduleFields: { type: Array },  // For listOf submodule types
+    enumValues: { type: Array },  // For enum types
     uiHint: { type: Object },  // UI rendering hints
     fileBrowserOpen: { type: Boolean, state: true }  // Track file browser modal state
   };
@@ -220,6 +221,15 @@ class ServiceOptionInput extends LitElement {
       opacity: 0.5;
       cursor: not-allowed;
     }
+
+    .submodule-fields {
+      margin-left: 16px;
+      padding-left: 16px;
+      border-left: 2px solid #e5e5e7;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
   `;
 
   constructor() {
@@ -386,6 +396,70 @@ class ServiceOptionInput extends LitElement {
     `;
   }
 
+  renderEnumInput() {
+    const value = this.currentValue !== null && this.currentValue !== undefined
+      ? this.currentValue
+      : this.defaultValue;
+
+    return html`
+      <select
+        .value=${value || ''}
+        ?disabled=${this.disabled}
+        @change=${(e) => this.handleChange(e.target.value)}
+      >
+        <option value="">Select an option...</option>
+        ${this.enumValues.map(option => html`
+          <option value=${option} ?selected=${value === option}>
+            ${option}
+          </option>
+        `)}
+      </select>
+      ${this.renderDefaultHint()}
+    `;
+  }
+
+  renderSubmoduleInput() {
+    if (!this.submoduleFields || this.submoduleFields.length === 0) {
+      return html`<div class="field-description">No fields defined for this submodule</div>`;
+    }
+
+    // Get current value (object with nested fields)
+    const currentValue = this.currentValue || this.defaultValue || {};
+
+    return html`
+      <div class="submodule-fields">
+        ${this.submoduleFields.map(field => html`
+          <service-option-input
+            .optionKey=${field.path}
+            .label=${field.path.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            .description=${field.description || ''}
+            .type=${field.type}
+            .defaultValue=${field.default}
+            .currentValue=${currentValue[field.path]}
+            .enumValues=${field['enum-values'] || []}
+            .submoduleFields=${field['submodule-fields'] || []}
+            ?disabled=${this.disabled}
+            @option-changed=${(e) => this.handleSubmoduleFieldChange(e.detail.optionKey, e.detail.value)}
+          ></service-option-input>
+        `)}
+      </div>
+    `;
+  }
+
+  handleSubmoduleFieldChange(fieldPath, fieldValue) {
+    // Get current submodule value
+    const currentValue = this.currentValue || this.defaultValue || {};
+
+    // Update nested field
+    const newValue = {
+      ...currentValue,
+      [fieldPath]: fieldValue
+    };
+
+    // Emit change event with updated submodule object
+    this.handleChange(newValue);
+  }
+
   renderListInput() {
     // Extract item type from "listOf <type>" string
     const itemType = this.type.replace(/^(nullOr )?listOf /, '');
@@ -418,6 +492,11 @@ class ServiceOptionInput extends LitElement {
   }
 
   renderInput() {
+    // Check if this is an enum type (has enum-values array)
+    if (this.enumValues && this.enumValues.length > 0) {
+      return this.renderEnumInput();
+    }
+
     // Determine base type (strip nullOr prefix)
     const baseType = this.type.replace(/^nullOr /, '');
 
@@ -427,6 +506,8 @@ class ServiceOptionInput extends LitElement {
       return this.renderIntInput();
     } else if (baseType === 'str' || baseType === 'string' || baseType === 'path') {
       return this.renderStringInput();
+    } else if (baseType === 'submodule') {
+      return this.renderSubmoduleInput();
     } else if (baseType.startsWith('listOf')) {
       return this.renderListInput();
     } else {

@@ -591,6 +591,12 @@
           description = "enable Frigate video recording service";
         };
 
+        enable-coral = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Google Coral AI processor";
+        };
+
         public = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -1969,6 +1975,7 @@
     homefree.service-options.freshrss.public = config.homefree.services.freshrss.public;
 
     homefree.service-options.frigate.enable = config.homefree.services.frigate.enable;
+    homefree.service-options.frigate.enable-coral = config.homefree.services.frigate.enable-coral;
     homefree.service-options.frigate.public = config.homefree.services.frigate.public;
     homefree.service-options.frigate.media-path = config.homefree.services.frigate.media-path;
     homefree.service-options.frigate.enable-backup-media = config.homefree.services.frigate.enable-backup-media;

@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, options, ... }:
 
 with lib;
 
@@ -27,11 +27,17 @@ let
     exec ${pythonEnv}/bin/python simple_main.py
   '';
 
-  # Generate list of all available service names from homefree.services
-  # This extracts all top-level service names that have an 'enable' option
-  all-services-list = builtins.attrNames (lib.filterAttrs
-    (name: value: value ? enable)
-    cfg.services
+  # Generate list of all available service labels (not option names)
+  # This extracts labels from service option definitions
+  all-services-list = lib.filter (label: label != null) (
+    lib.mapAttrsToList (optName: optDef:
+      if optDef ? enable then
+        # Try to get label from option definition's default value
+        (if optDef ? label && optDef.label ? default
+         then optDef.label.default
+         else optName)
+      else null
+    ) options.homefree.service-options
   );
   all-services-json = (pkgs.formats.json {}).generate "all-services.json" all-services-list;
 
@@ -99,51 +105,189 @@ let
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;
 
-  # Generate service options schema from options-metadata in service-config
-  # This extracts metadata from each service's service-config entry
-  # Metadata is defined in each service file alongside the service-config declaration
+  # Generate service options schema by extracting metadata from option definitions
+  # This reads directly from options.homefree.service-options.* to get type, default, etc.
+  # Custom attributes (ui-hint, category) are attached via // operator in service files
 
-  # Helper function to convert metadata entry to schema format
+  # Helper function to extract full type string from an option
+  getTypeName = opt:
+    let
+      typeName = opt.type.name or "unknown";
+      # For wrapped types (nullOr, listOf, etc), access the wrapped type via nestedTypes.elemType
+      wrappedType =
+        if opt.type ? nestedTypes && opt.type.nestedTypes ? elemType then
+          opt.type.nestedTypes.elemType
+        else
+          null;
+      wrappedName = if wrappedType != null then (wrappedType.name or "unknown") else null;
+    in
+      # Handle composite types
+      if typeName == "nullOr" && wrappedName != null then
+        "nullOr ${wrappedName}"
+      else if typeName == "listOf" && wrappedName != null then
+        "listOf ${wrappedName}"
+      else if typeName == "attrsOf" && wrappedName != null then
+        "attrsOf ${wrappedName}"
+      else
+        typeName;
+
+  # Helper function to extract metadata from an option definition
+  optionToSchema = opt: {
+    type = getTypeName opt;
+    description = opt.description or "";
+    default = opt.default or null;
+    required = !(opt ? default);
+    category = opt.category or "basic";
+    ui-hint = opt.ui-hint or null;
+    submodule-fields =
+      let
+        typeName = getTypeName opt;
+        # Check if this is a submodule type
+        isSubmodule = typeName == "submodule" || typeName == "listOf submodule" || typeName == "nullOr submodule";
+        # For submodules, extract their nested options
+        # Handle listOf submodule by getting the inner submodule type
+        submoduleType =
+          if opt.type.name == "listOf" && opt.type ? nestedTypes && opt.type.nestedTypes ? elemType then
+            opt.type.nestedTypes.elemType
+          else if opt.type.name == "nullOr" && opt.type ? nestedTypes && opt.type.nestedTypes ? elemType then
+            opt.type.nestedTypes.elemType
+          else
+            opt.type;
+        subOpts = if isSubmodule && (submoduleType ? getSubOptions) then
+          (submoduleType.getSubOptions [])
+        else {};
+      in
+        if isSubmodule && subOpts != {} then
+          let
+            # Filter out internal NixOS fields like _module
+            subOptNames = lib.filter (name: name != "_module") (builtins.attrNames subOpts);
+          in
+          (map (subOptName:
+            let subOpt = subOpts.${subOptName};
+            in {
+              path = subOptName;
+              type = getTypeName subOpt;
+              description = subOpt.description or "";
+              default = subOpt.default or null;
+              required = !(subOpt ? default);
+              ui-hint = subOpt.ui-hint or null;
+            }
+          ) subOptNames)
+        else null;
+  };
+
+  # Helper function to convert metadata entry to schema format (for services with options-metadata)
+  # Recursively processes nested submodules
   metadataToSchema = metadata: {
-    type = if metadata.nullable then "nullOr ${metadata.type}" else metadata.type;
-    description = metadata.description;
-    default = metadata.default;
+    type = if (metadata.nullable or false) then "nullOr ${metadata.type}" else metadata.type;
+    description = metadata.description or "";
+    default = metadata.default or null;
     required = metadata.required or false;
     category = metadata.category or "basic";
     ui-hint = metadata.ui-hint or null;
-    submodule-fields = if metadata.submodule-fields != null then
-      (map (field: {
-        path = field.path;
-        type = if field.nullable then "nullOr ${field.type}" else field.type;
-        description = field.description;
-        default = field.default;
-        required = field.required or false;
-        ui-hint = field.ui-hint or null;
-      }) metadata.submodule-fields)
-    else null;
+    enum-values = metadata.enum-values or null;
+    submodule-fields =
+      let subfields = metadata.submodule-fields or null;
+      in if subfields != null then
+        (map (field:
+          let
+            hasNestedSubmodule = field ? submodule-fields && field.submodule-fields != null;
+            nestedFields = if hasNestedSubmodule then
+              (map (nestedField: {
+                path = nestedField.path;
+                type = if (nestedField.nullable or false) then "nullOr ${nestedField.type}" else nestedField.type;
+                description = nestedField.description or "";
+                default = nestedField.default or null;
+                required = nestedField.required or false;
+                ui-hint = nestedField.ui-hint or null;
+                enum-values = nestedField.enum-values or null;
+              }) field.submodule-fields)
+            else null;
+          in {
+            path = field.path;
+            type = if (field.nullable or false) then "nullOr ${field.type}" else field.type;
+            description = field.description or "";
+            default = field.default or null;
+            required = field.required or false;
+            ui-hint = field.ui-hint or null;
+            enum-values = field.enum-values or null;
+            submodule-fields = nestedFields;
+          }
+        ) subfields)
+      else null;
   };
 
-  # Extract metadata from service-config entries
+  # Extract metadata from ALL services using HYBRID approach:
+  # 1. If service has options-metadata defined, use that (preserves complex types)
+  # 2. Otherwise, auto-extract from option definitions (for simpler services)
+  all-service-option-names = builtins.attrNames options.homefree.service-options;
+
   service-options-schema = builtins.listToAttrs (
     lib.filter (entry: entry != null) (
-      map (service-config:
+      map (service-option-name:
         let
-          label = service-config.label;
-          metadata = service-config.options-metadata or [];
+          # Get the option definitions for this service
+          service-opts-def = options.homefree.service-options.${service-option-name};
+          # Get the config values for this service
+          service-opts-cfg = cfg.service-options.${service-option-name} or null;
+          # Use label from config if available, otherwise use option name
+          label = if service-opts-cfg != null && service-opts-cfg ? label
+                  then service-opts-cfg.label
+                  else service-option-name;
+
+          # Check if service has options-metadata defined
+          # First check in service-options (MediaWiki, Minecraft)
+          # Then check in service-config (Frigate) - which is a LIST, not attrset
+          hasMetadataInOpts = service-opts-def ? options-metadata;
+          metadataFromOpts = if hasMetadataInOpts then service-opts-def.options-metadata.default or [] else [];
+
+          # Search service-config list for matching label
+          serviceConfigEntry = lib.findFirst (entry: entry.label == label) null cfg.service-config;
+          hasMetadataInConfig = serviceConfigEntry != null && serviceConfigEntry ? options-metadata;
+          metadataFromConfig = if hasMetadataInConfig then serviceConfigEntry.options-metadata or [] else [];
+
+          # Prefer service-options metadata, fall back to service-config
+          hasMetadata = hasMetadataInOpts || hasMetadataInConfig;
+          metadata = if metadataFromOpts != [] then metadataFromOpts else metadataFromConfig;
         in
-        if metadata != [] then
-          {
-            name = label;
-            value = builtins.listToAttrs (
-              map (opt: {
-                name = opt.path;
-                value = metadataToSchema opt;
-              }) metadata
-            );
-          }
+        # Only include services that have an enable option
+        if service-opts-def ? enable then
+          if hasMetadata && metadata != [] then
+            # Use options-metadata (for Frigate, MediaWiki, Minecraft, etc.)
+            {
+              name = label;
+              value = builtins.listToAttrs (
+                map (opt: {
+                  name = opt.path;
+                  value = metadataToSchema opt;
+                }) metadata
+              );
+            }
+          else
+            # Auto-extract from option definitions (for simpler services)
+            let
+              # Get all option names, filtering out internal options, secrets, and _module
+              optNames = builtins.attrNames service-opts-def;
+              visibleOpts = lib.filter (name:
+                let opt = service-opts-def.${name};
+                in !(opt.internal or false) && name != "secrets" && name != "_module"
+              ) optNames;
+            in
+            if visibleOpts != [] then
+              {
+                name = label;
+                value = builtins.listToAttrs (
+                  map (optName: {
+                    name = optName;
+                    value = optionToSchema service-opts-def.${optName};
+                  }) visibleOpts
+                );
+              }
+            else
+              null
         else
           null
-      ) cfg.service-config
+      ) all-service-option-names
     )
   );
   service-options-schema-json = (pkgs.formats.json {}).generate "service-options-schema.json" service-options-schema;

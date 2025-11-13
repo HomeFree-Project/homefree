@@ -761,6 +761,7 @@ class ServicesModule extends LitElement {
                 .defaultValue=${optionDef.default}
                 .currentValue=${currentValue}
                 .submoduleFields=${optionDef['submodule-fields'] || []}
+                .enumValues=${optionDef['enum-values'] || []}
                 .uiHint=${optionDef['ui-hint'] || null}
                 @option-changed=${(e) => this.handleOptionChanged(service.label, e.detail.optionKey, e.detail.value)}
               ></service-option-input>

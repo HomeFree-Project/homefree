@@ -57,63 +57,13 @@ in
             default = "Minecraft";
             description = "Name for instance";
           };
-        };
-      });
-    };
-
-    options-metadata = [
-      {
-        path = "enable";
-        type = "bool";
-        default = false;
-        description = "Enable Minecraft servers";
-      }
-      {
-        path = "public";
-        type = "bool";
-        default = false;
-        description = "Make service accessible from WAN";
-      }
-      {
-        path = "instances";
-        type = "listOf submodule";
-        nullable = true;
-        default = null;
-        description = "Minecraft server instance configurations";
-        submodule-fields = [
-          {
-            path = "public";
-            type = "bool";
-            default = false;
-            description = "Make this instance accessible from WAN";
-          }
-          {
-            path = "subdomain";
-            type = "str";
-            default = "minecraft";
-            description = "Subdomain for Minecraft instance (must be unique)";
-          }
-          {
-            path = "name";
-            type = "str";
-            default = "Minecraft";
-            description = "Display name for instance";
-          }
-          {
-            path = "memory";
-            type = "str";
-            nullable = true;
+          memory = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
             default = null;
             description = "Memory for Java VM, e.g. 6G";
-            ui-hint = "memory-size";
-          }
-          {
-            path = "type";
-            type = "enum";
-            nullable = true;
-            default = null;
-            description = "Minecraft server type or mod platform";
-            enum-values = [
+          };
+          type = lib.mkOption {
+            type = lib.types.nullOr (lib.types.enum [
               "AUTO_CURSEFORGE"
               "CURSEFORGE"
               "FTBA"
@@ -135,52 +85,202 @@ in
               "LEAF"
               "FOLIA"
               "QUILT"
-            ];
-          }
-          {
-            path = "mod-pack";
-            type = "submodule";
+            ]);
+            default = null;
+            description = "Minecraft server type or mod platform";
+          };
+          mod-pack = lib.mkOption {
+            type = lib.types.nullOr (lib.types.submodule {
+              options = {
+                download-url = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Download URL for mod pack";
+                };
+                project-slug = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Project slug identifier";
+                };
+              };
+            });
+            default = null;
             description = "Mod pack configuration";
-            submodule-fields = [
-              {
-                path = "download-url";
-                type = "str";
-                required = true;
-                description = "Download URL for mod pack";
-                ui-hint = "url-input";
-              }
-              {
-                path = "project-slug";
-                type = "str";
-                required = true;
-                description = "Project slug identifier";
-              }
-            ];
-          }
-          {
-            path = "mods";
-            type = "listOf submodule";
+          };
+          mods = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                download-url = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Download URL for mod";
+                };
+                project-slug = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Project slug identifier";
+                };
+              };
+            });
             default = [];
             description = "Individual mod configurations";
-            submodule-fields = [
-              {
-                path = "download-url";
-                type = "str";
-                required = true;
-                description = "Download URL for mod";
-                ui-hint = "url-input";
-              }
-              {
-                path = "project-slug";
-                type = "str";
-                required = true;
-                description = "Project slug identifier";
-              }
-            ];
-          }
-        ];
-      }
-    ];
+          };
+        };
+      });
+    };
+
+    # Internal option to hold metadata for admin UI schema generation
+    options-metadata = lib.mkOption {
+      type = lib.types.listOf lib.types.attrs;
+      internal = true;
+      default = [
+        {
+          path = "enable";
+          type = "bool";
+          default = false;
+          description = "Enable Minecraft servers";
+        }
+        {
+          path = "public";
+          type = "bool";
+          default = false;
+          description = "Make service accessible from WAN";
+        }
+        {
+          path = "secrets";
+          type = "submodule";
+          description = "Secret file paths for Minecraft service";
+          submodule-fields = [
+            {
+              path = "curseforge-api-key";
+              type = "path";
+              nullable = true;
+              default = null;
+              description = "Location of Curseforge API Key";
+              ui-hint = "file-picker";
+            }
+            {
+              path = "env";
+              type = "path";
+              nullable = true;
+              default = null;
+              description = "Location of docker env file";
+              ui-hint = "file-picker";
+            }
+            {
+              path = "secret-file";
+              type = "path";
+              nullable = true;
+              default = null;
+              description = "Location of Minecraft secrets file";
+              ui-hint = "file-picker";
+            }
+          ];
+        }
+        {
+          path = "instances";
+          type = "listOf submodule";
+          nullable = true;
+          default = null;
+          description = "Minecraft server instance configurations";
+          submodule-fields = [
+            {
+              path = "public";
+              type = "bool";
+              default = false;
+              description = "Make this instance accessible from WAN";
+            }
+            {
+              path = "subdomain";
+              type = "str";
+              default = "minecraft";
+              description = "Subdomain for Minecraft instance (must be unique)";
+            }
+            {
+              path = "name";
+              type = "str";
+              default = "Minecraft";
+              description = "Display name for instance";
+            }
+            {
+              path = "memory";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "Memory for Java VM, e.g. 6G";
+              ui-hint = "memory-size";
+            }
+            {
+              path = "type";
+              type = "enum";
+              nullable = true;
+              default = null;
+              description = "Minecraft server type or mod platform";
+              enum-values = [
+                "AUTO_CURSEFORGE"
+                "CURSEFORGE"
+                "FTBA"
+                "GTNH"
+                "MODRINTH"
+                "SPIGOT"
+                "FABRIC"
+                "MAGMA"
+                "MAGMA_MAINTAINED"
+                "KETTING"
+                "MOHIST"
+                "YOUER"
+                "BANNER"
+                "CATSERVER"
+                "ARCLIGHT"
+                "SPONGEVANILLA"
+                "PAPER"
+                "PURPUR"
+                "LEAF"
+                "FOLIA"
+                "QUILT"
+              ];
+            }
+            {
+              path = "mod-pack";
+              type = "submodule";
+              description = "Mod pack configuration";
+              submodule-fields = [
+                {
+                  path = "download-url";
+                  type = "str";
+                  required = true;
+                  description = "Download URL for mod pack";
+                  ui-hint = "url-input";
+                }
+                {
+                  path = "project-slug";
+                  type = "str";
+                  required = true;
+                  description = "Project slug identifier";
+                }
+              ];
+            }
+            {
+              path = "mods";
+              type = "listOf submodule";
+              default = [];
+              description = "Individual mod configurations";
+              submodule-fields = [
+                {
+                  path = "download-url";
+                  type = "str";
+                  required = true;
+                  description = "Download URL for mod";
+                  ui-hint = "url-input";
+                }
+                {
+                  path = "project-slug";
+                  type = "str";
+                  required = true;
+                  description = "Project slug identifier";
+                }
+              ];
+            }
+          ];
+        }
+      ];
+    };
   };
 
   config = {
