@@ -2031,6 +2031,7 @@
 
     homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
     homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
+    homefree.service-options.minecraft.secrets = config.homefree.services.minecraft.secrets;
     homefree.service-options.minecraft.instances = config.homefree.services.minecraft.instances;
 
     homefree.service-options.nextcloud.enable = config.homefree.services.nextcloud.enable;

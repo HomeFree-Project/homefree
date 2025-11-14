@@ -19,6 +19,14 @@ in
       description = "Open to public on WAN port";
     };
 
+    secrets = {
+      curseforge-api-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of CurseForge API key file for downloading modpacks. Managed via SOPS - enter the key value in the UI.";
+      };
+    };
+
     instances = lib.mkOption {
       description = "Minecraft instance config";
       default = [];
@@ -123,6 +131,22 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "secrets";
+          type = "submodule";
+          description = "Secret values for Minecraft service (managed via SOPS)";
+          sops-managed = true;
+          submodule-fields = [
+            {
+              path = "curseforge-api-key";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "CurseForge API key for downloading modpacks";
+              sops-managed = true;
+            }
+          ];
         }
         {
           path = "instances";
