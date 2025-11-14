@@ -301,10 +301,12 @@ in
       };
     };
 
-    services = lib.mapAttrs (name: value: {
-      enable = value.enable or false;
-      public = value.public or false;
-    }) jsonData.services;
+    services = lib.mapAttrs (name: value:
+      value // {
+        enable = value.enable or false;
+        public = value.public or false;
+      }
+    ) jsonData.services;
 
     backups = {
       enable = jsonData.backups.enable;
