@@ -3,11 +3,12 @@ Config writer service - updates NixOS configuration files
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 import shutil
 import json
 from datetime import datetime
+from services.secrets_manager import SecretsManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ class ConfigWriter:
             if 'backups' in config:
                 current_config['backups'].update(config['backups'])
 
+            # Write secrets from SOPS to individual files and inject paths
+            success, error = ConfigWriter._inject_secret_paths(current_config)
+            if not success:
+                logger.warning(f"Failed to write secret files: {error}")
+                # Continue anyway - secrets might not be configured yet
+
             # Write updated config with pretty formatting
             ConfigWriter.CONFIG_FILE.write_text(
                 json.dumps(current_config, indent=2, sort_keys=False) + '\n'
@@ -90,3 +97,59 @@ class ConfigWriter:
             logger.info(f"Config backed up to: {backup_file}")
         except Exception as e:
             logger.warning(f"Failed to backup config: {e}")
+
+    @staticmethod
+    def _inject_secret_paths(config: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        Write secrets from SOPS to individual files and inject file paths into config.
+
+        This extracts secrets from encrypted SOPS storage and writes them to
+        /var/lib/homefree-secrets/{service}/{secret-key}, then auto-populates
+        the config with these paths so services can find the secret files.
+
+        Args:
+            config: The configuration dictionary to inject paths into
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        try:
+            # Write all secrets from SOPS to individual files
+            success, error = SecretsManager.write_secret_files()
+            if not success:
+                return False, error
+
+            # Get secrets schema to know what secrets each service needs
+            secrets_schema = SecretsManager.get_schema()
+
+            # Get secrets status to know which secrets are actually set
+            secrets_status = SecretsManager.get_secrets_status()
+
+            # Inject secret paths into config for each service
+            if 'services' in config:
+                for service_label, service_config in config['services'].items():
+                    # Check if this service has secrets defined
+                    if service_label not in secrets_schema:
+                        continue
+
+                    # Ensure secrets section exists in config
+                    if 'secrets' not in service_config:
+                        service_config['secrets'] = {}
+
+                    # Get this service's secrets
+                    service_secrets = secrets_schema.get(service_label, {})
+                    service_status = secrets_status.get(service_label, {})
+
+                    # Inject path for each secret that is actually set
+                    for secret_key in service_secrets.keys():
+                        # Only inject path if the secret is actually set (not empty)
+                        if service_status.get(secret_key, False):
+                            secret_path = str(SecretsManager.get_secret_file_path(service_label, secret_key))
+                            service_config['secrets'][secret_key] = secret_path
+                            logger.debug(f"Injected secret path for {service_label}/{secret_key}: {secret_path}")
+
+            return True, None
+
+        except Exception as e:
+            logger.error(f"Error injecting secret paths: {e}")
+            return False, str(e)

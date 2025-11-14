@@ -419,3 +419,141 @@ class SecretsManager:
         except Exception as e:
             print(f"Error loading secrets schema: {e}")
             return {}
+
+    @staticmethod
+    def get_secret_file_path(service_label: str, secret_key: str) -> Path:
+        """
+        Get the file path where a secret should be stored
+
+        Args:
+            service_label: Service identifier (e.g., "minecraft")
+            secret_key: Secret key name (e.g., "curseforge-api-key")
+
+        Returns:
+            Path object for the secret file
+        """
+        base_dir = Path("/var/lib/homefree-secrets")
+        return base_dir / service_label / secret_key
+
+    @staticmethod
+    def extract_and_write_secret(service_label: str, secret_key: str) -> Tuple[bool, Optional[str]]:
+        """
+        Extract a secret from SOPS and write it to an individual file
+
+        Args:
+            service_label: Service identifier
+            secret_key: Secret key name
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if not SECRETS_FILE.exists():
+            return False, "Secrets file does not exist"
+
+        try:
+            # Convert SSH private key to age format for decryption
+            age_private_key = SecretsManager.ssh_private_to_age(SYSTEM_SSH_PRIVATE_KEY)
+            if not age_private_key:
+                return False, "Failed to convert system SSH private key to age format"
+
+            env = os.environ.copy()
+            env['SOPS_AGE_KEY'] = age_private_key
+
+            # Decrypt secrets file
+            result = subprocess.run(
+                ['sops', '--config', str(SOPS_CONFIG_FILE), '--decrypt', str(SECRETS_FILE)],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env
+            )
+
+            secrets_data = yaml.safe_load(result.stdout) or {}
+
+            # Get the secret value
+            sops_key = f"{service_label}/{secret_key}"
+            secret_value = secrets_data.get(sops_key)
+
+            if secret_value is None or secret_value == "":
+                # Secret not set, don't create file
+                return True, None
+
+            # Get target file path
+            file_path = SecretsManager.get_secret_file_path(service_label, secret_key)
+
+            # Create parent directory if needed
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(file_path.parent, 0o700)
+
+            # Write secret to temporary file first (atomic write)
+            with tempfile.NamedTemporaryFile(mode='w', dir=file_path.parent, delete=False) as tmp:
+                tmp.write(secret_value)
+                tmp_path = tmp.name
+
+            # Set proper permissions before renaming
+            os.chmod(tmp_path, 0o600)
+
+            # Atomic rename
+            os.rename(tmp_path, file_path)
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            return False, f"Failed to decrypt secrets: {e.stderr}"
+        except Exception as e:
+            return False, f"Error writing secret file: {str(e)}"
+
+    @staticmethod
+    def write_secret_files() -> Tuple[bool, Optional[str]]:
+        """
+        Extract all secrets from SOPS and write them to individual files.
+        Creates files at /var/lib/homefree-secrets/{service}/{secret-key}
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if not SECRETS_FILE.exists():
+            # No secrets file means no secrets to write
+            return True, None
+
+        try:
+            # Convert SSH private key to age format for decryption
+            age_private_key = SecretsManager.ssh_private_to_age(SYSTEM_SSH_PRIVATE_KEY)
+            if not age_private_key:
+                return False, "Failed to convert system SSH private key to age format"
+
+            env = os.environ.copy()
+            env['SOPS_AGE_KEY'] = age_private_key
+
+            # Decrypt secrets file
+            result = subprocess.run(
+                ['sops', '--config', str(SOPS_CONFIG_FILE), '--decrypt', str(SECRETS_FILE)],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env
+            )
+
+            secrets_data = yaml.safe_load(result.stdout) or {}
+
+            # Write each secret to its own file
+            for sops_key, secret_value in secrets_data.items():
+                if '/' not in sops_key:
+                    continue  # Skip malformed keys
+
+                if secret_value is None or secret_value == "":
+                    continue  # Skip empty secrets
+
+                service_label, secret_key = sops_key.split('/', 1)
+
+                # Write this secret
+                success, error = SecretsManager.extract_and_write_secret(service_label, secret_key)
+                if not success:
+                    print(f"Warning: Failed to write secret {sops_key}: {error}")
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            return False, f"Failed to decrypt secrets: {e.stderr}"
+        except Exception as e:
+            return False, f"Error writing secret files: {str(e)}"
