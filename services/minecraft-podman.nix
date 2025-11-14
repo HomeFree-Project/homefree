@@ -19,24 +19,6 @@ in
       description = "Open to public on WAN port";
     };
 
-    secrets = {
-      curseforge-api-key = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Curseforge API Key";
-      };
-      env = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of docker env file";
-      };
-      secret-file = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Nextcloud secrets file";
-      };
-    };
-
     instances = lib.mkOption {
       description = "Minecraft instance config";
       default = [];
@@ -141,37 +123,6 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
-        }
-        {
-          path = "secrets";
-          type = "submodule";
-          description = "Secret file paths for Minecraft service";
-          submodule-fields = [
-            {
-              path = "curseforge-api-key";
-              type = "path";
-              nullable = true;
-              default = null;
-              description = "Location of Curseforge API Key";
-              ui-hint = "file-picker";
-            }
-            {
-              path = "env";
-              type = "path";
-              nullable = true;
-              default = null;
-              description = "Location of docker env file";
-              ui-hint = "file-picker";
-            }
-            {
-              path = "secret-file";
-              type = "path";
-              nullable = true;
-              default = null;
-              description = "Location of Minecraft secrets file";
-              ui-hint = "file-picker";
-            }
-          ];
         }
         {
           path = "instances";
@@ -376,9 +327,11 @@ in
       preStart = ''
         mkdir -p ${containerDataPath}/data
         mkdir -p ${containerDataPath}/downloads
-      '' + (lib.optionalString (config.homefree.service-options.minecraft.secrets.curseforge-api-key != null) ''
-        echo "CF_API_KEY=$(cat ${config.homefree.service-options.minecraft.secrets.curseforge-api-key})" > ${containerDataPath}/env
-      '');
+        # Read curseforge-api-key from /var/lib/homefree-secrets if it exists
+        if [ -f /var/lib/homefree-secrets/${instance-id}/curseforge-api-key ]; then
+          echo "CF_API_KEY=$(cat /var/lib/homefree-secrets/${instance-id}/curseforge-api-key)" > ${containerDataPath}/env
+        fi
+      '';
     in
     {
       name = "podman-${instance-id}";

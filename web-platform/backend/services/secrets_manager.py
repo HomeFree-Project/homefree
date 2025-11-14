@@ -421,6 +421,46 @@ class SecretsManager:
             return {}
 
     @staticmethod
+    def get_instance_labels_for_service(service_name: str) -> List[str]:
+        """
+        Get instance labels for services that support multiple instances.
+
+        For instance-based services (like Minecraft), returns a list of labels
+        formatted as "{service}_{subdomain}" for each instance.
+        For regular services, returns a list with just the service name.
+
+        Args:
+            service_name: Service name (e.g., "minecraft")
+
+        Returns:
+            List of instance labels (e.g., ["minecraft_minecraft-cisco", "minecraft_survival"])
+            or just [service_name] for non-instance services
+        """
+        if not CONFIG_FILE.exists():
+            return [service_name]
+
+        try:
+            config = json.loads(CONFIG_FILE.read_text())
+            service_config = config.get('services', {}).get(service_name, {})
+
+            # Check if service has instances
+            instances = service_config.get('instances', [])
+            if instances and isinstance(instances, list):
+                # Return label for each instance: {service}_{subdomain}
+                labels = []
+                for instance in instances:
+                    subdomain = instance.get('subdomain', service_name)
+                    labels.append(f"{service_name}_{subdomain}")
+                return labels
+            else:
+                # Not an instance-based service, just return service name
+                return [service_name]
+
+        except Exception as e:
+            print(f"Error getting instance labels for {service_name}: {e}")
+            return [service_name]
+
+    @staticmethod
     def get_secret_file_path(service_label: str, secret_key: str) -> Path:
         """
         Get the file path where a secret should be stored.
@@ -552,10 +592,16 @@ class SecretsManager:
 
                 service_label, secret_key = sops_key.split('/', 1)
 
-                # Write this secret
-                success, error = SecretsManager.extract_and_write_secret(service_label, secret_key)
-                if not success:
-                    print(f"Warning: Failed to write secret {sops_key}: {error}")
+                # Get all instance labels for this service
+                # For instance-based services (like minecraft), this returns multiple labels
+                # For regular services, this returns just [service_label]
+                instance_labels = SecretsManager.get_instance_labels_for_service(service_label)
+
+                # Write this secret to each instance
+                for instance_label in instance_labels:
+                    success, error = SecretsManager.extract_and_write_secret(instance_label, secret_key)
+                    if not success:
+                        print(f"Warning: Failed to write secret {instance_label}/{secret_key}: {error}")
 
             return True, None
 

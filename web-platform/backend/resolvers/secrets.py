@@ -153,6 +153,12 @@ async def set_secret(service_label: str, secret_key: str, request: SecretSetRequ
                 detail=error or "Failed to set secret"
             )
 
+        # Write secret files immediately after setting
+        # This ensures secrets are available to services right away
+        write_success, write_error = SecretsManager.write_secret_files()
+        if not write_success:
+            logger.warning(f"Secret set in SOPS but failed to write files: {write_error}")
+
         return SecretResponse(
             success=True,
             message="Secret set successfully"
