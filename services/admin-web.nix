@@ -186,6 +186,7 @@ let
     category = metadata.category or "basic";
     ui-hint = metadata.ui-hint or null;
     enum-values = metadata.enum-values or null;
+    "sops-managed" = metadata."sops-managed" or false;
     submodule-fields =
       let subfields = metadata.submodule-fields or null;
       in if subfields != null then
@@ -201,6 +202,7 @@ let
                 required = nestedField.required or false;
                 ui-hint = nestedField.ui-hint or null;
                 enum-values = nestedField.enum-values or null;
+                "sops-managed" = nestedField."sops-managed" or false;
               }) field.submodule-fields)
             else null;
           in {
@@ -211,6 +213,7 @@ let
             required = field.required or false;
             ui-hint = field.ui-hint or null;
             enum-values = field.enum-values or null;
+            "sops-managed" = field."sops-managed" or false;
             submodule-fields = nestedFields;
           }
         ) subfields)
