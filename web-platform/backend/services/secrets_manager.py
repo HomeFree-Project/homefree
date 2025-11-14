@@ -425,8 +425,11 @@ class SecretsManager:
         """
         Get the file path where a secret should be stored.
 
-        SOPS-nix extracts secrets to /run/secrets/ during system activation.
-        We use the format: /run/secrets/{service}/{secret-key}
+        Secrets are written to /var/lib/homefree-secrets/ and managed by the backend.
+        Format: /var/lib/homefree-secrets/{service}/{secret-key}
+
+        Directory permissions: 0700 (root only)
+        File permissions: 0600 (root only)
 
         Args:
             service_label: Service identifier (e.g., "minecraft")
@@ -435,7 +438,7 @@ class SecretsManager:
         Returns:
             Path object for the secret file
         """
-        base_dir = Path("/run/secrets")
+        base_dir = Path("/var/lib/homefree-secrets")
         return base_dir / service_label / secret_key
 
     @staticmethod
