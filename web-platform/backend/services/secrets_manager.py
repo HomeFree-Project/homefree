@@ -423,7 +423,10 @@ class SecretsManager:
     @staticmethod
     def get_secret_file_path(service_label: str, secret_key: str) -> Path:
         """
-        Get the file path where a secret should be stored
+        Get the file path where a secret should be stored.
+
+        SOPS-nix extracts secrets to /run/secrets/ during system activation.
+        We use the format: /run/secrets/{service}/{secret-key}
 
         Args:
             service_label: Service identifier (e.g., "minecraft")
@@ -432,7 +435,7 @@ class SecretsManager:
         Returns:
             Path object for the secret file
         """
-        base_dir = Path("/var/lib/homefree-secrets")
+        base_dir = Path("/run/secrets")
         return base_dir / service_label / secret_key
 
     @staticmethod

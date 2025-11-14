@@ -104,7 +104,7 @@ class ConfigWriter:
         Write secrets from SOPS to individual files and inject file paths into config.
 
         This extracts secrets from encrypted SOPS storage and writes them to
-        /var/lib/homefree-secrets/{service}/{secret-key}, then auto-populates
+        /run/secrets/{service}/{secret-key}, then auto-populates
         the config with these paths so services can find the secret files.
 
         Args:
