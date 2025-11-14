@@ -439,7 +439,10 @@ class ServiceOptionInput extends LitElement {
             .enumValues=${field['enum-values'] || []}
             .submoduleFields=${field['submodule-fields'] || []}
             ?disabled=${this.disabled}
-            @option-changed=${(e) => this.handleSubmoduleFieldChange(e.detail.optionKey, e.detail.value)}
+            @option-changed=${(e) => {
+              e.stopPropagation();
+              this.handleSubmoduleFieldChange(e.detail.optionKey, e.detail.value);
+            }}
           ></service-option-input>
         `)}
       </div>
@@ -474,7 +477,10 @@ class ServiceOptionInput extends LitElement {
           .submoduleFields=${this.submoduleFields}
           .value=${value}
           ?disabled=${this.disabled}
-          @list-changed=${(e) => this.handleChange(e.detail.value)}
+          @list-changed=${(e) => {
+            e.stopPropagation();
+            this.handleChange(e.detail.value);
+          }}
         ></submodule-list-editor>
       `;
     }

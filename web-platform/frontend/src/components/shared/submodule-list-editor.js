@@ -283,7 +283,10 @@ class SubmoduleListEditor extends LitElement {
         .enumValues=${field['enum-values'] || []}
         .submoduleFields=${field['submodule-fields'] || []}
         ?disabled=${this.disabled}
-        @option-changed=${(e) => this.handleFieldChange(index, e.detail.optionKey, e.detail.value)}
+        @option-changed=${(e) => {
+          e.stopPropagation();
+          this.handleFieldChange(index, e.detail.optionKey, e.detail.value);
+        }}
       ></service-option-input>
       ${error ? html`<div class="validation-error">⚠️ ${error}</div>` : ''}
     `;
