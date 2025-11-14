@@ -1053,19 +1053,6 @@
           description = "Open to public on WAN port";
         };
 
-        secrets = {
-          curseforge-api-key = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = ''
-              Location of Curseforge API Key, required for automatic mod/modpack downloads. Managed via SOPS - enter the key value in the UI.
-
-              See:
-              https://console.curseforge.com/#/api-keys
-            '';
-          };
-        };
-
         instances = lib.mkOption {
           description = "Minecraft instance config";
           default = [];
@@ -2013,7 +2000,6 @@
 
     homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
     homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
-    homefree.service-options.minecraft.secrets = config.homefree.services.minecraft.secrets;
     homefree.service-options.minecraft.instances = config.homefree.services.minecraft.instances;
 
     homefree.service-options.nextcloud.enable = config.homefree.services.nextcloud.enable;
