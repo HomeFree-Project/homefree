@@ -327,9 +327,12 @@ in
       preStart = ''
         mkdir -p ${containerDataPath}/data
         mkdir -p ${containerDataPath}/downloads
-        # Read curseforge-api-key from /var/lib/homefree-secrets if it exists
+        # Create env file (empty or with secrets)
         if [ -f /var/lib/homefree-secrets/${instance-id}/curseforge-api-key ]; then
           echo "CF_API_KEY=$(cat /var/lib/homefree-secrets/${instance-id}/curseforge-api-key)" > ${containerDataPath}/env
+        else
+          # Create empty env file so podman doesn't fail
+          touch ${containerDataPath}/env
         fi
       '';
     in
