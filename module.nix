@@ -1058,29 +1058,11 @@
             type = lib.types.nullOr lib.types.path;
             default = null;
             description = ''
-              Location of Curseforge API Key, required for automatic mod/modpack downloads";
+              Location of Curseforge API Key, required for automatic mod/modpack downloads. Managed via SOPS - enter the key value in the UI.
 
               See:
               https://console.curseforge.com/#/api-keys
             '';
-          };
-
-          env = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = ''
-              Location of docker env file. Contains:
-
-              NEXTCLOUD_ADMIN_PASSWORD=<password>
-
-              Should not be a file included in your source repo.
-            '';
-          };
-
-          secret-file = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
           };
         };
 
