@@ -676,12 +676,14 @@ class ServicesModule extends LitElement {
   }
 
   handleAddInstanceClick(parentLabel) {
+    console.log('[handleAddInstanceClick] Called with parentLabel:', parentLabel);
     // Emit action event to parent - parent manages state
     this.dispatchEvent(new CustomEvent('instance-add', {
       detail: { parentLabel },
       bubbles: true,
       composed: true
     }));
+    console.log('[handleAddInstanceClick] Event dispatched');
   }
 
   handleInstanceDeleteClick(parentLabel, instanceIndex) {

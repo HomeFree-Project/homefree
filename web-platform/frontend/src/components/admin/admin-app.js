@@ -778,6 +778,7 @@ class AdminApp extends LitElement {
   }
 
   handleInstanceAdd(e) {
+    console.log('[handleInstanceAdd] Event received:', e.detail);
     const { parentLabel } = e.detail;
 
     // Initialize services in pending config if not exists
@@ -824,6 +825,12 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    console.log('[handleInstanceAdd] Instance added, config updated:', {
+      parentLabel,
+      newInstance,
+      updatedInstances,
+      pendingConfig: this.pendingConfig
+    });
   }
 
   handleInstanceDelete(e) {
