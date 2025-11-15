@@ -1520,6 +1520,12 @@
             description = "Official project name of application";
           };
 
+          parent = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Label of parent service (for child instances)";
+          };
+
           release-tracking = {
             type = lib.mkOption {
               type = lib.types.str;
