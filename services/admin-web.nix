@@ -87,7 +87,14 @@ let
       map (service-name:
         let
           service-opts = cfg.service-options.${service-name} or null;
-          secrets = if service-opts != null && service-opts ? secrets then service-opts.secrets else null;
+          service-opts-def = options.homefree.service-options.${service-name};
+
+          # Check if secrets option exists and is not marked as internal
+          hasSecrets = service-opts != null && service-opts ? secrets;
+          secretsOption = if service-opts-def ? secrets then service-opts-def.secrets else null;
+          secretsInternal = if secretsOption != null then (secretsOption.internal or false) else false;
+
+          secrets = if hasSecrets && !secretsInternal then service-opts.secrets else null;
         in
         if secrets != null then
           {
