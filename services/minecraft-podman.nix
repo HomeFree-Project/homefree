@@ -32,6 +32,11 @@ in
       default = [];
       type = with lib.types; listOf (submodule {
         options = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Enable this Minecraft instance";
+          };
           public = lib.mkOption {
             type = lib.types.bool;
             default = false;
