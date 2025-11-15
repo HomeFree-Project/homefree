@@ -121,6 +121,7 @@ class ConfigWriter:
             Tuple of (success, error_message)
         """
         try:
+            logger.info("_write_sops_managed_secrets() called")
             # Load service options schema to identify SOPS-managed secrets
             schema_file = Path("/run/homefree/admin/service-options-schema.json")
             if not schema_file.exists():
@@ -131,7 +132,10 @@ class ConfigWriter:
                 options_schema = json.load(f)
 
             if 'services' not in config:
+                logger.info("No services in config, returning")
                 return True, None
+
+            logger.info(f"Processing {len(config['services'])} services for SOPS secrets")
 
             # Process each service's secrets
             for service_label, service_config in config['services'].items():
