@@ -180,6 +180,16 @@ class ConfigWriter:
                         logger.error(f"Failed to write secret {service_label}/{secret_key} to SOPS: {error}")
                         return False, f"Failed to write secret {service_label}/{secret_key}: {error}"
 
+                    # Write the secret to disk file
+                    write_success, write_error = SecretsManager.write_secret_files()
+                    if not write_success:
+                        logger.warning(f"Failed to extract secret to file: {write_error}")
+
+                    # Replace plaintext value with file path in config
+                    secret_path = str(SecretsManager.get_secret_file_path(service_label, secret_key))
+                    service_config['secrets'][secret_key] = secret_path
+                    logger.info(f"Replaced plaintext with path: {secret_path}")
+
             return True, None
 
         except Exception as e:
