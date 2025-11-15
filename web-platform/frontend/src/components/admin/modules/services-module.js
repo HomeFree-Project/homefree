@@ -761,7 +761,22 @@ class ServicesModule extends LitElement {
       !serviceOptions[key]['sops-managed']
     );
     const hasExtraOptions = extraOptions.length > 0;
-    const hasConfig = hasSecrets || hasExtraOptions || hasChildren;
+    let hasConfig = hasSecrets || hasExtraOptions || hasChildren;
+
+    // For child services (instances), check if parent has instance configuration
+    if (service.parent) {
+      const parentOptions = this.optionsSchema[service.parent] || {};
+      const instancesOption = parentOptions['instances'];
+      if (instancesOption && instancesOption['submodule-fields']) {
+        const configFields = instancesOption['submodule-fields'].filter(f =>
+          f.path !== 'enable' && f.path !== 'public'
+        );
+        if (configFields.length > 0) {
+          hasConfig = true;
+        }
+      }
+    }
+
     const isExpanded = this.expandedServices.has(service.label);
 
     // Add child class if this service has a parent
@@ -861,7 +876,10 @@ class ServicesModule extends LitElement {
 
     // Check if this service supports instances
     const serviceOptions = this.optionsSchema[service.label] || {};
-    const hasInstancesOption = serviceOptions['instances'] && serviceOptions['instances'].type === 'listOf submodule';
+    const instancesOption = serviceOptions['instances'];
+    const hasInstancesOption = instancesOption &&
+      (instancesOption.type === 'listOf submodule' ||
+       instancesOption.type?.includes('listOf'));
 
     if (!hasInstancesOption && childServices.length === 0) {
       return '';
