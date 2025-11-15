@@ -855,7 +855,13 @@ class ServicesModule extends LitElement {
                   <input
                     type="checkbox"
                     .checked=${isEnabled}
-                    @change=${(e) => this.handleServiceToggle(service.label, e.target.checked)}
+                    @change=${(e) => {
+                      if (service.parent) {
+                        this.handleInstanceToggle(service.parent, service.label, e.target.checked);
+                      } else {
+                        this.handleServiceToggle(service.label, e.target.checked);
+                      }
+                    }}
                   />
                   <span class="toggle-slider"></span>
                 </label>
@@ -869,7 +875,13 @@ class ServicesModule extends LitElement {
                   <input
                     type="checkbox"
                     .checked=${isPublic}
-                    @change=${(e) => this.handlePublicToggle(service.label, e.target.checked)}
+                    @change=${(e) => {
+                      if (service.parent) {
+                        this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
+                      } else {
+                        this.handlePublicToggle(service.label, e.target.checked);
+                      }
+                    }}
                   />
                   <span class="toggle-slider"></span>
                 </label>

@@ -875,6 +875,111 @@ class AdminApp extends LitElement {
     this.requestUpdate();
   }
 
+  handleInstanceToggle(e) {
+    const { parentLabel, instanceLabel, enabled } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current parent service config
+    const currentParentConfig = this.pendingConfig.services[parentLabel] ||
+                                this.serverConfig?.services?.[parentLabel] ||
+                                { enable: false, public: false, instances: [] };
+
+    // Get current instances array
+    const currentInstances = currentParentConfig.instances || [];
+
+    // Find instance index by matching label
+    // Instance label format: parentLabel_subdomain (e.g., "minecraft_minecraft-cisco")
+    const instanceIndex = currentInstances.findIndex(inst => {
+      const instanceId = `${parentLabel}_${inst.subdomain}`;
+      return instanceId === instanceLabel;
+    });
+
+    if (instanceIndex === -1) {
+      console.error('[handleInstanceToggle] Instance not found:', instanceLabel);
+      return;
+    }
+
+    // Update the specific instance's enable field
+    const updatedInstances = [...currentInstances];
+    updatedInstances[instanceIndex] = {
+      ...updatedInstances[instanceIndex],
+      enable: enabled
+    };
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [parentLabel]: {
+          ...currentParentConfig,
+          instances: updatedInstances
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  handleInstancePublicToggle(e) {
+    const { parentLabel, instanceLabel, isPublic } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current parent service config
+    const currentParentConfig = this.pendingConfig.services[parentLabel] ||
+                                this.serverConfig?.services?.[parentLabel] ||
+                                { enable: false, public: false, instances: [] };
+
+    // Get current instances array
+    const currentInstances = currentParentConfig.instances || [];
+
+    // Find instance index by matching label
+    const instanceIndex = currentInstances.findIndex(inst => {
+      const instanceId = `${parentLabel}_${inst.subdomain}`;
+      return instanceId === instanceLabel;
+    });
+
+    if (instanceIndex === -1) {
+      console.error('[handleInstancePublicToggle] Instance not found:', instanceLabel);
+      return;
+    }
+
+    // Update the specific instance's public field
+    const updatedInstances = [...currentInstances];
+    updatedInstances[instanceIndex] = {
+      ...updatedInstances[instanceIndex],
+      public: isPublic
+    };
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [parentLabel]: {
+          ...currentParentConfig,
+          instances: updatedInstances
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
   /**
    * Merge server config with pending changes to get the config to save
    * Pending changes override server config
@@ -1135,6 +1240,8 @@ class AdminApp extends LitElement {
             @service-toggle=${this.handleServiceToggle}
             @service-public-toggle=${this.handleServicePublicToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
+            @instance-toggle=${this.handleInstanceToggle}
+            @instance-public-toggle=${this.handleInstancePublicToggle}
             @instance-field-changed=${this.handleInstanceFieldChanged}
             @instance-add=${this.handleInstanceAdd}
             @instance-delete=${this.handleInstanceDelete}
