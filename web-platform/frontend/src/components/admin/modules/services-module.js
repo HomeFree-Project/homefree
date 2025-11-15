@@ -574,6 +574,34 @@ class ServicesModule extends LitElement {
     }));
   }
 
+  handleInstanceToggle(parentLabel, instanceLabel, enabled) {
+    // Update local services array for immediate UI feedback
+    this.services = this.services.map(s =>
+      s.label === instanceLabel ? { ...s, enabled } : s
+    );
+
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('instance-toggle', {
+      detail: { parentLabel, instanceLabel, enabled },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  handleInstancePublicToggle(parentLabel, instanceLabel, isPublic) {
+    // Update local services array for immediate UI feedback
+    this.services = this.services.map(s =>
+      s.label === instanceLabel ? { ...s, public: isPublic } : s
+    );
+
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('instance-public-toggle', {
+      detail: { parentLabel, instanceLabel, isPublic },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
   handleOptionChanged(serviceLabel, optionKey, value) {
     // Emit action event to parent - parent manages all config state
     this.dispatchEvent(new CustomEvent('service-option-changed', {
@@ -622,11 +650,19 @@ class ServicesModule extends LitElement {
     return `${activeState} (${subState})`;
   }
 
+  getChildServices(parentLabel) {
+    return this.services.filter(s => s.parent === parentLabel);
+  }
+
   renderServiceRow(service) {
     const statusClass = this.getStatusClass(service.active_state, service.sub_state);
     const statusText = this.getStatusText(service.active_state, service.sub_state, service.enabled);
     const isEnabled = service.enabled;
     const isPublic = service.public;
+
+    // Check if this service has child instances
+    const childServices = this.getChildServices(service.label);
+    const hasChildren = childServices.length > 0;
 
     // Admin service can't be disabled (no enable toggle)
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
@@ -635,10 +671,14 @@ class ServicesModule extends LitElement {
     // Check if service has configuration options (secrets, options)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
     const serviceOptions = this.optionsSchema[service.label] || {};
-    // Filter out standard enable/public options to check for "extra" options
-    const extraOptions = Object.keys(serviceOptions).filter(key => key !== 'enable' && key !== 'public');
+    // Filter out standard enable/public options and sops-managed options to check for "extra" options
+    const extraOptions = Object.keys(serviceOptions).filter(key =>
+      key !== 'enable' &&
+      key !== 'public' &&
+      !serviceOptions[key]['sops-managed']
+    );
     const hasExtraOptions = extraOptions.length > 0;
-    const hasConfig = hasSecrets || hasExtraOptions;
+    const hasConfig = hasSecrets || hasExtraOptions || hasChildren;
     const isExpanded = this.expandedServices.has(service.label);
 
     return html`
@@ -721,9 +761,82 @@ class ServicesModule extends LitElement {
       </div>
 
       ${isExpanded ? html`
+        ${this.renderChildInstances(service)}
         ${this.renderOptionsSection(service)}
         ${this.renderSecretsSection(service)}
       ` : ''}
+    `;
+  }
+
+  renderChildInstances(service) {
+    const childServices = this.getChildServices(service.label);
+    if (childServices.length === 0) {
+      return '';
+    }
+
+    return html`
+      <div class="instances-section">
+        <div class="instances-header">
+          <span>Instances (${childServices.length})</span>
+        </div>
+
+        <div class="instances-list">
+          ${childServices.map(child => this.renderInstanceRow(child))}
+        </div>
+      </div>
+    `;
+  }
+
+  renderInstanceRow(instance) {
+    const statusClass = this.getStatusClass(instance.active_state, instance.sub_state);
+    const statusText = this.getStatusText(instance.active_state, instance.sub_state, instance.enabled);
+    const isEnabled = instance.enabled;
+    const isPublic = instance.public;
+
+    return html`
+      <div class="instance-row">
+        <div class="instance-info">
+          <div class="status-indicator">
+            <div class="status-dot ${statusClass}"></div>
+            <div class="status-text ${statusClass}">${statusText}</div>
+          </div>
+
+          <div class="service-info">
+            <div class="service-name">${instance.name}</div>
+            ${instance.url && isEnabled ? html`
+              <a href="${instance.url}" target="_blank" class="service-url">
+                ${instance.url}
+              </a>
+            ` : ''}
+          </div>
+        </div>
+
+        <div class="instance-controls">
+          <div class="toggle-container">
+            <span class="toggle-label">Enable</span>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                .checked=${isEnabled}
+                @change=${(e) => this.handleInstanceToggle(instance.parent, instance.label, e.target.checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-container">
+            <span class="toggle-label">Public (WAN)</span>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                .checked=${isPublic}
+                @change=${(e) => this.handleInstancePublicToggle(instance.parent, instance.label, e.target.checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
     `;
   }
 
@@ -840,8 +953,11 @@ class ServicesModule extends LitElement {
       `;
     }
 
+    // Filter out child services (those with parent field) - they'll be rendered inside parent
+    const parentServices = this.services.filter(service => !service.parent);
+
     // Filter services based on search query
-    const filteredServices = this.services.filter(service => {
+    const filteredServices = parentServices.filter(service => {
       const searchLower = this.searchQuery.toLowerCase();
       return (
         service.name.toLowerCase().includes(searchLower) ||

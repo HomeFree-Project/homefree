@@ -46,6 +46,7 @@ class ServicesResolver:
             name = service_config.get("name", service_label.replace("-", " ").title())
             project_name = service_config.get("project-name", name)
             systemd_service_names = service_config.get("systemd-service-names", [])
+            parent = service_config.get("parent", None)
             url = service_config_data.get("url", None)
 
             # Get runtime status from systemd only if enabled
@@ -63,7 +64,8 @@ class ServicesResolver:
                 active_state=active_state,
                 sub_state=sub_state,
                 systemd_services=systemd_service_names,
-                url=url
+                url=url,
+                parent=parent
             )
 
             services_status.append(service_status)
@@ -85,6 +87,7 @@ class ServicesResolver:
             name = service_config.get("name", service_label.replace("-", " ").title())
             project_name = service_config.get("project-name", name)
             systemd_service_names = service_config.get("systemd-service-names", [])
+            parent = service_config.get("parent", None)
             url = service_config_data.get("url", None)
 
             # Get runtime status from systemd
@@ -102,11 +105,47 @@ class ServicesResolver:
                 active_state=active_state,
                 sub_state=sub_state,
                 systemd_services=systemd_service_names,
-                url=url
+                url=url,
+                parent=parent
             )
 
             services_status.append(service_status)
             processed_labels.add(service_label)
+
+        # Calculate aggregate status for parent services (those with no systemd services)
+        parent_services = {s.label: s for s in services_status if not s.systemd_services}
+        for parent_label, parent_service in parent_services.items():
+            # Find all child services
+            children = [s for s in services_status if s.parent == parent_label]
+
+            if children:
+                # Aggregate status logic:
+                # - active/running if ALL children are active/running
+                # - failed if ANY child is failed
+                # - inactive/dead if ALL children are inactive/dead
+                # - activating if ANY child is activating and none are failed
+
+                all_running = all(s.active_state == "active" and s.sub_state == "running" for s in children)
+                any_failed = any(s.active_state == "failed" or s.sub_state == "failed" for s in children)
+                all_inactive = all(s.active_state == "inactive" and s.sub_state == "dead" for s in children)
+                any_activating = any(s.active_state == "activating" for s in children)
+
+                if all_running:
+                    parent_service.active_state = "active"
+                    parent_service.sub_state = "running"
+                elif any_failed:
+                    parent_service.active_state = "failed"
+                    parent_service.sub_state = "failed"
+                elif all_inactive:
+                    parent_service.active_state = "inactive"
+                    parent_service.sub_state = "dead"
+                elif any_activating:
+                    parent_service.active_state = "activating"
+                    parent_service.sub_state = "start"
+                else:
+                    # Mixed states
+                    parent_service.active_state = "active"
+                    parent_service.sub_state = "degraded"
 
         # Sort: running services first, then starting/transitioning, then disabled/stopped, then by name
         def sort_key(service):

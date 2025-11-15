@@ -146,3 +146,4 @@ class ServiceStatus:
     sub_state: str
     systemd_services: List[str]
     url: Optional[str] = None
+    parent: Optional[str] = None  # Label of parent service (for instances)

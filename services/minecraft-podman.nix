@@ -338,7 +338,7 @@ in
           };
         };
       }
-    ) config.homefree.service-options.minecraft.instances)
+    ) (lib.filter (instance: instance.enable) config.homefree.service-options.minecraft.instances))
   );
 
   systemd.services = lib.optionalAttrs config.homefree.service-options.minecraft.enable
@@ -370,23 +370,35 @@ in
           ExecStartPre = [ "!${pkgs.writeShellScript "${instance-id}-prestart" preStart}" ];
         };
       };
-    }) config.homefree.service-options.minecraft.instances)
+    }) (lib.filter (instance: instance.enable) config.homefree.service-options.minecraft.instances))
   );
 
   homefree.service-config = lib.optionals config.homefree.service-options.minecraft.enable
-  (lib.imap0 (index: instance:
-  let
-    instance-id = "minecraft_${instance.subdomain}";
-    containerDataPath = "/var/lib/${instance-id}";
-    port = initialPort + index;
-  in
-  {
-    label = instance-id;
-    name = "Minecraft - ${instance.name}";
-    project-name = "Minecraft";
-    systemd-service-names = [
-      "podman-${instance-id}"
-    ];
+  (
+    # Parent service entry (no systemd services, aggregates status from children)
+    [{
+      label = "minecraft";
+      name = "Minecraft";
+      project-name = "Minecraft";
+      systemd-service-names = [];
+      reverse-proxy.enable = false;
+    }]
+    ++
+    # Individual instance entries (only enabled instances)
+    (lib.imap0 (index: instance:
+    let
+      instance-id = "minecraft_${instance.subdomain}";
+      containerDataPath = "/var/lib/${instance-id}";
+      port = initialPort + index;
+    in
+    {
+      label = instance-id;
+      name = "Minecraft - ${instance.name}";
+      project-name = "Minecraft";
+      parent = "minecraft";  # Mark this as a child of the parent service
+      systemd-service-names = [
+        "podman-${instance-id}"
+      ];
     # @TODO: Get rid of reverse-proxy
     reverse-proxy = {
       enable = config.homefree.service-options.minecraft.enable;
@@ -407,7 +419,8 @@ in
         containerDataPath
       ];
     };
-  }) config.homefree.service-options.minecraft.instances);
+  }) (lib.filter (instance: instance.enable) config.homefree.service-options.minecraft.instances))
+  );
   };
 }
 
