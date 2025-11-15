@@ -994,8 +994,26 @@ class AdminApp extends LitElement {
 
     // Merge services section
     if (this.pendingConfig.services) {
+      // Remove flat instance keys from server config before merging
+      // Flat keys like "minecraft_minecraft-cisco" are from old buggy saves
+      // and should not be carried forward
+      const serverServices = {};
+      if (this.serverConfig.services) {
+        for (const [name, value] of Object.entries(this.serverConfig.services)) {
+          // Skip flat instance keys (format: parent_subdomain)
+          if (name.includes('_')) {
+            const parentName = name.split('_')[0];
+            // Check if parent exists with instances - if so, skip this flat key
+            if (this.serverConfig.services[parentName]?.instances) {
+              continue;
+            }
+          }
+          serverServices[name] = value;
+        }
+      }
+
       merged.services = {
-        ...(this.serverConfig.services || {}),
+        ...serverServices,
         ...this.pendingConfig.services
       };
     }
