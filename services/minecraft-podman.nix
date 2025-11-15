@@ -19,10 +19,12 @@ in
       description = "Open to public on WAN port";
     };
 
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf lib.types.anything;
-      default = {};
-      description = "Secrets for Minecraft service (managed via SOPS)";
+    secrets = {
+      curseforge-api-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "CurseForge API key for downloading modpacks";
+      };
     };
 
     instances = lib.mkOption {
