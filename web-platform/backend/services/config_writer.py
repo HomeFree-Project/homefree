@@ -56,12 +56,51 @@ class ConfigWriter:
                 # admin-api is for monitoring only and has no config options
                 special_services = {'admin-api'}
 
+                # Load service options schema to identify multi-instance services
+                schema_file = Path("/run/homefree/admin/service-options-schema.json")
+                options_schema = {}
+                if schema_file.exists():
+                    with open(schema_file, 'r') as f:
+                        options_schema = json.load(f)
+
                 # Merge services - add new ones, update existing ones
                 # Filter out special services that aren't configurable
                 for service_name, service_config in config['services'].items():
                     if service_name in special_services:
                         continue  # Skip special services
 
+                    # Check if this is a multi-instance service entry (format: parent_subdomain)
+                    if '_' in service_name:
+                        parts = service_name.split('_', 1)
+                        parent_service = parts[0]
+                        instance_subdomain = parts[1]
+
+                        # Check if parent service has instances option
+                        if parent_service in options_schema:
+                            parent_options = options_schema[parent_service]
+                            if 'instances' in parent_options and parent_options['instances'].get('type', '').startswith('listOf'):
+                                # This is a multi-instance service - update the instances array
+                                if parent_service not in current_config['services']:
+                                    current_config['services'][parent_service] = {}
+                                if 'instances' not in current_config['services'][parent_service]:
+                                    current_config['services'][parent_service]['instances'] = []
+
+                                # Find the instance in the array by subdomain
+                                instances = current_config['services'][parent_service]['instances']
+                                instance_index = next((i for i, inst in enumerate(instances) if inst.get('subdomain') == instance_subdomain), -1)
+
+                                if instance_index >= 0:
+                                    # Update existing instance
+                                    instances[instance_index].update(service_config)
+                                else:
+                                    # New instance - add to array
+                                    instances.append({
+                                        'subdomain': instance_subdomain,
+                                        **service_config
+                                    })
+                                continue  # Skip normal service update
+
+                    # Regular single-instance service
                     if service_name not in current_config['services']:
                         current_config['services'][service_name] = {}
                     current_config['services'][service_name].update(service_config)
