@@ -19,6 +19,14 @@ in
       description = "Open to public on WAN port";
     };
 
+    secrets = {
+      curseforge-api-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "CurseForge API key for downloading modpacks (SOPS-managed)";
+      };
+    };
+
     instances = lib.mkOption {
       description = "Minecraft instance config";
       default = [];
