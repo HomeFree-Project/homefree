@@ -248,7 +248,7 @@ in
 
     name = lib.mkOption {
       type = lib.types.str;
-      default = "Cloud Storage";
+      default = "Personal Cloud Service Suite";
       internal = true;
       description = "Service display name";
     };
