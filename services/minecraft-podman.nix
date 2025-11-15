@@ -424,7 +424,7 @@ in
         containerDataPath
       ];
     };
-  }) (lib.filter (instance: instance.enable) config.homefree.service-options.minecraft.instances))
+  }) config.homefree.service-options.minecraft.instances)
   );
   };
 }
