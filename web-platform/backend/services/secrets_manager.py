@@ -482,12 +482,13 @@ class SecretsManager:
         return base_dir / service_label / secret_key
 
     @staticmethod
-    def extract_and_write_secret(service_label: str, secret_key: str) -> Tuple[bool, Optional[str]]:
+    def extract_and_write_secret(service_name: str, instance_label: str, secret_key: str) -> Tuple[bool, Optional[str]]:
         """
         Extract a secret from SOPS and write it to an individual file
 
         Args:
-            service_label: Service identifier
+            service_name: Service name for SOPS key lookup (e.g., "minecraft")
+            instance_label: Instance label for file path (e.g., "minecraft_minecraft-cisco")
             secret_key: Secret key name
 
         Returns:
@@ -516,16 +517,17 @@ class SecretsManager:
 
             secrets_data = yaml.safe_load(result.stdout) or {}
 
-            # Get the secret value
-            sops_key = f"{service_label}/{secret_key}"
+            # Get the secret value using service name (not instance label)
+            # For instance-based services, secrets are stored per service, not per instance
+            sops_key = f"{service_name}/{secret_key}"
             secret_value = secrets_data.get(sops_key)
 
             if secret_value is None or secret_value == "":
                 # Secret not set, don't create file
                 return True, None
 
-            # Get target file path
-            file_path = SecretsManager.get_secret_file_path(service_label, secret_key)
+            # Get target file path using instance label
+            file_path = SecretsManager.get_secret_file_path(instance_label, secret_key)
 
             # Create parent directory if needed
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -590,16 +592,17 @@ class SecretsManager:
                 if secret_value is None or secret_value == "":
                     continue  # Skip empty secrets
 
-                service_label, secret_key = sops_key.split('/', 1)
+                service_name, secret_key = sops_key.split('/', 1)
 
                 # Get all instance labels for this service
                 # For instance-based services (like minecraft), this returns multiple labels
-                # For regular services, this returns just [service_label]
-                instance_labels = SecretsManager.get_instance_labels_for_service(service_label)
+                # For regular services, this returns just [service_name]
+                instance_labels = SecretsManager.get_instance_labels_for_service(service_name)
 
                 # Write this secret to each instance
                 for instance_label in instance_labels:
-                    success, error = SecretsManager.extract_and_write_secret(instance_label, secret_key)
+                    # Pass service_name for SOPS lookup, instance_label for file path
+                    success, error = SecretsManager.extract_and_write_secret(service_name, instance_label, secret_key)
                     if not success:
                         print(f"Warning: Failed to write secret {instance_label}/{secret_key}: {error}")
 
