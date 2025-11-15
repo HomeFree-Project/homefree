@@ -388,6 +388,39 @@ class ServicesModule extends LitElement {
       font-size: 12px;
     }
 
+    /* Instance management buttons */
+    .add-instance-button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: background 0.2s;
+      width: 100%;
+    }
+
+    .add-instance-button:hover {
+      background: #5568d3;
+    }
+
+    .delete-instance-button {
+      background: #ff3b30;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .delete-instance-button:hover {
+      background: #e02b1f;
+    }
+
     @media (max-width: 768px) {
       .service-row {
         flex-direction: column;
@@ -633,6 +666,33 @@ class ServicesModule extends LitElement {
     }));
   }
 
+  handleInstanceFieldChanged(parentLabel, instanceIndex, fieldKey, value) {
+    // Emit action event to parent - parent manages all config state
+    this.dispatchEvent(new CustomEvent('instance-field-changed', {
+      detail: { parentLabel, instanceIndex, fieldKey, value },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  handleAddInstanceClick(parentLabel) {
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('instance-add', {
+      detail: { parentLabel },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  handleInstanceDeleteClick(parentLabel, instanceIndex) {
+    // Emit action event to parent - parent manages state
+    this.dispatchEvent(new CustomEvent('instance-delete', {
+      detail: { parentLabel, instanceIndex },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
   handleSearch(e) {
     this.searchQuery = e.target.value.toLowerCase();
   }
@@ -693,10 +753,11 @@ class ServicesModule extends LitElement {
     // Check if service has configuration options (secrets, options)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
     const serviceOptions = this.optionsSchema[service.label] || {};
-    // Filter out standard enable/public options and sops-managed options to check for "extra" options
+    // Filter out standard enable/public options, sops-managed options, and instances (handled as child services)
     const extraOptions = Object.keys(serviceOptions).filter(key =>
       key !== 'enable' &&
       key !== 'public' &&
+      key !== 'instances' &&
       !serviceOptions[key]['sops-managed']
     );
     const hasExtraOptions = extraOptions.length > 0;
@@ -786,32 +847,138 @@ class ServicesModule extends LitElement {
       </div>
 
       ${isExpanded ? html`
-        ${this.renderChildInstances(service)}
-        ${this.renderOptionsSection(service)}
-        ${this.renderSecretsSection(service)}
+        ${service.parent ? this.renderInstanceConfig(service) : html`
+          ${this.renderChildInstances(service)}
+          ${this.renderOptionsSection(service)}
+          ${this.renderSecretsSection(service)}
+        `}
       ` : ''}
     `;
   }
 
   renderChildInstances(service) {
     const childServices = this.getChildServices(service.label);
-    if (childServices.length === 0) {
+
+    // Check if this service supports instances
+    const serviceOptions = this.optionsSchema[service.label] || {};
+    const hasInstancesOption = serviceOptions['instances'] && serviceOptions['instances'].type === 'listOf submodule';
+
+    if (!hasInstancesOption && childServices.length === 0) {
       return '';
     }
 
     return html`
-      <div class="child-services">
-        ${childServices.map(child => this.renderServiceRow(child))}
+      <div class="secrets-section">
+        <div class="secrets-header">
+          <span>Instances ${childServices.length > 0 ? `(${childServices.length})` : ''}</span>
+        </div>
+
+        <div class="child-services">
+          ${childServices.map(child => this.renderServiceRow(child))}
+
+          ${hasInstancesOption ? html`
+            <button
+              class="add-instance-button"
+              @click=${() => this.handleAddInstanceClick(service.label)}
+            >
+              + Add Instance
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  renderInstanceConfig(instance) {
+    // Get parent service label and find instance index
+    const parentLabel = instance.parent;
+    if (!parentLabel) return '';
+
+    // Get parent service options schema to access instances submodule definition
+    const parentOptions = this.optionsSchema[parentLabel] || {};
+    const instancesOption = parentOptions['instances'];
+    if (!instancesOption || instancesOption.type !== 'listOf submodule') {
+      return ''; // No instances configuration available
+    }
+
+    // Get the submodule fields that define instance configuration
+    const instanceFields = instancesOption['submodule-fields'] || [];
+
+    // Get current instances array from config
+    const currentInstances = this.pendingConfig.services?.[parentLabel]?.instances ||
+                            this.serverConfig?.services?.[parentLabel]?.instances ||
+                            [];
+
+    // Find the index of this instance by matching label
+    // Instance label format is typically: parentLabel_subdomain (e.g., "minecraft_minecraft-cisco")
+    const instanceIndex = currentInstances.findIndex(inst => {
+      const instanceId = `${parentLabel}_${inst.subdomain}`;
+      return instanceId === instance.label;
+    });
+
+    if (instanceIndex === -1) {
+      return ''; // Instance not found in config
+    }
+
+    const currentInstance = currentInstances[instanceIndex];
+
+    return html`
+      <div class="secrets-section">
+        <div class="secrets-header">
+          <span>Instance Configuration</span>
+        </div>
+
+        <div class="secrets-content">
+          ${instanceFields.map(field => {
+            // Skip enable and public - they're handled by toggles
+            if (field.path === 'enable' || field.path === 'public') {
+              return '';
+            }
+
+            const currentValue = currentInstance?.[field.path];
+            const label = field.path
+              .split('-')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+
+            return html`
+              <service-option-input
+                .optionKey=${field.path}
+                .label=${label}
+                .description=${field.description || ''}
+                .type=${field.type}
+                .defaultValue=${field.default}
+                .currentValue=${currentValue}
+                .submoduleFields=${field['submodule-fields'] || []}
+                .enumValues=${field['enum-values'] || []}
+                .uiHint=${field['ui-hint'] || null}
+                .nullable=${field.nullable || false}
+                .required=${field.required || false}
+                @option-changed=${(e) => this.handleInstanceFieldChanged(parentLabel, instanceIndex, e.detail.optionKey, e.detail.value)}
+              ></service-option-input>
+            `;
+          })}
+
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e5e7;">
+            <button
+              class="delete-instance-button"
+              @click=${() => this.handleInstanceDeleteClick(parentLabel, instanceIndex)}
+            >
+              Delete Instance
+            </button>
+          </div>
+        </div>
       </div>
     `;
   }
 
   renderOptionsSection(service) {
     const serviceOptions = this.optionsSchema[service.label] || {};
-    // Filter out standard enable/public options and sops-managed options
+    // Filter out standard enable/public options, sops-managed options, and instances (handled as child services)
     const extraOptions = Object.keys(serviceOptions).filter(key =>
       key !== 'enable' &&
       key !== 'public' &&
+      key !== 'instances' &&
       !serviceOptions[key]['sops-managed']
     );
 

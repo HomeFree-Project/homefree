@@ -734,6 +734,140 @@ class AdminApp extends LitElement {
     this.requestUpdate();
   }
 
+  handleInstanceFieldChanged(e) {
+    const { parentLabel, instanceIndex, fieldKey, value } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current parent service config
+    const currentParentConfig = this.pendingConfig.services[parentLabel] ||
+                                this.serverConfig?.services?.[parentLabel] ||
+                                { enable: false, public: false, instances: [] };
+
+    // Get current instances array
+    const currentInstances = currentParentConfig.instances || [];
+
+    // Update the specific instance's field
+    const updatedInstances = [...currentInstances];
+    if (instanceIndex >= 0 && instanceIndex < updatedInstances.length) {
+      updatedInstances[instanceIndex] = {
+        ...updatedInstances[instanceIndex],
+        [fieldKey]: value
+      };
+    }
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [parentLabel]: {
+          ...currentParentConfig,
+          instances: updatedInstances
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  handleInstanceAdd(e) {
+    const { parentLabel } = e.detail;
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current parent service config
+    const currentParentConfig = this.pendingConfig.services[parentLabel] ||
+                                this.serverConfig?.services?.[parentLabel] ||
+                                { enable: false, public: false, instances: [] };
+
+    // Get current instances array
+    const currentInstances = currentParentConfig.instances || [];
+
+    // Create a new instance with default values
+    // Generate unique subdomain (e.g., "instance-1", "instance-2")
+    const instanceNumber = currentInstances.length + 1;
+    const newInstance = {
+      enable: true,
+      public: false,
+      subdomain: `instance-${instanceNumber}`,
+      name: `Instance ${instanceNumber}`,
+      // Additional fields will get their defaults from the schema
+      // For minecraft: memory (null), type (null), mod-pack (null), mods ([])
+    };
+
+    // Add new instance to array
+    const updatedInstances = [...currentInstances, newInstance];
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [parentLabel]: {
+          ...currentParentConfig,
+          instances: updatedInstances
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
+  handleInstanceDelete(e) {
+    const { parentLabel, instanceIndex } = e.detail;
+
+    // Confirm deletion
+    if (!confirm('Are you sure you want to delete this instance? This action cannot be undone after applying changes.')) {
+      return;
+    }
+
+    // Initialize services in pending config if not exists
+    if (!this.pendingConfig.services) {
+      this.pendingConfig = { ...this.pendingConfig, services: {} };
+    }
+
+    // Get current parent service config
+    const currentParentConfig = this.pendingConfig.services[parentLabel] ||
+                                this.serverConfig?.services?.[parentLabel] ||
+                                { enable: false, public: false, instances: [] };
+
+    // Get current instances array
+    const currentInstances = currentParentConfig.instances || [];
+
+    // Remove instance at index
+    const updatedInstances = currentInstances.filter((_, idx) => idx !== instanceIndex);
+
+    // Update pending config immutably
+    this.pendingConfig = {
+      ...this.pendingConfig,
+      services: {
+        ...this.pendingConfig.services,
+        [parentLabel]: {
+          ...currentParentConfig,
+          instances: updatedInstances
+        }
+      }
+    };
+
+    // Mark services module as dirty
+    this.dirtyModules.add('services');
+    this.updateMergedConfig();
+    this.requestUpdate();
+  }
+
   /**
    * Merge server config with pending changes to get the config to save
    * Pending changes override server config
@@ -994,6 +1128,9 @@ class AdminApp extends LitElement {
             @service-toggle=${this.handleServiceToggle}
             @service-public-toggle=${this.handleServicePublicToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
+            @instance-field-changed=${this.handleInstanceFieldChanged}
+            @instance-add=${this.handleInstanceAdd}
+            @instance-delete=${this.handleInstanceDelete}
           ></services-module>
         `;
 
