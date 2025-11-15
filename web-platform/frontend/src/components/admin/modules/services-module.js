@@ -897,7 +897,7 @@ class ServicesModule extends LitElement {
           ${hasInstancesOption ? html`
             <button
               class="add-instance-button"
-              @click=${() => this.handleAddInstanceClick(service.label)}
+              @click=${(e) => { e.stopPropagation(); this.handleAddInstanceClick(service.label); }}
             >
               + Add Instance
             </button>
@@ -915,7 +915,8 @@ class ServicesModule extends LitElement {
     // Get parent service options schema to access instances submodule definition
     const parentOptions = this.optionsSchema[parentLabel] || {};
     const instancesOption = parentOptions['instances'];
-    if (!instancesOption || instancesOption.type !== 'listOf submodule') {
+    if (!instancesOption || !instancesOption.type?.includes('listOf')) {
+      console.warn('[renderInstanceConfig] No instances option found for parent:', parentLabel, instancesOption);
       return ''; // No instances configuration available
     }
 
@@ -927,14 +928,24 @@ class ServicesModule extends LitElement {
                             this.serverConfig?.services?.[parentLabel]?.instances ||
                             [];
 
+    console.log('[renderInstanceConfig] Looking for instance:', {
+      instanceLabel: instance.label,
+      parentLabel,
+      currentInstances,
+      pendingInstances: this.pendingConfig.services?.[parentLabel]?.instances,
+      serverInstances: this.serverConfig?.services?.[parentLabel]?.instances
+    });
+
     // Find the index of this instance by matching label
     // Instance label format is typically: parentLabel_subdomain (e.g., "minecraft_minecraft-cisco")
     const instanceIndex = currentInstances.findIndex(inst => {
       const instanceId = `${parentLabel}_${inst.subdomain}`;
+      console.log('[renderInstanceConfig] Checking instance:', { instanceId, actualLabel: instance.label, match: instanceId === instance.label });
       return instanceId === instance.label;
     });
 
     if (instanceIndex === -1) {
+      console.warn('[renderInstanceConfig] Instance not found in config:', instance.label);
       return ''; // Instance not found in config
     }
 
