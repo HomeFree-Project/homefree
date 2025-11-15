@@ -729,8 +729,12 @@ class ServicesModule extends LitElement {
 
   renderOptionsSection(service) {
     const serviceOptions = this.optionsSchema[service.label] || {};
-    // Filter out standard enable/public options - those are already in the main UI
-    const extraOptions = Object.keys(serviceOptions).filter(key => key !== 'enable' && key !== 'public');
+    // Filter out standard enable/public options and sops-managed options
+    const extraOptions = Object.keys(serviceOptions).filter(key =>
+      key !== 'enable' &&
+      key !== 'public' &&
+      !serviceOptions[key]['sops-managed']
+    );
 
     if (extraOptions.length === 0) {
       return ''; // No extra options for this service
