@@ -738,8 +738,10 @@ class ServicesModule extends LitElement {
     // Get child services from backend
     const backendChildren = this.services.filter(s => s.parent === parentLabel);
 
-    // Get instances from pending config
-    const pendingInstances = this.pendingConfig?.services?.[parentLabel]?.instances || [];
+    // Get instances from pending config, falling back to server config
+    const pendingInstances = this.pendingConfig?.services?.[parentLabel]?.instances ||
+                            this.serverConfig?.services?.[parentLabel]?.instances ||
+                            [];
 
     if (pendingInstances.length === 0) {
       return backendChildren;
