@@ -366,6 +366,28 @@ class ServicesModule extends LitElement {
       cursor: not-allowed;
     }
 
+    /* Child services (instances) styling */
+    .child-services {
+      margin-top: 8px;
+      margin-left: 24px;
+      padding-left: 16px;
+      border-left: 2px solid #e5e5e7;
+    }
+
+    .service-row-child {
+      background: #fafafa;
+      margin-bottom: 8px;
+      padding: 12px;
+    }
+
+    .service-row-child .service-name {
+      font-size: 14px;
+    }
+
+    .service-row-child .service-project {
+      font-size: 12px;
+    }
+
     @media (max-width: 768px) {
       .service-row {
         flex-direction: column;
@@ -681,8 +703,11 @@ class ServicesModule extends LitElement {
     const hasConfig = hasSecrets || hasExtraOptions || hasChildren;
     const isExpanded = this.expandedServices.has(service.label);
 
+    // Add child class if this service has a parent
+    const childClass = service.parent ? 'service-row-child' : '';
+
     return html`
-      <div class="service-row ${isEnabled ? 'enabled' : ''}">
+      <div class="service-row ${isEnabled ? 'enabled' : ''} ${childClass}">
         <div class="service-row-main">
           <div class="status-indicator">
             <div class="status-dot ${statusClass}"></div>
@@ -775,67 +800,8 @@ class ServicesModule extends LitElement {
     }
 
     return html`
-      <div class="instances-section">
-        <div class="instances-header">
-          <span>Instances (${childServices.length})</span>
-        </div>
-
-        <div class="instances-list">
-          ${childServices.map(child => this.renderInstanceRow(child))}
-        </div>
-      </div>
-    `;
-  }
-
-  renderInstanceRow(instance) {
-    const statusClass = this.getStatusClass(instance.active_state, instance.sub_state);
-    const statusText = this.getStatusText(instance.active_state, instance.sub_state, instance.enabled);
-    const isEnabled = instance.enabled;
-    const isPublic = instance.public;
-
-    return html`
-      <div class="instance-row">
-        <div class="instance-info">
-          <div class="status-indicator">
-            <div class="status-dot ${statusClass}"></div>
-            <div class="status-text ${statusClass}">${statusText}</div>
-          </div>
-
-          <div class="service-info">
-            <div class="service-name">${instance.name}</div>
-            ${instance.url && isEnabled ? html`
-              <a href="${instance.url}" target="_blank" class="service-url">
-                ${instance.url}
-              </a>
-            ` : ''}
-          </div>
-        </div>
-
-        <div class="instance-controls">
-          <div class="toggle-container">
-            <span class="toggle-label">Enable</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                .checked=${isEnabled}
-                @change=${(e) => this.handleInstanceToggle(instance.parent, instance.label, e.target.checked)}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-container">
-            <span class="toggle-label">Public (WAN)</span>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                .checked=${isPublic}
-                @change=${(e) => this.handleInstancePublicToggle(instance.parent, instance.label, e.target.checked)}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
+      <div class="child-services">
+        ${childServices.map(child => this.renderServiceRow(child))}
       </div>
     `;
   }
