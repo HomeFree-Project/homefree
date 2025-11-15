@@ -735,7 +735,47 @@ class ServicesModule extends LitElement {
   }
 
   getChildServices(parentLabel) {
-    return this.services.filter(s => s.parent === parentLabel);
+    // Get child services from backend
+    const backendChildren = this.services.filter(s => s.parent === parentLabel);
+
+    // Get instances from pending config
+    const pendingInstances = this.pendingConfig?.services?.[parentLabel]?.instances || [];
+
+    if (pendingInstances.length === 0) {
+      return backendChildren;
+    }
+
+    // Create child service objects for pending instances not yet in backend
+    const pendingChildren = pendingInstances.map(inst => {
+      const instanceId = `${parentLabel}_${inst.subdomain}`;
+
+      // Check if already exists in backend children
+      const existingChild = backendChildren.find(child => child.label === instanceId);
+      if (existingChild) {
+        // Update existing child with pending config values
+        return {
+          ...existingChild,
+          enabled: inst.enable ?? existingChild.enabled,
+          public: inst.public ?? existingChild.public
+        };
+      }
+
+      // Create synthetic child service for pending instance not yet in backend
+      return {
+        label: instanceId,
+        name: `${parentLabel.charAt(0).toUpperCase() + parentLabel.slice(1)} - ${inst.name}`,
+        project_name: parentLabel.charAt(0).toUpperCase() + parentLabel.slice(1),
+        enabled: inst.enable ?? true,
+        public: inst.public ?? false,
+        active_state: 'inactive',
+        sub_state: 'dead',
+        systemd_services: [],
+        url: null,
+        parent: parentLabel
+      };
+    });
+
+    return pendingChildren;
   }
 
   renderServiceRow(service) {
