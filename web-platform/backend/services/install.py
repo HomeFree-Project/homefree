@@ -265,6 +265,7 @@ in
       keyMap = jsonData.system.keyMap;
       adminUsername = jsonData.system.adminUsername;
       adminDescription = jsonData.system.adminDescription;
+      adminEmail = jsonData.system.adminEmail;
       localDomain = jsonData.system.localDomain;
       additionalDomains = jsonData.system.additionalDomains;
       authorizedKeys = jsonData.system.authorizedKeys;
