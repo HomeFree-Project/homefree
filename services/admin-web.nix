@@ -448,23 +448,5 @@ in
       }
     ];
 
-    # Post-activation hook to restart admin-api if it changed
-    # This runs after nixos-rebuild switch completes
-    system.activationScripts.restart-admin-api = {
-      text = ''
-        # Get the new admin-api service ExecStart path
-        NEW_EXEC=$(${pkgs.systemd}/bin/systemctl cat admin-api.service 2>/dev/null | ${pkgs.gnugrep}/bin/grep "^ExecStart=" | ${pkgs.coreutils}/bin/cut -d= -f2 || echo "")
-
-        # Get the currently running admin-api ExecStart path
-        RUNNING_EXEC=$(${pkgs.systemd}/bin/systemctl show admin-api.service -p ExecStart --value 2>/dev/null | ${pkgs.coreutils}/bin/cut -d' ' -f2 | ${pkgs.coreutils}/bin/cut -d';' -f1 || echo "")
-
-        # If they differ, restart the service
-        if [ -n "$NEW_EXEC" ] && [ -n "$RUNNING_EXEC" ] && [ "$NEW_EXEC" != "$RUNNING_EXEC" ]; then
-          echo "Admin API changed, restarting service..."
-          ${pkgs.systemd}/bin/systemctl restart admin-api.service || true
-        fi
-      '';
-      deps = [];
-    };
   };
 }
