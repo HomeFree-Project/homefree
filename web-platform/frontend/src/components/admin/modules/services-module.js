@@ -748,7 +748,7 @@ class ServicesModule extends LitElement {
     }
 
     // Create child service objects for pending instances not yet in backend
-    const pendingChildren = pendingInstances.map(inst => {
+    const pendingChildren = pendingInstances.map((inst, index) => {
       const instanceId = `${parentLabel}_${inst.subdomain}`;
 
       // Check if already exists in backend children
@@ -758,7 +758,8 @@ class ServicesModule extends LitElement {
         return {
           ...existingChild,
           enabled: inst.enable ?? existingChild.enabled,
-          public: inst.public ?? existingChild.public
+          public: inst.public ?? existingChild.public,
+          instanceIndex: index  // Add stable instance index
         };
       }
 
@@ -773,7 +774,8 @@ class ServicesModule extends LitElement {
         sub_state: 'dead',
         systemd_services: [],
         url: null,
-        parent: parentLabel
+        parent: parentLabel,
+        instanceIndex: index  // Add stable instance index
       };
     });
 
@@ -821,7 +823,11 @@ class ServicesModule extends LitElement {
       }
     }
 
-    const isExpanded = this.expandedServices.has(service.label);
+    // Use stable identifier for expand state (instance index for children, label for parents)
+    const expandId = service.instanceIndex !== undefined
+      ? `${service.parent}:instance:${service.instanceIndex}`
+      : service.label;
+    const isExpanded = this.expandedServices.has(expandId);
 
     // Add child class if this service has a parent
     const childClass = service.parent ? 'service-row-child' : '';
@@ -911,7 +917,7 @@ class ServicesModule extends LitElement {
     return html`
       <div
         class="config-expander ${isExpanded ? 'expanded' : ''}"
-        @click=${() => this.toggleSecretsExpanded(service.label)}
+        @click=${() => this.toggleSecretsExpanded(expandId)}
       >
         <span class="config-expander-arrow">▶</span>
         <span>${isExpanded ? 'Hide settings' : 'More settings...'}</span>
@@ -964,9 +970,11 @@ class ServicesModule extends LitElement {
   }
 
   renderInstanceConfig(instance) {
-    // Get parent service label and find instance index
+    // Get parent service label and instance index
     const parentLabel = instance.parent;
-    if (!parentLabel) return '';
+    const instanceIndex = instance.instanceIndex;
+
+    if (!parentLabel || instanceIndex === undefined) return '';
 
     // Get parent service options schema to access instances submodule definition
     const parentOptions = this.optionsSchema[parentLabel] || {};
@@ -984,28 +992,12 @@ class ServicesModule extends LitElement {
                             this.serverConfig?.services?.[parentLabel]?.instances ||
                             [];
 
-    console.log('[renderInstanceConfig] Looking for instance:', {
-      instanceLabel: instance.label,
-      parentLabel,
-      currentInstances,
-      pendingInstances: this.pendingConfig.services?.[parentLabel]?.instances,
-      serverInstances: this.serverConfig?.services?.[parentLabel]?.instances
-    });
-
-    // Find the index of this instance by matching label
-    // Instance label format is typically: parentLabel_subdomain (e.g., "minecraft_minecraft-cisco")
-    const instanceIndex = currentInstances.findIndex(inst => {
-      const instanceId = `${parentLabel}_${inst.subdomain}`;
-      console.log('[renderInstanceConfig] Checking instance:', { instanceId, actualLabel: instance.label, match: instanceId === instance.label });
-      return instanceId === instance.label;
-    });
-
-    if (instanceIndex === -1) {
-      console.warn('[renderInstanceConfig] Instance not found in config:', instance.label);
-      return ''; // Instance not found in config
-    }
-
     const currentInstance = currentInstances[instanceIndex];
+
+    if (!currentInstance) {
+      console.warn('[renderInstanceConfig] Instance not found at index:', instanceIndex);
+      return '';
+    }
 
     return html`
       <div class="secrets-section">
