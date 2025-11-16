@@ -904,12 +904,12 @@ class ServicesModule extends LitElement {
           </div>
         </div>
 
-        ${this.renderConfigSection(service, hasConfig, isExpanded)}
+        ${this.renderConfigSection(service, hasConfig, isExpanded, expandId)}
       </div>
     `;
   }
 
-  renderConfigSection(service, hasConfig, isExpanded) {
+  renderConfigSection(service, hasConfig, isExpanded, expandId) {
     if (!hasConfig) {
       return ''; // No config options for this service
     }
