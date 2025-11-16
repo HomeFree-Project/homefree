@@ -703,27 +703,31 @@ class ServicesModule extends LitElement {
     await this.loadServices();
   }
 
-  getStatusClass(activeState, subState) {
+  getStatusClass(activeState, subState, partial = false) {
     if (activeState === 'active' && subState === 'running') {
-      return 'running';
+      return 'running';  // Green - includes partial
+    } else if (activeState === 'active' && subState === 'degraded') {
+      return 'failed';  // Red - actual degradation/problems
     } else if (activeState === 'failed') {
-      return 'failed';
+      return 'failed';  // Red
     } else if (activeState === 'activating' || subState === 'start') {
-      return 'starting';
+      return 'starting';  // Orange
     } else if (activeState === 'inactive' || subState === 'dead') {
-      return 'stopped';
+      return 'stopped';  // Grey
     }
-    return 'unknown';
+    return 'unknown';  // Grey
   }
 
-  getStatusText(activeState, subState, enabled) {
+  getStatusText(activeState, subState, enabled, partial = false) {
     if (!enabled) {
       return 'Disabled';
     }
     if (activeState === 'active' && subState === 'running') {
-      return 'Running';
+      return partial ? 'Running (partial)' : 'Running';
+    } else if (activeState === 'active' && subState === 'degraded') {
+      return 'Degraded';  // Actual problems with enabled instances
     } else if (activeState === 'failed') {
-      return 'Failed';
+      return 'Degraded';  // Failed = Degraded for consistency
     } else if (activeState === 'activating') {
       return 'Starting';
     } else if (activeState === 'inactive' && subState === 'dead') {
@@ -783,8 +787,8 @@ class ServicesModule extends LitElement {
   }
 
   renderServiceRow(service) {
-    const statusClass = this.getStatusClass(service.active_state, service.sub_state);
-    const statusText = this.getStatusText(service.active_state, service.sub_state, service.enabled);
+    const statusClass = this.getStatusClass(service.active_state, service.sub_state, service.partial);
+    const statusText = this.getStatusText(service.active_state, service.sub_state, service.enabled, service.partial);
     const isEnabled = service.enabled;
     const isPublic = service.public;
 

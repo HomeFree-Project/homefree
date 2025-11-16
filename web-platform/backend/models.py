@@ -147,3 +147,4 @@ class ServiceStatus:
     systemd_services: List[str]
     url: Optional[str] = None
     parent: Optional[str] = None  # Label of parent service (for instances)
+    partial: bool = False  # True if parent service has some instances disabled

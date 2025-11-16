@@ -119,33 +119,51 @@ class ServicesResolver:
             children = [s for s in services_status if s.parent == parent_label]
 
             if children:
-                # Aggregate status logic:
-                # - active/running if ALL children are active/running
-                # - failed if ANY child is failed
-                # - inactive/dead if ALL children are inactive/dead
-                # - activating if ANY child is activating and none are failed
+                # Only consider ENABLED children for status aggregation
+                # Disabled children are intentionally stopped and shouldn't affect parent status
+                enabled_children = [s for s in children if s.enabled]
 
-                all_running = all(s.active_state == "active" and s.sub_state == "running" for s in children)
-                any_failed = any(s.active_state == "failed" or s.sub_state == "failed" for s in children)
-                all_inactive = all(s.active_state == "inactive" and s.sub_state == "dead" for s in children)
-                any_activating = any(s.active_state == "activating" for s in children)
+                # Check if there are any disabled children (for partial flag)
+                has_disabled = len(enabled_children) < len(children)
 
-                if all_running:
-                    parent_service.active_state = "active"
-                    parent_service.sub_state = "running"
-                elif any_failed:
-                    parent_service.active_state = "failed"
-                    parent_service.sub_state = "failed"
-                elif all_inactive:
+                if not enabled_children:
+                    # All children disabled - parent should be inactive
                     parent_service.active_state = "inactive"
                     parent_service.sub_state = "dead"
-                elif any_activating:
-                    parent_service.active_state = "activating"
-                    parent_service.sub_state = "start"
+                    parent_service.partial = False
                 else:
-                    # Mixed states
-                    parent_service.active_state = "active"
-                    parent_service.sub_state = "degraded"
+                    # Aggregate status logic for enabled children only:
+                    # - active/running if ALL enabled children are active/running
+                    # - failed if ANY enabled child is failed
+                    # - inactive/dead if ALL enabled children are inactive/dead
+                    # - activating if ANY enabled child is activating and none are failed
+
+                    all_running = all(s.active_state == "active" and s.sub_state == "running" for s in enabled_children)
+                    any_failed = any(s.active_state == "failed" or s.sub_state == "failed" for s in enabled_children)
+                    all_inactive = all(s.active_state == "inactive" and s.sub_state == "dead" for s in enabled_children)
+                    any_activating = any(s.active_state == "activating" for s in enabled_children)
+
+                    if all_running:
+                        parent_service.active_state = "active"
+                        parent_service.sub_state = "running"
+                        parent_service.partial = has_disabled  # Mark as partial if some children disabled
+                    elif any_failed:
+                        parent_service.active_state = "failed"
+                        parent_service.sub_state = "failed"
+                        parent_service.partial = False  # Failed state takes priority over partial
+                    elif all_inactive:
+                        parent_service.active_state = "inactive"
+                        parent_service.sub_state = "dead"
+                        parent_service.partial = False
+                    elif any_activating:
+                        parent_service.active_state = "activating"
+                        parent_service.sub_state = "start"
+                        parent_service.partial = has_disabled
+                    else:
+                        # Mixed states among enabled children
+                        parent_service.active_state = "active"
+                        parent_service.sub_state = "degraded"
+                        parent_service.partial = False  # Degraded means actual problems, not just partial
 
         # Sort: running services first, then starting/transitioning, then disabled/stopped, then by name
         def sort_key(service):
