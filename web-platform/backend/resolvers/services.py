@@ -79,16 +79,35 @@ class ServicesResolver:
 
             service_config = service_config_data.get("service-config", {})
 
-            # These are special services (admin, landing-page, etc.) - assume always enabled
-            enabled = True
-            public = service_config.get("reverse-proxy", {}).get("public", False)
-
-            # Extract service info
+            # Extract service info first to get parent
             name = service_config.get("name", service_label.replace("-", " ").title())
             project_name = service_config.get("project-name", name)
             systemd_service_names = service_config.get("systemd-service-names", [])
             parent = service_config.get("parent", None)
             url = service_config_data.get("url", None)
+
+            # Determine enabled state based on whether this is a child instance or special service
+            if parent:
+                # This is a child instance - need to check its enable state from parent's instances array
+                parent_settings = homefree_config.get("services", {}).get(parent, {})
+                instances = parent_settings.get("instances", [])
+
+                # Extract subdomain from label (format: parent_subdomain)
+                subdomain = service_label.split('_', 1)[1] if '_' in service_label else None
+
+                # Find matching instance by subdomain
+                instance = next((inst for inst in instances if inst.get("subdomain") == subdomain), None)
+
+                if instance:
+                    enabled = instance.get("enable", True)
+                    public = instance.get("public", False)
+                else:
+                    enabled = True  # Default to enabled if instance not found
+                    public = False
+            else:
+                # These are special services (admin, landing-page, etc.) - assume always enabled
+                enabled = True
+                public = service_config.get("reverse-proxy", {}).get("public", False)
 
             # Get runtime status from systemd
             if systemd_service_names:
@@ -165,8 +184,13 @@ class ServicesResolver:
                         parent_service.sub_state = "degraded"
                         parent_service.partial = False  # Degraded means actual problems, not just partial
 
-        # Sort: running services first, then starting/transitioning, then disabled/stopped, then by name
+        # Sort: failed/degraded first (RED - most important), then running, then starting, then disabled
         def sort_key(service):
+            is_failed = (
+                service.active_state == "failed" or
+                service.sub_state == "failed" or
+                (service.active_state == "active" and service.sub_state == "degraded")
+            )
             is_running = service.active_state == "active" and service.sub_state == "running"
             is_transitioning = (
                 service.active_state in ("activating", "reloading", "deactivating") or
@@ -174,15 +198,17 @@ class ServicesResolver:
             )
             is_disabled = not service.enabled or (service.active_state == "inactive" and service.sub_state == "dead")
 
-            # Priority: 0 = running, 1 = transitioning/starting, 2 = disabled/stopped, 3 = other
-            if is_running:
+            # Priority: 0 = failed/degraded (RED - top), 1 = running, 2 = transitioning/starting, 3 = disabled/stopped, 4 = other
+            if is_failed:
                 priority = 0
-            elif is_transitioning:
+            elif is_running:
                 priority = 1
-            elif is_disabled:
+            elif is_transitioning:
                 priority = 2
-            else:
+            elif is_disabled:
                 priority = 3
+            else:
+                priority = 4
 
             return (priority, service.name.lower())
 
