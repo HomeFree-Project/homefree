@@ -84,7 +84,8 @@ let
   # This extracts secrets options from service-options for each service
   secrets-schema = builtins.listToAttrs (
     lib.filter (entry: entry != null) (
-      map (service-name:
+      # Service secrets from service-options
+      (map (service-name:
         let
           service-opts = cfg.service-options.${service-name} or null;
           service-opts-def = options.homefree.service-options.${service-name};
@@ -107,7 +108,25 @@ let
           }
         else
           null
-      ) all-services-list
+      ) all-services-list)
+      # Add backup secrets as a special case
+      ++ [
+        (let
+          backupSecrets = cfg.backups.secrets or null;
+          backupSecretsDef = options.homefree.backups.secrets;
+        in
+        if backupSecrets != null then
+          {
+            name = "backup";
+            value = builtins.mapAttrs (secret-key: secret-opt: {
+              type = secret-opt.type.name or "str";
+              description = secret-opt.description or "";
+              required = !(secret-opt ? default) || secret-opt.default == null;
+            }) backupSecrets;
+          }
+        else
+          null)
+      ]
     )
   );
   secrets-schema-json = (pkgs.formats.json {}).generate "service-secrets-schema.json" secrets-schema;

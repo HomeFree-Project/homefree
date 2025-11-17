@@ -16,7 +16,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Default configuration
 BACKUP_LOCAL_PATH="${BACKUP_LOCAL_PATH:-/var/lib/backups}"
 BACKBLAZE_MOUNT="${BACKBLAZE_MOUNT:-/mnt/backup-backblaze}"
-RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/run/secrets/backup/restic-password}"
+RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/var/lib/homefree-secrets/backup/restic-password}"
 TEMP_RESTORE_DIR="/tmp/homefree-restore"
 
 # Usage information
@@ -40,7 +40,7 @@ Options:
     -s, --source SOURCE    Source for restore: 'local', 'backblaze', or 'auto' (default: auto)
 
 Environment Variables:
-    RESTIC_PASSWORD_FILE   Path to restic password file (default: /run/secrets/backup/restic-password)
+    RESTIC_PASSWORD_FILE   Path to restic password file (default: /var/lib/homefree-secrets/backup/restic-password)
     BACKUP_LOCAL_PATH      Local backup directory (default: /var/lib/backups)
     BACKBLAZE_MOUNT        Backblaze mount point (default: /mnt/backup-backblaze)
 

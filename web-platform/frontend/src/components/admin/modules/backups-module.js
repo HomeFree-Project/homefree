@@ -1,15 +1,24 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
+import '../secrets-input.js';
 
 /**
  * Backups configuration module
- * Handles: Local backups and Backblaze B2 cloud backups
+ * Handles: Local backups, Backblaze B2 cloud backups, and restore operations
  */
 class BackupsModule extends LitElement {
   static properties = {
     config: { type: Object },
-    modified: { type: Boolean }
+    modified: { type: Boolean },
+    activeTab: { type: String },
+    secretsStatus: { type: Object },
+    backupConfigStatus: { type: Object },
+    services: { type: Array },
+    selectedService: { type: String },
+    snapshots: { type: Array },
+    loading: { type: Boolean },
+    restoreInProgress: { type: Boolean }
   };
 
   static styles = css`
@@ -47,6 +56,164 @@ class BackupsModule extends LitElement {
       display: block;
       margin-bottom: 8px;
     }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #e5e5e7;
+    }
+
+    .tab {
+      padding: 12px 24px;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+      color: #86868b;
+      transition: all 0.2s;
+      margin-bottom: -2px;
+    }
+
+    .tab:hover {
+      color: #1d1d1f;
+    }
+
+    .tab.active {
+      color: #667eea;
+      border-bottom-color: #667eea;
+    }
+
+    .restore-container {
+      max-width: 1200px;
+    }
+
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .status-indicator.ready {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status-indicator.not-ready {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .status-indicator.warning {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    select {
+      width: 100%;
+      padding: 12px;
+      font-size: 14px;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      background: white;
+      margin-bottom: 16px;
+    }
+
+    .snapshots-list {
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-bottom: 16px;
+    }
+
+    .snapshot-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e7;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .snapshot-item:last-child {
+      border-bottom: none;
+    }
+
+    .snapshot-item:hover {
+      background: #f5f5f7;
+    }
+
+    .snapshot-item.selected {
+      background: #e3f2fd;
+      border-left: 4px solid #2196f3;
+    }
+
+    .snapshot-id {
+      font-family: monospace;
+      font-size: 12px;
+      color: #86868b;
+    }
+
+    .snapshot-time {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1d1d1f;
+      margin-bottom: 4px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: #5568d3;
+    }
+
+    .btn-secondary {
+      background: #f5f5f7;
+      color: #1d1d1f;
+      border: 1px solid #d2d2d7;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #e5e5e7;
+    }
+
+    .btn-danger {
+      background: #ff3b30;
+      color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: #ff2d20;
+    }
   `;
 
   constructor() {
@@ -60,6 +227,20 @@ class BackupsModule extends LitElement {
       }
     };
     this.modified = false;
+    this.activeTab = 'configuration';
+    this.secretsStatus = null;
+    this.backupConfigStatus = null;
+    this.services = [];
+    this.selectedService = null;
+    this.snapshots = [];
+    this.loading = false;
+    this.restoreInProgress = false;
+  }
+
+  async connectedCallback() {
+    super.connectedCallback();
+    await this.loadSecretsStatus();
+    await this.loadBackupConfigStatus();
   }
 
   handleFieldChange(field, value) {
@@ -84,92 +265,354 @@ class BackupsModule extends LitElement {
     }));
   }
 
-  render() {
+  async loadSecretsStatus() {
+    try {
+      const response = await fetch('/api/secrets/status');
+      if (response.ok) {
+        const data = await response.json();
+        this.secretsStatus = data.secrets?.backup || {};
+      }
+    } catch (error) {
+      console.error('Error loading secrets status:', error);
+    }
+  }
+
+  async loadBackupConfigStatus() {
+    try {
+      const response = await fetch('/api/backups/config/status');
+      if (response.ok) {
+        this.backupConfigStatus = await response.json();
+      }
+    } catch (error) {
+      console.error('Error loading backup config status:', error);
+    }
+  }
+
+  async loadServices() {
+    this.loading = true;
+    try {
+      const response = await fetch('/api/backups/services');
+      if (response.ok) {
+        const data = await response.json();
+        this.services = data.services || [];
+      }
+    } catch (error) {
+      console.error('Error loading services:', error);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async loadSnapshots(service) {
+    if (!service) return;
+
+    this.loading = true;
+    try {
+      const response = await fetch(`/api/backups/services/${encodeURIComponent(service)}/snapshots`);
+      if (response.ok) {
+        const data = await response.json();
+        this.snapshots = data.snapshots || [];
+      }
+    } catch (error) {
+      console.error('Error loading snapshots:', error);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async handleTabChange(tab) {
+    this.activeTab = tab;
+    if (tab === 'restore') {
+      await this.loadServices();
+    }
+  }
+
+  async handleServiceChange(e) {
+    this.selectedService = e.target.value;
+    if (this.selectedService) {
+      await this.loadSnapshots(this.selectedService);
+    } else {
+      this.snapshots = [];
+    }
+  }
+
+  async handleRestore(service, snapshotId = null) {
+    if (!confirm(`Are you sure you want to restore ${service}? This will overwrite current data.`)) {
+      return;
+    }
+
+    this.restoreInProgress = true;
+    try {
+      const response = await fetch(`/api/backups/services/${encodeURIComponent(service)}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          snapshot_id: snapshotId,
+          source: 'auto',
+          dry_run: false,
+          create_snapshot: false
+        })
+      });
+
+      if (response.ok) {
+        alert(`Successfully restored ${service}`);
+      } else {
+        const error = await response.json();
+        alert(`Failed to restore ${service}: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error restoring service:', error);
+      alert(`Error restoring ${service}: ${error.message}`);
+    } finally {
+      this.restoreInProgress = false;
+    }
+  }
+
+  handleSecretUpdated() {
+    this.loadSecretsStatus();
+    this.loadBackupConfigStatus();
+  }
+
+  renderConfigurationTab() {
     const { backups } = this.config;
 
     return html`
-      <div class="module-container">
-        <!-- Local Backups -->
-        <config-section
-          title="Local Backups"
-          description="Automatic backups to a local storage device using Restic"
-        >
+      <!-- Local Backups -->
+      <config-section
+        title="Local Backups"
+        description="Automatic backups to a local storage device using Restic"
+      >
+        <form-field
+          label="Enable Local Backups"
+          type="boolean"
+          .value=${backups.enable}
+          help="Enable automatic backups of service data"
+          @field-change=${(e) => this.handleFieldChange('backups.enable', e.detail.value)}
+        ></form-field>
+
+        ${backups.enable ? html`
           <form-field
-            label="Enable Local Backups"
-            type="boolean"
-            .value=${backups.enable}
-            help="Enable automatic backups of service data"
-            @field-change=${(e) => this.handleFieldChange('backups.enable', e.detail.value)}
+            label="Backup Directory"
+            type="text"
+            .value=${backups.to_path}
+            placeholder="/mnt/backup"
+            help="Path to local backup storage (e.g., external drive mount point)"
+            required
+            @field-change=${(e) => this.handleFieldChange('backups.to_path', e.detail.value)}
           ></form-field>
 
-          ${backups.enable ? html`
-            <form-field
-              label="Backup Directory"
-              type="text"
-              .value=${backups.to_path}
-              placeholder="/mnt/backup"
-              help="Path to local backup storage (e.g., external drive mount point)"
-              required
-              @field-change=${(e) => this.handleFieldChange('backups.to_path', e.detail.value)}
-            ></form-field>
-
-            <div class="info-box">
-              <strong>ℹ️ Backup Information</strong>
-              <div style="font-size: 14px;">
-                HomeFree uses Restic for encrypted, deduplicated backups. Backups run automatically at 2 AM daily and include all enabled service data.
-              </div>
+          <div class="info-box">
+            <strong>ℹ️ Backup Information</strong>
+            <div style="font-size: 14px;">
+              HomeFree uses Restic for encrypted, deduplicated backups. Backups run automatically at 2 AM daily and include all enabled service data.
             </div>
-          ` : ''}
-        </config-section>
+          </div>
+        ` : ''}
+      </config-section>
 
-        <!-- Backblaze B2 Cloud Backups -->
-        <config-section
-          title="Backblaze B2 Cloud Backups"
-          description="Off-site encrypted backups to Backblaze B2 cloud storage"
-        >
+      <!-- Backup Secrets -->
+      <config-section
+        title="Backup Secrets"
+        description="Encryption password and cloud storage credentials"
+      >
+        <secrets-input
+          serviceLabel="backup"
+          secretKey="restic-password"
+          label="Restic Password"
+          description="Encryption password for backup repositories (required for backups and restores)"
+          .exists=${this.secretsStatus?.['restic-password'] || false}
+          @secret-updated=${() => this.handleSecretUpdated()}
+        ></secrets-input>
+
+        ${backups.backblaze_enable ? html`
+          <secrets-input
+            serviceLabel="backup"
+            secretKey="backblaze-id"
+            label="Backblaze Account ID"
+            description="Your Backblaze B2 account ID"
+            .exists=${this.secretsStatus?.['backblaze-id'] || false}
+            @secret-updated=${() => this.handleSecretUpdated()}
+          ></secrets-input>
+
+          <secrets-input
+            serviceLabel="backup"
+            secretKey="backblaze-key"
+            label="Backblaze Application Key"
+            description="Your Backblaze B2 application key"
+            .exists=${this.secretsStatus?.['backblaze-key'] || false}
+            @secret-updated=${() => this.handleSecretUpdated()}
+          ></secrets-input>
+        ` : ''}
+      </config-section>
+
+      <!-- Backblaze B2 Cloud Backups -->
+      <config-section
+        title="Backblaze B2 Cloud Backups"
+        description="Off-site encrypted backups to Backblaze B2 cloud storage"
+      >
+        <form-field
+          label="Enable Backblaze Backups"
+          type="boolean"
+          .value=${backups.backblaze_enable}
+          help="Send encrypted backups to Backblaze B2 cloud storage"
+          @field-change=${(e) => this.handleFieldChange('backups.backblaze_enable', e.detail.value)}
+        ></form-field>
+
+        ${backups.backblaze_enable ? html`
           <form-field
-            label="Enable Backblaze Backups"
-            type="boolean"
-            .value=${backups.backblaze_enable}
-            help="Send encrypted backups to Backblaze B2 cloud storage"
-            @field-change=${(e) => this.handleFieldChange('backups.backblaze_enable', e.detail.value)}
+            label="Backblaze Bucket Name"
+            type="text"
+            .value=${backups.backblaze_bucket}
+            placeholder="my-homefree-backups"
+            help="B2 bucket name for storing backups"
+            required
+            @field-change=${(e) => this.handleFieldChange('backups.backblaze_bucket', e.detail.value)}
           ></form-field>
 
-          ${backups.backblaze_enable ? html`
-            <form-field
-              label="Backblaze Bucket Name"
-              type="text"
-              .value=${backups.backblaze_bucket}
-              placeholder="my-homefree-backups"
-              help="B2 bucket name for storing backups"
-              required
-              @field-change=${(e) => this.handleFieldChange('backups.backblaze_bucket', e.detail.value)}
-            ></form-field>
+          <div class="info-box">
+            <strong>ℹ️ Backblaze Configuration</strong>
+            <div style="font-size: 14px; margin-top: 8px;">
+              To use Backblaze B2:
+              <ul style="margin: 8px 0 0 20px; padding: 0;">
+                <li>Create a B2 account at backblaze.com</li>
+                <li>Create a bucket for your backups</li>
+                <li>Generate application keys with read/write access</li>
+                <li>Configure credentials above in Backup Secrets</li>
+              </ul>
+            </div>
+          </div>
+        ` : ''}
+      </config-section>
 
-            <div class="info-box">
-              <strong>ℹ️ Backblaze Configuration</strong>
+      <!-- Future: Backup Schedule -->
+      <config-section
+        title="Backup Schedule"
+        description="Configure backup timing and retention (Coming Soon)"
+      >
+        <p style="color: #86868b; font-size: 14px;">
+          Custom backup schedules and retention policies will be available in a future update. Currently, backups run daily at 2 AM with automatic retention management.
+        </p>
+      </config-section>
+    `;
+  }
+
+  renderRestoreTab() {
+    const isReady = this.backupConfigStatus?.restic_password_configured;
+    const hasLocalBackups = this.backupConfigStatus?.local_backups_available;
+    const hasBackblaze = this.backupConfigStatus?.backblaze_configured;
+
+    return html`
+      <div class="restore-container">
+        <config-section
+          title="Restore from Backup"
+          description="Restore service data from backups"
+        >
+          ${!isReady ? html`
+            <div class="status-indicator not-ready">
+              ⚠️ Restic password not configured. Please configure it in the Configuration tab before restoring.
+            </div>
+          ` : html`
+            <div class="status-indicator ready">
+              ✓ Restore is ready
+              ${hasLocalBackups ? ' - Local backups available' : ''}
+              ${hasBackblaze ? ' - Backblaze configured' : ''}
+            </div>
+
+            <div style="margin-bottom: 16px;">
+              <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px;">
+                Select Service to Restore
+              </label>
+              <select
+                @change=${this.handleServiceChange}
+                ?disabled=${this.loading}
+              >
+                <option value="">-- Select a service --</option>
+                ${this.services.map(service => html`
+                  <option value="${service}" ?selected=${service === this.selectedService}>
+                    ${service}
+                  </option>
+                `)}
+              </select>
+            </div>
+
+            ${this.selectedService ? html`
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px;">
+                  Available Snapshots for ${this.selectedService}
+                </label>
+
+                ${this.loading ? html`
+                  <p style="color: #86868b;">Loading snapshots...</p>
+                ` : this.snapshots.length === 0 ? html`
+                  <p style="color: #86868b;">No snapshots found for this service.</p>
+                ` : html`
+                  <div class="snapshots-list">
+                    ${this.snapshots.map((snapshot, index) => html`
+                      <div class="snapshot-item" @click=${() => this.selectedSnapshot = snapshot.id}>
+                        <div class="snapshot-time">${snapshot.time}</div>
+                        <div class="snapshot-id">ID: ${snapshot.id?.substring(0, 8)}... ${index === 0 ? '(latest)' : ''}</div>
+                        ${snapshot.hostname ? html`<div class="snapshot-id">Host: ${snapshot.hostname}</div>` : ''}
+                      </div>
+                    `)}
+                  </div>
+
+                  <div class="btn-group">
+                    <button
+                      class="btn btn-primary"
+                      @click=${() => this.handleRestore(this.selectedService, null)}
+                      ?disabled=${this.restoreInProgress}
+                    >
+                      ${this.restoreInProgress ? 'Restoring...' : 'Restore Latest Snapshot'}
+                    </button>
+
+                    <button
+                      class="btn btn-secondary"
+                      @click=${() => this.handleRestore(this.selectedService, this.selectedSnapshot)}
+                      ?disabled=${this.restoreInProgress || !this.selectedSnapshot}
+                    >
+                      Restore Selected
+                    </button>
+                  </div>
+                `}
+              </div>
+            ` : ''}
+
+            <div class="info-box" style="margin-top: 24px;">
+              <strong>⚠️ Important Notes</strong>
               <div style="font-size: 14px; margin-top: 8px;">
-                To use Backblaze B2:
                 <ul style="margin: 8px 0 0 20px; padding: 0;">
-                  <li>Create a B2 account at backblaze.com</li>
-                  <li>Create a bucket for your backups</li>
-                  <li>Generate application keys with read/write access</li>
-                  <li>Store credentials in your secrets configuration</li>
+                  <li>Restoring will stop the service and overwrite its current data</li>
+                  <li>Database contents will be replaced with backup data</li>
+                  <li>The service will be automatically restarted after restore</li>
+                  <li>Consider creating a manual backup before restoring if needed</li>
                 </ul>
               </div>
             </div>
-          ` : ''}
+          `}
         </config-section>
+      </div>
+    `;
+  }
 
-        <!-- Future: Backup Schedule -->
-        <config-section
-          title="Backup Schedule"
-          description="Configure backup timing and retention (Coming Soon)"
-        >
-          <p style="color: #86868b; font-size: 14px;">
-            Custom backup schedules and retention policies will be available in a future update. Currently, backups run daily at 2 AM with automatic retention management.
-          </p>
-        </config-section>
+  render() {
+    return html`
+      <div class="module-container">
+        <div class="tabs">
+          <button
+            class="tab ${this.activeTab === 'configuration' ? 'active' : ''}"
+            @click=${() => this.handleTabChange('configuration')}
+          >
+            Configuration
+          </button>
+          <button
+            class="tab ${this.activeTab === 'restore' ? 'active' : ''}"
+            @click=${() => this.handleTabChange('restore')}
+          >
+            Restore
+          </button>
+        </div>
+
+        ${this.activeTab === 'configuration' ? this.renderConfigurationTab() : this.renderRestoreTab()}
       </div>
     `;
   }

@@ -1821,7 +1821,7 @@
       };
 
       to-path = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.str;
         default = "/var/lib/backups";
         description = "Path to store backups";
       };
@@ -1847,33 +1847,120 @@
 
       secrets = {
         restic-password = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of Restic password file. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Restic repository password for encryption/decryption of backups (managed via SOPS)";
         };
 
         restic-environment = lib.mkOption {
-          type = lib.types.path;
+          type = lib.types.nullOr lib.types.str;
+          default = null;
           description = ''
-            Location of Restic environment variables.
+            Restic environment variables (managed via SOPS).
 
             If using Backblaze, put in your ID and key in here, e.g.:
 
             B2_ACCOUNT_ID=<id>
             B2_ACCOUNT_KEY=<key>
-
-            Should not be a file included in your source repo.";
           '';
         };
 
         backblaze-id = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of file with Backblaze ID. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Backblaze account ID for B2 storage (managed via SOPS)";
         };
 
         backblaze-key = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of file with Backblaze key. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Backblaze account key for B2 storage (managed via SOPS)";
         };
+      };
+
+      # Internal option to hold metadata for admin UI schema generation
+      options-metadata = lib.mkOption {
+        type = lib.types.listOf lib.types.attrs;
+        internal = true;
+        default = [
+          {
+            path = "enable";
+            type = "bool";
+            default = false;
+            description = "Enable automatic backups";
+          }
+          {
+            path = "to-path";
+            type = "str";
+            default = "/var/lib/backups";
+            description = "Local directory path where backups are stored";
+          }
+          {
+            path = "extra-from-paths";
+            type = "listOf str";
+            default = [];
+            description = "Additional custom paths to include in backups";
+          }
+          {
+            path = "backblaze";
+            type = "submodule";
+            description = "Backblaze B2 cloud backup configuration";
+            submodule-fields = [
+              {
+                path = "enable";
+                type = "bool";
+                default = false;
+                description = "Enable Backblaze B2 cloud backups";
+              }
+              {
+                path = "bucket";
+                type = "str";
+                default = "";
+                description = "Backblaze B2 bucket name";
+              }
+            ];
+          }
+          {
+            path = "secrets";
+            type = "submodule";
+            description = "Secret values for backup service (managed via SOPS)";
+            sops-managed = true;
+            submodule-fields = [
+              {
+                path = "restic-password";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Restic repository password for encryption/decryption of backups";
+                sops-managed = true;
+              }
+              {
+                path = "restic-environment";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Restic environment variables (B2_ACCOUNT_ID and B2_ACCOUNT_KEY for Backblaze)";
+                sops-managed = true;
+              }
+              {
+                path = "backblaze-id";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Backblaze account ID for B2 storage";
+                sops-managed = true;
+              }
+              {
+                path = "backblaze-key";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Backblaze account key for B2 storage";
+                sops-managed = true;
+              }
+            ];
+          }
+        ];
       };
     };
   };

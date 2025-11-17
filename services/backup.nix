@@ -5,7 +5,9 @@
 { config, lib, pkgs, ... }:
 let
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
-  backup-to-path = trimTrailingSlash config.homefree.backups.to-path;
+  backup-to-path = if config.homefree.backups.to-path != null
+    then trimTrailingSlash config.homefree.backups.to-path
+    else "/var/lib/backups";
   ## Combine service backup paths to extra custom paths into an array of { label = "label"; paths = []; }
   backup-from-paths-all =
     (lib.map (entry: {
@@ -34,7 +36,13 @@ let
   }) config.homefree.service-config);
   quoted-backup-path-list = lib.concatStringsSep " " (lib.map (entry: ''"${backup-to-path}/${entry.label}"'') backup-from-paths);
   backup-cli = pkgs.writeShellScriptBin "backup-cli" ''
-    RESTIC_PASSWORD=$(cat /run/secrets/backup/restic-password)
+    # Use SOPS-managed secret from /var/lib/homefree-secrets
+    if [ -f /var/lib/homefree-secrets/backup/restic-password ]; then
+      RESTIC_PASSWORD=$(cat /var/lib/homefree-secrets/backup/restic-password)
+    else
+      echo "Error: Restic password not configured. Please set it in the admin UI." >&2
+      exit 1
+    fi
     export RESTIC_PASSWORD
 
     backup_paths=(${quoted-backup-path-list})
@@ -143,7 +151,7 @@ in
       name = "local-${entry.label}";
       value = {
         initialize = true;
-        passwordFile = config.homefree.backups.secrets.restic-password;
+        passwordFile = "/var/lib/homefree-secrets/backup/restic-password";
         # What to backup
         paths = entry.paths;
         # the name of the repository
@@ -288,8 +296,8 @@ in
             cat > /root/.config/rclone/rclone.conf << EOF
             [b2]
             type = b2
-            account = $(cat ${config.homefree.backups.secrets.backblaze-id})
-            key = $(cat ${config.homefree.backups.secrets.backblaze-key})
+            account = $(cat /var/lib/homefree-secrets/backup/backblaze-id)
+            key = $(cat /var/lib/homefree-secrets/backup/backblaze-key)
             EOF
           ''}"
         ];
