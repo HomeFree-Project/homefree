@@ -354,13 +354,16 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
+      # Prevent automatic restart during system activation
+      # Admin service will be manually restarted after rebuild if it changed
+      restartIfChanged = false;
+
       serviceConfig = {
         Type = "simple";
         User = "root";
         Group = "root";
         StateDirectory = "homefree-admin";
         WorkingDirectory = "/var/lib/homefree-admin";
-        ExecStartPre = [ "!${pkgs.writeShellScript "homefree-admin-prestart" preStart}" ];
         ExecStart = "${admin-backend}/bin/homefree-admin-backend";
         Restart = "always";
         RestartSec = "10s";
@@ -369,10 +372,6 @@ in
         Environment = [
           "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd pkgs.sops pkgs.ssh-to-age ]}"
         ];
-
-        # Prevent automatic restart during system activation
-        # Admin service will be manually restarted after rebuild if it changed
-        X-RestartIfChanged = false;
       };
     };
 
@@ -447,6 +446,14 @@ in
         };
       }
     ];
+
+    # Activation script to copy admin config files
+    # This runs during activation but doesn't change the admin-api unit file
+    # so it won't trigger a restart when only service configs change
+    system.activationScripts.setup-admin-config = {
+      text = preStart;
+      deps = [];
+    };
 
   };
 }
