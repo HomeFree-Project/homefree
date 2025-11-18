@@ -54,6 +54,7 @@ let
     done
   '';
   restore-cli = pkgs.writeShellScriptBin "restore-cli" ''
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:${pkgs.restic}/bin:${pkgs.findutils}/bin:${pkgs.gnugrep}/bin:${pkgs.gawk}/bin:${pkgs.gnused}/bin:${pkgs.rsync}/bin:$PATH"
     exec ${pkgs.bash}/bin/bash ${../scripts/restore.sh} "$@"
   '';
   backup-mysql-script =

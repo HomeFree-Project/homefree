@@ -9,9 +9,14 @@ class ProgressModal extends LitElement {
     visible: { type: Boolean },
     title: { type: String },
     message: { type: String },
-    status: { type: String }, // 'progress', 'success', 'error'
+    status: { type: String }, // 'progress', 'success', 'error', 'confirm'
     details: { type: Array },
-    canClose: { type: Boolean }
+    canClose: { type: Boolean },
+    confirmText: { type: String },
+    cancelText: { type: String },
+    confirmCallback: { type: Object },
+    cancelCallback: { type: Object },
+    confirmVariant: { type: String } // 'primary' or 'danger'
   };
 
   static styles = css`
@@ -180,6 +185,20 @@ class ProgressModal extends LitElement {
     .btn-secondary:hover {
       background: #d1d5db;
     }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .status-icon.warning {
+      background: #f59e0b;
+      color: white;
+    }
   `;
 
   constructor() {
@@ -187,18 +206,28 @@ class ProgressModal extends LitElement {
     this.visible = false;
     this.title = '';
     this.message = '';
-    this.status = 'progress'; // progress, success, error
+    this.status = 'progress'; // progress, success, error, confirm
     this.details = [];
     this.canClose = false;
+    this.confirmText = 'Confirm';
+    this.cancelText = 'Cancel';
+    this.confirmCallback = null;
+    this.cancelCallback = null;
+    this.confirmVariant = 'primary';
   }
 
-  show(title, message, status = 'progress') {
+  show(title, message, status = 'progress', options = {}) {
     this.visible = true;
     this.title = title;
     this.message = message;
     this.status = status;
-    this.details = [];
-    this.canClose = false;
+    this.details = options.details || [];
+    this.canClose = status === 'success' || status === 'error' || status === 'confirm';
+    this.confirmText = options.confirmText || 'Confirm';
+    this.cancelText = options.cancelText || 'Cancel';
+    this.confirmCallback = options.confirmCallback || null;
+    this.cancelCallback = options.cancelCallback || null;
+    this.confirmVariant = options.confirmVariant || 'primary';
     this.requestUpdate();
   }
 
@@ -225,6 +254,28 @@ class ProgressModal extends LitElement {
     }
   }
 
+  handleConfirm() {
+    if (this.confirmCallback) {
+      this.confirmCallback();
+    }
+    this.dispatchEvent(new CustomEvent('modal-confirmed', {
+      bubbles: true,
+      composed: true
+    }));
+    this.hide();
+  }
+
+  handleCancel() {
+    if (this.cancelCallback) {
+      this.cancelCallback();
+    }
+    this.dispatchEvent(new CustomEvent('modal-cancelled', {
+      bubbles: true,
+      composed: true
+    }));
+    this.hide();
+  }
+
   renderIcon() {
     if (this.status === 'progress') {
       return html`<div class="spinner"></div>`;
@@ -236,6 +287,10 @@ class ProgressModal extends LitElement {
 
     if (this.status === 'error') {
       return html`<div class="status-icon error">✕</div>`;
+    }
+
+    if (this.status === 'confirm') {
+      return html`<div class="status-icon warning">⚠</div>`;
     }
 
     return '';
@@ -265,7 +320,17 @@ class ProgressModal extends LitElement {
             ` : ''}
           </div>
 
-          ${this.canClose ? html`
+          ${this.status === 'confirm' ? html`
+            <div class="modal-actions">
+              <button class="btn btn-secondary" @click=${this.handleCancel}>
+                ${this.cancelText}
+              </button>
+              <button class="btn ${this.confirmVariant === 'danger' ? 'btn-danger' : 'btn-primary'}"
+                      @click=${this.handleConfirm}>
+                ${this.confirmText}
+              </button>
+            </div>
+          ` : this.canClose ? html`
             <div class="modal-actions">
               <button class="btn btn-primary" @click=${this.handleClose}>
                 ${this.status === 'success' ? 'Done' : 'Close'}

@@ -9,10 +9,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
 # Default configuration
 BACKUP_LOCAL_PATH="${BACKUP_LOCAL_PATH:-/var/lib/backups}"
 BACKBLAZE_MOUNT="${BACKBLAZE_MOUNT:-/mnt/backup-backblaze}"
@@ -38,6 +34,7 @@ Options:
     -b, --backup-path PATH Override local backup path (default: $BACKUP_LOCAL_PATH)
     -m, --mount-path PATH  Override Backblaze mount path (default: $BACKBLAZE_MOUNT)
     -s, --source SOURCE    Source for restore: 'local', 'backblaze', or 'auto' (default: auto)
+    -y, --yes              Skip confirmation prompts (for non-interactive use)
 
 Environment Variables:
     RESTIC_PASSWORD_FILE   Path to restic password file (default: /var/lib/homefree-secrets/backup/restic-password)
@@ -66,21 +63,21 @@ Examples:
 EOF
 }
 
-# Logging functions
+# Logging functions (all output to stderr to avoid interfering with command output)
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $*"
+    echo -e "${BLUE}[INFO]${NC} $*" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $*"
+    echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    echo -e "${YELLOW}[WARN]${NC} $*" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $*"
+    echo -e "${RED}[ERROR]${NC} $*" >&2
 }
 
 # Check if running as root
@@ -104,15 +101,20 @@ load_restic_password() {
 determine_source() {
     local source="${SOURCE:-auto}"
 
+    log_info "determine_source called with SOURCE=$SOURCE (resolved to: $source)"
+
     case "$source" in
         local)
+            log_info "Source is explicitly 'local'"
             echo "local"
             ;;
         backblaze)
+            log_info "Source is explicitly 'backblaze'"
             echo "backblaze"
             ;;
         auto)
             # Check if Backblaze is mounted
+            log_info "Source is 'auto', checking BACKBLAZE_MOUNT=$BACKBLAZE_MOUNT"
             if mountpoint -q "$BACKBLAZE_MOUNT" 2>/dev/null; then
                 log_info "Backblaze mount detected, using Backblaze backups"
                 echo "backblaze"
@@ -144,28 +146,50 @@ get_backup_base_path() {
 
 # List all services with backups
 list_services() {
-    local base_path=$(get_backup_base_path)
+    local found_any=false
 
-    log_info "Services with backups in $base_path:"
-    echo
-
-    if [[ ! -d "$base_path" ]]; then
-        log_error "Backup path does not exist: $base_path"
-        exit 1
+    # Try local backups if source is auto or local
+    if [[ "$SOURCE" == "auto" || "$SOURCE" == "local" ]]; then
+        if [[ -d "$BACKUP_LOCAL_PATH" ]]; then
+            log_info "Services with backups in $BACKUP_LOCAL_PATH:"
+            echo
+            for service_dir in "$BACKUP_LOCAL_PATH"/*; do
+                if [[ -d "$service_dir" ]]; then
+                    local service_name=$(basename "$service_dir")
+                    # Just check if it looks like a restic repo (has config file)
+                    if [[ -f "$service_dir/config" ]]; then
+                        echo "$service_name"
+                        found_any=true
+                    fi
+                fi
+            done
+            echo
+        fi
     fi
 
-    for service_dir in "$base_path"/*; do
-        if [[ -d "$service_dir" ]]; then
-            local service_name=$(basename "$service_dir")
-            # Check if it's a valid restic repo
-            export RESTIC_REPOSITORY="$service_dir"
-            if restic snapshots --quiet >/dev/null 2>&1; then
-                local snapshot_count=$(restic snapshots --json 2>/dev/null | jq '. | length' 2>/dev/null || echo "0")
-                echo "  - $service_name ($snapshot_count snapshots)"
-            fi
+    # Try Backblaze if source is auto or backblaze
+    if [[ "$SOURCE" == "auto" || "$SOURCE" == "backblaze" ]]; then
+        if [[ -d "$BACKBLAZE_MOUNT" ]]; then
+            log_info "Services with backups in $BACKBLAZE_MOUNT:"
+            echo
+            for service_dir in "$BACKBLAZE_MOUNT"/*; do
+                if [[ -d "$service_dir" ]]; then
+                    local service_name=$(basename "$service_dir")
+                    # Just check if it looks like a restic repo (has config file)
+                    if [[ -f "$service_dir/config" ]]; then
+                        echo "$service_name"
+                        found_any=true
+                    fi
+                fi
+            done
+            echo
         fi
-    done
-    echo
+    fi
+
+    if [[ "$found_any" == "false" ]]; then
+        log_warn "No backup repositories found"
+        echo
+    fi
 }
 
 # List snapshots for a specific service
@@ -174,8 +198,10 @@ list_snapshots() {
     local base_path=$(get_backup_base_path)
     local repo_path="$base_path/$service"
 
+    log_info "Checking for backup at: $repo_path"
+
     if [[ ! -d "$repo_path" ]]; then
-        log_error "No backup repository found for service: $service"
+        log_error "No backup repository found for service: $service at $repo_path"
         log_info "Available services:"
         list_services
         exit 1
@@ -184,9 +210,16 @@ list_snapshots() {
     export RESTIC_REPOSITORY="$repo_path"
 
     log_info "Snapshots for $service:"
-    echo
-    restic snapshots
-    echo
+    # Output as JSON for API parsing, or table format when run interactively
+    if [ -t 1 ]; then
+        # stdout is a terminal, use human-readable format
+        echo
+        restic snapshots
+        echo
+    else
+        # stdout is not a terminal (piped/captured), use JSON for parsing
+        restic snapshots --json
+    fi
 }
 
 # Download service backup from Backblaze
@@ -255,7 +288,7 @@ stop_service() {
 
     local stopped=0
     for pattern in "${patterns[@]}"; do
-        for unit in $(systemctl list-units --all --no-legend --state=active | grep -i "$pattern" | awk '{print $1}' | grep '\.service$'); do
+        for unit in $(systemctl list-units --all --no-legend --state=active | grep -i "$pattern" || true | awk '{print $1}' | grep '\.service$' || true); do
             log_info "  Stopping $unit"
             systemctl stop "$unit" || log_warn "Failed to stop $unit"
             stopped=1
@@ -283,7 +316,7 @@ start_service() {
 
     local started=0
     for pattern in "${patterns[@]}"; do
-        for unit in $(systemctl list-unit-files --no-legend | grep -i "$pattern" | awk '{print $1}' | grep '\.service$'); do
+        for unit in $(systemctl list-unit-files --no-legend | grep -i "$pattern" || true | awk '{print $1}' | grep '\.service$' || true); do
             if systemctl is-enabled "$unit" >/dev/null 2>&1; then
                 log_info "  Starting $unit"
                 systemctl start "$unit" || log_warn "Failed to start $unit"
@@ -359,12 +392,18 @@ restore_service() {
 
     log_warn "This will restore $service from backup (snapshot: $snapshot_id)"
     log_warn "This will OVERWRITE current data!"
-    echo -n "Are you sure you want to continue? (yes/no): "
-    read -r confirmation
 
-    if [[ "$confirmation" != "yes" ]]; then
-        log_info "Restore cancelled"
-        exit 0
+    # Check if we should skip confirmation (non-interactive mode)
+    if [[ "$SKIP_CONFIRMATION" != "true" ]]; then
+        echo -n "Are you sure you want to continue? (yes/no): "
+        read -r confirmation
+
+        if [[ "$confirmation" != "yes" ]]; then
+            log_error "Restore cancelled by user"
+            exit 1
+        fi
+    else
+        log_info "Skipping confirmation (non-interactive mode)"
     fi
 
     # Stop the service
@@ -386,18 +425,24 @@ restore_service() {
     # Find all non-database paths and restore them
     log_info "Restoring files for $service..."
 
-    # Get list of backed up paths from the snapshot
-    for path in $(find "$temp_dir" -type d -name "var" -prune -o -type f -print | sed "s|^$temp_dir||" | sort -u | head -1); do
-        local parent_dir=$(dirname "$path")
-        if [[ "$parent_dir" != "/var/backup"* ]]; then
-            # This is application data, not a database dump
-            local src="$temp_dir$parent_dir"
-            local dst="$parent_dir"
-            if [[ -d "$src" ]]; then
-                log_info "  Restoring $dst"
-                mkdir -p "$(dirname "$dst")"
-                rsync -av --delete "$src/" "$dst/"
-            fi
+    # Find the top-level application directories to restore
+    # Look for directories under /var/lib that aren't database dumps
+    for dir in $(find "$temp_dir/var/lib" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed "s|^$temp_dir||" | sort -u); do
+        local src="$temp_dir$dir"
+        local dst="$dir"
+        log_info "  Restoring $dst"
+        mkdir -p "$(dirname "$dst")"
+        rsync -av --delete "$src/" "$dst/" || log_warn "Failed to restore $dst"
+    done
+
+    # Also restore any other paths that might exist (not under /var/lib or /var/backup)
+    for dir in $(find "$temp_dir" -mindepth 1 -maxdepth 3 -type d -not -path "*/var/lib/*" -not -path "*/var/backup/*" 2>/dev/null | sed "s|^$temp_dir||" | sort -u); do
+        if [[ -d "$temp_dir$dir" && "$dir" != "/var" && "$dir" != "/var/lib" && "$dir" != "/var/backup" ]]; then
+            local src="$temp_dir$dir"
+            local dst="$dir"
+            log_info "  Restoring $dst"
+            mkdir -p "$(dirname "$dst")"
+            rsync -av --delete "$src/" "$dst/" || log_warn "Failed to restore $dst"
         fi
     done
 
@@ -417,12 +462,18 @@ restore_all() {
 
     log_warn "This will restore ALL services from backup (snapshot: $snapshot_id)"
     log_warn "This will OVERWRITE current data for all services!"
-    echo -n "Are you sure you want to continue? (yes/no): "
-    read -r confirmation
 
-    if [[ "$confirmation" != "yes" ]]; then
-        log_info "Restore cancelled"
-        exit 0
+    # Check if we should skip confirmation (non-interactive mode)
+    if [[ "$SKIP_CONFIRMATION" != "true" ]]; then
+        echo -n "Are you sure you want to continue? (yes/no): "
+        read -r confirmation
+
+        if [[ "$confirmation" != "yes" ]]; then
+            log_error "Restore cancelled by user"
+            exit 1
+        fi
+    else
+        log_info "Skipping confirmation (non-interactive mode)"
     fi
 
     # Get list of all services
@@ -454,17 +505,24 @@ restore_all() {
         restore_database "postgres" "$service" "$temp_dir"
         restore_database "mysql" "$service" "$temp_dir"
 
-        # Restore files
-        for path in $(find "$temp_dir" -type d -name "var" -prune -o -type f -print | sed "s|^$temp_dir||" | sort -u | head -1); do
-            local parent_dir=$(dirname "$path")
-            if [[ "$parent_dir" != "/var/backup"* ]]; then
-                local src="$temp_dir$parent_dir"
-                local dst="$parent_dir"
-                if [[ -d "$src" ]]; then
-                    log_info "  Restoring $dst"
-                    mkdir -p "$(dirname "$dst")"
-                    rsync -av --delete "$src/" "$dst/" || log_warn "Failed to restore $dst"
-                fi
+        # Find the top-level application directories to restore
+        # Look for directories under /var/lib that aren't database dumps
+        for dir in $(find "$temp_dir/var/lib" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed "s|^$temp_dir||" | sort -u); do
+            local src="$temp_dir$dir"
+            local dst="$dir"
+            log_info "  Restoring $dst"
+            mkdir -p "$(dirname "$dst")"
+            rsync -av --delete "$src/" "$dst/" || log_warn "Failed to restore $dst"
+        done
+
+        # Also restore any other paths that might exist (not under /var/lib or /var/backup)
+        for dir in $(find "$temp_dir" -mindepth 1 -maxdepth 3 -type d -not -path "*/var/lib/*" -not -path "*/var/backup/*" 2>/dev/null | sed "s|^$temp_dir||" | sort -u); do
+            if [[ -d "$temp_dir$dir" && "$dir" != "/var" && "$dir" != "/var/lib" && "$dir" != "/var/backup" ]]; then
+                local src="$temp_dir$dir"
+                local dst="$dir"
+                log_info "  Restoring $dst"
+                mkdir -p "$(dirname "$dst")"
+                rsync -av --delete "$src/" "$dst/" || log_warn "Failed to restore $dst"
             fi
         done
 
@@ -482,8 +540,31 @@ main() {
         exit 1
     fi
 
-    # Parse global options
+    # Parse global options FIRST (can be before or after command)
     SOURCE="auto"
+    SKIP_CONFIRMATION="false"
+    COMMAND=""
+    COMMAND_ARGS=()
+
+    # First pass: extract command and all args
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            list-services|list-snapshots|download|restore|restore-all)
+                COMMAND="$1"
+                shift
+                COMMAND_ARGS=("$@")
+                break
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Second pass: parse all flags (both before and after command)
+    # Note: Don't include "$@" here as it still contains the args from first pass (would duplicate them)
+    set -- "${COMMAND_ARGS[@]}"
+    COMMAND_ARGS=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -507,6 +588,24 @@ main() {
                 SOURCE="$2"
                 shift 2
                 ;;
+            -y|--yes)
+                SKIP_CONFIRMATION="true"
+                shift
+                ;;
+            list-services|list-snapshots|download|restore|restore-all)
+                # Skip command name
+                shift
+                ;;
+            *)
+                # This is a command argument (not a flag)
+                COMMAND_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Now execute the command
+    case "$COMMAND" in
             list-services)
                 check_root
                 load_restic_password
@@ -514,24 +613,24 @@ main() {
                 exit 0
                 ;;
             list-snapshots)
-                if [[ $# -lt 2 ]]; then
+                if [[ ${#COMMAND_ARGS[@]} -lt 1 ]]; then
                     log_error "Missing service name"
                     usage
                     exit 1
                 fi
                 check_root
                 load_restic_password
-                list_snapshots "$2"
+                list_snapshots "${COMMAND_ARGS[0]}"
                 exit 0
                 ;;
             download)
-                if [[ $# -lt 2 ]]; then
+                if [[ ${#COMMAND_ARGS[@]} -lt 1 ]]; then
                     log_error "Missing service name"
                     usage
                     exit 1
                 fi
                 check_root
-                download_service "$2"
+                download_service "${COMMAND_ARGS[0]}"
                 exit 0
                 ;;
             download-all)
@@ -540,29 +639,33 @@ main() {
                 exit 0
                 ;;
             restore)
-                if [[ $# -lt 2 ]]; then
+                if [[ ${#COMMAND_ARGS[@]} -lt 1 ]]; then
                     log_error "Missing service name"
                     usage
                     exit 1
                 fi
                 check_root
                 load_restic_password
-                restore_service "$2" "${3:-latest}"
+                restore_service "${COMMAND_ARGS[0]}" "${COMMAND_ARGS[1]:-latest}"
                 exit 0
                 ;;
             restore-all)
                 check_root
                 load_restic_password
-                restore_all "${2:-latest}"
+                restore_all "${COMMAND_ARGS[0]:-latest}"
                 exit 0
                 ;;
+            "")
+                log_error "No command specified"
+                usage
+                exit 1
+                ;;
             *)
-                log_error "Unknown command: $1"
+                log_error "Unknown command: $COMMAND"
                 usage
                 exit 1
                 ;;
         esac
-    done
 }
 
 main "$@"

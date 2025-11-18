@@ -5,12 +5,30 @@ Backup operations service - handles restore.sh script operations
 import subprocess
 import logging
 import json
+import re
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from enum import Enum
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def strip_ansi_codes(text: str) -> str:
+    """
+    Remove ANSI escape codes (color codes, formatting) from text.
+
+    Args:
+        text: Text potentially containing ANSI codes
+
+    Returns:
+        Clean text without ANSI codes
+    """
+    if not text:
+        return text
+    # Remove ANSI escape sequences: \x1b[...m or \033[...m
+    ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
+    return ansi_pattern.sub('', text)
 
 
 class BackupSource(Enum):
@@ -70,12 +88,18 @@ class BackupOperations:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=120  # Increased for Backblaze operations
             )
 
             if result.returncode == 0:
                 # Parse service names from output (one per line)
-                services = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+                # Filter out log lines (contain ANSI color codes, [INFO], [WARN], etc.)
+                services = []
+                for line in result.stdout.strip().split('\n'):
+                    line = line.strip()
+                    # Skip empty lines, lines with ANSI codes, or log prefixes
+                    if line and '\x1b' not in line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]']):
+                        services.append(line)
                 return {
                     'success': True,
                     'services': services
@@ -92,7 +116,7 @@ class BackupOperations:
             return {
                 'success': False,
                 'services': [],
-                'error': 'Operation timed out after 30 seconds'
+                'error': 'Operation timed out after 120 seconds'
             }
         except Exception as e:
             logger.error(f"Error listing services: {e}")
@@ -166,17 +190,29 @@ class BackupOperations:
         Parse snapshot output into structured data.
 
         Args:
-            output: Raw output from list-snapshots command
+            output: Raw output from list-snapshots command (JSON array from restic)
 
         Returns:
             List of snapshot dictionaries
         """
+        if not output.strip():
+            return []
+
+        try:
+            # Try to parse as JSON array (restic --json output)
+            snapshots = json.loads(output.strip())
+            if isinstance(snapshots, list):
+                return snapshots
+        except json.JSONDecodeError:
+            pass
+
+        # Fall back to line-by-line parsing for other formats
         snapshots = []
         for line in output.strip().split('\n'):
             if not line.strip():
                 continue
 
-            # Try to parse as JSON first
+            # Try to parse as JSON object
             try:
                 snapshot = json.loads(line)
                 snapshots.append(snapshot)
@@ -185,7 +221,6 @@ class BackupOperations:
                 pass
 
             # Fall back to pipe-separated format: "ID | Time | Hostname | Paths"
-            # This is the format used by restic's default output
             parts = [p.strip() for p in line.split('|')]
             if len(parts) >= 3:
                 snapshots.append({
@@ -279,12 +314,18 @@ class BackupOperations:
             if source != BackupSource.AUTO:
                 cmd.extend(["--source", source.value])
 
+            # Add --yes flag for non-interactive mode (API calls)
+            cmd.append("--yes")
+
             # Note: dry_run and create_snapshot would need to be added to restore.sh
             # For now, we'll log them but not pass them to the script
             if dry_run:
                 logger.info(f"Dry-run mode requested (not yet implemented in restore.sh)")
             if create_snapshot:
                 logger.info(f"Create-snapshot mode requested (not yet implemented in restore.sh)")
+
+            # Log the command for debugging
+            logger.info(f"Running restore command: {' '.join(cmd)}")
 
             result = subprocess.run(
                 cmd,
@@ -293,16 +334,19 @@ class BackupOperations:
                 timeout=1800  # 30 minutes for restore
             )
 
+            # Combine stdout and stderr since log functions write to stderr
+            combined_output = result.stdout + result.stderr if result.stderr else result.stdout
+
             if result.returncode == 0:
                 return {
                     'success': True,
-                    'output': result.stdout
+                    'output': strip_ansi_codes(combined_output)
                 }
             else:
                 return {
                     'success': False,
-                    'output': result.stdout,
-                    'error': result.stderr or "Restore failed"
+                    'output': strip_ansi_codes(combined_output),
+                    'error': strip_ansi_codes(result.stderr or "Restore failed")
                 }
 
         except subprocess.TimeoutExpired:
@@ -347,8 +391,14 @@ class BackupOperations:
             if source != BackupSource.AUTO:
                 cmd.extend(["--source", source.value])
 
+            # Add --yes flag for non-interactive mode (API calls)
+            cmd.append("--yes")
+
             if dry_run:
                 logger.info(f"Dry-run mode requested (not yet implemented in restore.sh)")
+
+            # Log the command for debugging
+            logger.info(f"Running restore-all command: {' '.join(cmd)}")
 
             result = subprocess.run(
                 cmd,
@@ -357,16 +407,19 @@ class BackupOperations:
                 timeout=3600  # 1 hour for restore-all
             )
 
+            # Combine stdout and stderr since log functions write to stderr
+            combined_output = result.stdout + result.stderr if result.stderr else result.stdout
+
             if result.returncode == 0:
                 return {
                     'success': True,
-                    'output': result.stdout
+                    'output': strip_ansi_codes(combined_output)
                 }
             else:
                 return {
                     'success': False,
-                    'output': result.stdout,
-                    'error': result.stderr or "Restore-all failed"
+                    'output': strip_ansi_codes(combined_output),
+                    'error': strip_ansi_codes(result.stderr or "Restore-all failed")
                 }
 
         except subprocess.TimeoutExpired:
