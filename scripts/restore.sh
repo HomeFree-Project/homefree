@@ -345,7 +345,10 @@ restore_database() {
                     if [[ -f "$dump_file" ]]; then
                         local db_name=$(basename "$dump_file" .sql.gz)
                         log_info "  Restoring database: $db_name"
-                        gunzip -c "$dump_file" | sudo -u postgres psql "$db_name" || log_warn "Failed to restore $db_name"
+                        # Drop existing database to ensure clean restore
+                        sudo -u postgres dropdb --if-exists "$db_name" 2>/dev/null || true
+                        # Restore to postgres database (dump contains CREATE DATABASE)
+                        gunzip -c "$dump_file" | sudo -u postgres psql postgres || log_warn "Failed to restore $db_name"
                     fi
                 done
             fi
