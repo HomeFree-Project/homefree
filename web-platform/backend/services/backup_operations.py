@@ -282,6 +282,67 @@ class BackupOperations:
             }
 
     @staticmethod
+    def get_repository_paths(service: str, source: BackupSource = BackupSource.AUTO) -> Dict[str, Any]:
+        """
+        Get the list of paths backed up in a repository.
+
+        Args:
+            service: Service/repository name
+            source: Backup source (auto, local, or backblaze)
+
+        Returns:
+            Dictionary with:
+                - success: bool
+                - paths: List[str] (paths in the repository)
+                - error: str (if failed)
+        """
+        try:
+            cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-paths", service]
+            if source != BackupSource.AUTO:
+                cmd.extend(["--source", source.value])
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode == 0:
+                # Parse paths from output (one per line, filter out metadata/log lines)
+                paths = []
+                for line in result.stdout.strip().split('\n'):
+                    line = strip_ansi_codes(line.strip())
+                    # Skip empty lines, lines with ANSI codes, or log prefixes
+                    if line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]', 'snapshot', 'repository']):
+                        paths.append(line)
+                return {
+                    'success': True,
+                    'paths': paths
+                }
+            else:
+                return {
+                    'success': False,
+                    'paths': [],
+                    'error': result.stderr or result.stdout
+                }
+
+        except subprocess.TimeoutExpired:
+            logger.error("get_repository_paths timed out")
+            return {
+                'success': False,
+                'paths': [],
+                'error': 'Operation timed out after 60 seconds'
+            }
+        except Exception as e:
+            logger.error(f"Error getting repository paths: {e}")
+            return {
+                'success': False,
+                'paths': [],
+                'error': str(e)
+            }
+
+    @staticmethod
     def restore_service(
         service: str,
         snapshot_id: Optional[str] = None,

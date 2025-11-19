@@ -16,7 +16,11 @@ class BackupsModule extends LitElement {
     secretsStatus: { type: Object },
     backupConfigStatus: { type: Object },
     services: { type: Array },
+    systemConfig: { type: Array },
+    extraPaths: { type: Array },
+    repositoryPaths: { type: Object }, // Map of repository name to paths
     selectedService: { type: String },
+    selectedCategory: { type: String }, // 'service', 'system-config', or 'extra-path'
     snapshots: { type: Array },
     selectedSnapshot: { type: String },
     loading: { type: Boolean },
@@ -238,7 +242,11 @@ class BackupsModule extends LitElement {
     this.secretsStatus = null;
     this.backupConfigStatus = null;
     this.services = [];
+    this.systemConfig = [];
+    this.extraPaths = [];
+    this.repositoryPaths = {};
     this.selectedService = null;
+    this.selectedCategory = null;
     this.snapshots = [];
     this.loading = false;
     this.restoreServiceInProgress = null; // Stores snapshot ID being restored: "latest", snapshot ID, or null
@@ -303,11 +311,33 @@ class BackupsModule extends LitElement {
       if (response.ok) {
         const data = await response.json();
         this.services = data.services || [];
+        this.systemConfig = data.system_config || [];
+        this.extraPaths = data.extra_paths || [];
+
+        // Load paths for all repositories
+        const allRepos = [...this.services, ...this.systemConfig, ...this.extraPaths];
+        await Promise.all(allRepos.map(repo => this.loadRepositoryPaths(repo)));
       }
     } catch (error) {
       console.error('Error loading services:', error);
     } finally {
       this.loading = false;
+    }
+  }
+
+  async loadRepositoryPaths(repo) {
+    try {
+      const response = await fetch(`/api/backups/services/${encodeURIComponent(repo)}/paths`);
+      if (response.ok) {
+        const data = await response.json();
+        this.repositoryPaths = {
+          ...this.repositoryPaths,
+          [repo]: data.paths || []
+        };
+        this.requestUpdate();
+      }
+    } catch (error) {
+      console.error(`Error loading paths for ${repo}:`, error);
     }
   }
 
@@ -380,7 +410,7 @@ class BackupsModule extends LitElement {
 
     // Show progress modal
     modal.show(
-      'Restoring Service',
+      'Restoring Repository',
       `Restoring ${service}...`,
       'progress'
     );
@@ -408,7 +438,7 @@ class BackupsModule extends LitElement {
         this.showNotification(`Failed to restore ${service}: ${error.detail || 'Unknown error'}`, 'error');
       }
     } catch (error) {
-      console.error('Error restoring service:', error);
+      console.error('Error restoring repository:', error);
       modal.updateStatus('error', `Error restoring ${service}`, [
         { message: error.message, type: 'error' }
       ]);
@@ -419,24 +449,25 @@ class BackupsModule extends LitElement {
   }
 
   async handleRestoreAll() {
-    const serviceCount = this.services.length;
+    const repoCount = this.services.length + this.systemConfig.length + this.extraPaths.length;
     const modal = this.renderRoot.querySelector('progress-modal');
 
     // Show confirmation modal
     modal.show(
-      'Restore All Services',
-      `This will restore ALL ${serviceCount} services from their latest backups.`,
+      'Restore Entire System',
+      `This will restore ALL ${repoCount} backup repositories from their latest snapshots, including services, databases, and system configuration.`,
       'confirm',
       {
-        confirmText: 'Restore All',
+        confirmText: 'Restore Entire System',
         cancelText: 'Cancel',
         confirmVariant: 'danger',
         details: [
-          { message: 'This will overwrite all current service data', type: 'warning' },
-          { message: `${serviceCount} services will be restored`, type: 'warning' }
+          { message: 'This will overwrite all current data', type: 'warning' },
+          { message: `${repoCount} repositories will be restored`, type: 'warning' },
+          { message: 'This operation may take several minutes', type: 'warning' }
         ],
         confirmCallback: async () => {
-          await this.performRestoreAll(serviceCount);
+          await this.performRestoreAll(repoCount);
         }
       }
     );
@@ -449,8 +480,8 @@ class BackupsModule extends LitElement {
 
     // Show progress modal
     modal.show(
-      'Restoring All Services',
-      `Restoring ${serviceCount} services...`,
+      'Restoring Entire System',
+      `Restoring ${serviceCount} repositories...`,
       'progress'
     );
 
@@ -466,22 +497,22 @@ class BackupsModule extends LitElement {
       });
 
       if (response.ok) {
-        modal.updateStatus('success', `Successfully restored all ${serviceCount} services!`);
-        this.showNotification(`Successfully restored all ${serviceCount} services!`, 'success');
+        modal.updateStatus('success', `Successfully restored entire system (${serviceCount} repositories)!`);
+        this.showNotification(`Successfully restored entire system (${serviceCount} repositories)!`, 'success');
         await this.loadServices(); // Refresh the list
       } else {
         const error = await response.json();
-        modal.updateStatus('error', `Failed to restore all services`, [
+        modal.updateStatus('error', `Failed to restore entire system`, [
           { message: error.detail || 'Unknown error', type: 'error' }
         ]);
-        this.showNotification(`Failed to restore all services: ${error.detail || 'Unknown error'}`, 'error');
+        this.showNotification(`Failed to restore entire system: ${error.detail || 'Unknown error'}`, 'error');
       }
     } catch (error) {
-      console.error('Error restoring all services:', error);
-      modal.updateStatus('error', `Error restoring all services`, [
+      console.error('Error restoring entire system:', error);
+      modal.updateStatus('error', `Error restoring entire system`, [
         { message: error.message, type: 'error' }
       ]);
-      this.showNotification(`Error restoring all services: ${error.message}`, 'error');
+      this.showNotification(`Error restoring entire system: ${error.message}`, 'error');
     } finally {
       this.restoreAllInProgress = false;
     }
@@ -632,7 +663,7 @@ class BackupsModule extends LitElement {
       <div class="restore-container">
         <config-section
           title="Restore from Backup"
-          description="Restore service data from backups"
+          description="Restore data from backup repositories"
         >
           ${!isReady ? html`
             <div class="status-indicator not-ready">
@@ -658,7 +689,7 @@ class BackupsModule extends LitElement {
                     <li>Local backups (${this.backupConfigStatus?.local_backup_path})</li>
                   ` : ''}
                   ${backblazeMounted ? html`
-                    <li>Backblaze B2 cloud backups (${this.services.length} services found)</li>
+                    <li>Backblaze B2 cloud backups (${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories found)</li>
                   ` : hasBackblaze ? html`
                     <li>Backblaze configured but not mounted (enable in Configuration to restore)</li>
                   ` : ''}
@@ -671,42 +702,129 @@ class BackupsModule extends LitElement {
 
             ${this.loading ? html`
               <div style="padding: 40px; text-align: center; color: #86868b;">
-                <div style="font-size: 16px; margin-bottom: 8px;">Loading available services...</div>
+                <div style="font-size: 16px; margin-bottom: 8px;">Loading available repositories...</div>
                 <div style="font-size: 14px;">Checking backup repositories</div>
               </div>
             ` : html`
               <!-- Restore All Button -->
               <div style="margin-bottom: 32px; padding: 20px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;">
                 <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #856404;">
-                  🔄 Restore All Services
+                  🔄 Restore Entire System
                 </div>
                 <div style="font-size: 14px; color: #856404; margin-bottom: 12px;">
-                  Restore all ${this.services.length} services from their latest backups. This is useful when setting up a new machine.
+                  Restore all backup repositories from their latest snapshots. This includes ${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories: services, databases, system configuration, and arbitrary paths. This is useful when setting up a new machine or performing disaster recovery.
                 </div>
                 <button
                   class="btn btn-danger"
                   @click=${() => this.handleRestoreAll()}
-                  ?disabled=${this.restoreAllInProgress || this.restoreServiceInProgress || this.services.length === 0}
+                  ?disabled=${this.restoreAllInProgress || this.restoreServiceInProgress || (this.services.length + this.systemConfig.length + this.extraPaths.length) === 0}
                 >
-                  ${this.restoreAllInProgress ? 'Restoring All Services...' : 'Restore All Services from Latest Backups'}
+                  ${this.restoreAllInProgress ? 'Restoring Entire System...' : 'Restore Entire System from Latest Backups'}
                 </button>
               </div>
 
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px;">
-                  Or restore individual service:
-                </label>
-                <select
-                  @change=${this.handleServiceChange}
-                  ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                >
-                  <option value="">-- Select a service --</option>
-                  ${this.services.map(service => html`
-                    <option value="${service}" ?selected=${service === this.selectedService}>
-                      ${service}
-                    </option>
-                  `)}
-                </select>
+              <div style="margin-bottom: 32px;">
+                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">
+                  Or restore individual repositories:
+                </h3>
+
+                <!-- Services Section -->
+                ${this.services.length > 0 ? html`
+                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
+                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
+                      📦 Services
+                    </h4>
+                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
+                      Service data, databases, and application configurations
+                    </p>
+                    <div style="display: grid; gap: 8px;">
+                      ${this.services.map(service => html`
+                        <button
+                          class="btn btn-secondary"
+                          style="text-align: left; padding: 12px; justify-content: flex-start;"
+                          @click=${() => this.handleServiceChange({ target: { value: service } })}
+                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                        >
+                          <div>
+                            <div style="font-weight: 600;">${service}</div>
+                            ${this.repositoryPaths[service] ? html`
+                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                ${this.repositoryPaths[service].slice(0, 2).join(', ')}${this.repositoryPaths[service].length > 2 ? ` +${this.repositoryPaths[service].length - 2} more` : ''}
+                              </div>
+                            ` : ''}
+                          </div>
+                        </button>
+                      `)}
+                    </div>
+                  </div>
+                ` : ''}
+
+                <!-- System Configuration Section -->
+                ${this.systemConfig.length > 0 ? html`
+                  <div style="margin-bottom: 24px; padding: 16px; border: 2px solid #ff9500; border-radius: 8px; background: #fff9f0;">
+                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 8px 0; color: #856404;">
+                      ⚙️ System Configuration
+                    </h4>
+                    <div style="padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; margin-bottom: 12px;">
+                      <strong>⚠️ Warning:</strong> Restoring system configuration will overwrite /etc/nixos. This may affect network settings, service configurations, and system behavior.
+                    </div>
+                    <div style="display: grid; gap: 8px;">
+                      ${this.systemConfig.map(repo => html`
+                        <button
+                          class="btn btn-secondary"
+                          style="text-align: left; padding: 12px; justify-content: flex-start;"
+                          @click=${() => this.handleServiceChange({ target: { value: repo } })}
+                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                        >
+                          <div>
+                            <div style="font-weight: 600;">
+                              ${repo === 'extra-paths' ? 'System Configuration & Extra Paths' : '/etc/nixos (System Configuration)'}
+                            </div>
+                            ${this.repositoryPaths[repo] ? html`
+                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                ${repo === 'extra-paths'
+                                  ? this.repositoryPaths[repo].slice(0, 3).join(', ') + (this.repositoryPaths[repo].length > 3 ? ` +${this.repositoryPaths[repo].length - 3} more` : '')
+                                  : `${this.repositoryPaths[repo].length} files`
+                                }
+                              </div>
+                            ` : ''}
+                          </div>
+                        </button>
+                      `)}
+                    </div>
+                  </div>
+                ` : ''}
+
+                <!-- Extra Paths Section -->
+                ${this.extraPaths.length > 0 ? html`
+                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
+                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
+                      📁 Extra Paths
+                    </h4>
+                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
+                      User-defined custom paths
+                    </p>
+                    <div style="display: grid; gap: 8px;">
+                      ${this.extraPaths.map(repo => html`
+                        <button
+                          class="btn btn-secondary"
+                          style="text-align: left; padding: 12px; justify-content: flex-start;"
+                          @click=${() => this.handleServiceChange({ target: { value: repo } })}
+                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                        >
+                          <div>
+                            <div style="font-weight: 600;">${repo}</div>
+                            ${this.repositoryPaths[repo] && this.repositoryPaths[repo].length > 0 ? html`
+                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                📂 ${this.repositoryPaths[repo][0]}
+                              </div>
+                            ` : ''}
+                          </div>
+                        </button>
+                      `)}
+                    </div>
+                  </div>
+                ` : ''}
               </div>
             `}
 
@@ -719,7 +837,7 @@ class BackupsModule extends LitElement {
                 ${this.loading ? html`
                   <p style="color: #86868b;">Loading snapshots...</p>
                 ` : this.snapshots.length === 0 ? html`
-                  <p style="color: #86868b;">No snapshots found for this service.</p>
+                  <p style="color: #86868b;">No snapshots found for this repository.</p>
                 ` : html`
                   <div class="snapshots-list">
                     ${this.snapshots.map((snapshot, index) => html`

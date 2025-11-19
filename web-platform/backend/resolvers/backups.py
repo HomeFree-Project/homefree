@@ -39,6 +39,8 @@ class ServicesResponse(BaseModel):
     """Response model for list of services"""
     success: bool
     services: List[str]
+    system_config: List[str] = []
+    extra_paths: List[str] = []
     error: Optional[str] = None
 
 
@@ -54,6 +56,13 @@ class SnapshotsResponse(BaseModel):
     """Response model for list of snapshots"""
     success: bool
     snapshots: List[Dict[str, Any]]
+    error: Optional[str] = None
+
+
+class PathsResponse(BaseModel):
+    """Response model for list of paths in a repository"""
+    success: bool
+    paths: List[str]
     error: Optional[str] = None
 
 
@@ -106,7 +115,31 @@ async def list_services(source: str = "auto"):
             )
 
         result = BackupOperations.list_services(source=backup_source)
-        return ServicesResponse(**result)
+
+        # Categorize repositories
+        all_repos = result.get('services', [])
+        services = []
+        system_config = []
+        extra_paths = []
+
+        for repo in all_repos:
+            if repo == 'system-config':
+                system_config.append(repo)
+            elif repo.startswith('extra-path-'):
+                extra_paths.append(repo)
+            elif repo == 'extra-paths':
+                # Legacy combined repository - treat as system config
+                system_config.append(repo)
+            else:
+                services.append(repo)
+
+        return ServicesResponse(
+            success=result['success'],
+            services=services,
+            system_config=system_config,
+            extra_paths=extra_paths,
+            error=result.get('error')
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -147,6 +180,39 @@ async def list_snapshots(service: str, source: str = "auto"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list snapshots for {service}: {str(e)}"
+        )
+
+
+@router.get("/services/{service}/paths", response_model=PathsResponse)
+async def list_paths(service: str, source: str = "auto"):
+    """
+    List all paths backed up in a repository's latest snapshot
+
+    Args:
+        service: Service/repository name
+        source: Backup source - "auto", "local", or "backblaze"
+
+    Returns list of paths
+    """
+    try:
+        # Convert source string to enum
+        try:
+            backup_source = BackupSource(source)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source: {source}. Must be 'auto', 'local', or 'backblaze'"
+            )
+
+        result = BackupOperations.get_repository_paths(service, source=backup_source)
+        return PathsResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing paths for {service}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list paths for {service}: {str(e)}"
         )
 
 

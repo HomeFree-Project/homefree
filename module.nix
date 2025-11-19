@@ -2157,7 +2157,7 @@
     ++
       (if config.homefree.backups.enable == true && config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
         ''
-          Backups being written locally to the default path of "${config.homefree.backups.path}".
+          Backups being written locally to the default path of "${config.homefree.backups.to-path}".
           You should backup to an off-machine location, e.g. to an NFS mounted path. To change
           the backup path:
 

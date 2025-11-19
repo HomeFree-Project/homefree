@@ -23,6 +23,7 @@ Usage: $(basename "$0") <command> [options]
 Commands:
     list-services           List all services that have backups
     list-snapshots SERVICE  List all snapshots for a specific service
+    list-paths SERVICE      List all paths in a service's latest snapshot
     download SERVICE        Download a service backup from Backblaze to local
     download-all            Download all service backups from Backblaze
     restore SERVICE [ID]    Restore a service from backup (latest or specific snapshot ID)
@@ -220,6 +221,23 @@ list_snapshots() {
         # stdout is not a terminal (piped/captured), use JSON for parsing
         restic snapshots --json
     fi
+}
+
+# List paths in a repository's latest snapshot
+list_paths() {
+    local service="$1"
+    local base_path=$(get_backup_base_path)
+    local repo_path="$base_path/$service"
+
+    if [[ ! -d "$repo_path" ]]; then
+        log_error "No backup repository found for service: $service at $repo_path"
+        exit 1
+    fi
+
+    export RESTIC_REPOSITORY="$repo_path"
+
+    # List files in latest snapshot, one per line
+    restic ls latest 2>/dev/null | sort -u
 }
 
 # Download service backup from Backblaze
@@ -624,6 +642,17 @@ main() {
                 check_root
                 load_restic_password
                 list_snapshots "${COMMAND_ARGS[0]}"
+                exit 0
+                ;;
+            list-paths)
+                if [[ ${#COMMAND_ARGS[@]} -lt 1 ]]; then
+                    log_error "Missing service name"
+                    usage
+                    exit 1
+                fi
+                check_root
+                load_restic_password
+                list_paths "${COMMAND_ARGS[0]}"
                 exit 0
                 ;;
             download)
