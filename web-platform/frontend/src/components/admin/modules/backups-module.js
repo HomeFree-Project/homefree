@@ -693,12 +693,40 @@ class BackupsModule extends LitElement {
 
       if (response.ok) {
         const result = await response.json();
-        const count = result.services_triggered || 0;
-        modal.updateStatus('success', `Successfully triggered ${count} backup service${count !== 1 ? 's' : ''}`);
-        this.showNotification(`Triggered ${count} backup service${count !== 1 ? 's' : ''}`, 'success');
 
-        // Start polling for backup status
-        await this.pollBackupStatus();
+        // Wait for backup to actually start (with timeout)
+        // The API returns immediately now (async), but we need to wait for backup_running to become true
+        modal.updateStatus('progress', 'Waiting for backups to start...');
+
+        let backupStarted = false;
+        const maxWaitTime = 3000; // 3 seconds max
+        const pollInterval = 300; // Check every 300ms
+        const maxAttempts = Math.floor(maxWaitTime / pollInterval);
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await this.pollBackupStatus();
+
+          if (this.backupStatus?.backup_running) {
+            backupStarted = true;
+            break;
+          }
+
+          // Wait before next poll
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        // Show success and start polling
+        const count = result.output?.match(/(\d+) services/)?.[1] || 'backup';
+        if (backupStarted) {
+          modal.updateStatus('success', `Backups running for ${count} service${count !== '1' ? 's' : ''}`);
+          this.showNotification(`Backups started for ${count} service${count !== '1' ? 's' : ''}`, 'success');
+        } else {
+          // Backup may start later, still show success
+          modal.updateStatus('success', `Backup trigger sent for ${count} service${count !== '1' ? 's' : ''}`);
+          this.showNotification(`Backup trigger sent for ${count} service${count !== '1' ? 's' : ''}`, 'success');
+        }
+
+        // Continue polling
         this.startStatusPolling();
       } else {
         const error = await response.json();
