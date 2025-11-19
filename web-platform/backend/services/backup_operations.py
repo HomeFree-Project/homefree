@@ -6,6 +6,7 @@ import subprocess
 import logging
 import json
 import re
+import threading
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from enum import Enum
@@ -525,3 +526,216 @@ class BackupOperations:
             'local_backups_available': local_backup_path.exists() and any(local_backup_path.iterdir()) if local_backup_path.exists() else False,
             'backblaze_mounted': backblaze_mount.exists() and backblaze_mount.is_mount()
         }
+
+    @staticmethod
+    def _trigger_backups_worker():
+        """
+        Worker function that runs in background thread to start backup services.
+        This runs asynchronously and logs results but doesn't return anything.
+        """
+        try:
+            # Get list of all backup services
+            result = subprocess.run(
+                ['systemctl', 'list-units', '--all', 'restic-backups-local-*.service', '--no-pager', '--no-legend'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode != 0:
+                logger.error(f"Failed to list backup services: {result.stderr}")
+                return
+
+            # Parse service names from output
+            services = []
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    # Extract service name (first field)
+                    parts = line.split()
+                    if parts and parts[0].endswith('.service'):
+                        services.append(parts[0])
+
+            if not services:
+                logger.warning('No backup services found to trigger')
+                return
+
+            # Trigger all backup services
+            logger.info(f"Starting {len(services)} backup services in background")
+            failed_services = []
+
+            for service in services:
+                try:
+                    subprocess.run(
+                        ['systemctl', 'start', service],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=True
+                    )
+                    logger.debug(f"Started {service}")
+                except subprocess.CalledProcessError as e:
+                    error_msg = f"{service}: {e.stderr}"
+                    failed_services.append(error_msg)
+                    logger.error(f"Failed to start {error_msg}")
+                except subprocess.TimeoutExpired:
+                    error_msg = f"{service}: timeout"
+                    failed_services.append(error_msg)
+                    logger.error(f"Timeout starting {service}")
+
+            if failed_services:
+                logger.warning(f"Started {len(services) - len(failed_services)}/{len(services)} services. Failed: {', '.join(failed_services)}")
+            else:
+                logger.info(f"Successfully started all {len(services)} backup services")
+
+        except subprocess.TimeoutExpired:
+            logger.error("Backup trigger worker timed out")
+        except Exception as e:
+            logger.error(f"Error in backup trigger worker: {e}")
+
+    @staticmethod
+    def trigger_all_backups() -> Dict[str, Any]:
+        """
+        Trigger all backup services to run immediately.
+        Returns immediately after starting background thread.
+
+        Returns:
+            Dictionary with:
+                - success: bool
+                - output: str
+        """
+        try:
+            # Get list of services quickly to validate they exist
+            result = subprocess.run(
+                ['systemctl', 'list-units', '--all', 'restic-backups-local-*.service', '--no-pager', '--no-legend'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode != 0:
+                return {
+                    'success': False,
+                    'error': f"Failed to list backup services: {result.stderr}"
+                }
+
+            # Count services
+            services_count = len([line for line in result.stdout.strip().split('\n') if line.strip()])
+
+            if services_count == 0:
+                return {
+                    'success': False,
+                    'error': 'No backup services found. Ensure backups are enabled.'
+                }
+
+            # Start background thread to trigger services
+            thread = threading.Thread(
+                target=BackupOperations._trigger_backups_worker,
+                daemon=True,
+                name="backup-trigger-worker"
+            )
+            thread.start()
+
+            logger.info(f"Triggered background thread to start {services_count} backup services")
+
+            return {
+                'success': True,
+                'output': f"Backup trigger started for {services_count} services. Check status for progress."
+            }
+
+        except Exception as e:
+            logger.error(f"Error triggering backups: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @staticmethod
+    def trigger_backblaze_sync() -> Dict[str, Any]:
+        """Trigger Backblaze sync service to sync local backups to Backblaze B2."""
+        try:
+            # Check if the sync service exists
+            check_result = subprocess.run(
+                ['systemctl', 'list-units', '--all', 'restic-backblaze-rsync.service', '--no-pager', '--no-legend'],
+                capture_output=True, text=True, timeout=10
+            )
+
+            if not check_result.stdout.strip():
+                return {
+                    'success': False,
+                    'error': 'Backblaze sync service (restic-backblaze-rsync.service) not found. Ensure Backblaze backups are enabled.'
+                }
+
+            # Trigger the sync service
+            subprocess.run(
+                ['systemctl', 'start', 'restic-backblaze-rsync.service'],
+                timeout=5,
+                check=True
+            )
+
+            return {
+                'success': True,
+                'output': 'Successfully triggered Backblaze sync service'
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': 'Operation timed out while triggering Backblaze sync'
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                'success': False,
+                'error': f'Failed to start Backblaze sync service: {e.stderr if e.stderr else str(e)}'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    @staticmethod
+    def get_backup_status() -> Dict[str, Any]:
+        """Get current status of backup and sync operations."""
+        try:
+            # Check for active local backup services
+            backup_result = subprocess.run(
+                ['systemctl', 'list-units', 'restic-backups-local-*.service', '--state=active,activating', '--no-pager', '--no-legend'],
+                capture_output=True, text=True, timeout=10
+            )
+
+            active_backups = []
+            if backup_result.stdout.strip():
+                for line in backup_result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = line.split()
+                        if parts and parts[0].endswith('.service'):
+                            # Extract service name from unit name
+                            # restic-backups-local-nextcloud.service -> nextcloud
+                            service_name = parts[0].replace('restic-backups-local-', '').replace('.service', '')
+                            active_backups.append(service_name)
+
+            # Check Backblaze sync status
+            sync_result = subprocess.run(
+                ['systemctl', 'is-active', 'restic-backblaze-rsync.service'],
+                capture_output=True, text=True, timeout=5
+            )
+            sync_running = sync_result.stdout.strip() in ['active', 'activating']
+
+            return {
+                'success': True,
+                'backup_running': len(active_backups) > 0,
+                'active_backups': active_backups,
+                'sync_running': sync_running
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': 'Operation timed out while checking backup status'
+            }
+        except Exception as e:
+            logger.error(f"Error getting backup status: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
