@@ -331,3 +331,88 @@ async def restore_all(request: RestoreRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to restore all services: {str(e)}"
         )
+
+
+@router.post("/trigger", response_model=OperationResponse)
+async def trigger_backups():
+    """
+    Trigger all backup services to run immediately
+
+    Returns operation result with services_triggered count
+    """
+    try:
+        result = BackupOperations.trigger_all_backups()
+
+        if not result['success']:
+            # Return partial success if some services started
+            if result.get('services_triggered', 0) > 0:
+                return OperationResponse(**result)
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get('error', 'Failed to trigger backups')
+            )
+
+        return OperationResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering backups: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger backups: {str(e)}"
+        )
+
+
+@router.post("/sync-backblaze", response_model=OperationResponse)
+async def sync_backblaze():
+    """
+    Trigger Backblaze sync service to sync local backups to Backblaze B2
+
+    Returns operation result
+    """
+    try:
+        result = BackupOperations.trigger_backblaze_sync()
+
+        if not result['success']:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get('error', 'Failed to trigger Backblaze sync')
+            )
+
+        return OperationResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering Backblaze sync: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger Backblaze sync: {str(e)}"
+        )
+
+
+class BackupStatusResponse(BaseModel):
+    """Response model for backup status"""
+    success: bool
+    backup_running: bool = False
+    active_backups: List[str] = []
+    sync_running: bool = False
+    error: Optional[str] = None
+
+
+@router.get("/status", response_model=BackupStatusResponse)
+async def get_backup_status():
+    """
+    Get current status of backup and sync operations
+
+    Returns status of running backups and sync
+    """
+    try:
+        result = BackupOperations.get_backup_status()
+        return BackupStatusResponse(**result)
+    except Exception as e:
+        logger.error(f"Error getting backup status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get backup status: {str(e)}"
+        )

@@ -570,7 +570,7 @@ main() {
     # First pass: extract command and all args
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            list-services|list-snapshots|download|restore|restore-all)
+            list-services|list-snapshots|list-paths|download|restore|restore-all)
                 COMMAND="$1"
                 shift
                 COMMAND_ARGS=("$@")
@@ -613,7 +613,7 @@ main() {
                 SKIP_CONFIRMATION="true"
                 shift
                 ;;
-            list-services|list-snapshots|download|restore|restore-all)
+            list-services|list-snapshots|list-paths|download|restore|restore-all)
                 # Skip command name
                 shift
                 ;;
