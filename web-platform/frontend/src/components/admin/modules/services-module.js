@@ -468,6 +468,13 @@ class ServicesModule extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+
+    // CRITICAL: Stop polling before page unload to prevent connection limit race condition
+    this.beforeUnloadHandler = () => {
+      this.stopPolling();
+    };
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
     await Promise.all([
       this.loadServices(),
       this.loadSecretsData(),
@@ -478,6 +485,12 @@ class ServicesModule extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+
+    // Remove beforeunload listener
+    if (this.beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    }
+
     this.stopPolling();
   }
 

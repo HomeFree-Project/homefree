@@ -423,6 +423,22 @@ class AdminApp extends LitElement {
   async connectedCallback() {
     super.connectedCallback();
 
+    // CRITICAL: Stop polling before page unload to prevent connection limit race condition
+    // Create AbortController for cancelling in-flight requests
+    this.rebuildStatusAbortController = new AbortController();
+
+    this.beforeUnloadHandler = () => {
+      // Abort any in-flight requests
+      if (this.rebuildStatusAbortController) {
+        this.rebuildStatusAbortController.abort();
+      }
+      // Clear polling interval
+      if (this.statusPollInterval) {
+        clearInterval(this.statusPollInterval);
+      }
+    };
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
     // Read initial route from hash
     this.loadRouteFromHash();
 
@@ -443,6 +459,12 @@ class AdminApp extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+
+    // Remove beforeunload listener
+    if (this.beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    }
+
     // Clean up polling interval
     if (this.statusPollInterval) {
       clearInterval(this.statusPollInterval);
@@ -479,7 +501,9 @@ class AdminApp extends LitElement {
 
   async checkRebuildStatus() {
     try {
-      const response = await fetch('/api/config/rebuild-status');
+      const response = await fetch('/api/config/rebuild-status', {
+        signal: this.rebuildStatusAbortController?.signal
+      });
 
       // Check if response is OK before parsing JSON
       if (!response.ok) {
@@ -556,6 +580,10 @@ class AdminApp extends LitElement {
         }
       }
     } catch (error) {
+      // Ignore abort errors - these are expected when component disconnects
+      if (error.name === 'AbortError') {
+        return;
+      }
       console.error('Error checking rebuild status:', error);
       // Don't throw - just continue with normal loading
     }
@@ -1097,7 +1125,9 @@ class AdminApp extends LitElement {
 
     const checkStatus = async () => {
       try {
-        const response = await fetch('/api/config/rebuild-status');
+        const response = await fetch('/api/config/rebuild-status', {
+          signal: this.rebuildStatusAbortController?.signal
+        });
 
         // Check if response is OK before parsing JSON
         if (!response.ok) {
@@ -1192,6 +1222,11 @@ class AdminApp extends LitElement {
         // Continue polling every 2 seconds
         setTimeout(checkStatus, 2000);
       } catch (error) {
+        // Ignore abort errors - these are expected when component disconnects
+        if (error.name === 'AbortError') {
+          return;
+        }
+
         console.error('Error polling rebuild status:', error);
         // Reset polling flag on error
         this._pollRebuildActive = false;

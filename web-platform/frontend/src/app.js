@@ -94,15 +94,32 @@ class HomeFreeApp extends LitElement {
   }
 
   async detectMode() {
-    try {
-      const result = await getMode();
-      this.mode = result.mode; // 'installer' or 'admin'
-      this.loading = false;
-    } catch (error) {
-      console.error('Failed to detect mode:', error);
-      this.error = `Failed to connect to backend: ${error.message}`;
-      this.loading = false;
+    // Retry logic to handle transient NetworkErrors during page refresh
+    // when old page's cleanup races with new page's first request
+    let retries = 3;
+    let lastError = null;
+
+    while (retries > 0) {
+      try {
+        const result = await getMode();
+        this.mode = result.mode; // 'installer' or 'admin'
+        this.loading = false;
+        return;
+      } catch (error) {
+        lastError = error;
+        retries--;
+
+        if (retries > 0) {
+          // Wait 500ms before retry to allow old page cleanup to complete
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
     }
+
+    // All retries exhausted
+    console.error('Failed to detect mode after retries:', lastError);
+    this.error = `Failed to connect to backend: ${lastError.message}`;
+    this.loading = false;
   }
 
   render() {
