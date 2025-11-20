@@ -100,16 +100,16 @@ class InstallationService:
       "enable": true,
       "public": false
     },
+    "admin": {
+      "enable": true,
+      "public": false
+    },
     "landing-page": {
       "enable": true,
       "public": false
     },
     "headscale": {
       "enable": false,
-      "public": false
-    },
-    "admin": {
-      "enable": true,
       "public": false
     },
     "postgres-vectorchord": {
@@ -205,10 +205,6 @@ class InstallationService:
       "public": false
     },
     "zitadel": {
-      "enable": false,
-      "public": false
-    },
-    "authentik": {
       "enable": false,
       "public": false
     },

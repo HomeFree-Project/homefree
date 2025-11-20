@@ -2,6 +2,10 @@
 
 Instructions: Complete the next bullet in TODOS.md. Create a plan for this item only. Once you have completed the item, and I have confirmed that you are complete, mark off the item in TODOS.md with a strike through or check, then await further instructions.
 
+### Web Installer
+
+- The web installer should detect if there is no internet and indicate to the user that the installation will not complete successfully without an internet connection.
+
 ### Admin UI
 
 Note: The admin UI is now in ./web-platform. The code at ./services/admin is deprecated.
