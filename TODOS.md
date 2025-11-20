@@ -2,9 +2,16 @@
 
 Instructions: Complete the next bullet in TODOS.md. Create a plan for this item only. Once you have completed the item, and I have confirmed that you are complete, mark off the item in TODOS.md with a strike through or check, then await further instructions.
 
+### Infrastructure
+
+- Templatize the flake.nix installed by install.py and update the /scripts/build-image.sh script to substitute the current branch name appended to the homefree flake
+- If hostname is changed, the flake configuration needs to be changed. or a build script that builds the fixed configuration name
+- scrub out all references to "erahhal"
+
 ### Web Installer
 
 - The web installer should detect if there is no internet and indicate to the user that the installation will not complete successfully without an internet connection.
+- Add avanced networking step that allows editing of LAN IP range. This should be filled in appropriately with defaults, which are changed in development mode is selected.
 
 ### Admin UI
 

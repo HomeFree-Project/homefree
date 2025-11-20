@@ -38,7 +38,7 @@ class InstallationService:
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git?ref=build-image";@@dev_input@@
+    homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git?ref=build-image-admin-ui";@@dev_input@@
   };
 
   outputs = { self, nixpkgs, homefree-base@@dev_output_arg@@, ... }@inputs:
