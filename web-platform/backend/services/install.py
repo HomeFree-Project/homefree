@@ -294,12 +294,103 @@ in
       };
     };
 
-    services = lib.mapAttrs (name: value:
-      value // {
-        enable = value.enable or false;
-        public = value.public or false;
-      }
-    ) jsonData.services;
+    services = {
+      adguard.enable = jsonData.services.adguard.enable or false;
+      adguard.public = jsonData.services.adguard.public or false;
+
+      admin.enable = jsonData.services.admin.enable or false;
+      admin.public = jsonData.services.admin.public or false;
+
+      landing-page.enable = jsonData.services.landing-page.enable or false;
+      landing-page.public = jsonData.services.landing-page.public or false;
+
+      headscale.enable = jsonData.services.headscale.enable or false;
+      headscale.public = jsonData.services.headscale.public or false;
+
+      postgres-vectorchord.enable = jsonData.services.postgres-vectorchord.enable or false;
+      postgres-vectorchord.public = jsonData.services.postgres-vectorchord.public or false;
+
+      lidarr.enable = jsonData.services.lidarr.enable or false;
+      lidarr.public = jsonData.services.lidarr.public or false;
+
+      vaultwarden.enable = jsonData.services.vaultwarden.enable or false;
+      vaultwarden.public = jsonData.services.vaultwarden.public or false;
+
+      webdav.enable = jsonData.services.webdav.enable or false;
+      webdav.public = jsonData.services.webdav.public or false;
+
+      linkwarden.enable = jsonData.services.linkwarden.enable or false;
+      linkwarden.public = jsonData.services.linkwarden.public or false;
+
+      joplin.enable = jsonData.services.joplin.enable or false;
+      joplin.public = jsonData.services.joplin.public or false;
+
+      homeassistant.enable = jsonData.services.homeassistant.enable or false;
+      homeassistant.public = jsonData.services.homeassistant.public or false;
+
+      nextcloud.enable = jsonData.services.nextcloud.enable or false;
+      nextcloud.public = jsonData.services.nextcloud.public or false;
+
+      snipe-it.enable = jsonData.services.snipe-it.enable or false;
+      snipe-it.public = jsonData.services.snipe-it.public or false;
+
+      frigate.enable = jsonData.services.frigate.enable or false;
+      frigate.public = jsonData.services.frigate.public or false;
+
+      unifi.enable = jsonData.services.unifi.enable or false;
+      unifi.public = jsonData.services.unifi.public or false;
+
+      cryptpad.enable = jsonData.services.cryptpad.enable or false;
+      cryptpad.public = jsonData.services.cryptpad.public or false;
+
+      forgejo.enable = jsonData.services.forgejo.enable or false;
+      forgejo.public = jsonData.services.forgejo.public or false;
+
+      jellyfin.enable = jsonData.services.jellyfin.enable or false;
+      jellyfin.public = jsonData.services.jellyfin.public or false;
+
+      nzbget.enable = jsonData.services.nzbget.enable or false;
+      nzbget.public = jsonData.services.nzbget.public or false;
+
+      kanidm.enable = jsonData.services.kanidm.enable or false;
+      kanidm.public = jsonData.services.kanidm.public or false;
+
+      radicale.enable = jsonData.services.radicale.enable or false;
+      radicale.public = jsonData.services.radicale.public or false;
+
+      freshrss.enable = jsonData.services.freshrss.enable or false;
+      freshrss.public = jsonData.services.freshrss.public or false;
+
+      minecraft.enable = jsonData.services.minecraft.enable or false;
+      minecraft.public = jsonData.services.minecraft.public or false;
+
+      logseq.enable = jsonData.services.logseq.enable or false;
+      logseq.public = jsonData.services.logseq.public or false;
+
+      homebox.enable = jsonData.services.homebox.enable or false;
+      homebox.public = jsonData.services.homebox.public or false;
+
+      ollama.enable = jsonData.services.ollama.enable or false;
+      ollama.public = jsonData.services.ollama.public or false;
+
+      grocy.enable = jsonData.services.grocy.enable or false;
+      grocy.public = jsonData.services.grocy.public or false;
+
+      zitadel.enable = jsonData.services.zitadel.enable or false;
+      zitadel.public = jsonData.services.zitadel.public or false;
+
+      immich.enable = jsonData.services.immich.enable or false;
+      immich.public = jsonData.services.immich.public or false;
+
+      mediawiki.enable = jsonData.services.mediawiki.enable or false;
+      mediawiki.public = jsonData.services.mediawiki.public or false;
+
+      screeenly.enable = jsonData.services.screeenly.enable or false;
+      screeenly.public = jsonData.services.screeenly.public or false;
+
+      baikal.enable = jsonData.services.baikal.enable or false;
+      baikal.public = jsonData.services.baikal.public or false;
+    };
 
     backups = {
       enable = jsonData.backups.enable;
