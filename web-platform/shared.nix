@@ -46,6 +46,7 @@
       psutil
       pyudev
       pydantic
+      pyyaml
     ]);
   in {
     description = "HomeFree Web Platform Backend";

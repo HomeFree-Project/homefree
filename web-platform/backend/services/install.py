@@ -208,10 +208,6 @@ class InstallationService:
       "enable": false,
       "public": false
     },
-    "matrix": {
-      "enable": false,
-      "public": false
-    },
     "authentik": {
       "enable": false,
       "public": false

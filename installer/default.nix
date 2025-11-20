@@ -1,17 +1,13 @@
-# Installer stub module
+# Installer Configuration
 #
-# This module provides a semantic import point for the HomeFree installer.
-# It imports the unified web-platform which serves both installer and admin modes.
-#
-# The web-platform automatically detects mode based on whether
-# /etc/nixos/homefree-configuration.nix exists:
-# - If absent (fresh install) → Installer mode
-# - If present (installed system) → Admin mode
+# This module provides the installer ISO configuration for HomeFree.
+# It imports both the shared web platform components and installer-specific config.
 
 { ... }:
 
 {
   imports = [
-    ../web-platform
+    ../web-platform/shared.nix      # Shared backend, frontend, and services
+    ../web-platform/installer.nix   # Installer-specific: ISO config, GNOME autostart, etc.
   ];
 }
