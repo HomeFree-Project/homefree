@@ -5,12 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HomeFree Installer</title>
 
-  <!-- Import map for Lit module resolution via CDN -->
+  <!-- Import map for Lit module resolution (vendored locally) -->
   <script type="importmap">
   {
     "imports": {
-      "lit": "https://cdn.jsdelivr.net/npm/lit@3/+esm",
-      "lit/": "https://cdn.jsdelivr.net/npm/lit@3/"
+      "lit": "/src/vendor/lit/index.js",
+      "lit/": "/src/vendor/lit/",
+      "@lit/reactive-element": "/src/vendor/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "/src/vendor/@lit/reactive-element/",
+      "lit-html": "/src/vendor/lit-html/lit-html.js",
+      "lit-html/": "/src/vendor/lit-html/",
+      "lit-element": "/src/vendor/lit-element/lit-element.js",
+      "lit-element/": "/src/vendor/lit-element/"
     }
   }
   </script>
