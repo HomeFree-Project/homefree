@@ -93,7 +93,9 @@ in
           # Use a DHCPv6-PD delegated prefix (DHCPv6PrefixDelegation.SubnetId)
           # from the pool and assigns one /64 to this network.
           DHCPPrefixDelegation = "yes";
-          ConfigureWithoutCarrier = "no";
+          ## @TODO: This was set to "no" before, but changed to "yes" so that adguardhome could start even if the LAN
+          ##        port is not connected. Are there ramifications of keeping this set to "yes"?
+          ConfigureWithoutCarrier = "yes";
         };
         ipv6SendRAConfig = {
           # Currently dnsmasq manages DNS servers.
@@ -226,7 +228,7 @@ in
             ${service-input-rules}
 
             ${lib.optionalString config.homefree.development ''
-            tcp dport { 22 } ct state new accept; # Accept SSH connections
+            tcp dport { 22, 2022 } ct state new accept; # Accept SSH and Eternal Terminal connections
             ''}
 
             # DHCPv6
