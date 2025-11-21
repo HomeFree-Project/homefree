@@ -34,8 +34,11 @@ class BackupsModule extends LitElement {
     loading: { type: Boolean },
     restoreServiceInProgress: { type: String }, // Stores snapshot ID being restored: "latest", snapshot ID, or null
     restoreAllInProgress: { type: Boolean },
+    includeSystemConfig: { type: Boolean }, // Whether to include system-config in restore-all
     triggerInProgress: { type: Boolean },
-    syncInProgress: { type: Boolean }
+    syncInProgress: { type: Boolean },
+    hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
+    lastServicesRefresh: { type: Number } // When services were last loaded (for display only)
   };
 
   static styles = css`
@@ -269,10 +272,12 @@ class BackupsModule extends LitElement {
     this.loading = false;
     this.restoreServiceInProgress = null; // Stores snapshot ID being restored: "latest", snapshot ID, or null
     this.restoreAllInProgress = false;
+    this.includeSystemConfig = false; // Default: don't include system-config in restore-all
     this.triggerInProgress = false;
     this.syncInProgress = false;
     this.statusPollingInterval = null;
     this.abortController = null;
+    this.lastServicesRefresh = null; // Track when services were last loaded
   }
 
   async connectedCallback() {
@@ -290,7 +295,7 @@ class BackupsModule extends LitElement {
     await this.pollBackupStatus();
 
     // Start polling if operations are active
-    if (this.backupStatus?.backup_running || this.backupStatus?.sync_running) {
+    if (this.backupStatus?.backup_running || this.backupStatus?.sync_running || this.backupStatus?.restore_running) {
       this.startStatusPolling();
     }
   }
@@ -360,7 +365,7 @@ class BackupsModule extends LitElement {
         this.backupStatus = await response.json();
 
         // Stop polling if no operations are active
-        if (!this.backupStatus.backup_running && !this.backupStatus.sync_running) {
+        if (!this.backupStatus.backup_running && !this.backupStatus.sync_running && !this.backupStatus.restore_running) {
           this.stopStatusPolling();
         }
       }
@@ -401,21 +406,25 @@ class BackupsModule extends LitElement {
     }
   }
 
-  async loadServices() {
+  async loadServices(force = false) {
     this.loading = true;
     try {
+      // Build query string with force parameter if needed
+      const forceParam = force ? '&force=true' : '';
+
       // Fetch from both local and Backblaze sources
       const [localResponse, backblazeResponse] = await Promise.all([
-        fetch('/api/backups/services?source=local'),
-        fetch('/api/backups/services?source=backblaze')
+        fetch(`/api/backups/services?source=local${forceParam}`),
+        fetch(`/api/backups/services?source=backblaze${forceParam}`)
       ]);
 
       // Process local backups
+      let localData = { services: [], system_config: [], extra_paths: [] };
       if (localResponse.ok) {
-        const data = await localResponse.json();
-        this.localServices = data.services || [];
-        this.localSystemConfig = data.system_config || [];
-        this.localExtraPaths = data.extra_paths || [];
+        localData = await localResponse.json();
+        this.localServices = localData.services || [];
+        this.localSystemConfig = localData.system_config || [];
+        this.localExtraPaths = localData.extra_paths || [];
       } else {
         this.localServices = [];
         this.localSystemConfig = [];
@@ -423,11 +432,12 @@ class BackupsModule extends LitElement {
       }
 
       // Process Backblaze backups
+      let backblazeData = { services: [], system_config: [], extra_paths: [] };
       if (backblazeResponse.ok) {
-        const data = await backblazeResponse.json();
-        this.backblazeServices = data.services || [];
-        this.backblazeSystemConfig = data.system_config || [];
-        this.backblazeExtraPaths = data.extra_paths || [];
+        backblazeData = await backblazeResponse.json();
+        this.backblazeServices = backblazeData.services || [];
+        this.backblazeSystemConfig = backblazeData.system_config || [];
+        this.backblazeExtraPaths = backblazeData.extra_paths || [];
       } else {
         this.backblazeServices = [];
         this.backblazeSystemConfig = [];
@@ -444,9 +454,12 @@ class BackupsModule extends LitElement {
       const backblazeRepos = [...this.backblazeServices, ...this.backblazeSystemConfig, ...this.backblazeExtraPaths];
 
       await Promise.all([
-        ...localRepos.map(repo => this.loadRepositoryPaths(repo, 'local')),
-        ...backblazeRepos.map(repo => this.loadRepositoryPaths(repo, 'backblaze'))
+        ...localRepos.map(repo => this.loadRepositoryPaths(repo, 'local', force)),
+        ...backblazeRepos.map(repo => this.loadRepositoryPaths(repo, 'backblaze', force))
       ]);
+
+      // Track when services were loaded for display
+      this.lastServicesRefresh = Date.now();
     } catch (error) {
       console.error('Error loading services:', error);
     } finally {
@@ -454,9 +467,10 @@ class BackupsModule extends LitElement {
     }
   }
 
-  async loadRepositoryPaths(repo, source = 'auto') {
+  async loadRepositoryPaths(repo, source = 'auto', force = false) {
     try {
-      const response = await fetch(`/api/backups/services/${encodeURIComponent(repo)}/paths?source=${source}`);
+      const forceParam = force ? '&force=true' : '';
+      const response = await fetch(`/api/backups/services/${encodeURIComponent(repo)}/paths?source=${source}${forceParam}`);
       if (response.ok) {
         const data = await response.json();
         // Store paths with source-prefixed key
@@ -624,7 +638,8 @@ class BackupsModule extends LitElement {
         body: JSON.stringify({
           snapshot_id: null,
           source: 'auto',
-          dry_run: false
+          dry_run: false,
+          include_system_config: this.includeSystemConfig
         })
       });
 
@@ -826,6 +841,24 @@ class BackupsModule extends LitElement {
     }));
   }
 
+  formatTimestamp(timestamp) {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+
+    // If less than a minute ago
+    if (diffMins < 1) return 'just now';
+    // If less than an hour ago
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+    // If less than a day ago
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    // Otherwise show full date
+    return date.toLocaleString();
+  }
+
   renderConfigurationTab() {
     const { backups } = this.config;
 
@@ -930,12 +963,22 @@ class BackupsModule extends LitElement {
         title="Backup Secrets"
         description="Encryption password and cloud storage credentials"
       >
+        ${!this.hasAuthorizedKeys ? html`
+          <div class="info-box" style="background: #fff3cd; border-left-color: #ffc107; color: #856404;">
+            <strong>⚠️ SSH Key Required</strong>
+            <div style="font-size: 14px; margin-top: 8px;">
+              Before you can manage secrets, you need to add an SSH authorized key in the <a href="#/system" style="color: #856404; text-decoration: underline;">System settings</a>.
+            </div>
+          </div>
+        ` : ''}
+
         <secrets-input
           serviceLabel="backup"
           secretKey="restic-password"
           label="Restic Password"
           description="Encryption password for backup repositories (required for backups and restores)"
           .exists=${this.secretsStatus?.['restic-password'] || false}
+          ?disabled=${!this.hasAuthorizedKeys}
           @secret-updated=${() => this.handleSecretUpdated()}
         ></secrets-input>
 
@@ -946,6 +989,7 @@ class BackupsModule extends LitElement {
             label="Backblaze Account ID"
             description="Your Backblaze B2 account ID"
             .exists=${this.secretsStatus?.['backblaze-id'] || false}
+            ?disabled=${!this.hasAuthorizedKeys}
             @secret-updated=${() => this.handleSecretUpdated()}
           ></secrets-input>
 
@@ -955,6 +999,7 @@ class BackupsModule extends LitElement {
             label="Backblaze Application Key"
             description="Your Backblaze B2 application key"
             .exists=${this.secretsStatus?.['backblaze-key'] || false}
+            ?disabled=${!this.hasAuthorizedKeys}
             @secret-updated=${() => this.handleSecretUpdated()}
           ></secrets-input>
         ` : ''}
@@ -1057,6 +1102,42 @@ class BackupsModule extends LitElement {
               </div>
             </div>
 
+            <!-- Last Refreshed Timestamp and Refresh Button -->
+            <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f5f5f7; border-radius: 8px;">
+              <div style="font-size: 13px; color: #666;">
+                ${this.lastServicesRefresh ? html`
+                  <strong>Last refreshed:</strong> ${this.formatTimestamp(this.lastServicesRefresh)}
+                ` : html`
+                  <strong>Repository list not loaded</strong>
+                `}
+              </div>
+              <button
+                class="btn btn-secondary"
+                @click=${() => this.loadServices(true)}
+                ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                style="padding: 8px 16px; font-size: 13px;"
+              >
+                🔄 Refresh List
+              </button>
+            </div>
+
+            <!-- Restore Status Display -->
+            ${this.backupStatus?.restore_running ? html`
+              <div style="margin-top: 16px; padding: 16px; background: #fff3cd; border-left: 4px solid #ff9500; border-radius: 8px;">
+                <div style="font-weight: 600; margin-bottom: 8px; color: #856404; display: flex; align-items: center; gap: 8px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid #ff9500; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
+                  Restore in Progress
+                </div>
+                <div style="font-size: 14px; color: #856404;">
+                  ${this.backupStatus.restore_type === 'all' ? html`
+                    <strong>🔄 Restoring entire system...</strong>
+                  ` : html`
+                    <strong>📦 Restoring:</strong> ${this.backupStatus.active_restore}
+                  `}
+                </div>
+              </div>
+            ` : ''}
+
             ${this.loading ? html`
               <div style="padding: 40px; text-align: center; color: #86868b;">
                 <div style="font-size: 16px; margin-bottom: 8px;">Loading available repositories...</div>
@@ -1071,6 +1152,17 @@ class BackupsModule extends LitElement {
                 <div style="font-size: 14px; color: #856404; margin-bottom: 12px;">
                   Restore all backup repositories from their latest snapshots. This includes ${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories: services, databases, system configuration, and arbitrary paths. This is useful when setting up a new machine or performing disaster recovery.
                 </div>
+                <div style="margin-bottom: 12px;">
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: #856404;">
+                    <input
+                      type="checkbox"
+                      ?checked=${this.includeSystemConfig}
+                      @change=${(e) => { this.includeSystemConfig = e.target.checked; this.requestUpdate(); }}
+                      style="width: 16px; height: 16px; cursor: pointer;"
+                    />
+                    <span>Include system configuration (/etc/nixos)</span>
+                  </label>
+                </div>
                 <button
                   class="btn btn-danger"
                   @click=${() => this.handleRestoreAll()}
@@ -1082,7 +1174,7 @@ class BackupsModule extends LitElement {
 
               <div style="margin-bottom: 32px;">
                 <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">
-                  Or restore individual repositories:
+                  Restore individual repositories:
                 </h3>
 
                 <!-- Services Section -->
@@ -1124,6 +1216,54 @@ class BackupsModule extends LitElement {
                             ${this.repositoryPaths[`backblaze:${service}`] ? html`
                               <div style="font-size: 12px; color: #666; margin-top: 4px;">
                                 ${this.repositoryPaths[`backblaze:${service}`].slice(0, 2).join(', ')}${this.repositoryPaths[`backblaze:${service}`].length > 2 ? ` +${this.repositoryPaths[`backblaze:${service}`].length - 2} more` : ''}
+                              </div>
+                            ` : ''}
+                          </div>
+                        </button>
+                      `)}
+                    </div>
+                  </div>
+                ` : ''}
+
+                <!-- Extra Paths Section -->
+                ${this.extraPaths.length > 0 ? html`
+                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
+                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
+                      📁 Extra Paths
+                    </h4>
+                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
+                      User-defined custom paths
+                    </p>
+                    <div style="display: grid; gap: 8px;">
+                      ${this.localExtraPaths.map(repo => html`
+                        <button
+                          class="btn btn-secondary"
+                          style="text-align: left; padding: 12px; justify-content: flex-start;"
+                          @click=${() => this.handleServiceChange(repo, 'local')}
+                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                        >
+                          <div>
+                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #666;">(Local)</span></div>
+                            ${this.repositoryPaths[`local:${repo}`] && this.repositoryPaths[`local:${repo}`].length > 0 ? html`
+                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                📂 ${this.repositoryPaths[`local:${repo}`][0]}
+                              </div>
+                            ` : ''}
+                          </div>
+                        </button>
+                      `)}
+                      ${this.backblazeExtraPaths.map(repo => html`
+                        <button
+                          class="btn btn-secondary"
+                          style="text-align: left; padding: 12px; justify-content: flex-start;"
+                          @click=${() => this.handleServiceChange(repo, 'backblaze')}
+                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
+                        >
+                          <div>
+                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #007bff;">☁️ Backblaze</span></div>
+                            ${this.repositoryPaths[`backblaze:${repo}`] && this.repositoryPaths[`backblaze:${repo}`].length > 0 ? html`
+                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                📂 ${this.repositoryPaths[`backblaze:${repo}`][0]}
                               </div>
                             ` : ''}
                           </div>
@@ -1176,54 +1316,6 @@ class BackupsModule extends LitElement {
                             ${this.repositoryPaths[`backblaze:${repo}`] ? html`
                               <div style="font-size: 12px; color: #666; margin-top: 4px;">
                                 ${this.repositoryPaths[`backblaze:${repo}`].length} files
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                    </div>
-                  </div>
-                ` : ''}
-
-                <!-- Extra Paths Section -->
-                ${this.extraPaths.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
-                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
-                      📁 Extra Paths
-                    </h4>
-                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
-                      User-defined custom paths
-                    </p>
-                    <div style="display: grid; gap: 8px;">
-                      ${this.localExtraPaths.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'local')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #666;">(Local)</span></div>
-                            ${this.repositoryPaths[`local:${repo}`] && this.repositoryPaths[`local:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                📂 ${this.repositoryPaths[`local:${repo}`][0]}
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                      ${this.backblazeExtraPaths.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'backblaze')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #007bff;">☁️ Backblaze</span></div>
-                            ${this.repositoryPaths[`backblaze:${repo}`] && this.repositoryPaths[`backblaze:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                📂 ${this.repositoryPaths[`backblaze:${repo}`][0]}
                               </div>
                             ` : ''}
                           </div>

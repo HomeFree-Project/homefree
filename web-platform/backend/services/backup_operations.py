@@ -52,6 +52,15 @@ class BackupOperations:
     RESTORE_PID_FILE = RESTORE_STATE_DIR / "restore.pid"
     RESTORE_LOG_FILE_REF = RESTORE_STATE_DIR / "restore.log"
     RESTORE_OFFSET_FILE = RESTORE_STATE_DIR / "restore.offset"
+    RESTORE_STATUS_FILE = RESTORE_STATE_DIR / "restore-status.json"
+
+    # Server-side cache for list_services (persists until force refresh)
+    _services_cache: Dict[str, Any] = {}  # Cache by source (local, backblaze)
+    _services_cache_timestamp: Dict[str, float] = {}  # Timestamp by source
+
+    # Server-side cache for get_repository_paths (persists until force refresh)
+    _paths_cache: Dict[str, Any] = {}  # Cache by "source:service"
+    _paths_cache_timestamp: Dict[str, float] = {}  # Timestamp by "source:service"
 
     _current_restore_process = None
     _current_restore_output_file = None
@@ -67,12 +76,13 @@ class BackupOperations:
         BackupOperations.RESTORE_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def list_services(source: BackupSource = BackupSource.AUTO) -> Dict[str, Any]:
+    def list_services(source: BackupSource = BackupSource.AUTO, force_refresh: bool = False) -> Dict[str, Any]:
         """
         List all services that have backups available.
 
         Args:
             source: Backup source (auto, local, or backblaze)
+            force_refresh: If True, bypass cache and fetch fresh data
 
         Returns:
             Dictionary with:
@@ -81,6 +91,17 @@ class BackupOperations:
                 - error: str (if failed)
         """
         try:
+            # Check cache unless force refresh
+            cache_key = source.value
+            if not force_refresh:
+                cached_data = BackupOperations._services_cache.get(cache_key)
+                if cached_data:
+                    cached_timestamp = BackupOperations._services_cache_timestamp.get(cache_key, 0)
+                    age = datetime.now().timestamp() - cached_timestamp
+                    logger.info(f"Returning cached services for {cache_key} (age: {age:.1f}s)")
+                    return cached_data
+
+            logger.info(f"Fetching fresh services list for {cache_key}")
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-services"]
             if source != BackupSource.AUTO:
                 cmd.extend(["--source", source.value])
@@ -101,10 +122,17 @@ class BackupOperations:
                     # Skip empty lines, lines with ANSI codes, or log prefixes
                     if line and '\x1b' not in line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]']):
                         services.append(line)
-                return {
+
+                response = {
                     'success': True,
                     'services': services
                 }
+
+                # Cache the result
+                BackupOperations._services_cache[cache_key] = response
+                BackupOperations._services_cache_timestamp[cache_key] = datetime.now().timestamp()
+
+                return response
             else:
                 return {
                     'success': False,
@@ -283,13 +311,14 @@ class BackupOperations:
             }
 
     @staticmethod
-    def get_repository_paths(service: str, source: BackupSource = BackupSource.AUTO) -> Dict[str, Any]:
+    def get_repository_paths(service: str, source: BackupSource = BackupSource.AUTO, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Get the list of paths backed up in a repository.
 
         Args:
             service: Service/repository name
             source: Backup source (auto, local, or backblaze)
+            force_refresh: If True, bypass cache and fetch fresh data
 
         Returns:
             Dictionary with:
@@ -298,6 +327,18 @@ class BackupOperations:
                 - error: str (if failed)
         """
         try:
+            # Check cache unless force refresh
+            cache_key = f"{source.value}:{service}"
+            if not force_refresh:
+                cached_data = BackupOperations._paths_cache.get(cache_key)
+                if cached_data:
+                    cached_timestamp = BackupOperations._paths_cache_timestamp.get(cache_key, 0)
+                    age = datetime.now().timestamp() - cached_timestamp
+                    logger.info(f"Returning cached paths for {cache_key} (age: {age:.1f}s)")
+                    return cached_data
+
+            logger.info(f"Fetching fresh paths for {cache_key}")
+
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-paths", service]
             if source != BackupSource.AUTO:
                 cmd.extend(["--source", source.value])
@@ -317,10 +358,17 @@ class BackupOperations:
                     # Skip empty lines, lines with ANSI codes, or log prefixes
                     if line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]', 'snapshot', 'repository']):
                         paths.append(line)
-                return {
+
+                response = {
                     'success': True,
                     'paths': paths
                 }
+
+                # Cache the result (no expiration)
+                BackupOperations._paths_cache[cache_key] = response
+                BackupOperations._paths_cache_timestamp[cache_key] = datetime.now().timestamp()
+
+                return response
             else:
                 return {
                     'success': False,
@@ -344,12 +392,38 @@ class BackupOperations:
             }
 
     @staticmethod
+    def _write_restore_status(service: str, restore_type: str):
+        """Write restore status to file for tracking."""
+        try:
+            BackupOperations.RESTORE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            status = {
+                'running': True,
+                'service': service,
+                'type': restore_type,
+                'started_at': datetime.now().isoformat()
+            }
+            with open(BackupOperations.RESTORE_STATUS_FILE, 'w') as f:
+                json.dump(status, f)
+        except Exception as e:
+            logger.warning(f"Failed to write restore status: {e}")
+
+    @staticmethod
+    def _clear_restore_status():
+        """Clear restore status file."""
+        try:
+            if BackupOperations.RESTORE_STATUS_FILE.exists():
+                BackupOperations.RESTORE_STATUS_FILE.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to clear restore status: {e}")
+
+    @staticmethod
     def restore_service(
         service: str,
         snapshot_id: Optional[str] = None,
         source: BackupSource = BackupSource.AUTO,
         dry_run: bool = False,
-        create_snapshot: bool = False
+        create_snapshot: bool = False,
+        _skip_status_tracking: bool = False
     ) -> Dict[str, Any]:
         """
         Restore a service from backup.
@@ -360,6 +434,7 @@ class BackupOperations:
             source: Backup source (auto, local, or backblaze)
             dry_run: If True, only show what would be restored
             create_snapshot: If True, create a snapshot before restoring
+            _skip_status_tracking: Internal flag to skip status tracking (when called from restore_all)
 
         Returns:
             Dictionary with:
@@ -368,6 +443,10 @@ class BackupOperations:
                 - error: str (if failed)
         """
         try:
+            # Write restore status before starting (unless called from restore_all)
+            if not _skip_status_tracking:
+                BackupOperations._write_restore_status(service, 'service')
+
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "restore", service]
 
             if snapshot_id:
@@ -423,12 +502,17 @@ class BackupOperations:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            # Clear restore status when done (unless called from restore_all)
+            if not _skip_status_tracking:
+                BackupOperations._clear_restore_status()
 
     @staticmethod
     def restore_all(
         snapshot_id: Optional[str] = None,
         source: BackupSource = BackupSource.AUTO,
-        dry_run: bool = False
+        dry_run: bool = False,
+        include_system_config: bool = False
     ) -> Dict[str, Any]:
         """
         Restore all services from backup.
@@ -437,6 +521,7 @@ class BackupOperations:
             snapshot_id: Specific snapshot ID to restore (None = latest)
             source: Backup source (auto, local, or backblaze)
             dry_run: If True, only show what would be restored
+            include_system_config: If True, include system-config in restore
 
         Returns:
             Dictionary with:
@@ -445,6 +530,70 @@ class BackupOperations:
                 - error: str (if failed)
         """
         try:
+            # Write restore status before starting (use "ALL" as service name for restore-all)
+            BackupOperations._write_restore_status("ALL", 'all')
+
+            # If system-config should be excluded, restore services individually
+            if not include_system_config:
+                logger.info("Excluding system-config from restore-all")
+
+                # Get list of all services
+                services_result = BackupOperations.list_services(source)
+                if not services_result['success']:
+                    return {
+                        'success': False,
+                        'error': f"Failed to list services: {services_result.get('error', 'Unknown error')}"
+                    }
+
+                all_services = services_result.get('services', [])
+                system_config = services_result.get('system_config', [])
+                extra_paths = services_result.get('extra_paths', [])
+
+                # Combine all repositories except system-config
+                repositories_to_restore = all_services + extra_paths
+
+                if not repositories_to_restore:
+                    return {
+                        'success': False,
+                        'error': 'No repositories found to restore'
+                    }
+
+                logger.info(f"Restoring {len(repositories_to_restore)} repositories (excluding system-config)")
+
+                # Restore each repository individually
+                combined_output = []
+                failed_services = []
+
+                for service in repositories_to_restore:
+                    logger.info(f"Restoring {service}...")
+                    result = BackupOperations.restore_service(
+                        service=service,
+                        snapshot_id=snapshot_id,
+                        source=source,
+                        dry_run=dry_run,
+                        _skip_status_tracking=True  # restore_all manages status tracking
+                    )
+
+                    combined_output.append(f"=== Restoring {service} ===")
+                    combined_output.append(result.get('output', ''))
+
+                    if not result['success']:
+                        failed_services.append(service)
+                        logger.error(f"Failed to restore {service}: {result.get('error', 'Unknown error')}")
+
+                if failed_services:
+                    return {
+                        'success': False,
+                        'output': '\n'.join(combined_output),
+                        'error': f"Failed to restore {len(failed_services)} repositories: {', '.join(failed_services)}"
+                    }
+                else:
+                    return {
+                        'success': True,
+                        'output': '\n'.join(combined_output)
+                    }
+
+            # Otherwise, use the standard restore-all command
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "restore-all"]
 
             if snapshot_id:
@@ -496,6 +645,9 @@ class BackupOperations:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            # Always clear restore status when done
+            BackupOperations._clear_restore_status()
 
     @staticmethod
     def get_backup_config_status() -> Dict[str, Any]:
@@ -721,11 +873,29 @@ class BackupOperations:
             )
             sync_running = sync_result.stdout.strip() in ['active', 'activating']
 
+            # Check restore status from status file
+            restore_running = False
+            active_restore = None
+            restore_type = None
+
+            try:
+                if BackupOperations.RESTORE_STATUS_FILE.exists():
+                    with open(BackupOperations.RESTORE_STATUS_FILE, 'r') as f:
+                        restore_status = json.load(f)
+                        restore_running = restore_status.get('running', False)
+                        active_restore = restore_status.get('service')
+                        restore_type = restore_status.get('type')
+            except Exception as e:
+                logger.warning(f"Error reading restore status file: {e}")
+
             return {
                 'success': True,
                 'backup_running': len(active_backups) > 0,
                 'active_backups': active_backups,
-                'sync_running': sync_running
+                'sync_running': sync_running,
+                'restore_running': restore_running,
+                'active_restore': active_restore,
+                'restore_type': restore_type
             }
 
         except subprocess.TimeoutExpired:

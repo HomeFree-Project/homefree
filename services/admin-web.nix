@@ -427,12 +427,28 @@ in
           public = cfg.services.admin.public;
 
           extraCaddyConfig = ''
+            # Service state endpoint - always available (served directly by Caddy)
+            handle /api/service-state {
+              root * /var/lib/homefree-admin
+              try_files service-state.json
+              file_server
+            }
+
             # Override default behavior - proxy API first, then serve static files
             @api {
               path /api/* /health
             }
             handle @api {
-              reverse_proxy localhost:8000
+              reverse_proxy localhost:8000 {
+                # Handle backend unavailability gracefully
+                @backend_down status 502 503 504
+                handle_response @backend_down {
+                  # Serve state file when backend is down
+                  root * /var/lib/homefree-admin
+                  rewrite * /service-state.json
+                  file_server
+                }
+              }
             }
 
             # Override default caching for JS/CSS - disable aggressive caching

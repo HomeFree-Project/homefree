@@ -175,11 +175,23 @@ class SystemModule extends LitElement {
     const keys = [...this.config.system.authorizedKeys, this.newSshKey.trim()];
     this.handleFieldChange('system.authorizedKeys', keys);
     this.newSshKey = '';
+
+    // Notify parent that SSH keys have changed
+    this.dispatchEvent(new CustomEvent('ssh-keys-changed', {
+      bubbles: true,
+      composed: true
+    }));
   }
 
   removeSshKey(index) {
     const keys = this.config.system.authorizedKeys.filter((_, i) => i !== index);
     this.handleFieldChange('system.authorizedKeys', keys);
+
+    // Notify parent that SSH keys have changed
+    this.dispatchEvent(new CustomEvent('ssh-keys-changed', {
+      bubbles: true,
+      composed: true
+    }));
   }
 
   render() {
@@ -356,7 +368,11 @@ class SystemModule extends LitElement {
 
           <div style="margin-top: 16px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px; font-size: 13px; color: #1d1d1f;">
             <strong>💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
-            You'll need its corresponding private key to manage secrets through the admin UI.
+            <ul style="margin: 8px 0 0 20px; padding: 0;">
+              <li>After adding a key, click "Save & Apply" to activate it</li>
+              <li>Secrets fields (on Backups and Services pages) will be enabled after the rebuild completes</li>
+              <li>You'll need the corresponding private key to manage secrets through the admin UI</li>
+            </ul>
           </div>
         </config-section>
       </div>

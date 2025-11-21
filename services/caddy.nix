@@ -51,6 +51,51 @@ in
     '';
   };
 
+  # Service to install Caddy's root CA into system trust store in development mode
+  systemd.services.caddy-trust-root-ca = lib.mkIf config.homefree.development {
+    description = "Install Caddy root CA certificate";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "caddy.service" ];
+    requires = [ "caddy.service" ];
+    path = with pkgs; [ coreutils ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      # Wait for Caddy to generate the root CA (up to 30 seconds)
+      for i in {1..30}; do
+        if [ -f /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+          break
+        fi
+        sleep 1
+      done
+
+      # Install the root CA into the system trust store
+      if [ -f /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        # Copy to the system CA certificates directory
+        mkdir -p /etc/ssl/certs
+        cp /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt /etc/ssl/certs/caddy-root-ca.pem
+        chmod 644 /etc/ssl/certs/caddy-root-ca.pem
+
+        # Get the certificate hash for symlinking (OpenSSL format)
+        CERT_HASH=$(${pkgs.openssl}/bin/openssl x509 -in /etc/ssl/certs/caddy-root-ca.pem -noout -hash)
+
+        # Create the hash symlink that OpenSSL/NSS expects
+        if [ -n "$CERT_HASH" ]; then
+          ln -sf /etc/ssl/certs/caddy-root-ca.pem /etc/ssl/certs/$CERT_HASH.0
+          echo "Caddy root CA installed: /etc/ssl/certs/caddy-root-ca.pem (hash: $CERT_HASH)"
+        else
+          echo "Warning: Failed to get certificate hash"
+          exit 1
+        fi
+      else
+        echo "Warning: Caddy root CA not found at /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt"
+        exit 1
+      fi
+    '';
+  };
+
   nixpkgs.overlays = [
     (import ../overlays/caddy-with-plugins.nix)
   ] ++ lib.optional (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) (final: prev: {

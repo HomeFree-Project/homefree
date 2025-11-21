@@ -6,7 +6,9 @@ Instructions: Complete the next bullet in TODOS.md. Create a plan for this item 
 
 - Templatize the flake.nix installed by install.py and update the /scripts/build-image.sh script to substitute the current branch name appended to the homefree flake
 - If hostname is changed, the flake configuration needs to be changed. or a build script that builds the fixed configuration name
+- split development-mode into development-mode and vm-mode, which each have their own config includes in /etc/nixos
 - scrub out all references to "erahhal"
+- Make sudo require a password unless in dev mode
 
 ### Web Installer
 
@@ -45,3 +47,10 @@ Note: System config is at /etc/nixos
 - For the status page, add various system details, the same as those in the old admin UI at services/deprecated/admin/site/components/hf-system-status.js
 - The status of the system on the Status page is too simple, and only takes into account the last build. Create a system health module that takes into account the last build status, as well as whether any systemd services have failed, low disk space, lack of connectivity, and SMART status. Have it return a list of issues as warnings and errors, and a status, with error if there is at least one error, warning if there are no errorrs and at least one warning, and healthy otherwise. and display them on the Status page
 - The admin-api service is still often not restarting after a build if there have been changes to it. We've made changes to avoid the admin-api from being restarting during the build because it interferes with access to the admin UI, but we still need to restart it when it has changed.
+
+### Code
+
+- move to module-based dev
+- Try prompt: Make sure resulting code is documented, with tests, and highly encapsulated with clear well defined interfaces. Build in a way that an LLM with minimal context could come in later and make changes with minimal mistakes and guidance.
+- Prompt: Best framework for automating e2e testing by LLM
+

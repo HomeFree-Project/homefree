@@ -24,6 +24,7 @@ class RestoreRequest(BaseModel):
     source: str = "auto"  # auto, local, or backblaze
     dry_run: bool = False
     create_snapshot: bool = False
+    include_system_config: bool = False  # Whether to include system-config in restore-all
 
 
 class BackupConfigStatusResponse(BaseModel):
@@ -95,12 +96,13 @@ async def get_backup_config_status():
 
 
 @router.get("/services", response_model=ServicesResponse)
-async def list_services(source: str = "auto"):
+async def list_services(source: str = "auto", force: bool = False):
     """
     List all services that have backups available
 
     Args:
         source: Backup source - "auto", "local", or "backblaze"
+        force: If True, bypass cache and fetch fresh data
 
     Returns list of service names
     """
@@ -114,7 +116,7 @@ async def list_services(source: str = "auto"):
                 detail=f"Invalid source: {source}. Must be 'auto', 'local', or 'backblaze'"
             )
 
-        result = BackupOperations.list_services(source=backup_source)
+        result = BackupOperations.list_services(source=backup_source, force_refresh=force)
 
         # Categorize repositories
         all_repos = result.get('services', [])
@@ -184,13 +186,14 @@ async def list_snapshots(service: str, source: str = "auto"):
 
 
 @router.get("/services/{service}/paths", response_model=PathsResponse)
-async def list_paths(service: str, source: str = "auto"):
+async def list_paths(service: str, source: str = "auto", force: bool = False):
     """
     List all paths backed up in a repository's latest snapshot
 
     Args:
         service: Service/repository name
         source: Backup source - "auto", "local", or "backblaze"
+        force: If True, bypass cache and fetch fresh data
 
     Returns list of paths
     """
@@ -204,7 +207,7 @@ async def list_paths(service: str, source: str = "auto"):
                 detail=f"Invalid source: {source}. Must be 'auto', 'local', or 'backblaze'"
             )
 
-        result = BackupOperations.get_repository_paths(service, source=backup_source)
+        result = BackupOperations.get_repository_paths(service, source=backup_source, force_refresh=force)
         return PathsResponse(**result)
     except HTTPException:
         raise
@@ -313,7 +316,8 @@ async def restore_all(request: RestoreRequest):
         result = BackupOperations.restore_all(
             snapshot_id=request.snapshot_id,
             source=backup_source,
-            dry_run=request.dry_run
+            dry_run=request.dry_run,
+            include_system_config=request.include_system_config
         )
 
         if not result['success']:
@@ -397,6 +401,9 @@ class BackupStatusResponse(BaseModel):
     backup_running: bool = False
     active_backups: List[str] = []
     sync_running: bool = False
+    restore_running: bool = False
+    active_restore: Optional[str] = None
+    restore_type: Optional[str] = None
     error: Optional[str] = None
 
 

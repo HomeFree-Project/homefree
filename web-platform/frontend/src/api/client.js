@@ -106,6 +106,7 @@ export const rebootSystem = () => post('/api/system/reboot', {});
 
 // Admin Mode
 export const getMode = () => get('/api/mode');
+export const getServiceState = () => get('/api/service-state');
 export const getCurrentConfig = () => get('/api/config/current');
 export const validateConfig = (config) => post('/api/config/validate', config);
 export const getConfigDiff = () => get('/api/config/diff');

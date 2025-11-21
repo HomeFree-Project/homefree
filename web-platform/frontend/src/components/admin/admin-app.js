@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState } from '../../api/client.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -24,7 +24,10 @@ class AdminApp extends LitElement {
     systemHealth: { type: String },    // System health status for left nav icon
     toasts: { type: Array },           // Toast notifications stack
     statusFlashing: { type: Boolean }, // Status nav item flash animation
-    statusNeedsAttention: { type: Boolean } // Persistent flash until user clicks Status
+    statusNeedsAttention: { type: Boolean }, // Persistent flash until user clicks Status
+    hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
+    serviceReloading: { type: Boolean }, // Whether admin-api is restarting
+    serviceReloadMessage: { type: String } // Message to show during reload
   };
 
   static styles = css`
@@ -327,6 +330,52 @@ class AdminApp extends LitElement {
       margin: 32px;
     }
 
+    /* Service reload overlay */
+    .service-reload-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      backdrop-filter: blur(4px);
+    }
+
+    .service-reload-content {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      max-width: 400px;
+    }
+
+    .service-reload-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(102, 126, 234, 0.1);
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    .service-reload-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1d1d1f;
+      margin-bottom: 8px;
+    }
+
+    .service-reload-message {
+      font-size: 14px;
+      color: #86868b;
+    }
+
     .module-content {
       background: white;
       border-radius: 0;
@@ -372,6 +421,10 @@ class AdminApp extends LitElement {
     this.statusFlashing = false;
     this.statusNeedsAttention = false;
     this._toastIdCounter = 0;
+    this.hasAuthorizedKeys = false;
+    this.serviceReloading = false;
+    this.serviceReloadMessage = '';
+    this.serviceStateCheckInterval = null;
 
     // Navigation modules
     this.modules = [
@@ -432,9 +485,12 @@ class AdminApp extends LitElement {
       if (this.rebuildStatusAbortController) {
         this.rebuildStatusAbortController.abort();
       }
-      // Clear polling interval
+      // Clear polling intervals
       if (this.statusPollInterval) {
         clearInterval(this.statusPollInterval);
+      }
+      if (this.serviceStateCheckInterval) {
+        clearTimeout(this.serviceStateCheckInterval);
       }
     };
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
@@ -447,7 +503,13 @@ class AdminApp extends LitElement {
       this.loadRouteFromHash();
     });
 
+    // Check service availability before loading config
+    await this.checkServiceAvailability();
+
     await this.loadConfig();
+
+    // Load SSH key status for secrets management
+    await this.loadSSHKeyStatus();
 
     // Check if a rebuild is already in progress
     await this.checkRebuildStatus();
@@ -465,9 +527,12 @@ class AdminApp extends LitElement {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     }
 
-    // Clean up polling interval
+    // Clean up polling intervals
     if (this.statusPollInterval) {
       clearInterval(this.statusPollInterval);
+    }
+    if (this.serviceStateCheckInterval) {
+      clearTimeout(this.serviceStateCheckInterval);
     }
   }
 
@@ -496,6 +561,68 @@ class AdminApp extends LitElement {
       console.error('Failed to load config:', error);
       this.error = `Failed to load configuration: ${error.message}`;
       this.loading = false;
+    }
+  }
+
+  async loadSSHKeyStatus() {
+    try {
+      const response = await fetch('/api/secrets/keys/user');
+      if (!response.ok) {
+        console.error('Failed to load SSH key status:', response.status);
+        this.hasAuthorizedKeys = false;
+        return;
+      }
+      const data = await response.json();
+      this.hasAuthorizedKeys = data.exists || false;
+    } catch (error) {
+      console.error('Error loading SSH key status:', error);
+      this.hasAuthorizedKeys = false;
+    }
+  }
+
+  async checkServiceAvailability() {
+    /**
+     * Check if admin-api service is reloading/restarting
+     * Polls /api/service-state and shows overlay if status is 'restarting'
+     */
+    try {
+      const state = await getServiceState();
+
+      if (state.admin_api_status === 'restarting') {
+        this.serviceReloading = true;
+        this.serviceReloadMessage = state.message || 'Admin API is restarting...';
+
+        // Poll again in 2 seconds
+        if (this.serviceStateCheckInterval) {
+          clearTimeout(this.serviceStateCheckInterval);
+        }
+        this.serviceStateCheckInterval = setTimeout(() => {
+          this.checkServiceAvailability();
+        }, 2000);
+      } else {
+        // Service is operational
+        this.serviceReloading = false;
+        this.serviceReloadMessage = '';
+
+        // Clear any polling
+        if (this.serviceStateCheckInterval) {
+          clearTimeout(this.serviceStateCheckInterval);
+          this.serviceStateCheckInterval = null;
+        }
+      }
+    } catch (error) {
+      // Backend is completely unavailable - show loading state
+      console.warn('Service state check failed:', error);
+      this.serviceReloading = true;
+      this.serviceReloadMessage = 'Connecting to admin API...';
+
+      // Retry in 2 seconds
+      if (this.serviceStateCheckInterval) {
+        clearTimeout(this.serviceStateCheckInterval);
+      }
+      this.serviceStateCheckInterval = setTimeout(() => {
+        this.checkServiceAvailability();
+      }, 2000);
     }
   }
 
@@ -639,6 +766,16 @@ class AdminApp extends LitElement {
    */
   setStatusNeedsAttention(needs) {
     this.statusNeedsAttention = needs;
+  }
+
+  /**
+   * Handle SSH keys changed event from system-module
+   * Note: SSH keys are only available for secrets management after Save & Apply
+   * So we don't refresh here - it will refresh after successful rebuild
+   */
+  handleSSHKeysChanged() {
+    // No-op: SSH key status will be refreshed after rebuild completes
+    // The key must be saved to the system config before it can be used for secrets
   }
 
   toggleSidebar() {
@@ -1175,6 +1312,8 @@ class AdminApp extends LitElement {
               // Reload config after success, then clear pending changes
               setTimeout(async () => {
                 await this.loadConfig();
+                // Reload SSH key status in case user added keys
+                await this.loadSSHKeyStatus();
                 // Now that serverConfig is updated, clear optimistic updates
                 this.pendingConfig = {};
                 this.updateMergedConfig();
@@ -1195,6 +1334,8 @@ class AdminApp extends LitElement {
               // Reload config after partial success, then clear pending changes
               setTimeout(async () => {
                 await this.loadConfig();
+                // Reload SSH key status in case user added keys
+                await this.loadSSHKeyStatus();
                 // Now that serverConfig is updated, clear optimistic updates
                 this.pendingConfig = {};
                 this.updateMergedConfig();
@@ -1266,6 +1407,7 @@ class AdminApp extends LitElement {
           <system-module
             .config=${this.config}
             @config-change=${this.handleConfigChange}
+            @ssh-keys-changed=${this.handleSSHKeysChanged}
           ></system-module>
         `;
 
@@ -1290,6 +1432,7 @@ class AdminApp extends LitElement {
           <services-module
             .serverConfig=${this.serverConfig}
             .pendingConfig=${this.pendingConfig}
+            .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @service-toggle=${this.handleServiceToggle}
             @service-public-toggle=${this.handleServicePublicToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
@@ -1305,6 +1448,7 @@ class AdminApp extends LitElement {
         return html`
           <backups-module
             .config=${this.config}
+            .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @config-change=${this.handleConfigChange}
           ></backups-module>
         `;
@@ -1438,6 +1582,17 @@ ${JSON.stringify(this.config, null, 2)}
           ></toast-notification>
         `)}
       </div>
+
+      <!-- Service Reload Overlay -->
+      ${this.serviceReloading ? html`
+        <div class="service-reload-overlay">
+          <div class="service-reload-content">
+            <div class="service-reload-spinner"></div>
+            <div class="service-reload-title">Service Restarting</div>
+            <div class="service-reload-message">${this.serviceReloadMessage}</div>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

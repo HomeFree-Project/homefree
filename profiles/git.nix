@@ -38,7 +38,10 @@
         path = "~/.gitconfig.local";
       };
       safe = {
-        directory = "/etc/nixos";
+        directory = [
+          "/etc/nixos"
+          "/home/${config.homefree.system.adminUsername}/homefree"
+        ];
       };
 
       user = {

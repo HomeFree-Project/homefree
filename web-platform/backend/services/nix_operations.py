@@ -37,6 +37,7 @@ class NixOperations:
     REBUILD_PID_FILE = REBUILD_STATE_DIR / "rebuild.pid"
     REBUILD_LOG_FILE_REF = REBUILD_STATE_DIR / "rebuild.log"
     REBUILD_OFFSET_FILE = REBUILD_STATE_DIR / "rebuild.offset"
+    SERVICE_STATE_FILE = REBUILD_STATE_DIR / "service-state.json"
 
     _current_rebuild_process = None
     _current_rebuild_output_file = None
@@ -569,6 +570,20 @@ class NixOperations:
 
             if needs_reload:
                 logger.info("admin-api service changed, restarting...")
+
+                # Write state file to notify frontend of restart
+                try:
+                    NixOperations.SERVICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    state_data = {
+                        "admin_api_status": "restarting",
+                        "timestamp": datetime.now().isoformat(),
+                        "estimated_duration_seconds": 10,
+                        "message": "Admin API is restarting after rebuild"
+                    }
+                    NixOperations.SERVICE_STATE_FILE.write_text(json.dumps(state_data, indent=2))
+                    logger.info("Wrote service state file indicating restart")
+                except Exception as e:
+                    logger.error(f"Error writing service state file: {e}")
 
                 # Reload systemd daemon
                 subprocess.run(

@@ -107,6 +107,23 @@ app.add_middleware(
 app.include_router(secrets_router)
 app.include_router(backups_router)
 
+# Startup event handler
+@app.on_event("startup")
+async def clear_service_restart_flag():
+    """Clear service restart flag on startup to indicate service is operational"""
+    try:
+        service_state_file = Path("/var/lib/homefree-admin/service-state.json")
+        state_data = {
+            "admin_api_status": "operational",
+            "timestamp": datetime.now().isoformat(),
+            "message": "Admin API is running normally"
+        }
+        service_state_file.parent.mkdir(parents=True, exist_ok=True)
+        service_state_file.write_text(json.dumps(state_data, indent=2))
+        logger.info("Service state file updated to operational status")
+    except Exception as e:
+        logger.error(f"Error clearing service restart flag: {e}")
+
 # Request/Response Models
 class NetworkConfigRequest(BaseModel):
     wan_interface: str
@@ -224,8 +241,28 @@ async def root():
 # Health check endpoint
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
-    return {"status": "ok", "message": "HomeFree Installer Backend is running"}
+    """Health check endpoint with service status"""
+    try:
+        service_state_file = Path("/var/lib/homefree-admin/service-state.json")
+        if service_state_file.exists():
+            state_data = json.loads(service_state_file.read_text())
+            return {
+                "status": "ok",
+                "message": "HomeFree Installer Backend is running",
+                "service_state": state_data
+            }
+    except Exception as e:
+        logger.warning(f"Error reading service state file: {e}")
+
+    # Fallback if state file doesn't exist or can't be read
+    return {
+        "status": "ok",
+        "message": "HomeFree Installer Backend is running",
+        "service_state": {
+            "admin_api_status": "operational",
+            "timestamp": datetime.now().isoformat()
+        }
+    }
 
 @app.get("/api/status")
 async def status():

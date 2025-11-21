@@ -20,7 +20,7 @@ class ServicesModule extends LitElement {
     secretsSchema: { type: Object },     // Secrets schema for all services
     secretsStatus: { type: Object },     // Status of which secrets are set
     optionsSchema: { type: Object },     // Service options schema for all services
-    userKeyConfigured: { type: Boolean }, // Whether user SSH key is configured
+    hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured (from parent)
     expandedServices: { type: Set, state: true } // Track which services have secrets expanded
   };
 
@@ -462,7 +462,7 @@ class ServicesModule extends LitElement {
     this.secretsSchema = {};
     this.secretsStatus = {};
     this.optionsSchema = {};
-    this.userKeyConfigured = false;
+    this.hasAuthorizedKeys = false;
     this.expandedServices = new Set();
   }
 
@@ -574,12 +574,7 @@ class ServicesModule extends LitElement {
         this.secretsStatus = statusData.secrets || {};
       }
 
-      // Check if user key is configured
-      const userKeyResponse = await fetch('/api/secrets/keys/user');
-      if (userKeyResponse.ok) {
-        const userKeyData = await userKeyResponse.json();
-        this.userKeyConfigured = userKeyData.exists || false;
-      }
+      // Note: hasAuthorizedKeys is now passed from parent (admin-app)
     } catch (error) {
       console.error('Error loading secrets data:', error);
       // Non-fatal - secrets UI will show appropriate disabled state
@@ -1130,7 +1125,7 @@ class ServicesModule extends LitElement {
       <div class="secrets-section">
         <div class="secrets-header">
           <span>Secrets (${setCount}/${secretsCount} configured)</span>
-          ${!this.userKeyConfigured ? html`
+          ${!this.hasAuthorizedKeys ? html`
             <span style="color: #ff3b30; font-size: 12px;">⚠️ SSH key required</span>
           ` : ''}
         </div>
@@ -1145,7 +1140,7 @@ class ServicesModule extends LitElement {
                 .label=${secretKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
                 .description=${secretInfo.description || ''}
                 .required=${secretInfo.required || false}
-                .disabled=${!this.userKeyConfigured}
+                .disabled=${!this.hasAuthorizedKeys}
                 .exists=${exists}
                 @secret-updated=${this.handleSecretUpdated}
               ></secrets-input>
