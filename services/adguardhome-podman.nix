@@ -303,14 +303,13 @@ in
     wants = [ "unbound.service" ];
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${pkgs.socat}/bin/socat UDP4-LISTEN:53,fork,bind=127.0.0.1 UDP4:127.0.0.1:53530";
+      # Use dnsmasq instead of socat - properly handles concurrent UDP DNS queries
+      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq --no-daemon --bind-interfaces --listen-address=127.0.0.1 --port=53 --server=127.0.0.1#53530 --no-resolv --no-hosts --log-queries";
       Restart = "no";
-      # Ensure all child processes are killed when service stops
-      KillMode = "mixed";
+      # Clean shutdown
+      KillMode = "process";
       KillSignal = "SIGTERM";
-      # Short timeout for clean shutdown
       TimeoutStopSec = 5;
-      # Treat exit code 143 (SIGTERM: 128+15) as successful completion, not failure
       SuccessExitStatus = 143;
     };
   };
@@ -320,13 +319,13 @@ in
     wants = [ "unbound.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
-      # Cleanup any leftover socat processes on service stop/restart/failure
+      # Cleanup any leftover DNS proxy processes on service stop/restart/failure
       ExecStopPost = [
         "${pkgs.writeShellScript "adguardhome-cleanup" ''
           # Stop the DNS proxy service if it's still running
           systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true
-          # Kill any leftover socat processes (belt and suspenders)
-          ${pkgs.procps}/bin/pkill -f "socat.*127.0.0.1:53.*127.0.0.1:53530" || true
+          # Kill any leftover dnsmasq processes on port 53 (belt and suspenders)
+          ${pkgs.procps}/bin/pkill -f "dnsmasq.*--port=53.*--server=127.0.0.1#53530" || true
         ''}"
       ];
       ## Bump ulimit
