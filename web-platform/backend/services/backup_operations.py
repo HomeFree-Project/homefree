@@ -128,9 +128,14 @@ class BackupOperations:
                     'services': services
                 }
 
-                # Cache the result
-                BackupOperations._services_cache[cache_key] = response
-                BackupOperations._services_cache_timestamp[cache_key] = datetime.now().timestamp()
+                # Only cache if we got actual data (don't cache empty results)
+                # This prevents caching failure states or temporary empty responses
+                if services:
+                    BackupOperations._services_cache[cache_key] = response
+                    BackupOperations._services_cache_timestamp[cache_key] = datetime.now().timestamp()
+                    logger.info(f"Cached {len(services)} services for {cache_key}")
+                else:
+                    logger.warning(f"Not caching empty services list for {cache_key}")
 
                 return response
             else:
@@ -364,9 +369,14 @@ class BackupOperations:
                     'paths': paths
                 }
 
-                # Cache the result (no expiration)
-                BackupOperations._paths_cache[cache_key] = response
-                BackupOperations._paths_cache_timestamp[cache_key] = datetime.now().timestamp()
+                # Only cache if we got actual data (don't cache empty results)
+                # This prevents caching failure states or temporary empty responses
+                if paths:
+                    BackupOperations._paths_cache[cache_key] = response
+                    BackupOperations._paths_cache_timestamp[cache_key] = datetime.now().timestamp()
+                    logger.info(f"Cached {len(paths)} paths for {cache_key}")
+                else:
+                    logger.warning(f"Not caching empty paths list for {cache_key}")
 
                 return response
             else:
