@@ -409,22 +409,33 @@ class BackupsModule extends LitElement {
   async loadServices(force = false) {
     this.loading = true;
     try {
-      // Build query string with force parameter if needed
+      // Build query string with force and include_paths parameters
       const forceParam = force ? '&force=true' : '';
 
-      // Fetch from both local and Backblaze sources
+      // Fetch from both local and Backblaze sources WITH paths included
       const [localResponse, backblazeResponse] = await Promise.all([
-        fetch(`/api/backups/services?source=local${forceParam}`),
-        fetch(`/api/backups/services?source=backblaze${forceParam}`)
+        fetch(`/api/backups/services?source=local&include_paths=true${forceParam}`),
+        fetch(`/api/backups/services?source=backblaze&include_paths=true${forceParam}`)
       ]);
 
       // Process local backups
-      let localData = { services: [], system_config: [], extra_paths: [] };
+      let localData = { services: [], system_config: [], extra_paths: [], paths: {} };
       if (localResponse.ok) {
         localData = await localResponse.json();
         this.localServices = localData.services || [];
         this.localSystemConfig = localData.system_config || [];
         this.localExtraPaths = localData.extra_paths || [];
+
+        // Extract paths from response and store with source prefix
+        if (localData.paths) {
+          for (const [repo, paths] of Object.entries(localData.paths)) {
+            const key = `local:${repo}`;
+            this.repositoryPaths = {
+              ...this.repositoryPaths,
+              [key]: paths
+            };
+          }
+        }
       } else {
         this.localServices = [];
         this.localSystemConfig = [];
@@ -432,12 +443,23 @@ class BackupsModule extends LitElement {
       }
 
       // Process Backblaze backups
-      let backblazeData = { services: [], system_config: [], extra_paths: [] };
+      let backblazeData = { services: [], system_config: [], extra_paths: [], paths: {} };
       if (backblazeResponse.ok) {
         backblazeData = await backblazeResponse.json();
         this.backblazeServices = backblazeData.services || [];
         this.backblazeSystemConfig = backblazeData.system_config || [];
         this.backblazeExtraPaths = backblazeData.extra_paths || [];
+
+        // Extract paths from response and store with source prefix
+        if (backblazeData.paths) {
+          for (const [repo, paths] of Object.entries(backblazeData.paths)) {
+            const key = `backblaze:${repo}`;
+            this.repositoryPaths = {
+              ...this.repositoryPaths,
+              [key]: paths
+            };
+          }
+        }
       } else {
         this.backblazeServices = [];
         this.backblazeSystemConfig = [];
@@ -449,14 +471,8 @@ class BackupsModule extends LitElement {
       this.systemConfig = [...new Set([...this.localSystemConfig, ...this.backblazeSystemConfig])];
       this.extraPaths = [...new Set([...this.localExtraPaths, ...this.backblazeExtraPaths])];
 
-      // Load paths for all repositories from both sources
-      const localRepos = [...this.localServices, ...this.localSystemConfig, ...this.localExtraPaths];
-      const backblazeRepos = [...this.backblazeServices, ...this.backblazeSystemConfig, ...this.backblazeExtraPaths];
-
-      await Promise.all([
-        ...localRepos.map(repo => this.loadRepositoryPaths(repo, 'local', force)),
-        ...backblazeRepos.map(repo => this.loadRepositoryPaths(repo, 'backblaze', force))
-      ]);
+      // Paths are now loaded directly in the services response above
+      // No need for separate loadRepositoryPaths calls
 
       // Track when services were loaded for display
       this.lastServicesRefresh = Date.now();
@@ -644,8 +660,43 @@ class BackupsModule extends LitElement {
       });
 
       if (response.ok) {
-        modal.updateStatus('success', `Successfully restored entire system (${serviceCount} repositories)!`);
-        this.showNotification(`Successfully restored entire system (${serviceCount} repositories)!`, 'success');
+        const result = await response.json();
+
+        // Wait for restore to actually start (with timeout)
+        modal.updateStatus('progress', 'Waiting for restore to start...');
+
+        let restoreStarted = false;
+        const maxWaitTime = 3000; // 3 seconds max
+        const pollInterval = 300; // Check every 300ms
+        const maxAttempts = Math.floor(maxWaitTime / pollInterval);
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await this.pollBackupStatus();
+
+          if (this.backupStatus?.restore_running) {
+            restoreStarted = true;
+            break;
+          }
+
+          // Wait before next poll
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        if (restoreStarted) {
+          modal.updateStatus('progress', `Restore in progress...`);
+          this.showNotification(`Restore started for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`, 'success');
+
+          // Poll restore status until completion
+          await this.waitForRestoreCompletion(modal, serviceCount);
+        } else {
+          // Restore may start later, still show success
+          modal.updateStatus('success', `Restore initiated for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`);
+          this.showNotification(`Restore initiated for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`, 'success');
+        }
+
+        // Continue polling to keep status updated
+        this.startStatusPolling();
+
         await this.loadServices(); // Refresh the list
       } else {
         const error = await response.json();
@@ -663,6 +714,31 @@ class BackupsModule extends LitElement {
     } finally {
       this.restoreAllInProgress = false;
     }
+  }
+
+  async waitForRestoreCompletion(modal, serviceCount) {
+    return new Promise((resolve) => {
+      const pollInterval = 2000; // Check every 2 seconds
+      const checkRestore = async () => {
+        await this.pollBackupStatus();
+
+        if (this.backupStatus?.restore_running) {
+          // Update progress with current service being restored
+          const currentService = this.backupStatus.active_restore || 'system';
+          modal.updateStatus('progress', `Restoring: ${currentService}...`);
+
+          // Continue polling
+          setTimeout(checkRestore, pollInterval);
+        } else {
+          // Restore completed
+          modal.updateStatus('success', `Successfully restored entire system (${serviceCount} repository${serviceCount !== 1 ? 's' : ''})!`);
+          this.showNotification(`Successfully restored entire system (${serviceCount} repository${serviceCount !== 1 ? 's' : ''})!`, 'success');
+          resolve();
+        }
+      };
+
+      checkRestore();
+    });
   }
 
   async handleTriggerBackups() {

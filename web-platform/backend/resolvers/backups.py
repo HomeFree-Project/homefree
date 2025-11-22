@@ -42,6 +42,7 @@ class ServicesResponse(BaseModel):
     services: List[str]
     system_config: List[str] = []
     extra_paths: List[str] = []
+    paths: Optional[Dict[str, List[str]]] = None  # Optional: service -> paths mapping
     error: Optional[str] = None
 
 
@@ -96,15 +97,16 @@ async def get_backup_config_status():
 
 
 @router.get("/services", response_model=ServicesResponse)
-async def list_services(source: str = "auto", force: bool = False):
+async def list_services(source: str = "auto", force: bool = False, include_paths: bool = False):
     """
     List all services that have backups available
 
     Args:
         source: Backup source - "auto", "local", or "backblaze"
         force: If True, bypass cache and fetch fresh data
+        include_paths: If True, include repository paths in response
 
-    Returns list of service names
+    Returns list of service names (and optionally paths)
     """
     try:
         # Convert source string to enum
@@ -135,11 +137,29 @@ async def list_services(source: str = "auto", force: bool = False):
             else:
                 services.append(repo)
 
+        # Optionally fetch paths for all repositories
+        paths_map = None
+        if include_paths:
+            paths_map = {}
+            # Fetch paths for all repositories
+            for repo in all_repos:
+                path_result = BackupOperations.get_repository_paths(
+                    service=repo,
+                    source=backup_source,
+                    force_refresh=force
+                )
+                if path_result.get('success'):
+                    paths_map[repo] = path_result.get('paths', [])
+                else:
+                    # Store empty list if fetch failed
+                    paths_map[repo] = []
+
         return ServicesResponse(
             success=result['success'],
             services=services,
             system_config=system_config,
             extra_paths=extra_paths,
+            paths=paths_map,
             error=result.get('error')
         )
     except HTTPException:

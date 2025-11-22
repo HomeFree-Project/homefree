@@ -455,6 +455,8 @@ class BackupOperations:
         try:
             # Write restore status before starting (unless called from restore_all)
             if not _skip_status_tracking:
+                # Clear any stale status before starting new restore
+                BackupOperations._clear_restore_status()
                 BackupOperations._write_restore_status(service, 'service')
 
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "restore", service]
@@ -478,33 +480,39 @@ class BackupOperations:
             # Log the command for debugging
             logger.info(f"Running restore command: {' '.join(cmd)}")
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=1800  # 30 minutes for restore
-            )
+            # Create log file for this restore operation
+            BackupOperations._ensure_directories()
+            log_file = BackupOperations.LOG_DIR / f"restore-{service}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
 
-            # Combine stdout and stderr since log functions write to stderr
-            combined_output = result.stdout + result.stderr if result.stderr else result.stdout
+            # Run restore in background using Popen (non-blocking)
+            with open(log_file, 'w') as f:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
 
-            if result.returncode == 0:
-                return {
-                    'success': True,
-                    'output': strip_ansi_codes(combined_output)
-                }
-            else:
-                return {
-                    'success': False,
-                    'output': strip_ansi_codes(combined_output),
-                    'error': strip_ansi_codes(result.stderr or "Restore failed")
-                }
+            # Store process info for monitoring
+            BackupOperations._current_restore_process = process
+            BackupOperations._current_restore_output_file = log_file
+            BackupOperations._current_restore_output_offset = 0
 
-        except subprocess.TimeoutExpired:
-            logger.error("restore timed out")
+            logger.info(f"Restore process started in background (PID: {process.pid}), logging to {log_file}")
+
+            # Return immediately - process runs in background
+            return {
+                'success': True,
+                'message': f'Restore started in background (PID: {process.pid})',
+                'log_file': str(log_file),
+                'pid': process.pid
+            }
+
+        except FileNotFoundError:
+            logger.error(f"Restore script not found: {BackupOperations.RESTORE_SCRIPT}")
             return {
                 'success': False,
-                'error': 'Restore timed out after 30 minutes'
+                'error': f'Restore script not found: {BackupOperations.RESTORE_SCRIPT}'
             }
         except Exception as e:
             logger.error(f"Error restoring service: {e}")
@@ -512,10 +520,8 @@ class BackupOperations:
                 'success': False,
                 'error': str(e)
             }
-        finally:
-            # Clear restore status when done (unless called from restore_all)
-            if not _skip_status_tracking:
-                BackupOperations._clear_restore_status()
+        # Note: Status is NOT cleared here since process runs in background
+        # Status will be cleared when process finishes or next restore starts
 
     @staticmethod
     def restore_all(
@@ -540,6 +546,8 @@ class BackupOperations:
                 - error: str (if failed)
         """
         try:
+            # Clear any stale status before starting new restore
+            BackupOperations._clear_restore_status()
             # Write restore status before starting (use "ALL" as service name for restore-all)
             BackupOperations._write_restore_status("ALL", 'all')
 
@@ -621,33 +629,39 @@ class BackupOperations:
             # Log the command for debugging
             logger.info(f"Running restore-all command: {' '.join(cmd)}")
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600  # 1 hour for restore-all
-            )
+            # Create log file for this restore operation
+            BackupOperations._ensure_directories()
+            log_file = BackupOperations.LOG_DIR / f"restore-all-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
 
-            # Combine stdout and stderr since log functions write to stderr
-            combined_output = result.stdout + result.stderr if result.stderr else result.stdout
+            # Run restore-all in background using Popen (non-blocking)
+            with open(log_file, 'w') as f:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
 
-            if result.returncode == 0:
-                return {
-                    'success': True,
-                    'output': strip_ansi_codes(combined_output)
-                }
-            else:
-                return {
-                    'success': False,
-                    'output': strip_ansi_codes(combined_output),
-                    'error': strip_ansi_codes(result.stderr or "Restore-all failed")
-                }
+            # Store process info for monitoring
+            BackupOperations._current_restore_process = process
+            BackupOperations._current_restore_output_file = log_file
+            BackupOperations._current_restore_output_offset = 0
 
-        except subprocess.TimeoutExpired:
-            logger.error("restore-all timed out")
+            logger.info(f"Restore-all process started in background (PID: {process.pid}), logging to {log_file}")
+
+            # Return immediately - process runs in background
+            return {
+                'success': True,
+                'message': f'Restore-all started in background (PID: {process.pid})',
+                'log_file': str(log_file),
+                'pid': process.pid
+            }
+
+        except FileNotFoundError:
+            logger.error(f"Restore script not found: {BackupOperations.RESTORE_SCRIPT}")
             return {
                 'success': False,
-                'error': 'Restore-all timed out after 1 hour'
+                'error': f'Restore script not found: {BackupOperations.RESTORE_SCRIPT}'
             }
         except Exception as e:
             logger.error(f"Error restoring all services: {e}")
@@ -655,9 +669,8 @@ class BackupOperations:
                 'success': False,
                 'error': str(e)
             }
-        finally:
-            # Always clear restore status when done
-            BackupOperations._clear_restore_status()
+        # Note: Status is NOT cleared here since process runs in background
+        # Status will be cleared when process finishes or next restore starts
 
     @staticmethod
     def get_backup_config_status() -> Dict[str, Any]:
@@ -888,6 +901,16 @@ class BackupOperations:
             active_restore = None
             restore_type = None
 
+            # Check if restore process is still actually running
+            if BackupOperations._current_restore_process is not None:
+                returncode = BackupOperations._current_restore_process.poll()
+                if returncode is not None:
+                    # Process finished - clear status
+                    logger.info(f"Restore process finished with exit code {returncode}, clearing status")
+                    BackupOperations._clear_restore_status()
+                    BackupOperations._current_restore_process = None
+                    BackupOperations._current_restore_output_file = None
+
             try:
                 if BackupOperations.RESTORE_STATUS_FILE.exists():
                     with open(BackupOperations.RESTORE_STATUS_FILE, 'r') as f:
@@ -895,6 +918,27 @@ class BackupOperations:
                         restore_running = restore_status.get('running', False)
                         active_restore = restore_status.get('service')
                         restore_type = restore_status.get('type')
+
+                        # Check for stale status (from before service restart)
+                        # If status file exists but we have no tracked process, it's likely stale
+                        if restore_running and BackupOperations._current_restore_process is None:
+                            started_at_str = restore_status.get('started_at')
+                            if started_at_str:
+                                try:
+                                    # Parse ISO format timestamp: 2025-11-21T14:28:38.391937
+                                    started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                                    age = (datetime.now() - started_at.replace(tzinfo=None)).total_seconds()
+
+                                    # If status is older than 30 minutes and we have no tracked process,
+                                    # assume it's stale (likely from before service restart)
+                                    if age > 1800:  # 30 minutes
+                                        logger.info(f"Clearing stale restore status (age: {age:.0f}s, no tracked process)")
+                                        BackupOperations._clear_restore_status()
+                                        restore_running = False
+                                        active_restore = None
+                                        restore_type = None
+                                except Exception as e:
+                                    logger.warning(f"Error checking restore status age: {e}")
             except Exception as e:
                 logger.warning(f"Error reading restore status file: {e}")
 
