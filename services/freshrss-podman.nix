@@ -107,6 +107,9 @@ in
         paths = [
           containerDataPath
         ];
+        postgres-databases = [
+          DB_BASE
+        ];
       };
     }
   ] else [];
