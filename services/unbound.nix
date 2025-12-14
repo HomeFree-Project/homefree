@@ -146,8 +146,7 @@ in
         # transparent - returns local data if matched, otherwise forwards to upstream DNS
         # redirect - redirect all queries for a domain to an single IP
         [
-          "\"${config.homefree.system.localDomain}\" static"
-          "\"${config.homefree.system.domain}\" transparent"
+          "\"homefree.${config.homefree.system.localDomain}\" static"
         ]
         ++
         # Primary domain and additional domains are transparent (local data + forward upstream)
@@ -229,22 +228,6 @@ in
           (domain: "\"${domain} IN A 10.0.0.1\"")
           nonPublicBaseDomains
         )
-        ++
-        # Add explicit wildcard subdomain entries for non-public proxied domains
-        # This handles cases like *.slacktopia.org when the domain is in additionalDomains (transparent zone)
-        (lib.flatten (lib.map (domain-mapping:
-          if domain-mapping.public == false then
-            lib.filter (x: x != null) (lib.map (domain:
-              # For wildcard entries, create an entry for the wildcard pattern
-              if lib.hasPrefix "*." domain then
-                "\"${domain} IN A 10.0.0.1\""
-              else
-                # For non-wildcard entries, just the domain itself (already handled above for base domains)
-                null
-            ) domain-mapping.domains)
-          else
-            []
-        ) proxiedDomains))
         ++
         ## router lan ip with public domains
         (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A 10.0.0.1\"") zones)
