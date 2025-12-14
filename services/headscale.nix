@@ -2,6 +2,20 @@
 let
   cfg = config.homefree;
   search-domains = [ cfg.system.domain cfg.system.localDomain ] ++ cfg.system.additionalDomains;
+  proxiedDomains = config.homefree.proxied-domains;
+
+  # Extract unique base domains from proxied domains (handle wildcards like *.example.com)
+  proxiedBaseDomains = lib.unique (lib.map (domain:
+    let
+      parts = lib.splitString "." domain;
+      cleanParts = lib.filter (p: p != "*") parts;
+      len = lib.length cleanParts;
+    in
+      lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
+  ) (lib.flatten (lib.map (dm: dm.domains) proxiedDomains)));
+
+  # All domains that need split DNS: system domains + proxied domains
+  all-split-domains = search-domains ++ proxiedBaseDomains;
   ## See: https://headscale.net/stable/ref/acls/
   ## @TODO: Doesn't seem to work, may even block all traffic not explicitly approved.
   policy = pkgs.writeText "headscale-policy.json" ''
@@ -60,7 +74,7 @@ in
           ## Secondary backup
           "1.1.1.1"
         ];
-        ## Needed to resolve internal domains
+        ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access)
         nameservers.split = lib.listToAttrs (lib.map (domain:
           {
             name = domain;
@@ -68,7 +82,7 @@ in
               "10.0.0.1"
             ];
           }
-        ) search-domains);
+        ) all-split-domains);
       };
       prefixes = {
         ## Some VPNs use addresses that overlap. Reduce the size of the network
