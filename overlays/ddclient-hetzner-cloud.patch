@@ -1,6 +1,6 @@
---- a/ddclient.in
-+++ b/ddclient.in
-@@ -770,6 +770,18 @@
+--- a/ddclient.in	2025-12-14 15:20:23.938620866 -0800
++++ b/ddclient.in	2025-12-14 15:30:28.694223177 -0800
+@@ -770,6 +770,19 @@
              'zone'         => setv(T_FQDN,   1, 0, '',                             undef),
          },
      },
@@ -20,19 +20,19 @@
      'mythicdyn' => {
          'updateable' => undef,
          'update'     => \&nic_mythicdyn_update,
-@@ -1851,7 +1863,7 @@
-
+@@ -1848,7 +1861,7 @@
+         $proto = opt('protocol') if !defined($proto);
+ 
          load_sha1_support($proto) if (grep (/^$proto$/, ("freedns", "nfsn")));
-         load_json_support($proto) if (grep (/^$proto$/, ("1984", "cloudflare", "digitalocean", "gandi", "godaddy", "hetzner", "yandex", "nfsn", "njalla", "porkbun", "dnsexit2")));
--
-+        load_json_support($proto) if ($proto eq "hetznercloud");
+-        load_json_support($proto) if (grep (/^$proto$/, ("1984", "cloudflare", "digitalocean", "gandi", "godaddy", "hetzner", "yandex", "nfsn", "njalla", "porkbun", "dnsexit2")));
++        load_json_support($proto) if (grep (/^$proto$/, ("1984", "cloudflare", "digitalocean", "gandi", "godaddy", "hetzner", "hetznercloud", "yandex", "nfsn", "njalla", "porkbun", "dnsexit2")));
+ 
          if (!exists($services{$proto})) {
              warning("skipping host: %s: unrecognized protocol '%s'", $h, $proto);
-             delete $config{$h};
-@@ -6320,6 +6332,104 @@
-     }
+@@ -6321,6 +6334,106 @@
  }
-
+ 
+ ######################################################################
 +######################################################################
 +## nic_hetznercloud_examples
 +######################################################################
@@ -100,7 +100,7 @@
 +                my $response = eval {decode_json(${^MATCH})};
 +
 +                my $http_method = "POST";
-+                my $data = "";
++                my $data;
 +
 +                if ($response && $response->{rrset}) {
 +                    debug("updating %s: DNS '$type' record exists", $domain);
@@ -133,6 +133,6 @@
 +    }
 +}
 +
- ######################################################################
  ## nic_yandex_examples
  ######################################################################
+ sub nic_yandex_examples {
