@@ -14,8 +14,9 @@ let
       parts = lib.splitString "." domain;
       # Filter out "*" from wildcard entries, then take last 2 parts
       cleanParts = lib.filter (p: p != "*") parts;
+      len = lib.length cleanParts;
     in
-      lib.concatStringsSep "." (lib.takeLast 2 cleanParts)
+      lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
   ) allProxiedDomainEntries);
 
   # Process proxied domains to extract non-public domains
@@ -32,8 +33,9 @@ let
       parts = lib.splitString "." domain;
       # Filter out "*" from wildcard entries, then take last 2 parts
       cleanParts = lib.filter (p: p != "*") parts;
+      len = lib.length cleanParts;
     in
-      lib.concatStringsSep "." (lib.takeLast 2 cleanParts)
+      lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
   ) nonPublicProxiedDomains);
 
   # All zones that need DNS handling: configured zones + proxied domain base domains
