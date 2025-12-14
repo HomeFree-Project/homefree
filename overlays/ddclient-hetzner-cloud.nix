@@ -4,8 +4,5 @@ final: prev:
     patches = (oldAttrs.patches or []) ++ [
       ./ddclient-hetzner-cloud.patch
     ];
-    buildInputs = (oldAttrs.buildInputs or []) ++ [
-      prev.perlPackages.JSON
-    ];
   });
 }
