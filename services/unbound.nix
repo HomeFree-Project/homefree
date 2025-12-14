@@ -24,10 +24,6 @@ let
       lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
   ) nonPublicProxiedDomains);
 
-  # All zones that need DNS handling: configured zones + proxied domain base domains
-  # Filter out proxied domains that are already in zones to avoid duplicates
-  allManagedZones = zones ++ (lib.filter (d: !(lib.elem d zones)) allProxiedBaseDomains);
-
   preStart = ''
     touch /run/unbound/include.conf
     cat > /run/unbound/dynamic.zone<< EOF
