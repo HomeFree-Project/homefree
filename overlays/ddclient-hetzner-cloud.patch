@@ -1,4 +1,3 @@
-diff --git a/ddclient.in b/ddclient.in
 --- a/ddclient.in
 +++ b/ddclient.in
 @@ -768,6 +768,18 @@
