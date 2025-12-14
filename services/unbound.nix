@@ -5,6 +5,19 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
 
+  # Extract all proxied domain entries (both wildcards and bare domains)
+  allProxiedDomainEntries = lib.flatten (lib.map (domain-mapping: domain-mapping.domains) proxiedDomains);
+
+  # Extract unique base domains from all proxied domains (handle wildcards like *.example.com)
+  allProxiedBaseDomains = lib.unique (lib.map (domain:
+    let
+      parts = lib.splitString "." domain;
+      # Filter out "*" from wildcard entries, then take last 2 parts
+      cleanParts = lib.filter (p: p != "*") parts;
+    in
+      lib.concatStringsSep "." (lib.takeLast 2 cleanParts)
+  ) allProxiedDomainEntries);
+
   # Process proxied domains to extract non-public domains
   nonPublicProxiedDomains = lib.flatten (lib.map (domain-mapping:
     if domain-mapping.public == false then
@@ -15,8 +28,17 @@ let
 
   # Extract unique base domains from non-public proxied domains (handle wildcards like *.example.com)
   nonPublicBaseDomains = lib.unique (lib.map (domain:
-    lib.removePrefix "*." domain
+    let
+      parts = lib.splitString "." domain;
+      # Filter out "*" from wildcard entries, then take last 2 parts
+      cleanParts = lib.filter (p: p != "*") parts;
+    in
+      lib.concatStringsSep "." (lib.takeLast 2 cleanParts)
   ) nonPublicProxiedDomains);
+
+  # All zones that need DNS handling: configured zones + proxied domain base domains
+  # Filter out proxied domains that are already in zones to avoid duplicates
+  allManagedZones = zones ++ (lib.filter (d: !(lib.elem d zones)) allProxiedBaseDomains);
 
   preStart = ''
     touch /run/unbound/include.conf
@@ -117,14 +139,21 @@ in
         #   "10.0.2.15"
         #   # @TODO: need ipv6 address
         # ];
-        local-zone = [
-          "\"homefree.lan\" static"
-          "\"homefree.host\" transparent"
-          "\"rahh.al\" transparent"
+        local-zone =
+        # static - fully authoritative, e.g. Local domain
+        # transparent - returns local data if matched, otherwise forwards to upstream DNS
+        # redirect - redirect all queries for a domain to an single IP
+        [
+          "\"${config.homefree.system.localDomain}\" static"
+          "\"${config.homefree.system.domain}\" transparent"
         ]
         ++
-        # Add non-public proxied base domains as redirect zones to handle wildcards
-        (lib.map (domain: "\"${domain}\" redirect") nonPublicBaseDomains)
+        # Primary domain and additional domains are transparent (local data + forward upstream)
+        (lib.map (zone: "\"${zone}\" transparent") zones)
+        ++
+        # Non-public proxied base domains use redirect to handle wildcards (all subdomains -> same IP)
+        # Only add if not already in zones to avoid conflicts
+        (lib.map (domain: "\"${domain}\" redirect") (lib.filter (d: !(lib.elem d zones)) nonPublicBaseDomains))
         ;
         ## @TODO: Add config.homefree.network.blocked-domains as such:
         # local-zone: "example.org" always_nxdomain
@@ -191,11 +220,29 @@ in
           )
         )
         ++
-        # Point non-public proxied base domains to internal IP (for redirect zones)
+        # Point non-public proxied domains to internal IP
+        # For redirect zones, only the base domain is needed (wildcards handled automatically)
+        # For transparent zones (domains also in additionalDomains), we need explicit entries
         (lib.map
           (domain: "\"${domain} IN A 10.0.0.1\"")
           nonPublicBaseDomains
         )
+        ++
+        # Add explicit wildcard subdomain entries for non-public proxied domains
+        # This handles cases like *.slacktopia.org when the domain is in additionalDomains (transparent zone)
+        (lib.flatten (lib.map (domain-mapping:
+          if domain-mapping.public == false then
+            lib.filter (x: x != null) (lib.map (domain:
+              # For wildcard entries, create an entry for the wildcard pattern
+              if lib.hasPrefix "*." domain then
+                "\"${domain} IN A 10.0.0.1\""
+              else
+                # For non-wildcard entries, just the domain itself (already handled above for base domains)
+                null
+            ) domain-mapping.domains)
+          else
+            []
+        ) proxiedDomains))
         ++
         ## router lan ip with public domains
         (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A 10.0.0.1\"") zones)
