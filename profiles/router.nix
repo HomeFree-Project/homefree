@@ -17,10 +17,15 @@ let
 
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
-  service-rules = lib.concatStringsSep "\n" (lib.map (service-config:
+  service-input-rules = lib.concatStringsSep "\n" (lib.map (service-config:
     lib.concatStringsSep "\n" (lib.map (tcp-port: "tcp dport { ${toString tcp-port} } ct state new accept;") service-config.firewall.open-ports.tcp)
     +
     lib.concatStringsSep "\n" (lib.map (udp-port: "udp dport { ${toString udp-port} } ct state new accept;") service-config.firewall.open-ports.udp)
+  ) public-service-configs);
+  service-forward-rules = lib.concatStringsSep "\n" (lib.map (service-config:
+    lib.concatStringsSep "\n" (lib.map (tcp-port: ''iifname "${wan-interface}" oifname "podman0" tcp dport ${toString tcp-port} ct state new accept;'') service-config.firewall.open-ports.tcp)
+    +
+    lib.concatStringsSep "\n" (lib.map (udp-port: ''iifname "${wan-interface}" oifname "podman0" udp dport ${toString udp-port} ct state new accept;'') service-config.firewall.open-ports.udp)
   ) public-service-configs);
 in
 {
@@ -210,7 +215,7 @@ in
             ## http is needed for headscale relaying
             tcp dport { http, https } ct state new accept;
 
-            ${service-rules}
+            ${service-input-rules}
 
             # DHCPv6
             ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept
@@ -247,6 +252,10 @@ in
             ## podman-WAN
             iifname { "podman0" } oifname { "${wan-interface}" } accept comment "Allow trusted podman to WAN"
             iifname { "${wan-interface}" } oifname { "podman0" } ct state established, related accept comment "Allow established back to podman"
+
+            ## WAN-Podman
+            ${service-forward-rules}
+            iifname { "podman0" } oifname { "${wan-interface}" } ct state established, related accept comment "Allow established back to podman"
 
             ## @TODO: Confirm which, if any, of these are needed.
 

@@ -1,5 +1,5 @@
---- a/ddclient.in	2025-12-14 15:20:23.938620866 -0800
-+++ b/ddclient.in	2025-12-14 16:07:40.556620340 -0800
+--- a/ddclient.in	2025-12-28 17:11:05.184630875 -0800
++++ b/ddclient.in	2025-12-28 17:18:08.391572899 -0800
 @@ -770,6 +770,19 @@
              'zone'         => setv(T_FQDN,   1, 0, '',                             undef),
          },
@@ -29,10 +29,19 @@
  
          if (!exists($services{$proto})) {
              warning("skipping host: %s: unrecognized protocol '%s'", $h, $proto);
-@@ -6321,6 +6334,150 @@
- }
- 
- ######################################################################
+@@ -6311,6 +6324,114 @@
+                     success("updating %s: IPv$ipv address set to %s", $domain, $ip);
+                     $config{$domain}{"ipv$ipv"} = $ip;
+                     $config{$domain}{'mtime'} = $now;
++                    $config{$domain}{"status-ipv$ipv"} = 'good';
++                } else {
++                    failed("updating %s: invalid json or result.", $domain);
++                }
++            }
++        }
++    }
++}
++
 +######################################################################
 +## nic_hetznercloud_examples
 +######################################################################
@@ -80,19 +89,13 @@
 +
 +            info("getting Hetzner Cloud Zone ID for %s", $domain);
 +
-+            # Get zone ID - Hetzner Cloud API requires zone ID, not zone name
 +            my $url = "https://$config{$key}{'server'}/zones?name=" . $config{$key}{'zone'};
-+
-+            my $reply = geturl(proxy => opt('proxy'),
-+                               url => $url,
-+                               headers => $headers
-+                              );
++            my $reply = geturl(proxy => opt('proxy'), url => $url, headers => $headers);
 +            unless ($reply && header_ok($domain, $reply)) {
 +                failed("updating %s: Could not connect to %s.", $domain, $config{$key}{'server'});
 +                next;
 +            }
 +
-+            # Strip header
 +            $reply =~ qr/{(?:[^{}]*|(?R))*}/mp;
 +            my $response = eval {decode_json(${^MATCH})};
 +            unless ($response && $response->{zones}) {
@@ -100,7 +103,6 @@
 +                next;
 +            }
 +
-+            # Pull the zone ID out of the json
 +            my ($zone_id) = map {$_->{name} eq $config{$key}{'zone'} ? $_->{id} : ()} @{$response->{zones}};
 +            unless ($zone_id) {
 +                failed("updating %s: No zone ID found for %s.", $domain, $config{$key}{'zone'});
@@ -108,7 +110,6 @@
 +            }
 +            info("Zone ID is %s", $zone_id);
 +
-+            # IPv4 and IPv6 handling
 +            foreach my $ip ($ipv4, $ipv6) {
 +                next if (!$ip);
 +                my $ipv  = ($ip eq ($ipv6 // '')) ? '6' : '4';
@@ -117,66 +118,29 @@
 +                info("updating %s: setting IPv$ipv address to %s", $domain, $ip);
 +                $config{$domain}{"status-ipv$ipv"} = 'failed';
 +
-+                # Get existing DNS records for this zone
-+                $url = "https://$config{$key}{'server'}/zones/$zone_id/records";
-+                $reply = geturl(proxy => opt('proxy'),
-+                                url => $url,
-+                                headers => $headers
-+                               );
++                # Hetzner Cloud API requires DELETE + POST to update (PUT doesn't work)
++                # First DELETE existing record (ignore 404 if it doesn't exist)
++                $url = "https://$config{$key}{'server'}/zones/$zone_id/rrsets/$hostname/$type";
++                debug("updating %s: DELETE %s", $domain, $url);
++                $reply = geturl(proxy => opt('proxy'), url => $url, headers => $headers, method => "DELETE");
++
++                # Then POST to create the new record
++                $url = "https://$config{$key}{'server'}/zones/$zone_id/rrsets";
++                my $data = encode_json({name => $hostname, type => $type, ttl => $config{$key}{'ttl'} + 0, records => [{value => $ip}]});
++                debug("updating %s: POST to %s with data: %s", $domain, $url, $data);
++
++                $reply = geturl(proxy => opt('proxy'), url => $url, headers => $headers, method => "POST", data => $data);
 +                unless ($reply && header_ok($domain, $reply)) {
-+                    failed("updating %s: Could not connect to %s.", $domain, $config{$key}{'server'});
++                    failed("updating %s: Could not create rrset at %s.", $domain, $config{$key}{'server'});
 +                    next;
 +                }
-+                # Strip header
++
 +                $reply =~ qr/{(?:[^{}]*|(?R))*}/mp;
 +                $response = eval {decode_json(${^MATCH})};
-+                unless ($response && $response->{records}) {
-+                    failed("updating %s: invalid json or result.", $domain);
-+                    next;
-+                }
-+
-+                # Find existing record ID if it exists
-+                my ($dns_rec_id) = map { ($_->{name} eq $hostname && $_->{type} eq $type) ? $_->{id} : ()} @{$response->{records}};
-+
-+                my $http_method;
-+                if ($dns_rec_id) {
-+                    debug("updating %s: DNS '$type' record ID: $dns_rec_id", $domain);
-+                    $url = "https://$config{$key}{'server'}/zones/$zone_id/records/$dns_rec_id";
-+                    $http_method = "PUT";
-+                } else {
-+                    debug("creating %s: DNS '$type' record", $domain);
-+                    $url = "https://$config{$key}{'server'}/zones/$zone_id/records";
-+                    $http_method = "POST";
-+                }
-+
-+                my $data = "{\"zone_id\":\"$zone_id\", \"name\": \"$hostname\", \"value\": \"$ip\", \"type\": \"$type\", \"ttl\": $config{$key}{'ttl'}}";
-+
-+                $reply = geturl(proxy => opt('proxy'),
-+                                url => $url,
-+                                headers => $headers,
-+                                method => $http_method,
-+                                data => $data
-+                               );
-+                unless ($reply && header_ok($domain, $reply)) {
-+                    failed("updating %s: Could not connect to %s.", $domain, $config{$key}{'server'});
-+                    next;
-+                }
-+                # Strip header
-+                $reply =~ qr/{(?:[^{}]*|(?R))*}/mp;
-+                $response = eval {decode_json(${^MATCH})};
-+                if ($response && $response->{record}) {
++                if ($response && $response->{rrset}) {
 +                    success("updating %s: IPv$ipv address set to %s", $domain, $ip);
 +                    $config{$domain}{"ipv$ipv"} = $ip;
 +                    $config{$domain}{'mtime'} = $now;
-+                    $config{$domain}{"status-ipv$ipv"} = 'good';
-+                } else {
-+                    failed("updating %s: invalid json or result.", $domain);
-+                }
-+            }
-+        }
-+    }
-+}
-+
- ## nic_yandex_examples
- ######################################################################
- sub nic_yandex_examples {
+                     $config{$domain}{"status-ipv$ipv"} = 'good';
+                 } else {
+                     failed("updating %s: invalid json or result.", $domain);

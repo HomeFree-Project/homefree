@@ -105,7 +105,7 @@ in
       };
       firewall = {
         open-ports = {
-          tcp = [ 3022 ];
+          tcp = [ ssh-port ];
         };
       };
       backup = {

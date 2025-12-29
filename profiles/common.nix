@@ -148,8 +148,7 @@
   # Boot / Kernel
   # --------------------------------------------------------------------------------------
 
-  # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort.
-  # Nix mounts read-write automatically when it needs to write to it.
+  # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort. Nix mounts read-write automatically when it needs to write to it.
   boot.readOnlyNixStore = true;
 
   boot.kernelPackages = pkgs.linuxPackages_latest;
@@ -262,6 +261,7 @@
     bind
     btop
     ccze             # readable parsed system logs
+    unstable.claude-code
     cpufrequtils
     distrobox
     dmidecode
