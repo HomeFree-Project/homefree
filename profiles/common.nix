@@ -213,7 +213,7 @@
     bind
     btop
     ccze             # readable parsed system logs
-    unstable.claude-code
+    claude-code
     cpufrequtils
     distrobox
     dmidecode
