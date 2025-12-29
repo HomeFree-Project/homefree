@@ -81,8 +81,8 @@ in
   config = {
     ## @TODO: Move to scripts run from containers
     environment.systemPackages = lib.optionals config.homefree.service-options.immich.enable [
-      pkgs.unstable.immich-cli
-      pkgs.unstable.immich-go
+      pkgs.immich-cli
+      pkgs.immich-go
     ];
 
   # ## Copied from nixpkgs
@@ -106,7 +106,17 @@ in
   ## @TODO: Currently disabled - try fresh install to see if it's even needed
   systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost =
   let
-    preStart = ''
+    postStartScript = pkgs.writeShellScript "postgres-vectorchord-poststart" ''
+      # Wait for database to be ready (max 30 seconds)
+      for i in {1..30}; do
+        if ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
+          echo "Database is ready"
+          break
+        fi
+        echo "Waiting for database to be ready... (attempt $i/30)"
+        sleep 1
+      done
+
       ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres << EOF
         DO
         \$do\$
@@ -118,7 +128,7 @@ in
               RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
            ELSE
               BEGIN   -- nested block
-                 CREATE ROLE "imich" WITH LOGIN PASSWORD 'changeme';
+                 CREATE ROLE "immich" WITH LOGIN PASSWORD 'changeme';
               EXCEPTION
                  WHEN duplicate_object THEN
                     RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
@@ -128,9 +138,9 @@ in
         \$do\$;
       EOF
 
-      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
-      ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -X -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -138,6 +148,9 @@ in
         END
         \$do\$;
       EOF
+
+      # Run the SQL extensions setup
+      ${lib.getExe' config.services.postgresql.package "psql"} -h postgres-vectorchord -p 6432 -U postgres -d "${database-name}" -f "${sqlFile}"
     '';
     sqlFile = pkgs.writeText "immich-pgvectors-setup.sql" ''
       CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -154,11 +167,7 @@ in
       ALTER EXTENSION vectors UPDATE;
     '';
   in
-  lib.optionals config.homefree.service-options.immich.enable
-  [
-    preStart
-    '' ${lib.getExe' config.services.postgresql.package "psql"} -d "${database-name}" -f "${sqlFile}" ''
-  ];
+  lib.optionals config.homefree.service-options.immich.enable [ "!${postStartScript}" ];
 
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.immich.enable {
     immich-server = {

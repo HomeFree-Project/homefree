@@ -104,6 +104,8 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/html
+    mkdir -p ${containerDataPath}/config
+    mkdir -p ${containerDataPath}/data
 
     # Copy override config
     cp -f ${nextcloud-config} ${containerDataPath}/config/override.config.php
@@ -146,7 +148,7 @@ let
         \$do\$;
       EOF
 
-      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
       ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -X -U postgres << EOF
         DO
@@ -162,6 +164,13 @@ let
   postStart = ''
     # Wait for container to be ready
     sleep 10
+
+    # Check if Nextcloud is installed
+    if ! ${pkgs.podman}/bin/podman exec nextcloud php occ status 2>/dev/null | grep -q "installed: true"; then
+      echo "Nextcloud is not installed yet. Skipping post-start configuration."
+      echo "Please run the Nextcloud installation wizard or use occ maintenance:install"
+      exit 0
+    fi
 
     # Enable pretty URLs (remove /index.php from URLs)
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set htaccess.RewriteBase --value='/'
@@ -297,7 +306,7 @@ in
 
         # Database configuration
         POSTGRES_HOST = postgres-host;
-        POSTGRES_PORT = postgres-port;
+        POSTGRES_PORT = toString postgres-port;
         POSTGRES_DB = database-name;
         POSTGRES_USER = database-user;
 
@@ -322,7 +331,7 @@ in
       };
 
       ## @TODO: this shouldn't need to be exposed to user config
-      environmentFiles = [
+      environmentFiles = lib.optionals (config.homefree.service-options.nextcloud.secrets.env != null) [
         config.homefree.service-options.nextcloud.secrets.env
       ];
     };
@@ -387,7 +396,7 @@ in
 
         # Database configuration (same as main container)
         POSTGRES_HOST = postgres-host;
-        POSTGRES_PORT = postgres-port;
+        POSTGRES_PORT = toString postgres-port;
         POSTGRES_DB = database-name;
         POSTGRES_USER = database-user;
 
@@ -418,7 +427,12 @@ in
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nextcloud-prestart" preStart}" ];
       ExecStartPost = [ "!${pkgs.writeShellScript "nextcloud-poststart" postStart}" ];
+      # Add restart delay to prevent rapid restart loops
+      RestartSec = 30;
     };
+    # Limit restart attempts to prevent infinite loops
+    startLimitBurst = 3;
+    startLimitIntervalSec = 300;  # 5 minutes
   };
 
   systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {

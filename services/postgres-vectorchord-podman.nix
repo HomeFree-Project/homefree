@@ -139,7 +139,12 @@ in
     partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "postgres-vectorchord-prestart" preStart}" ];
+      # Add restart delay to prevent rapid restart loops
+      RestartSec = 30;
     };
+    # Limit restart attempts to prevent infinite loops
+    startLimitBurst = 3;
+    startLimitIntervalSec = 300;  # 5 minutes
   };
 
     homefree.service-config = [{
