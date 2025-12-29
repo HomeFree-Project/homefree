@@ -28,7 +28,7 @@ let
     ${lib.optionalString (zoneCfg.server != "") "server=${zoneCfg.server}"}
     ${lib.optionalString (zoneCfg.extraConfig != "") zoneCfg.extraConfig}
     ${lib.optionalString (zoneCfg.zone != "")   "zone=${zoneCfg.zone}"}
-    ${lib.concatStringsSep "," zoneCfg.domains}
+    ${lib.concatStringsSep "," (map (d: if d == "@" then zoneCfg.zone else "${d}.${zoneCfg.zone}") zoneCfg.domains)}
   '') (lib.filter (zone: zone.disable == false) cfg.zones));
   configFile = if (cfg.configFile != null) then cfg.configFile else configFile';
 
