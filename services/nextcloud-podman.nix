@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "32.0.0";
+  version = "32.0.3";
   version-redis = "7-alpine";
   version-appapi-harp = "v0.2.0";
   containerDataPath = "/var/lib/nextcloud-podman";
@@ -116,12 +116,14 @@ let
 
     chmod o+rx ${containerDataPath}
 
-    ## Create shared secret for AppApi proxy
-    HARP_PASSWORD=$(${pkgs.coreutils}/bin/dd if=/dev/urandom bs=12 count=1 2>/dev/null | ${pkgs.coreutils}/bin/base64 | ${pkgs.coreutils}/bin/tr -d -- '\n' | ${pkgs.coreutils}/bin/tr -- '+/' '-_' ; echo)
-    ## Password file used by postStart
-    echo "$HARP_PASSWORD" > ${containerDataPath}/harp-pw.txt
-    ## Env file used by app-api proxy docker container
-    echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
+    ## Create shared secret for AppApi proxy (only if it doesn't exist)
+    if [ ! -f ${containerDataPath}/harp-pw.txt ]; then
+      HARP_PASSWORD=$(${pkgs.coreutils}/bin/dd if=/dev/urandom bs=12 count=1 2>/dev/null | ${pkgs.coreutils}/bin/base64 | ${pkgs.coreutils}/bin/tr -d -- '\n' | ${pkgs.coreutils}/bin/tr -- '+/' '-_' ; echo)
+      ## Password file used by postStart
+      echo "$HARP_PASSWORD" > ${containerDataPath}/harp-pw.txt
+      ## Env file used by app-api proxy docker container
+      echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
+    fi
 
     # Database initialization for postgres-vectorchord if needed
     ${lib.optionalString use-postgres-vectorchord ''
