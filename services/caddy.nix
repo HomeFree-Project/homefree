@@ -97,10 +97,8 @@ in
     ## Temporarily set to staging
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
-    # Global configuration for DNS-01 challenge
-    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
-      acme_dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
-    '';
+    # NOTE: No global acme_dns - let non-wildcard domains use HTTP-01 (default)
+    # Wildcard domains have per-virtualhost tls blocks with DNS-01
 
     virtualHosts = lib.mkMerge [
       (lib.listToAttrs (lib.map (service-config:
@@ -307,7 +305,6 @@ in
               ''
               +
               ''
-                propagation_delay 180s
               }
               '' else ""}
 

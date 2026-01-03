@@ -413,6 +413,20 @@
         };
       };
 
+      azuracast = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable AzuraCast service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       baikal = {
         enable = lib.mkOption {
           type = lib.types.bool;

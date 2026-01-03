@@ -30,6 +30,7 @@
 
     ## Podman-based services
     ./services/adguardhome-podman.nix
+    ./services/azuracast-podman.nix
     ./services/baikal-podman.nix
     ./services/cryptpad-podman.nix
     ./services/forgejo-podman.nix
