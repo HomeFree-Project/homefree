@@ -399,6 +399,20 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
           -e "s/{{WG_SECRET_KEY}}/$WG_SECRET_KEY/g" \
           ${local-settings} > ${containerDataPath}/LocalSettings.php
       '';
+      postStart = ''
+        # Wait for container to be ready
+        sleep 10
+
+        # Check if database needs initialization (no tables exist)
+        TABLE_COUNT=$(${pkgs.mariadb}/bin/mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${site-id}'")
+
+        if [ "$TABLE_COUNT" -eq 0 ]; then
+          echo "Initializing MediaWiki database for ${site-id}..."
+          ${pkgs.podman}/bin/podman exec ${site-id} php /var/www/html/maintenance/run.php installPreConfigured
+        else
+          echo "MediaWiki database ${site-id} already initialized ($TABLE_COUNT tables)"
+        fi
+      '';
     in
     {
       name = "podman-${site-id}";
@@ -408,6 +422,7 @@ virtualisation.oci-containers.containers = if config.homefree.services.mediawiki
         partOf =  [ "nftables.service" ];
         serviceConfig = {
           ExecStartPre = [ "!${pkgs.writeShellScript "${site-id}-prestart" preStart}" ];
+          ExecStartPost = [ "!${pkgs.writeShellScript "${site-id}-poststart" postStart}" ];
         };
       };
     }) config.homefree.services.mediawiki.sites)
