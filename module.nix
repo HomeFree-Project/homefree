@@ -990,6 +990,18 @@
                 description = "Memory for java vm, e.g. 6G";
               };
 
+              mode = lib.mkOption {
+                type = lib.types.nullOr (lib.types.enum [
+                  ## Mod Platforms
+                  "adventure"
+                  "creative"
+                  "hardcore"
+                  "spectator"
+                  "survival"
+                ]);
+                default = "survival";
+              };
+
               type = lib.mkOption {
                 type = lib.types.nullOr (lib.types.enum [
                   ## Mod Platforms

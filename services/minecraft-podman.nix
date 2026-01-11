@@ -48,7 +48,8 @@ in
             # OPS = "ektoklast";
             # TYPE = "SPIGOT";
             # SERVER_PORT = "25566";
-            # MODE = "adventure";
+            MODE = instance.mode;
+            FORCE_GAMEMODE = "true";
             # ENABLE_RCON = "TRUE";
             # RCON_PASSWORD = "REPLACEME";
             # RCON_PORT = "28016";
