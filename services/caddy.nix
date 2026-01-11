@@ -302,6 +302,7 @@ in
               ''
               + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
                 dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+                resolvers ${lib.concatStringsSep " " config.homefree.dns.remote.cert-management.dns-01.resolvers}
               ''
               +
               ''

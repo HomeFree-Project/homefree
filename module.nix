@@ -216,6 +216,13 @@
               description = "Needed for wildcard certs. Usually requires an API Key";
             };
 
+            resolvers = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ "1.1.1.1" ];
+              description = "DNS resolvers for ACME zone detection. Required when local DNS has redirect zones that don't return SOA records.";
+              example = [ "1.1.1.1" "8.8.8.8" ];
+            };
+
             secrets = {
               api-token = lib.mkOption {
                 type = lib.types.nullOr lib.types.path;
