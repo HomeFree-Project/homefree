@@ -276,6 +276,15 @@ in
         use-caps-for-id = false;
         prefetch = true;
         edns-buffer-size = 1232;
+        # Performance tuning to prevent request list overflow
+        num-threads = 4;
+        outgoing-range = 8192;
+        num-queries-per-thread = 4096;
+        msg-cache-size = "128m";
+        rrset-cache-size = "256m";
+        key-cache-size = "128m";
+        so-rcvbuf = "4m";
+        so-sndbuf = "4m";
       };
       #
       # range-lan = {
