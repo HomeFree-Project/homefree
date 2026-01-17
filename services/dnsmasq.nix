@@ -84,7 +84,7 @@ in
 
       ## Additional DHCP options
       dhcp-option = [
-        "option6:dns-server,[::]"  # @TODO: point this at Unbound when ipv6 is setup
+        "option6:dns-server,[fd00::1]"  # Points to AdGuard on fd00::1 (which forwards to Unbound)
         "option:dns-server,10.0.0.1"
       ];
 
