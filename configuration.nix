@@ -8,7 +8,7 @@ in
     ./profiles/bash.nix
     ./profiles/boot-branding.nix
     ./profiles/common.nix
-    ./profiles/config-editor.nix
+    # ./profiles/config-editor.nix
     ./profiles/git.nix
     ./profiles/hardware-configuration.nix
     ./profiles/router.nix

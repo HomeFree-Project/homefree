@@ -13,7 +13,7 @@
 
     nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";
 
-    # nix-editor.url = "github:snowfallorg/nix-editor";
+    nix-editor.url = "github:snowfallorg/nix-editor";
 
     sops-nix.url = "github:Mic92/sops-nix";
 

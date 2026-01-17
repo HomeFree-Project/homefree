@@ -81,9 +81,9 @@ rec {
             hash = "sha256-MRISKmYrCZAypoUsfQDMTjL24er8mES0gF5xmzhAqR8=";
           };
         in
-        prev.caddy.override {
+        (prev.caddy.override {
           ## Use unstable Go for newer module requirements (hetzner v2 needs Go 1.24+)
-          buildGoModule = args: final.buildGoModule (args // {
+          buildGo125Module = args: buildGo125Module (args // {
             inherit version src;
             inherit vendorHash;
             overrideModAttrs = _: {
