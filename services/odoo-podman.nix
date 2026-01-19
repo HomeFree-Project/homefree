@@ -1,3 +1,4 @@
+# First run default username and password is admin/admin
 { config, pkgs, ... }:
 let
   version = "18.0";
