@@ -113,16 +113,12 @@ in
   services.tailscale = {
     enable = true;
     authKeyFile = config.homefree.services.headscale.secrets.tailscale-key;
-    authKeyParameters = {
-      preauthorized = true;
-      baseURL = "https://headscale.${config.homefree.system.domain}";
-    };
     useRoutingFeatures = "server";
     extraUpFlags = [
-      # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
+      ## Connect directly to local headscale (bypasses Caddy proxy issues)
+      "--login-server=http://10.0.0.1:${toString config.services.headscale.port}"
       "--advertise-routes=10.0.0.0/24"
       "--advertise-exit-node"
-      # "--netfilter-mode=nodivert"
     ];
     extraSetFlags = [
       # "--advertise-routes=10.0.0.0/24,100.64.0.0/24"
@@ -173,8 +169,9 @@ in
 
         DEBUG = "true";
 
-        HEADSCALE_URL = "https://headscale.${config.homefree.system.domain}";
-        # HEADSCALE_URL = "http://localhost:8080";
+        ## Connect directly to headscale to avoid Caddy routing issues
+        HEADSCALE_URL = "http://10.0.0.1:${toString config.services.headscale.port}";
+        # HEADSCALE_URL = "https://headscale.${config.homefree.system.domain}";
 
         ## If headscale iteself is running in docker, set these
         # HEADSCALE_INTEGRATION = "docker";
@@ -230,7 +227,36 @@ in
         port = config.services.headscale.port;
         public = true;
         extraCaddyConfig = ''
-          reverse_proxy /admin* http://10.0.0.1:3009
+          # Fake DERP latency check (headscale doesn't implement this endpoint)
+          handle /derp/latency-check {
+            respond 200
+          }
+
+          # Handle DERP relay connections (requires HTTP upgrade)
+          @derp {
+            path /derp /derp/*
+          }
+          handle @derp {
+            reverse_proxy http://10.0.0.1:${toString config.services.headscale.port} {
+              header_up Connection {http.request.header.Connection}
+              header_up Upgrade {http.request.header.Upgrade}
+            }
+          }
+
+          # Handle Tailscale control protocol (requires HTTP upgrade)
+          @ts2021 {
+            path /ts2021
+          }
+          handle @ts2021 {
+            reverse_proxy http://10.0.0.1:${toString config.services.headscale.port} {
+              header_up Connection {http.request.header.Connection}
+              header_up Upgrade {http.request.header.Upgrade}
+            }
+          }
+
+          handle /admin* {
+            reverse_proxy http://10.0.0.1:3009
+          }
         '';
       };
       firewall = {

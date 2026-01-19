@@ -210,6 +210,25 @@ in
           (domain: "\"${domain} IN A 10.0.0.1\"")
           nonPublicBaseDomains
         )
+        # @TODO: Headscale subdomains need internal DNS for DERP connectivity
+        # but adding them breaks mobile clients (Tailscale app gets stuck loading).
+        # Need to investigate why internal DNS for public services causes issues.
+        # See: https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
+        # Related bug: https://github.com/tailscale/tailscale/issues/18441
+        ++
+        (let
+          headscaleConfig = lib.findFirst
+            (sc: sc.label == "headscale")
+            null
+            proxiedHostConfig;
+        in
+          if headscaleConfig != null then
+            lib.flatten (lib.map (subdomain:
+              lib.map (zone: "\"${subdomain}.${zone} IN A 10.0.0.1\"")
+                (headscaleConfig.reverse-proxy.http-domains ++ headscaleConfig.reverse-proxy.https-domains)
+            ) headscaleConfig.reverse-proxy.subdomains)
+          else []
+        )
         ++
         ## router lan ip with public domains
         (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A 10.0.0.1\"") zones)

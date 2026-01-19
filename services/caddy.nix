@@ -238,6 +238,8 @@ in
             }
           '' else "")
           +
+          (if reverse-proxy-config.extraCaddyConfig != null then reverse-proxy-config.extraCaddyConfig else "")
+          +
           ''
             handle {
               reverse_proxy ${if reverse-proxy-config.ssl == true then "https" else "http"}://${reverse-proxy-config.host}:${toString reverse-proxy-config.port} {
@@ -273,8 +275,7 @@ in
           +
           ''
             }
-          ''))
-          + (if reverse-proxy-config.extraCaddyConfig != null then reverse-proxy-config.extraCaddyConfig else "");
+          ''));
         };
       }
       ) proxiedHostConfig))

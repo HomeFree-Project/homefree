@@ -1137,6 +1137,20 @@
         };
       };
 
+      odoo = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Odoo ERP service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       oauth2-proxy = {
         secrets = {
           env = lib.mkOption {
