@@ -1235,6 +1235,20 @@
         };
       };
 
+      trilium = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Trilium Notes service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       unifi = {
         enable = lib.mkOption {
           type = lib.types.bool;

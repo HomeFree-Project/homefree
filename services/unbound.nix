@@ -53,6 +53,9 @@ in
     wants = [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "unbound-prestart" preStart}" ];
+      # Allow Unbound to use configured outgoing-range (8192 ports)
+      # Fixes: "cannot increase max open fds from 4096 to 33046"
+      LimitNOFILE = 65536;
     };
   };
 
@@ -72,7 +75,16 @@ in
 
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${pkgs.bash}/bin/bash -c 'until ${pkgs.dnsutils}/bin/dig +short ${config.homefree.system.domain} >/dev/null 2>&1; do ${pkgs.coreutils}/bin/sleep 1; done'";
+      ExecStart = "${pkgs.writeShellScript "wait-for-dns" ''
+        # Wait for LAN interface to have 10.0.0.1 assigned (required for Caddy to bind)
+        until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet 10.0.0.1/"; do
+          ${pkgs.coreutils}/bin/sleep 1
+        done
+        # Wait for DNS resolution to work
+        until ${pkgs.dnsutils}/bin/dig +short ${config.homefree.system.domain} >/dev/null 2>&1; do
+          ${pkgs.coreutils}/bin/sleep 1
+        done
+      ''}";
       RemainAfterExit = true;
       TimeoutStartSec = 60;
     };
@@ -215,20 +227,22 @@ in
         # Need to investigate why internal DNS for public services causes issues.
         # See: https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
         # Related bug: https://github.com/tailscale/tailscale/issues/18441
-        ++
-        (let
-          headscaleConfig = lib.findFirst
-            (sc: sc.label == "headscale")
-            null
-            proxiedHostConfig;
-        in
-          if headscaleConfig != null then
-            lib.flatten (lib.map (subdomain:
-              lib.map (zone: "\"${subdomain}.${zone} IN A 10.0.0.1\"")
-                (headscaleConfig.reverse-proxy.http-domains ++ headscaleConfig.reverse-proxy.https-domains)
-            ) headscaleConfig.reverse-proxy.subdomains)
-          else []
-        )
+        # NOTE: Commented out - this was preventing vpn.homefree.host from resolving to WAN IP,
+        # which broke access to /admin panel. Watch for DERP connectivity issues.
+        # ++
+        # (let
+        #   headscaleConfig = lib.findFirst
+        #     (sc: sc.label == "headscale")
+        #     null
+        #     proxiedHostConfig;
+        # in
+        #   if headscaleConfig != null then
+        #     lib.flatten (lib.map (subdomain:
+        #       lib.map (zone: "\"${subdomain}.${zone} IN A 10.0.0.1\"")
+        #         (headscaleConfig.reverse-proxy.http-domains ++ headscaleConfig.reverse-proxy.https-domains)
+        #     ) headscaleConfig.reverse-proxy.subdomains)
+        #   else []
+        # )
         ++
         ## router lan ip with public domains
         (lib.map (zone: "\"${config.homefree.system.hostName}.${zone} IN A 10.0.0.1\"") zones)

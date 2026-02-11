@@ -58,6 +58,7 @@
     ./services/radicale-podman.nix
     ./services/screeenly-podman.nix
     ./services/snipe-it-podman.nix
+    ./services/trilium-podman.nix
     ./services/unifi-podman.nix
     ./services/vaultwarden-podman.nix
     ./services/webdav-podman.nix

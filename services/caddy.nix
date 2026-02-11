@@ -62,10 +62,15 @@ in
   });
 
   systemd.services.caddy = {
+    after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     ## Restart Caddy with Unbound DNS changes
-    partOf = [ "unbound.service" ];
+    ## NOTE: Commented out - creates circular dependency with unbound's partOf below.
+    ## This causes 90-second delays when restarting unbound (caddy times out on SIGTERM).
+    ## NixOS already handles config-triggered restarts via X-Restart-Triggers/X-Reload-Triggers.
+    ## Was added for a reason - watch for issues after disabling.
+    # partOf = [ "unbound.service" ];
 
     # Grant capability to bind to privileged ports when using wrapper
     serviceConfig = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
@@ -74,8 +79,12 @@ in
   };
 
   ## Restart Unbound DNS with caddy changes
+  ## NOTE: Commented out partOf - creates circular dependency with caddy's partOf above.
+  ## This causes 90-second delays when restarting unbound (caddy times out on SIGTERM).
+  ## NixOS already handles config-triggered restarts via X-Restart-Triggers/X-Reload-Triggers.
+  ## Was added for a reason - watch for issues after disabling.
   systemd.services.unbound = {
-    partOf = [ "caddy.service" ];
+    # partOf = [ "caddy.service" ];
     before = [ "caddy.service" ] ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome-podman.service" ] else []);
   };
 

@@ -280,4 +280,9 @@ in
       };
     }
   ] else [];
+  # Cache headscale DNS locally to reduce DNS queries from tailscaled DERP retries
+  # NOTE: Commented out - this overrides unbound DNS and prevents public resolution
+  # networking.hosts = {
+  #   "10.0.0.1" = [ "headscale.homefree.host" "vpn.homefree.host" ];
+  # };
 }
