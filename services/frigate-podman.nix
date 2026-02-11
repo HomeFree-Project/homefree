@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
-  version = "0.16.3";
-  configVersion = "0.16-1";
+  version = "0.17.0-rc1";
+  configVersion = "0.17-1";
   containerDataPath = "/var/lib/frigate";
   mediaPath = config.homefree.services.frigate.media-path or "${containerDataPath}/media";
   cameras-filtered = lib.filter (camera: camera.enable == true) config.homefree.services.frigate.cameras;
@@ -53,9 +53,11 @@ let
       enabled = true;
       # ## Minutes
       # expire_interval = 60;
-      retain = {
+      continuous = {
         days = 3;
-        mode = "all";
+      };
+      motion = {
+        days = 14;
       };
       alerts = {
         retain = {
