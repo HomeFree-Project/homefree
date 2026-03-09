@@ -7,7 +7,7 @@ let
   '';
 
   port = 8222;
-  version = "1.34.3";
+  version = "1.35.3";
 in
 {
   virtualisation.oci-containers.containers = if config.homefree.services.vaultwarden.enable == true then {

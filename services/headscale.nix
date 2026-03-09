@@ -33,6 +33,7 @@ let
     }
   '';
 
+  # headplane-version = "0.3.9";
   headplane-version = "0.3.9";
   headplane-containerDataPath = "/var/lib/headplane";
   headplane-port = 3009;

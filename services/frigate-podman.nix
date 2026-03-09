@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "0.17.0-rc1";
+  version = "0.17.0-rc2";
   configVersion = "0.17-1";
   containerDataPath = "/var/lib/frigate";
   mediaPath = config.homefree.services.frigate.media-path or "${containerDataPath}/media";

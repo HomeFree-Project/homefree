@@ -4,6 +4,8 @@ let
 
   port = 3007;
 
+  version = "0.10.1";
+
   preStart = ''
     mkdir -p ${containerDataPath}/config
     mkdir -p ${containerDataPath}/Specific
@@ -12,7 +14,7 @@ in
 {
   virtualisation.oci-containers.containers = if config.homefree.services.baikal.enable == true then {
     baikal = {
-      image = "ckulka/baikal:nginx";
+      image = "ckulka/baikal:${version}-nginx";
 
       autoStart = true;
 
