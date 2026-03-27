@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 let
-  # version = "9.1.120";
-  version = "10.0.162";
+  # version = "10.0.162";
+  version = "10.1.89";
   containerDataPath = "/var/lib/unifi-podman";
   port = 8443;
   MONGO_AUTHSOURCE = "admin";

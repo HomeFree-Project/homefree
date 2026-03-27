@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "32.0.3";
+  version = "33.0.0";
   version-redis = "7-alpine";
   version-appapi-harp = "v0.2.0";
   containerDataPath = "/var/lib/nextcloud-podman";

@@ -77,7 +77,7 @@ in
         name = lan-interface;
         networkConfig = {
           Description = "LAN link";
-          Address = [ "10.0.0.1/24" "fd01::1/128" ];
+          Address = [ "10.0.0.1/24" "fd01::1/64" ];
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.

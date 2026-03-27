@@ -60,6 +60,7 @@
     ./services/snipe-it-podman.nix
     ./services/trilium-podman.nix
     ./services/unifi-podman.nix
+    ./services/unifi-os-podman.nix
     ./services/vaultwarden-podman.nix
     ./services/webdav-podman.nix
     ./services/zitadel-podman.nix

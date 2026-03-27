@@ -1263,6 +1263,20 @@
         };
       };
 
+      unifi-os = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable UniFi OS Server (replaces legacy UniFi Controller)";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       vaultwarden = {
         enable = lib.mkOption {
           type = lib.types.bool;

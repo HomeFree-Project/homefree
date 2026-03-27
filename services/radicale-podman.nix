@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "3.5.2.0";
+  version = "3.6.1.0";
   containerDataPath = "/var/lib/radicale-podman";
   port = 5232;
 

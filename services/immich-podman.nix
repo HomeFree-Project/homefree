@@ -19,7 +19,7 @@
 ## update person set "thumbnailPath" = replace("thumbnailPath", '/var/lib/immich', '/usr/src/app/upload');
 { config, lib, pkgs, ... }:
 let
-  version = "v2.5.6";
+  version = "v2.6.2";
   version-redis = "6.2-alpine";
   containerDataPath = "/var/lib/immich";
   # Seems to be hard coded in docker container, so can't override
