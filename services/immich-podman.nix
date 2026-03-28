@@ -304,7 +304,7 @@ in
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
-        port = config.services.immich.port;
+        port = port;
         public = config.homefree.service-options.immich.public;
       };
       backup = {

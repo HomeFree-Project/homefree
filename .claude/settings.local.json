@@ -120,7 +120,14 @@
       "Bash(tee /tmp/ccu-output.txt)",
       "Bash(echo \"EXIT: $?\")",
       "Bash(git *)",
-      "Bash(nix run *)"
+      "Bash(nix run *)",
+      "Bash(git commit:*)",
+      "Bash(podman images:*)",
+      "Bash(podman run:*)",
+      "Bash(podman info:*)",
+      "Bash(podman network:*)",
+      "Bash(systemctl is-active:*)",
+      "Bash(podman pull:*)"
     ]
   }
 }
