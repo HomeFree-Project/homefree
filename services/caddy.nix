@@ -304,7 +304,7 @@ in
 
             # Handle WebDAV with Basic Auth
             route @webdav_with_basic {
-              reverse_proxy 10.0.0.1:8764 {
+              reverse_proxy ${lan-address}:8764 {
                 # Pass the original host header
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
@@ -314,7 +314,7 @@ in
 
             # Handle WebDAV-specific methods even without Basic Auth
             route @webdav_methods {
-              reverse_proxy 10.0.0.1:8764 {
+              reverse_proxy ${lan-address}:8764 {
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
                 header_up X-Forwarded-Proto {scheme}
@@ -345,13 +345,13 @@ in
               }
           ''
           + (if reverse-proxy-config.oauth2 == true then ''
-              forward_auth http://10.0.0.1:4180 {
+              forward_auth http://${lan-address}:4180 {
                 uri /oauth2/auth
                 copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
               }
           '' else "")
           + (if reverse-proxy-config.basic-auth == true then ''
-              forward_auth 10.0.0.1:3241 {
+              forward_auth ${lan-address}:3241 {
                 uri /oauth/v2/introspect
                 copy_headers Authorization
               }
@@ -385,7 +385,7 @@ in
               output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
             '';
             extraConfig = ''
-              ${if !entry.public then "bind 10.0.0.1" else ""}
+              ${if !entry.public then "bind ${lan-address}" else ""}
 
               ${if entry.ssl && lib.hasInfix "*" entry.domain then ''
               # Use DNS-01 challenge for wildcard domains

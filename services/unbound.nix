@@ -78,8 +78,8 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${pkgs.writeShellScript "wait-for-dns" ''
-        # Wait for LAN interface to have 10.0.0.1 assigned (required for Caddy to bind)
-        until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet 10.0.0.1/"; do
+        # Wait for LAN interface to have IP assigned (required for Caddy to bind)
+        until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet ${lan-address}/"; do
           ${pkgs.coreutils}/bin/sleep 1
         done
         # Wait for DNS resolution to work
@@ -221,7 +221,7 @@ in
         # For redirect zones, only the base domain is needed (wildcards handled automatically)
         # For transparent zones (domains also in additionalDomains), we need explicit entries
         (lib.map
-          (domain: "\"${domain} IN A 10.0.0.1\"")
+          (domain: "\"${domain} IN A ${lan-address}\"")
           nonPublicBaseDomains
         )
         # @TODO: Headscale subdomains need internal DNS for DERP connectivity

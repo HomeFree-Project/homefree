@@ -78,7 +78,7 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        UOS_SYSTEM_IP = "10.0.0.1";
+        UOS_SYSTEM_IP = config.homefree.network.lan-address;
       };
     };
   } else {};
@@ -106,7 +106,7 @@ in
         subdomains = [ "unifi" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = "10.0.0.1";
+        host = config.homefree.network.lan-address;
         port = port;
         ssl = true;
         ssl-no-verify = true;

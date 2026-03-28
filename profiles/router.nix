@@ -117,8 +117,7 @@ in
     #-----------------------------------------------------------------------------------------------------
 
     useDHCP = false;
-    ## @TODO: Base on config for lan gateway
-    nameservers = [ "10.0.0.1" ];
+    nameservers = [ lan-address ];
 
     ## Define VLANS
     ## https://www.breakds.org/post/vlan-configuration-by-examples/
