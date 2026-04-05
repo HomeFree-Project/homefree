@@ -127,7 +127,14 @@
       "Bash(podman info:*)",
       "Bash(podman network:*)",
       "Bash(systemctl is-active:*)",
-      "Bash(podman pull:*)"
+      "Bash(podman pull:*)",
+      "Bash(systemctl list-units:*)",
+      "Bash(ls -la /home/erahhal/homefree/services/*.nix)",
+      "Bash(nix eval:*)",
+      "Bash(nixos-rebuild list-generations:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(nslookup cache.nixos.org)",
+      "Read(//etc/**)"
     ]
   }
 }
