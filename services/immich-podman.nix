@@ -109,7 +109,7 @@ in
     postStartScript = pkgs.writeShellScript "postgres-vectorchord-poststart" ''
       # Wait for database to be ready (max 30 seconds)
       for i in {1..30}; do
-        if ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
+        if ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
           echo "Database is ready"
           break
         fi
@@ -117,7 +117,7 @@ in
         sleep 1
       done
 
-      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -138,9 +138,9 @@ in
         \$do\$;
       EOF
 
-      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+      ${pkgs.postgresql}/bin/psql -h localhost -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
-      ${pkgs.postgresql}/bin/psql -h postgres-vectorchord -p 6432 -X -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -X -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -150,7 +150,7 @@ in
       EOF
 
       # Run the SQL extensions setup
-      ${lib.getExe' config.services.postgresql.package "psql"} -h postgres-vectorchord -p 6432 -U postgres -d "${database-name}" -f "${sqlFile}"
+      ${lib.getExe' config.services.postgresql.package "psql"} -h localhost -p 6432 -U postgres -d "${database-name}" -f "${sqlFile}"
     '';
     sqlFile = pkgs.writeText "immich-pgvectors-setup.sql" ''
       CREATE EXTENSION IF NOT EXISTS unaccent;

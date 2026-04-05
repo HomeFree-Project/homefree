@@ -304,7 +304,7 @@ in
     serviceConfig = {
       Type = "simple";
       # Use dnsmasq instead of socat - properly handles concurrent UDP DNS queries
-      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq --no-daemon --bind-interfaces --listen-address=127.0.0.1 --port=53 --server=127.0.0.1#53530 --no-resolv --no-hosts --log-queries";
+      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq --no-daemon --bind-interfaces --listen-address=127.0.0.1 --listen-address=::1 --port=53 --server=127.0.0.1#53530 --no-resolv --no-hosts --log-queries";
       Restart = "no";
       # Clean shutdown
       KillMode = "process";

@@ -134,7 +134,30 @@
       "Bash(nixos-rebuild list-generations:*)",
       "Bash(git ls-tree:*)",
       "Bash(nslookup cache.nixos.org)",
-      "Read(//etc/**)"
+      "Read(//etc/**)",
+      "Bash(for svc:*)",
+      "Bash(do echo:*)",
+      "Bash(host registry-1.docker.io)",
+      "Bash(host ghcr.io)",
+      "Bash(host quay.io)",
+      "Bash(host postgres-vectorchord:*)",
+      "Bash(getent hosts:*)",
+      "Bash(unbound-control lookup:*)",
+      "Bash(python3:*)",
+      "Bash(GODEBUG=netdns=cgo+2 podman pull --quiet docker.io/library/busybox:latest)",
+      "Bash(GODEBUG=netdns=go+2 podman pull --quiet docker.io/library/busybox:latest)",
+      "Read(//run/containers/**)",
+      "Read(//var/lib/containers/storage/**)",
+      "Read(//var/lib/containers/**)",
+      "Read(//run/**)",
+      "Read(//root/**)",
+      "Read(//home/erahhal/.local/share/containers/**)",
+      "Read(//home/erahhal/.config/**)",
+      "Bash(sudo nsenter:*)",
+      "Bash(sudo systemd-run:*)",
+      "Bash(ldd /nix/store/ds1vnv7xvx7pw16yrwlv8cyh2hwm06vh-podman-5.8.1/bin/podman)",
+      "Bash(ip:*)",
+      "Bash(echo \"killed: $?\")"
     ]
   }
 }
