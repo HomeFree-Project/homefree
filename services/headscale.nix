@@ -76,14 +76,28 @@ in
           "1.1.1.1"
         ];
         ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access)
-        nameservers.split = lib.listToAttrs (lib.map (domain:
-          {
-            name = domain;
-            value = [
-              "10.0.0.1"
-            ];
-          }
-        ) all-split-domains);
+        ##
+        ## The public domain (e.g. homefree.host) gets a fallback DNS server to break a
+        ## circular dependency: when the Tailscale tunnel is down (e.g. after a network
+        ## switch), MagicDNS can't reach 10.0.0.1 to resolve headscale.homefree.host,
+        ## so the tunnel can never recover. Tailscale queries all nameservers in parallel
+        ## and uses the first response, so 10.0.0.1 wins when the tunnel is up (lower
+        ## latency), and 9.9.9.10 responds via public DDNS when the tunnel is down.
+        ##
+        ## Internal-only domains (e.g. lan) only use 10.0.0.1 since public DNS would
+        ## return NXDOMAIN and could win the race.
+        nameservers.split =
+          let
+            internalDomains = lib.filter (d: d != cfg.system.domain) all-split-domains;
+            internalEntries = lib.listToAttrs (lib.map (domain: {
+              name = domain;
+              value = [ "10.0.0.1" ];
+            }) internalDomains);
+            publicEntry = {
+              ${cfg.system.domain} = [ "10.0.0.1" "9.9.9.10" ];
+            };
+          in
+            internalEntries // publicEntry;
       };
       prefixes = {
         ## Some VPNs use addresses that overlap. Reduce the size of the network
@@ -103,8 +117,11 @@ in
           stun_listen_addr = "0.0.0.0:${toString cfg.services.headscale.stun-port}";
           automatically_add_embedded_derp_region = true;
         };
-        ## Disable default DERP pointing at tailscale corporate servers
-        urls = [];
+        ## Include Tailscale's default DERP servers as fallback relays.
+        ## The embedded DERP (region 999) is preferred when reachable, but if the
+        ## headscale server is unreachable (e.g. DNS circular dependency during
+        ## network transitions), clients can relay through these public servers.
+        urls = [ "https://controlplane.tailscale.com/derpmap/default" ];
         paths = [];
       };
     };
