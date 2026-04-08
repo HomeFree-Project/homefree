@@ -625,6 +625,26 @@
           # default = 3578;
         };
 
+        enable-public-derp-fallback = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Include Tailscale's public DERP relay servers as fallback.
+
+            When enabled, clients can relay traffic through Tailscale's
+            infrastructure if the embedded DERP server on this machine is
+            unreachable (e.g. after a network switch causes a DNS circular
+            dependency where MagicDNS needs the tunnel to resolve the
+            headscale server, but the tunnel needs DERP to recover).
+            The embedded DERP is always preferred when reachable; public
+            servers are only used as a last resort.
+
+            NOTE: This creates a dependency on Tailscale's infrastructure
+            (controlplane.tailscale.com). Disable this if you require
+            complete independence from Tailscale's services.
+          '';
+        };
+
         secrets = {
           tailscale-key = lib.mkOption {
             type = lib.types.path;
@@ -1721,6 +1741,15 @@
           Landing page is set to the default Homefree project landing page.
 
             homefree.landing-page.path = "<path to html root>";
+        ''
+      ] else [])
+    ++
+      (if config.homefree.services.headscale.enable
+          && config.homefree.services.headscale.enable-public-derp-fallback then [
+        ''
+          Tailscale public DERP fallback is enabled (homefree.services.headscale.enable-public-derp-fallback).
+          Clients may relay traffic through Tailscale's infrastructure when the embedded DERP is unreachable.
+          Set to false for complete independence from Tailscale's services.
         ''
       ] else [])
     ;
