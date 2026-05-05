@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "0.92.6";
+  version = "0.95.0";
   containerDataPath = "/var/lib/trilium-podman";
   port = 8081;
 

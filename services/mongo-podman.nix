@@ -2,7 +2,7 @@
 let
   ## tag 8.0 changes
   ## Use patch version for stability, e.g. "8.0.9"
-  version = "8.0";
+  version = "8.2";
   containerDataPath = "/var/lib/mongo-podman";
 
   preStart = ''

@@ -7,7 +7,7 @@ let
   '';
 
   port = 7745;
-  version = "0.24.2";
+  version = "0.25.0";
 in
 {
   virtualisation.oci-containers.containers = if config.homefree.services.homebox.enable == true then {

@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "2.10.3";
+  version = "8.1.2135";
   port = 8976;
   containerDataPath = "/var/lib/lidarr";
   configPath = "${containerDataPath}/config";

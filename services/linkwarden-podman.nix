@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 let
-  version = "v2.10.2";
-  version-meili = "v1.12.8";
+  version = "v2.14.1";
+  version-meili = "v1.43.0";
   containerDataPath = "/var/lib/linkwarden-podman";
 
   port = 3005;

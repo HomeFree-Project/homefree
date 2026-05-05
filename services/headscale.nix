@@ -34,7 +34,7 @@ let
   '';
 
   # headplane-version = "0.3.9";
-  headplane-version = "0.3.9";
+  headplane-version = "0.6.2";
   headplane-containerDataPath = "/var/lib/headplane";
   headplane-port = 3009;
   headplane-preStart = ''

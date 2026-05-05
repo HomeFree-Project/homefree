@@ -7,7 +7,7 @@ let
   '';
 
   port = 8096;
-  version = "10.1l.4";
+  version = "2021.12.16";
 in
 {
   ##--------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ in
 
   virtualisation.oci-containers.containers = if config.homefree.services.jellyfin.enable == true then {
     jellyfin = {
-      image = "linuxserver/jellyfin:${version}";
+      image = "lscr.io/linuxserver/jellyfin:${version}";
 
       autoStart = true;
 

@@ -55,6 +55,12 @@ in
     "net.ipv6.conf.${lan-interface}.autoconf" = 1;
   };
 
+  # Required so netavark's IPv6 DNAT rules for podman containers actually load.
+  # Without this, inbound IPv6 to forwarded ports (e.g. forgejo ssh on 3022) is
+  # silently dropped, causing dual-stack clients to wait the full TCP SYN timeout
+  # before falling back to IPv4.
+  boot.kernelModules = [ "ip6table_nat" ];
+
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
   systemd.network = {
     links = {

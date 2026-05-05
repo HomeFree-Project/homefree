@@ -105,7 +105,22 @@
       "WebFetch(domain:ui.com)",
       "Bash(podman ps:*)",
       "Bash(podman logs:*)",
-      "Bash(sudo podman:*)"
+      "Bash(sudo podman:*)",
+      "Bash(chmod +x /home/erahhal/nixcfg/homefree/scripts/check-container-updates.py)",
+      "Bash(command -v nix-shell)",
+      "Read(//nix/var/nix/profiles/default/**)",
+      "Bash(nix-shell -p python3 --run 'python3 --version')",
+      "Bash(nix-shell -p python3 skopeo --run 'python3 -c \"import sys; print\\(sys.version\\)\" && skopeo --version')",
+      "Bash(nix-shell *)",
+      "Bash(git -C /home/erahhal/nixcfg/homefree log --oneline -5 -- services/postgres-vectorchord-podman.nix)",
+      "Bash(git -C /home/erahhal/nixcfg/homefree log -p --all -- services/postgres-vectorchord-podman.nix)",
+      "Bash(git -C /home/erahhal/nixcfg/homefree status services/postgres-vectorchord-podman.nix)",
+      "Bash(git -C /home/erahhal/nixcfg/homefree diff HEAD -- services/postgres-vectorchord-podman.nix)",
+      "Bash(time ./scripts/check-container-updates.py)",
+      "Bash(tee /tmp/ccu-output.txt)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(git *)",
+      "Bash(nix run *)"
     ]
   }
 }

@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "2025.10.5";
+  version = "2026.5.0";
 
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 25565;

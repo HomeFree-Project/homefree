@@ -28,7 +28,7 @@
 
 { config, pkgs, ... }:
 let
-  version = "1.4.6";
+  version = "1.10.0";
   containerDataPath = "/var/lib/kanidm";
 
   port = 3445;

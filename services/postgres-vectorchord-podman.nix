@@ -5,6 +5,7 @@ let
   # image = "tensorchord/vchord-postgres";
   # version = "pg16-v0.3.0";
   image = "ghcr.io/immich-app/postgres";
+  # update-check: pin
   version = "16-vectorchord0.4.2-pgvectors0.3.0";
   port = 6432;
   containerDataPath = "/var/lib/postgres-vectorchord-podman";

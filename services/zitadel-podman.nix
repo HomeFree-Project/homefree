@@ -4,7 +4,7 @@
 ## Default password: Password1!
 
 let
-  version = "v4.3.1";
+  version = "v4.15.0";
   containerDataPath = "/var/lib/zitadel";
   port = 3241;
 

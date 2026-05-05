@@ -16,7 +16,7 @@ let
     ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'%'"
   '';
 
-  version = "v7.1.15";
+  version = "v8.4.1";
 
   port = 3017;
 in

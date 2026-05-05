@@ -5,7 +5,7 @@
 ##   - https://github.com/NixOS/nixpkgs/tree/nixos-24.11/pkgs/servers/home-assistant/custom-components
 { config, pkgs, ... }:
 let
-  version = "2025.1";
+  version = "2026.4";
 
   containerDataPath = "/var/lib/homeassistant";
 

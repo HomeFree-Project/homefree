@@ -1,8 +1,8 @@
 { config, lib, pkgs, ... }:
 let
-  version = "33.0.0";
-  version-redis = "7-alpine";
-  version-appapi-harp = "v0.2.0";
+  version = "33.0.3";
+  version-redis = "8-alpine";
+  version-appapi-harp = "v0.4.0";
   containerDataPath = "/var/lib/nextcloud-podman";
 
   port = 3010;

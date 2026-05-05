@@ -1,6 +1,6 @@
 {config,  pkgs, ...}:
 let
-  version = "v1.130.0";
+  version = "v1.152.0";
   image = "matrixdotorg/synapse";
   containerDataPath = "/var/lib/matrix-synapse-podman";
 

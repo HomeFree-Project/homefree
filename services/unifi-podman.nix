@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 let
   # version = "10.0.162";
-  version = "10.1.89";
+  version = "10.3.58";
   containerDataPath = "/var/lib/unifi-podman";
   port = 8443;
   MONGO_AUTHSOURCE = "admin";
@@ -19,7 +19,7 @@ let
 
   ## tag 8.0 changes
   ## Use patch version for stability, e.g. "8.0.9"
-  mongo-version = "8.0";
+  mongo-version = "8.2";
   mongo-containerDataPath = "/var/lib/unifi-db-podman";
 
   mongo-preStart = ''

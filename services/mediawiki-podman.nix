@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   ## Update extension versions below when this is updated
-  version = "1.44.2";
+  version = "1.45.3";
 
   databases = lib.map (site: "mediawiki_${site.subdomain}") config.homefree.services.mediawiki.sites;
 

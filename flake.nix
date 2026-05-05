@@ -50,6 +50,14 @@
     homefree-inputs = inputs;
     # versionInfo = import ./version.nix;
     # version = versionInfo.version + (inputs.nixpkgs.lib.optionalString (!versionInfo.released) "-dirty");
+    pkgs = import inputs.nixpkgs { inherit system; };
+    update-versions = pkgs.writeShellApplication {
+      name = "update-versions";
+      runtimeInputs = with pkgs; [ python3 skopeo ];
+      text = ''
+        exec python3 ${./scripts/check-container-updates.py} "$@"
+      '';
+    };
   in
   {
     nixosModules = rec {
@@ -71,6 +79,15 @@
           self.nixosModules.lan-client
         ];
       };
+    };
+    apps.${system} = {
+      update-versions = {
+        type = "app";
+        program = "${update-versions}/bin/update-versions";
+      };
+    };
+    packages.${system} = {
+      inherit update-versions;
     };
   };
 }

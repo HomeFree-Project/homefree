@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  version = "v5.8.0";
+  version = "v5.11.8";
   containerDataPath = "/var/lib/webdav";
   port = 5334;
 
