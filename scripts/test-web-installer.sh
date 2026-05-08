@@ -112,9 +112,15 @@ test_in_qemu() {
         -netdev user,id=lan
         -device e1000,netdev=lan
         -boot d
-        -vga qxl
-        -display gtk
     )
+
+    if [ "$USE_GTK" = "true" ]; then
+        QEMU_ARGS+=(-vga qxl -display gtk)
+        log_info "Using GTK display with QXL"
+    else
+        QEMU_ARGS+=(-device virtio-vga-gl -display sdl,gl=on)
+        log_info "Using SDL display with VirtIO-GL"
+    fi
 
     # Add KVM if available
     if [ -e /dev/kvm ]; then
@@ -141,6 +147,16 @@ main() {
     log_info "===================================="
     echo
 
+    USE_GTK=false
+    POSITIONAL=()
+    for arg in "$@"; do
+        case "$arg" in
+            --gtk) USE_GTK=true ;;
+            *) POSITIONAL+=("$arg") ;;
+        esac
+    done
+    set -- "${POSITIONAL[@]}"
+
     case "${1:-}" in
         build)
             build_installer
@@ -160,19 +176,23 @@ main() {
             log_info "Clean complete"
             ;;
         *)
-            log_info "Usage: $0 {build|test|clean}"
+            log_info "Usage: $0 {build|test|clean} [--gtk]"
             echo
             log_info "Commands:"
             echo "  build  - Build the web installer ISO (homefree-installer)"
             echo "  test   - Test the installer in QEMU (builds if needed)"
             echo "  clean  - Remove build artifacts"
             echo
+            log_info "Options:"
+            echo "  --gtk  - Use GTK display with QXL (default: SDL with VirtIO-GL)"
+            echo
             log_info "Note: homefree-installer now uses the web installer (not Calamares)"
             echo "      To build Calamares: nix build .#nixosConfigurations.homefree-installer-calamares.config.system.build.isoImage"
             echo
             log_info "Quick start:"
-            echo "  $0 build   # Build the installer"
-            echo "  $0 test    # Test in QEMU"
+            echo "  $0 build         # Build the installer"
+            echo "  $0 test          # Test in QEMU (SDL)"
+            echo "  $0 test --gtk    # Test in QEMU (GTK fallback)"
             echo
             log_info "Or combine:"
             echo "  $0 build && $0 test"
