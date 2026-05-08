@@ -55,6 +55,12 @@ in
     "net.ipv6.conf.${wan-interface}.autoconf" = 1;
     "net.ipv6.conf.${lan-interface}.accept_ra" = 2;
     "net.ipv6.conf.${lan-interface}.autoconf" = 1;
+
+    # Allow services (AdGuardHome) to bind to LAN-side IPv6 addresses even when
+    # the LAN interface has no carrier — otherwise the address stays tentative
+    # (DAD can't complete on a down link) and AdGuardHome fatals on startup,
+    # taking out DNS for the whole host.
+    "net.ipv6.ip_nonlocal_bind" = 1;
   };
 
   # Required so netavark's IPv6 DNAT rules for podman containers actually load.
