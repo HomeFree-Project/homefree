@@ -1,0 +1,21 @@
+Fix apex hostname for cr3/ddclient PR #876 (Hetzner Cloud DNS).
+
+PR #876 computes the rrset name with:
+    (my $hostname = $domain) =~ s/\Q.$zone\E$//;
+which requires a leading dot, so when domain equals zone (the apex) the
+substitution does not happen and ddclient sends the full FQDN as the rrset
+name. Hetzner accepts that as a relative name, producing a bogus rrset that
+becomes "homefree.host.homefree.host" when fully qualified, while the real
+apex ("@") is never touched.
+
+Force "@" when domain equals zone.
+
+--- a/ddclient.in
++++ b/ddclient.in
+@@ -6035,6 +6035,7 @@
+ 
+         my $zone = opt('zone', $domain);
+         (my $hostname = $domain) =~ s/\Q.$zone\E$//;
++        $hostname = '@' if $hostname eq $zone;
+         my $ipv4 = delete $config{$domain}{'wantipv4'};
+         my $ipv6 = delete $config{$domain}{'wantipv6'};
