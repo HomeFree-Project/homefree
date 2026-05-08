@@ -26,7 +26,7 @@
 ##   --secret=[from show-basic-secret above] \
 ##   --auto-discover-url=https://idm.${config.homefree.system.domain}/oauth2/openid/forgejo/.well-known/openid-configuration
 
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "1.10.0";
   containerDataPath = "/var/lib/kanidm";
@@ -216,12 +216,14 @@ in
     };
   } else {};
 
-  systemd.services.podman-kanidm = {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "kanidm-prestart" preStart}" ];
+  systemd.services = lib.optionalAttrs config.homefree.services.kanidm.enable {
+    podman-kanidm = {
+      after = [ "dns-ready.service" ];
+      requires = [ "dns-ready.service" ];
+      partOf =  [ "nftables.service" ];
+      serviceConfig = {
+        ExecStartPre = [ "!${pkgs.writeShellScript "kanidm-prestart" preStart}" ];
+      };
     };
   };
 

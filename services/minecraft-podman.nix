@@ -16,7 +16,7 @@ in
       {
         name = "minecraft_${instance.subdomain}";
         value = {
-          image = "itzg/minecraft-server:${version}";
+          image = "itzg/minecraft-server:${if instance.image-tag != null then instance.image-tag else version}";
 
           autoStart = true;
 

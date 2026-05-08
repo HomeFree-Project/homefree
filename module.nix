@@ -1017,6 +1017,12 @@
                 description = "Memory for java vm, e.g. 6G";
               };
 
+              image-tag = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Override itzg/minecraft-server image tag, e.g. \"2026.5.0-java17\". Falls back to the module-wide default when null.";
+              };
+
               mode = lib.mkOption {
                 type = lib.types.nullOr (lib.types.enum [
                   ## Mod Platforms

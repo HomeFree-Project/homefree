@@ -20,7 +20,7 @@ in
     port = 11434;
     host = "[::]";
     loadModels = [
-      "deepseek-r1"
+      "deepseek-r1:7b"
     ];
   };
 
