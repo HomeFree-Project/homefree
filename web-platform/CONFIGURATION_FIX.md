@@ -73,10 +73,11 @@ nix build .#nixosConfigurations.homefree-installer-calamares.config.system.build
    - Added configuration integration section
    - Updated build command documentation
 
-4. **`scripts/test-web-installer.sh`**
+4. **`scripts/run-vm.sh`** (formerly `scripts/test-web-installer.sh`)
    - Changed from `homefree-web-installer` to `homefree-installer`
    - Updated result symlink name (`result-installer`)
    - Added usage note about configuration change
+   - Later consolidated into `run-vm.sh run --user-mode` (see scripts/MIGRATION.md)
 
 ## Verification
 
@@ -117,7 +118,7 @@ To verify the fix:
 
 ```bash
 # Clean old builds
-./scripts/test-web-installer.sh clean
+./scripts/run-vm.sh clean
 
 # Build new web installer
 ./scripts/build-image.sh
@@ -130,7 +131,7 @@ ls -lh build/
 # Should see homefree-installer.iso (NEW timestamp)
 
 # Test in QEMU
-./scripts/test-web-installer.sh test
+./scripts/run-vm.sh run
 # Should boot to GNOME → Firefox → Web Installer
 # NO Calamares should appear
 ```

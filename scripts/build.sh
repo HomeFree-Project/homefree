@@ -53,7 +53,14 @@ Options:
   -s, --switch              Switch to new configuration (default)
   -b, --boot                Set as boot configuration without switching
   -t, --test                Test configuration without making permanent
-  -n, --dry-run             Show what would be built without building
+      --dry-activate        Run nixos-rebuild dry-activate (plan only, no
+                            build, no activation). Distinct from --dry-run.
+  -n, --dry-run             Echo the nixos-rebuild command without running it
+                            (does NOT invoke nix at all; for that use
+                            --dry-activate)
+      --offline             Build without fetching from the network. Skips
+                            the flake-input update step and passes --offline
+                            to nixos-rebuild.
   -j, --max-jobs NUM        Maximum number of build jobs (default: auto)
   -h, --help               Show this help
 
@@ -78,6 +85,7 @@ EOF
 ACTION="switch"
 MAX_JOBS=""
 DRY_RUN=false
+OFFLINE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -101,8 +109,16 @@ while [[ $# -gt 0 ]]; do
             ACTION="test"
             shift
             ;;
+        --dry-activate)
+            ACTION="dry-activate"
+            shift
+            ;;
         -n|--dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --offline)
+            OFFLINE=true
             shift
             ;;
         -j|--max-jobs)
@@ -162,17 +178,23 @@ log_info "Building NixOS configuration: $CONFIG_NAME"
 log_info "Flake directory: $FLAKE_DIR"
 log_info "Action: $ACTION"
 
-# Update flake inputs before building
-log_info "Updating homefree-local and homefree-base flake inputs..."
-FLAKE_UPDATE_CMD="nix flake lock --allow-dirty --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
-if [[ $EUID -ne 0 ]]; then
-    FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
+# Update flake inputs before building (skip in offline mode — fetching is not allowed)
+if [[ "$OFFLINE" == "true" ]]; then
+    log_info "Offline mode: skipping flake-input update"
+    export NIX_REMOTE=daemon
+    ulimit -n 4096
+else
+    log_info "Updating homefree-local and homefree-base flake inputs..."
+    FLAKE_UPDATE_CMD="nix flake lock --allow-dirty --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
+    if [[ $EUID -ne 0 ]]; then
+        FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
+    fi
+    if ! eval "$FLAKE_UPDATE_CMD"; then
+        log_error "Failed to update flake inputs"
+        exit 1
+    fi
+    log_success "Flake inputs updated successfully"
 fi
-if ! eval "$FLAKE_UPDATE_CMD"; then
-    log_error "Failed to update flake inputs"
-    exit 1
-fi
-log_success "Flake inputs updated successfully"
 
 # Sync homefree-config.json with module.nix schema
 SYNC_SCRIPT="$SCRIPT_DIR/sync-config.sh"
@@ -200,6 +222,11 @@ CMD="$CMD --flake '$FLAKE_REF'"
 # Add max-jobs if specified
 if [[ -n "$MAX_JOBS" ]]; then
     CMD="$CMD --max-jobs $MAX_JOBS"
+fi
+
+# Add --offline if requested
+if [[ "$OFFLINE" == "true" ]]; then
+    CMD="$CMD --offline"
 fi
 
 # Add verbose logging
@@ -230,6 +257,9 @@ else
             test)
                 log_info "New configuration is active for testing (not made permanent)."
                 log_warning "Changes will be lost on reboot unless you run with --switch"
+                ;;
+            dry-activate)
+                log_info "Dry activation completed. No changes were made."
                 ;;
         esac
     else

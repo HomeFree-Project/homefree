@@ -167,7 +167,7 @@ Based on existing Calamares templates:
 - README.md
 - IMPLEMENTATION_SUMMARY.md
 - flake.nix (updated)
-- test-web-installer.sh
+- run-vm.sh (formerly test-web-installer.sh)
 
 ## Integration with Existing Code
 
@@ -193,8 +193,8 @@ nix build .#nixosConfigurations.homefree-web-installer.config.system.build.isoIm
 
 ### Test in QEMU:
 ```bash
-./scripts/test-web-installer.sh build
-./scripts/test-web-installer.sh test
+./scripts/run-vm.sh build
+./scripts/run-vm.sh run
 ```
 
 ### Development:

@@ -67,7 +67,6 @@
     mkSystemApps = system: pkgs: {
       deploy = mkScriptApp system pkgs "deploy" ./scripts/deploy.sh;
       build-iso-image = mkScriptApp system pkgs "build-image" ./scripts/build-image.sh;
-      build-qcow2-image = mkScriptApp system pkgs "build-qcow2-image" ./scripts/build-qcow2-installer.sh;
       flash = mkScriptApp system pkgs "flash" ./scripts/flash.sh;
       build = mkScriptApp system pkgs "build" ./scripts/build.sh;
       run-vm = mkScriptApp system pkgs "run" ./scripts/run-vm.sh;

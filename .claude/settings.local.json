@@ -157,7 +157,12 @@
       "Bash(sudo systemd-run:*)",
       "Bash(ldd /nix/store/ds1vnv7xvx7pw16yrwlv8cyh2hwm06vh-podman-5.8.1/bin/podman)",
       "Bash(ip:*)",
-      "Bash(echo \"killed: $?\")"
+      "Bash(echo \"killed: $?\")",
+      "Bash(bash -n /home/erahhal/Code/homefree/scripts/run-vm.sh)",
+      "Bash(bash -n /home/erahhal/Code/homefree/scripts/build.sh)",
+      "Bash(nix build *)",
+      "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh --help)",
+      "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh run *)"
     ]
   }
 }

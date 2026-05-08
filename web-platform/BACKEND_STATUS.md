@@ -56,7 +56,7 @@ This package would need to be:
 nix build .#nixosConfigurations.homefree-installer.config.system.build.isoImage
 
 # Test in QEMU
-./scripts/test-web-installer.sh test
+./scripts/run-vm.sh run
 ```
 
 ### Expected Behavior

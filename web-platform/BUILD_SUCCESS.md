@@ -81,7 +81,7 @@ To test the ISO:
 
 ```bash
 # Using test script
-./scripts/test-web-installer.sh test
+./scripts/run-vm.sh run
 
 # Or manually with QEMU
 qemu-system-x86_64 \

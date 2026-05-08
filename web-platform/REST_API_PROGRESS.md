@@ -244,7 +244,7 @@ async handleNext() {
 nix build .#nixosConfigurations.homefree-installer.config.system.build.isoImage
 
 # Test in VM
-./scripts/test-web-installer.sh test
+./scripts/run-vm.sh run
 
 # In VM, test endpoints manually:
 curl http://localhost:8000/health
@@ -333,7 +333,7 @@ installer-web/
 2. **Build and test ISO**:
    ```bash
    nix build .#nixosConfigurations.homefree-installer.config.system.build.isoImage
-   ./scripts/test-web-installer.sh test
+   ./scripts/run-vm.sh run
    ```
 
 3. **Test API connectivity**:

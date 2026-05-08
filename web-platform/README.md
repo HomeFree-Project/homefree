@@ -204,13 +204,13 @@ Use the provided test script:
 
 ```bash
 # Build the installer
-./scripts/test-web-installer.sh build
+./scripts/run-vm.sh build
 
-# Test in QEMU
-./scripts/test-web-installer.sh test
+# Test in QEMU (user-mode networking + dev share by default)
+./scripts/run-vm.sh run
 
 # Clean build artifacts
-./scripts/test-web-installer.sh clean
+./scripts/run-vm.sh clean
 ```
 
 Or manually with QEMU:
