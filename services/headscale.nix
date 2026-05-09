@@ -416,6 +416,16 @@ in
           handle /admin* {
             reverse_proxy http://${lan-address}:3009
           }
+
+          ## Land users at the Headplane admin UI when they visit
+          ## https://vpn.<domain>/ in a browser. Headplane is hard-coded
+          ## to its /admin basename (see vite/react-router config in the
+          ## upstream package), so this is a cosmetic redirect rather than
+          ## a path remount. We match `/` exactly so headscale's other
+          ## endpoints (/key, /derp/*, /ts2021, /machine/*, etc.) still
+          ## reach the headscale daemon below.
+          @root_only path /
+          redir @root_only /admin/ 302
         '';
       };
       firewall = {
