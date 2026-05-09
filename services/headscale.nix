@@ -64,22 +64,12 @@ let
   ## `headscale apikeys create` value and configure OIDC after.
   deployHeadplane = headscaleEnabled;
 
-  ## Generate the cookie secret on first boot if missing. Headplane
+  ## The cookie secret is auto-generated on first boot by the
+  ## headplane-prepare-secrets.service oneshot defined further down,
+  ## ensuring the file exists before LoadCredential reads it. Headplane
   ## requires *some* cookie secret to start; we don't want a fresh
   ## install to be locked out of its own admin UI just because the
   ## sysadmin hasn't visited the SOPS settings page yet.
-  headplaneCookiePreStart = pkgs.writeShellScript "headplane-cookie-prestart" ''
-    set -eu
-    mkdir -p ${headplaneSecretsDir}
-    if [ ! -s "${headplaneSecretsDir}/headplane-cookie-secret" ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
-        > "${headplaneSecretsDir}/headplane-cookie-secret"
-    fi
-    ## systemd LoadCredential reads the file as root before the unit
-    ## drops privileges, so ownership doesn't actually need to match
-    ## the headplane user — but leave the file 600 to keep it tight.
-    chmod 600 "${headplaneSecretsDir}/headplane-cookie-secret"
-  '';
 
   ## Secret values are exposed via systemd LoadCredential below; we
   ## point the *_path settings at the resolved paths under
@@ -378,6 +368,30 @@ in
     settings = headplaneSettings;
   };
 
+  ## Standalone oneshot that auto-generates the cookie secret before
+  ## headplane.service starts. LoadCredential= is processed by PID 1
+  ## *before* ExecStartPre runs, so we can't generate the file from
+  ## within headplane.service itself — by the time ExecStartPre would
+  ## run, LoadCredential has already failed with status 243.
+  systemd.services.headplane-prepare-secrets = lib.mkIf deployHeadplane {
+    description = "Prepare Headplane runtime secrets (cookie secret)";
+    wantedBy = [ "headplane.service" ];
+    before = [ "headplane.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -eu
+      mkdir -p ${headplaneSecretsDir}
+      if [ ! -s "${headplaneSecretsDir}/headplane-cookie-secret" ]; then
+        ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
+          > "${headplaneSecretsDir}/headplane-cookie-secret"
+      fi
+      chmod 600 "${headplaneSecretsDir}/headplane-cookie-secret"
+    '';
+  };
+
   ## LoadCredential bridges the SOPS-managed per-secret files into the
   ## headplane.service mount namespace at /run/credentials/headplane.service/<name>.
   ## The headplaneSettings YAML above points the *_path fields at exactly
@@ -385,11 +399,9 @@ in
   ## OIDC is actually configured — LoadCredential of a non-existent
   ## file is fatal at unit start.
   systemd.services.headplane = lib.mkIf deployHeadplane {
-    after = [ "headscale.service" "dns-ready.service" ];
-    requires = [ "headscale.service" "dns-ready.service" ];
+    after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
+    requires = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
     serviceConfig = {
-      ## Auto-generate the cookie secret on first boot if absent.
-      ExecStartPre = [ "+${headplaneCookiePreStart}" ];
       LoadCredential = [
         "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"
       ] ++ lib.optionals oidcConfigured [

@@ -1227,8 +1227,31 @@ class ServicesModule extends LitElement {
     // Filter out child services (those with parent field) - they'll be rendered inside parent
     const parentServices = this.services.filter(service => !service.parent);
 
+    // Sort by status severity: services that need attention float to the
+    // top so they're visible without scrolling. Within a status bucket,
+    // fall back to the service display name for stable ordering.
+    const statusPriority = {
+      failed: 0,
+      degraded: 1,
+      stopped: 2,
+      starting: 3,
+      running: 4,
+      unknown: 5,
+      disabled: 6,
+    };
+    const sortKey = (service) => {
+      if (!service.enabled) return statusPriority.disabled;
+      const cls = this.getStatusClass(service.active_state, service.sub_state, service.partial);
+      return statusPriority[cls] ?? statusPriority.unknown;
+    };
+    const sortedParents = [...parentServices].sort((a, b) => {
+      const pa = sortKey(a), pb = sortKey(b);
+      if (pa !== pb) return pa - pb;
+      return (a.name || a.label).localeCompare(b.name || b.label);
+    });
+
     // Filter services based on search query
-    const filteredServices = parentServices.filter(service => {
+    const filteredServices = sortedParents.filter(service => {
       const searchLower = this.searchQuery.toLowerCase();
       return (
         service.name.toLowerCase().includes(searchLower) ||
