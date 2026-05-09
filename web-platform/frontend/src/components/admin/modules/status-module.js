@@ -27,10 +27,10 @@ class StatusModule extends LitElement {
       align-items: center;
       gap: 16px;
       padding: 24px;
-      background: white;
+      background: var(--hf-surface);
       border-radius: 12px;
       margin-bottom: 24px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      box-shadow: var(--hf-shadow);
       max-width: 1200px;
     }
 
@@ -45,23 +45,23 @@ class StatusModule extends LitElement {
     }
 
     .status-indicator.healthy {
-      background: #d1fae5;
-      color: #065f46;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--hf-ok);
     }
 
     .status-indicator.unhealthy {
-      background: #fee2e2;
-      color: #991b1b;
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--hf-err);
     }
 
     .status-indicator.warning {
-      background: #fef3c7;
-      color: #92400e;
+      background: rgba(245, 158, 11, 0.1);
+      color: var(--hf-warn);
     }
 
     .status-indicator.building {
-      background: #dbeafe;
-      color: #1e40af;
+      background: var(--hf-accent-soft);
+      color: var(--hf-accent);
     }
 
     .status-info {
@@ -72,20 +72,20 @@ class StatusModule extends LitElement {
       font-size: 20px;
       font-weight: 600;
       margin: 0 0 4px 0;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .status-message {
       font-size: 14px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin: 0;
     }
 
     .spinner {
       width: 24px;
       height: 24px;
-      border: 3px solid #e5e7eb;
-      border-top-color: #667eea;
+      border: 3px solid var(--hf-border);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
@@ -95,10 +95,10 @@ class StatusModule extends LitElement {
     }
 
     .logs-container {
-      background: white;
+      background: var(--hf-surface);
       border-radius: 12px;
       padding: 24px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      box-shadow: var(--hf-shadow);
       max-width: 1200px;
     }
 
@@ -106,7 +106,7 @@ class StatusModule extends LitElement {
       font-size: 18px;
       font-weight: 600;
       margin: 0 0 16px 0;
-      color: #1d1d1f;
+      color: var(--hf-text);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -116,7 +116,7 @@ class StatusModule extends LitElement {
     }
 
     .logs-header:hover {
-      color: #667eea;
+      color: var(--hf-accent);
     }
 
     .logs-header-text {
@@ -128,7 +128,7 @@ class StatusModule extends LitElement {
     .chevron {
       font-size: 14px;
       transition: transform 0.3s ease;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .chevron.collapsed {
@@ -136,8 +136,8 @@ class StatusModule extends LitElement {
     }
 
     .logs-content {
-      background: #1d1d1f;
-      color: #f5f5f7;
+      background: var(--hf-surface);
+      color: var(--hf-text);
       padding: 16px;
       border-radius: 8px;
       font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
@@ -159,21 +159,21 @@ class StatusModule extends LitElement {
     }
 
     .logs-content::-webkit-scrollbar-track {
-      background: #2d2d2d;
+      background: var(--hf-surface-2);
       border-radius: 4px;
     }
 
     .logs-content::-webkit-scrollbar-thumb {
-      background: #667eea;
+      background: var(--hf-accent);
       border-radius: 4px;
     }
 
     .logs-content::-webkit-scrollbar-thumb:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .empty-logs {
-      color: #86868b;
+      color: var(--hf-text-muted);
       font-style: italic;
       text-align: center;
       padding: 32px;
@@ -184,15 +184,15 @@ class StatusModule extends LitElement {
     }
 
     .log-line.error {
-      color: #ef4444;
+      color: var(--hf-err);
     }
 
     .log-line.warning {
-      color: #f59e0b;
+      color: var(--hf-warn);
     }
 
     .log-line.success {
-      color: #10b981;
+      color: var(--hf-ok);
     }
   `;
 
@@ -212,6 +212,9 @@ class StatusModule extends LitElement {
 
   toggleLogsCollapsed() {
     this.logsCollapsed = !this.logsCollapsed;
+    // Once the user has explicitly toggled, stop auto-expanding on log
+    // changes — they've taken ownership of the panel state.
+    this._userHasToggledLogs = true;
   }
 
   updated(changedProperties) {
@@ -223,6 +226,16 @@ class StatusModule extends LitElement {
         this.logsCollapsed = false;
       }
       // Don't auto-collapse on success - let user control
+    }
+
+    // Auto-expand once logs first arrive — covers the page-reload case
+    // where we hydrate buildLogs from the backend's persisted log and the
+    // user otherwise wouldn't see them without clicking to expand.
+    if (changedProperties.has('buildLogs')) {
+      const prev = changedProperties.get('buildLogs') || [];
+      if (prev.length === 0 && this.buildLogs.length > 0 && !this._userHasToggledLogs) {
+        this.logsCollapsed = false;
+      }
     }
 
     // Auto-scroll to bottom when logs change (only if not collapsed)

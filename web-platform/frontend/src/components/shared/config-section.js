@@ -19,26 +19,26 @@ class ConfigSection extends LitElement {
     }
 
     .section {
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
+      border-radius: 10px;
       overflow: hidden;
     }
 
     .section-header {
-      padding: 20px 24px;
-      border-bottom: 1px solid #f5f5f7;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--hf-border);
       cursor: default;
     }
 
     .section-header.collapsible {
       cursor: pointer;
       user-select: none;
-      transition: background 0.2s;
+      transition: background 0.15s;
     }
 
     .section-header.collapsible:hover {
-      background: #fafafa;
+      background: var(--hf-surface-2);
     }
 
     .section-header-content {
@@ -49,20 +49,21 @@ class ConfigSection extends LitElement {
 
     .section-title {
       margin: 0;
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
+      letter-spacing: -0.005em;
     }
 
     .section-description {
       margin: 6px 0 0 0;
-      font-size: 14px;
-      color: #86868b;
+      font-size: 13px;
+      color: var(--hf-text-muted);
     }
 
     .collapse-icon {
-      font-size: 20px;
-      color: #86868b;
+      font-size: 18px;
+      color: var(--hf-text-muted);
       transition: transform 0.3s;
     }
 

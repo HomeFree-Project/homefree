@@ -26,10 +26,10 @@ class SecretsInput extends LitElement {
     }
 
     .secret-field {
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       padding: 16px;
-      background: #f9f9f9;
+      background: var(--hf-surface-2);
     }
 
     .secret-field.disabled {
@@ -47,11 +47,11 @@ class SecretsInput extends LitElement {
     .field-label {
       font-size: 14px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .field-label .required {
-      color: #ff3b30;
+      color: var(--hf-err);
       margin-left: 4px;
     }
 
@@ -63,18 +63,18 @@ class SecretsInput extends LitElement {
     }
 
     .status-badge.set {
-      background: #d4edda;
-      color: #155724;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--hf-ok);
     }
 
     .status-badge.not-set {
-      background: #f8d7da;
-      color: #721c24;
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--hf-err);
     }
 
     .field-description {
       font-size: 13px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-bottom: 12px;
     }
 
@@ -89,20 +89,27 @@ class SecretsInput extends LitElement {
       flex: 1;
       padding: 10px 12px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-bg);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       font-family: monospace;
       resize: vertical;
       min-height: 80px;
     }
 
+    textarea::placeholder {
+      color: var(--hf-text-subtle);
+    }
+
     textarea:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     textarea:disabled {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       cursor: not-allowed;
     }
 
@@ -127,32 +134,32 @@ class SecretsInput extends LitElement {
     }
 
     .btn-toggle {
-      background: #f5f5f7;
-      color: #1d1d1f;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       min-width: 60px;
     }
 
     .btn-toggle:hover:not(:disabled) {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
 
     .btn-set {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
     }
 
     .btn-set:hover:not(:disabled) {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .btn-clear {
-      background: #ff3b30;
-      color: white;
+      background: var(--hf-err);
+      color: var(--hf-text);
     }
 
     .btn-clear:hover:not(:disabled) {
-      background: #e02020;
+      background: #dc2626;
     }
 
     .btn-group {
@@ -162,11 +169,11 @@ class SecretsInput extends LitElement {
 
     .warning-message {
       padding: 12px;
-      background: #fff3cd;
-      border: 1px solid #ffc107;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid var(--hf-warn);
       border-radius: 8px;
       font-size: 13px;
-      color: #856404;
+      color: var(--hf-warn);
       margin-top: 12px;
     }
   `;

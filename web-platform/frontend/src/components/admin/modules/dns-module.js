@@ -75,7 +75,7 @@ class DnsModule extends LitElement {
           title="Local DNS Overrides"
           description="Map custom hostnames to IP addresses on your local network"
         >
-          <p style="color: #86868b; font-size: 14px; margin-bottom: 16px;">
+          <p style="color: var(--hf-text-muted); font-size: 14px; margin-bottom: 16px;">
             DNS overrides allow you to resolve custom hostnames like "myserver.local" to specific IP addresses on your network.
           </p>
 
@@ -92,7 +92,7 @@ class DnsModule extends LitElement {
           title="Dynamic DNS"
           description="Automatically update your public DNS records (Coming Soon)"
         >
-          <p style="color: #86868b; font-size: 14px;">
+          <p style="color: var(--hf-text-muted); font-size: 14px;">
             Dynamic DNS configuration will be available in a future update. This will allow you to automatically update DNS records when your public IP address changes.
           </p>
         </config-section>

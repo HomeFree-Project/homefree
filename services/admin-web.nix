@@ -387,9 +387,33 @@ in
         Restart = "always";
         RestartSec = "10s";
 
+        # Stop only the main process, not the entire control group. The
+        # rebuild now runs in its own transient systemd unit
+        # (homefree-rebuild.service) launched via systemd-run, so admin-api
+        # stopping should never affect it. KillMode=process is belt-and-
+        # suspenders for any other detached helpers we spawn.
+        KillMode = "process";
+
         # Environment
+        # NB: coreutils + standard userspace tools are needed because the
+        # rebuild we spawn (nixos-rebuild-ng) shells out to bare commands like
+        # `test`, `mkdir`, `cat`, etc. without absolute paths. systemd-run
+        # inherits this PATH into the transient unit, so anything missing
+        # here will fail mid-rebuild with [Errno 2] No such file or directory.
         Environment = [
-          "PATH=${lib.makeBinPath [ pkgs.nixos-rebuild pkgs.nix pkgs.git pkgs.systemd pkgs.sops pkgs.ssh-to-age ]}"
+          "PATH=${lib.makeBinPath [
+            pkgs.nixos-rebuild
+            pkgs.nix
+            pkgs.git
+            pkgs.systemd
+            pkgs.sops
+            pkgs.ssh-to-age
+            pkgs.coreutils
+            pkgs.bash
+            pkgs.gnused
+            pkgs.gnugrep
+            pkgs.findutils
+          ]}"
         ];
       };
     };
@@ -488,6 +512,54 @@ in
     system.activationScripts.setup-admin-config = {
       text = preStart;
       deps = [];
+    };
+
+    # Reconcile admin-api after every system activation. Runs as part of
+    # `switch-to-configuration` so it fires for ALL rebuild origins — UI
+    # Apply, sudo from shell, anything. Replaces the previous attempt at
+    # using systemd.paths to watch /run/current-system, which doesn't fire
+    # reliably for symlink swaps via rename(2).
+    #
+    # The script defers the actual restart via systemd-run so this
+    # activation step doesn't block waiting for the restart and so we
+    # don't kill ourselves if admin-api is the one running the rebuild
+    # (its transient unit lives in PID 1's cgroup, separate from us).
+    system.activationScripts.reconcile-admin-api = {
+      text = ''
+        # Only act if admin-api's unit definition changed since the running
+        # daemon last loaded it. NeedDaemonReload=yes is the canonical
+        # signal for "the unit file in /etc/systemd differs from what
+        # systemd has in memory."
+        needs_reload=$(${pkgs.systemd}/bin/systemctl show admin-api \
+          --property=NeedDaemonReload --value 2>/dev/null || echo no)
+
+        if [ "$needs_reload" = "yes" ]; then
+          echo "admin-api unit changed; scheduling deferred restart"
+
+          # Best-effort: tell the frontend a restart is coming so it can
+          # show its overlay during the brief window.
+          ${pkgs.coreutils}/bin/mkdir -p /var/lib/homefree-admin
+          ts=$(${pkgs.coreutils}/bin/date -Iseconds 2>/dev/null || ${pkgs.coreutils}/bin/date)
+          ${pkgs.coreutils}/bin/printf '%s\n' \
+            "{\"admin_api_status\":\"restarting\",\"timestamp\":\"$ts\",\"estimated_duration_seconds\":10,\"message\":\"Admin API is restarting after rebuild\"}" \
+            > /var/lib/homefree-admin/service-state.json
+
+          # Defer 2s so this activation script returns first. PID 1 owns
+          # the transient unit, so admin-api restarting can't kill it.
+          # We use a unique unit name (with timestamp) so multiple back-to-
+          # back rebuilds don't conflict on the unit name.
+          ${pkgs.systemd}/bin/systemd-run \
+            --unit="homefree-admin-restart-$(${pkgs.coreutils}/bin/date +%s).service" \
+            --collect \
+            --service-type=oneshot \
+            ${pkgs.bash}/bin/bash -c \
+              "sleep 2 && ${pkgs.systemd}/bin/systemctl daemon-reload && ${pkgs.systemd}/bin/systemctl restart admin-api" \
+            >/dev/null 2>&1 || true
+        else
+          echo "admin-api unit unchanged; no restart needed"
+        fi
+      '';
+      deps = [ "setup-admin-config" ];
     };
 
   };

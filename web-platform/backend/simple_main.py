@@ -4,6 +4,7 @@ HomeFree Web Installer Backend - REST API
 Simplified version without strawberry-graphql dependency
 """
 
+import os
 import sys
 import logging
 import json
@@ -656,6 +657,26 @@ async def reboot_system():
         logger.error(f"Error rebooting system: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/system/closure-id")
+async def get_closure_id():
+    """
+    Return an opaque fingerprint of the currently activated system closure.
+
+    The frontend polls this and when the value changes, knows new code has
+    been deployed and prompts the user to refresh the page.
+
+    Implementation: /run/current-system is a symlink to the active system
+    closure (/nix/store/<hash>-nixos-system-...). The hash changes IFF any
+    part of the system — including the bundled frontend — has changed.
+    """
+    try:
+        link = os.readlink("/run/current-system")
+        return JSONResponse(content={"closure_id": link})
+    except Exception as e:
+        logger.error(f"Error reading current-system: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Admin Mode Endpoints
 
 @app.get("/api/mode")
@@ -868,13 +889,129 @@ async def apply_config_changes(config: dict):
         logger.error(f"Error applying config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/config/save")
+async def save_config_changes(config: dict):
+    """
+    Persist configuration changes to disk WITHOUT triggering a rebuild.
+
+    Called by the frontend's debounced auto-save. Validates the payload, then
+    writes /etc/nixos/homefree-config.json (with backup). On validation failure
+    the file is NOT touched and the prior valid version is preserved on disk.
+    """
+    try:
+        from services.mode import ModeService
+        from services.config_writer import ConfigWriter
+        from services.validation import ValidationService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        is_valid, errors = ValidationService.validate_config(config)
+        if not is_valid:
+            return JSONResponse(content={
+                "success": False,
+                "message": "Validation failed",
+                "errors": errors,
+            })
+
+        if not ConfigWriter.write_config(config):
+            return JSONResponse(content={
+                "success": False,
+                "message": "Failed to write configuration file",
+                "errors": ["write failed"],
+            })
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Configuration saved",
+            "errors": [],
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config/dirty")
+async def get_config_dirty():
+    """
+    Indicate whether the on-disk config differs from the last applied state.
+
+    Used by the frontend to enable/disable the Apply button. We track the
+    "applied" state via /var/lib/homefree-admin/applied-config.json, which is
+    written at the end of each successful rebuild. If that file is missing or
+    its contents don't match /etc/nixos/homefree-config.json, the system is
+    dirty (has unapplied changes).
+    """
+    try:
+        from services.mode import ModeService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        config_path = Path("/etc/nixos/homefree-config.json")
+        applied_path = Path("/var/lib/homefree-admin/applied-config.json")
+
+        if not config_path.exists():
+            return JSONResponse(content={"dirty": False, "reason": "no config file"})
+
+        current = config_path.read_text()
+
+        if not applied_path.exists():
+            # No applied marker yet — assume dirty so the user can apply once.
+            return JSONResponse(content={"dirty": True, "reason": "no applied marker"})
+
+        applied = applied_path.read_text()
+        if current != applied:
+            return JSONResponse(content={"dirty": True, "reason": "differs"})
+
+        # Config matches the last applied snapshot — but if the most recent
+        # rebuild attempt failed, the system isn't actually in the desired
+        # state. Surface that as "dirty" so Apply stays enabled for retry.
+        latest_status_path = Path("/var/lib/homefree-admin/rebuild-logs/latest-status.json")
+        if latest_status_path.exists():
+            try:
+                status = json.loads(latest_status_path.read_text())
+                exit_code = status.get("exit_code")
+                if exit_code is not None and exit_code != 0:
+                    return JSONResponse(content={
+                        "dirty": True,
+                        "reason": "last rebuild failed",
+                    })
+            except Exception as e:
+                logger.warning(f"Could not parse latest-status.json: {e}")
+
+        return JSONResponse(content={"dirty": False, "reason": "in sync"})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking config dirty state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/config/rebuild-status")
-async def get_rebuild_status():
-    """Get status of current rebuild operation"""
+async def get_rebuild_status(request: Request):
+    """Get status of current rebuild operation.
+
+    Supports `?include_history=1` for the page-load case: when a fresh
+    frontend reattaches to an in-progress rebuild, it needs the full log
+    so far, not just incremental output since the last poll.
+    """
     try:
         from services.nix_operations import NixOperations
 
         status = NixOperations.get_rebuild_status()
+
+        # Optionally include the full log file (not just incremental output).
+        # Used by the frontend on first connect so reload doesn't lose history.
+        include_history = request.query_params.get("include_history") in ("1", "true")
+        if include_history:
+            full = NixOperations.get_full_log()
+            if full:
+                status = {**status, "output": full}
 
         from models import RebuildStatus
         result = RebuildStatus(

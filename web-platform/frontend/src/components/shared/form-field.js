@@ -29,15 +29,15 @@ class FormField extends LitElement {
     }
 
     label {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
-      color: #1d1d1f;
-      margin-bottom: 8px;
+      color: var(--hf-text);
+      margin-bottom: 6px;
       display: block;
     }
 
     label .required {
-      color: #ff3b30;
+      color: var(--hf-err);
       margin-left: 4px;
     }
 
@@ -45,16 +45,22 @@ class FormField extends LitElement {
     input[type="email"],
     input[type="number"],
     select {
-      padding: 10px 12px;
-      font-size: 14px;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      background: white;
-      color: #1d1d1f;
+      padding: 9px 12px;
+      font-size: 13px;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
       font-family: inherit;
-      transition: border-color 0.2s;
+      transition: border-color 0.15s, box-shadow 0.15s;
       max-width: 500px;
       width: 100%;
+    }
+
+    input[type="text"]::placeholder,
+    input[type="email"]::placeholder,
+    input[type="number"]::placeholder {
+      color: var(--hf-text-subtle);
     }
 
     input[type="text"]:focus,
@@ -62,15 +68,16 @@ class FormField extends LitElement {
     input[type="number"]:focus,
     select:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     input[type="text"]:disabled,
     input[type="email"]:disabled,
     input[type="number"]:disabled,
     select:disabled {
-      background: #f5f5f7;
-      color: #86868b;
+      background: var(--hf-surface-2);
+      color: var(--hf-text-muted);
       cursor: not-allowed;
     }
 
@@ -78,7 +85,7 @@ class FormField extends LitElement {
     input[type="email"].error,
     input[type="number"].error,
     select.error {
-      border-color: #ff3b30;
+      border-color: var(--hf-err);
     }
 
     .checkbox-wrapper {
@@ -88,9 +95,10 @@ class FormField extends LitElement {
     }
 
     input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       cursor: pointer;
+      accent-color: var(--hf-accent);
     }
 
     input[type="checkbox"]:disabled {
@@ -100,13 +108,13 @@ class FormField extends LitElement {
 
     .help-text {
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-top: 6px;
     }
 
     .error-text {
       font-size: 12px;
-      color: #ff3b30;
+      color: var(--hf-err);
       margin-top: 6px;
     }
   `;

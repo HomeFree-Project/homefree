@@ -34,12 +34,12 @@ class ServicesModule extends LitElement {
     }
 
     .info-box {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 20px;
       font-size: 14px;
-      color: #1d1d1f;
+      color: var(--hf-text);
       max-width: 1200px;
       display: flex;
       align-items: center;
@@ -51,13 +51,13 @@ class ServicesModule extends LitElement {
     }
 
     .warning-box {
-      background: #fff3cd;
-      border: 1px solid #ffc107;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid var(--hf-warn);
       border-radius: 8px;
       padding: 12px 16px;
       margin-bottom: 16px;
       font-size: 13px;
-      color: #856404;
+      color: var(--hf-warn);
       max-width: 1200px;
       display: flex;
       align-items: center;
@@ -79,14 +79,14 @@ class ServicesModule extends LitElement {
       max-width: 500px;
       padding: 12px 16px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       font-family: inherit;
     }
 
     .search-box input:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
     }
 
     .services-list {
@@ -94,8 +94,8 @@ class ServicesModule extends LitElement {
     }
 
     .service-row {
-      background: white;
-      border: 1px solid #e5e5e7;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
       border-radius: 12px;
       padding: 16px;
       margin-bottom: 12px;
@@ -107,7 +107,7 @@ class ServicesModule extends LitElement {
     }
 
     .service-row.enabled {
-      border-color: #667eea;
+      border-color: var(--hf-accent);
     }
 
     .service-row-main {
@@ -118,21 +118,21 @@ class ServicesModule extends LitElement {
 
     .config-expander {
       padding: 12px 16px;
-      border-top: 1px solid #e5e5e7;
-      background: #fafafa;
+      border-top: 1px solid var(--hf-border);
+      background: var(--hf-surface-2);
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 6px;
       font-size: 13px;
-      color: #667eea;
+      color: var(--hf-accent);
       transition: all 0.2s;
       user-select: none;
     }
 
     .config-expander:hover {
-      background: #f0f0f2;
-      color: #5568d3;
+      background: var(--hf-surface-3);
+      color: var(--hf-accent-hover);
     }
 
     .config-expander-arrow {
@@ -159,26 +159,26 @@ class ServicesModule extends LitElement {
     }
 
     .status-dot.running {
-      background: #34c759;
-      box-shadow: 0 0 8px rgba(52, 199, 89, 0.5);
+      background: var(--hf-ok);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
     }
 
     .status-dot.stopped {
-      background: #8e8e93;
+      background: var(--hf-text-muted);
     }
 
     .status-dot.failed {
-      background: #ff3b30;
-      box-shadow: 0 0 8px rgba(255, 59, 48, 0.5);
+      background: var(--hf-err);
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
     }
 
     .status-dot.starting {
-      background: #ff9500;
+      background: var(--hf-warn);
       animation: pulse 1.5s ease-in-out infinite;
     }
 
     .status-dot.unknown {
-      background: #d1d1d6;
+      background: var(--hf-border-2);
     }
 
     @keyframes pulse {
@@ -193,12 +193,12 @@ class ServicesModule extends LitElement {
     .status-text {
       font-size: 13px;
       font-weight: 500;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
-    .status-text.running { color: #34c759; }
-    .status-text.failed { color: #ff3b30; }
-    .status-text.starting { color: #ff9500; }
+    .status-text.running { color: var(--hf-ok); }
+    .status-text.failed { color: var(--hf-err); }
+    .status-text.starting { color: var(--hf-warn); }
 
     .service-info {
       flex: 1;
@@ -208,19 +208,19 @@ class ServicesModule extends LitElement {
     .service-name {
       font-size: 16px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
       margin-bottom: 4px;
     }
 
     .service-project {
       font-size: 13px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-bottom: 4px;
     }
 
     .service-url {
       font-size: 12px;
-      color: #667eea;
+      color: var(--hf-accent);
       text-decoration: none;
       word-break: break-all;
     }
@@ -231,7 +231,7 @@ class ServicesModule extends LitElement {
 
     .service-systemd {
       font-size: 11px;
-      color: #8e8e93;
+      color: var(--hf-text-muted);
       font-family: 'SF Mono', Monaco, 'Courier New', monospace;
       margin-top: 4px;
     }
@@ -251,7 +251,7 @@ class ServicesModule extends LitElement {
 
     .toggle-label {
       font-size: 13px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       min-width: 90px;
       text-align: right;
     }
@@ -275,7 +275,7 @@ class ServicesModule extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #ccc;
+      background-color: var(--hf-border-2);
       transition: 0.3s;
       border-radius: 24px;
     }
@@ -287,13 +287,13 @@ class ServicesModule extends LitElement {
       width: 18px;
       left: 3px;
       bottom: 3px;
-      background-color: white;
+      background-color: var(--hf-text);
       transition: 0.3s;
       border-radius: 50%;
     }
 
     input:checked + .toggle-slider {
-      background-color: #667eea;
+      background-color: var(--hf-accent);
     }
 
     input:checked + .toggle-slider:before {
@@ -312,7 +312,7 @@ class ServicesModule extends LitElement {
     .secrets-header {
       font-size: 14px;
       font-weight: 500;
-      color: #667eea;
+      color: var(--hf-accent);
       margin-bottom: 12px;
       display: flex;
       align-items: center;
@@ -326,28 +326,28 @@ class ServicesModule extends LitElement {
     .loading-spinner {
       text-align: center;
       padding: 40px;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .error-box {
-      background: #fff3f3;
-      border: 1px solid #ffccc7;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--hf-err);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 20px;
-      color: #d32f2f;
+      color: var(--hf-err);
       max-width: 1200px;
     }
 
     .no-results {
       text-align: center;
       padding: 40px;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .refresh-button {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
       border: none;
       padding: 8px 16px;
       border-radius: 6px;
@@ -358,11 +358,11 @@ class ServicesModule extends LitElement {
     }
 
     .refresh-button:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .refresh-button:disabled {
-      background: #d2d2d7;
+      background: var(--hf-border-2);
       cursor: not-allowed;
     }
 
@@ -371,11 +371,11 @@ class ServicesModule extends LitElement {
       margin-top: 8px;
       margin-left: 24px;
       padding-left: 16px;
-      border-left: 2px solid #e5e5e7;
+      border-left: 2px solid var(--hf-border);
     }
 
     .service-row-child {
-      background: #fafafa;
+      background: var(--hf-surface-2);
       margin-bottom: 8px;
       padding: 12px;
     }
@@ -390,8 +390,8 @@ class ServicesModule extends LitElement {
 
     /* Instance management buttons */
     .add-instance-button {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
       border: none;
       padding: 10px 16px;
       border-radius: 8px;
@@ -403,12 +403,12 @@ class ServicesModule extends LitElement {
     }
 
     .add-instance-button:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .delete-instance-button {
-      background: #ff3b30;
-      color: white;
+      background: var(--hf-err);
+      color: var(--hf-text);
       border: none;
       padding: 8px 16px;
       border-radius: 6px;
@@ -418,7 +418,7 @@ class ServicesModule extends LitElement {
     }
 
     .delete-instance-button:hover {
-      background: #e02b1f;
+      background: #dc2626;
     }
 
     @media (max-width: 768px) {
@@ -909,7 +909,7 @@ class ServicesModule extends LitElement {
             ` : ''}
 
             ${cannotDisable ? html`
-              <div class="toggle-label" style="color: #86868b; font-size: 12px;">
+              <div class="toggle-label" style="color: var(--hf-text-muted); font-size: 12px;">
                 ${isAdminApi ? 'System service' : 'System service (always enabled)'}
               </div>
             ` : ''}
@@ -1048,7 +1048,7 @@ class ServicesModule extends LitElement {
             `;
           })}
 
-          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e5e7;">
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hf-border);">
             <button
               class="delete-instance-button"
               @click=${() => this.handleInstanceDeleteClick(parentLabel, instanceIndex)}
@@ -1126,7 +1126,7 @@ class ServicesModule extends LitElement {
         <div class="secrets-header">
           <span>Secrets (${setCount}/${secretsCount} configured)</span>
           ${!this.hasAuthorizedKeys ? html`
-            <span style="color: #ff3b30; font-size: 12px;">⚠️ SSH key required</span>
+            <span style="color: var(--hf-err); font-size: 12px;">⚠️ SSH key required</span>
           ` : ''}
         </div>
 

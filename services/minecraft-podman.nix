@@ -57,6 +57,16 @@ in
             default = null;
             description = "Memory for Java VM, e.g. 6G";
           };
+          image-tag = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Pin a specific itzg/minecraft-server image tag (e.g. \"java21\", \"2025.7.0\"). Leave empty to use the project default.";
+          };
+          mode = lib.mkOption {
+            type = lib.types.enum [ "survival" "creative" "adventure" "spectator" ];
+            default = "survival";
+            description = "Default game mode for the world.";
+          };
           type = lib.mkOption {
             type = lib.types.nullOr (lib.types.enum [
               "AUTO_CURSEFORGE"
@@ -185,6 +195,20 @@ in
               default = null;
               description = "Memory for Java VM, e.g. 6G";
               ui-hint = "memory-size";
+            }
+            {
+              path = "image-tag";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "Pin a specific itzg/minecraft-server image tag (e.g. java21, 2025.7.0). Leave empty for the project default.";
+            }
+            {
+              path = "mode";
+              type = "enum";
+              default = "survival";
+              description = "Default game mode for the world";
+              enum-values = [ "survival" "creative" "adventure" "spectator" ];
             }
             {
               path = "type";

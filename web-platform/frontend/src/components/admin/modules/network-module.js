@@ -37,12 +37,12 @@ class NetworkModule extends LitElement {
     }
 
     .warning-box {
-      background: #fff3cd;
-      border-left: 4px solid #ffc107;
+      background: rgba(245, 158, 11, 0.1);
+      border-left: 4px solid var(--hf-warn);
       padding: 16px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: #856404;
+      color: var(--hf-warn);
       max-width: 1200px;
     }
 

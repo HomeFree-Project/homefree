@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId } from '../../api/client.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -27,7 +27,11 @@ class AdminApp extends LitElement {
     statusNeedsAttention: { type: Boolean }, // Persistent flash until user clicks Status
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
     serviceReloading: { type: Boolean }, // Whether admin-api is restarting
-    serviceReloadMessage: { type: String } // Message to show during reload
+    serviceReloadMessage: { type: String }, // Message to show during reload
+    saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
+    saveError: { type: String },           // First error message from a failed save, if any
+    hasUnappliedChanges: { type: Boolean }, // Whether there are unapplied changes on disk
+    updateAvailable: { type: Boolean }     // System closure changed since page-load — UI is stale
   };
 
   static styles = css`
@@ -36,6 +40,7 @@ class AdminApp extends LitElement {
       width: 100%;
       height: 100vh;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--hf-text);
     }
 
     .admin-container {
@@ -46,8 +51,9 @@ class AdminApp extends LitElement {
     /* Sidebar */
     .sidebar {
       width: 260px;
-      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      background: var(--hf-surface);
+      border-right: 1px solid var(--hf-border);
+      color: var(--hf-text);
       display: flex;
       flex-direction: column;
       transition: width 0.3s ease;
@@ -60,7 +66,7 @@ class AdminApp extends LitElement {
 
     .sidebar-header {
       padding: 24px 20px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      border-bottom: 1px solid var(--hf-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -75,12 +81,14 @@ class AdminApp extends LitElement {
       font-size: 20px;
       font-weight: 600;
       white-space: nowrap;
+      color: var(--hf-text);
+      letter-spacing: -0.01em;
     }
 
     .collapse-btn {
-      background: rgba(255, 255, 255, 0.1);
-      border: none;
-      color: white;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
+      color: var(--hf-text-muted);
       width: 32px;
       height: 32px;
       border-radius: 6px;
@@ -88,11 +96,12 @@ class AdminApp extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.2s;
+      transition: all 0.15s;
     }
 
     .collapse-btn:hover {
-      background: rgba(255, 255, 255, 0.2);
+      background: var(--hf-surface-3);
+      color: var(--hf-text);
     }
 
     .nav-menu {
@@ -104,31 +113,36 @@ class AdminApp extends LitElement {
     .nav-item {
       display: flex;
       align-items: center;
-      padding: 12px 20px;
-      color: rgba(255, 255, 255, 0.8);
+      padding: 10px 20px;
+      color: var(--hf-text-muted);
       text-decoration: none;
       cursor: pointer;
-      transition: all 0.2s;
-      border-left: 3px solid transparent;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
       white-space: nowrap;
     }
 
     .nav-item:hover {
-      background: rgba(255, 255, 255, 0.1);
-      color: white;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
     }
 
     .nav-item.active {
-      background: rgba(255, 255, 255, 0.15);
-      color: white;
-      border-left-color: white;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border-left-color: var(--hf-accent);
     }
 
     .nav-item-icon {
       width: 20px;
       margin-right: 12px;
-      font-size: 18px;
+      font-size: 16px;
       flex-shrink: 0;
+      filter: grayscale(0.4);
+    }
+
+    .nav-item.active .nav-item-icon {
+      filter: none;
     }
 
     .sidebar.collapsed .nav-item-text {
@@ -137,11 +151,11 @@ class AdminApp extends LitElement {
 
     .nav-section-title {
       padding: 20px 20px 8px 20px;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      opacity: 0.6;
+      letter-spacing: 0.08em;
+      color: var(--hf-text-subtle);
       white-space: nowrap;
     }
 
@@ -154,66 +168,129 @@ class AdminApp extends LitElement {
       flex: 1;
       display: flex;
       flex-direction: column;
-      background: #f5f5f7;
+      background: var(--hf-bg);
       overflow: hidden;
     }
 
     .top-bar {
       height: 64px;
-      background: white;
-      border-bottom: 1px solid #e5e5e7;
+      background: var(--hf-surface);
+      border-bottom: 1px solid var(--hf-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 0 24px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .top-bar-title {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 0;
     }
 
     .top-bar h2 {
       margin: 0;
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
+      letter-spacing: -0.01em;
     }
 
     .top-bar-actions {
       display: flex;
-      gap: 12px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Save status indicator */
+    .save-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--hf-text-muted);
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .save-indicator.saving {
+      color: var(--hf-text);
+    }
+
+    .save-indicator.saved {
+      color: var(--hf-ok);
+    }
+
+    .save-indicator.error {
+      color: var(--hf-err);
+      border-color: var(--hf-err);
+    }
+
+    .save-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .save-spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid var(--hf-border-2);
+      border-top-color: var(--hf-accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
     }
 
     .btn {
-      padding: 8px 16px;
-      border-radius: 8px;
-      border: 1px solid #d2d2d7;
-      background: white;
-      color: #1d1d1f;
-      font-size: 14px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .btn:hover {
-      background: #f5f5f7;
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
     .btn-primary {
-      background: #667eea;
+      background: var(--hf-accent);
       color: white;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
     }
 
     .btn-primary:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
 
     .btn:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
     }
 
+    .btn-primary:disabled:hover {
+      background: var(--hf-accent);
+      border-color: var(--hf-accent);
+    }
+
     .btn:disabled:hover {
-      background: #667eea;
+      background: var(--hf-surface-2);
+      border-color: var(--hf-border-2);
     }
 
     @keyframes spin {
@@ -223,36 +300,40 @@ class AdminApp extends LitElement {
     .spinner-tiny {
       width: 10px;
       height: 10px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-top-color: white;
+      border: 2px solid var(--hf-border-2);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
 
     .status-badge {
       margin-left: auto;
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
     }
 
     .status-badge.healthy {
-      background: #10b981;
+      background: var(--hf-ok);
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
     }
 
     .status-badge.unhealthy {
-      background: #ef4444;
+      background: var(--hf-err);
+      box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
     }
 
     .status-badge.warning {
-      background: #f59e0b;
+      background: var(--hf-warn);
+      box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
     }
 
     .status-badge.building {
       background: transparent;
       width: auto;
       height: auto;
+      box-shadow: none;
     }
 
     .sidebar.collapsed .status-badge {
@@ -262,12 +343,12 @@ class AdminApp extends LitElement {
     /* Status nav item flashing animation */
     @keyframes statusFlash {
       0%, 100% {
-        background: rgba(255, 255, 255, 0.15);
-        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+        background: var(--hf-surface-2);
+        box-shadow: 0 0 0 0 var(--hf-focus-ring);
       }
       50% {
-        background: rgba(255, 255, 255, 0.25);
-        box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.6);
+        background: var(--hf-accent-soft);
+        box-shadow: 0 0 12px 2px var(--hf-focus-ring);
       }
     }
 
@@ -279,6 +360,7 @@ class AdminApp extends LitElement {
       flex: 1;
       overflow-y: auto;
       padding: 24px;
+      background: var(--hf-bg);
     }
 
     .loading-overlay {
@@ -287,7 +369,7 @@ class AdminApp extends LitElement {
       justify-content: center;
       height: 100%;
       font-size: 18px;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     /* Full-screen loading overlay for initial load */
@@ -297,7 +379,7 @@ class AdminApp extends LitElement {
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: #f5f5f7;
+      background: var(--hf-bg);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -308,25 +390,25 @@ class AdminApp extends LitElement {
     .loading-spinner {
       width: 48px;
       height: 48px;
-      border: 4px solid rgba(102, 126, 234, 0.1);
-      border-top-color: #667eea;
+      border: 4px solid var(--hf-border);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
       margin-bottom: 16px;
     }
 
     .loading-text {
-      font-size: 16px;
-      color: #86868b;
+      font-size: 14px;
+      color: var(--hf-text-muted);
       font-weight: 500;
     }
 
     .error-message {
-      background: #fff3cd;
-      color: #856404;
+      background: rgba(239, 68, 68, 0.08);
+      color: var(--hf-err);
       padding: 16px;
       border-radius: 8px;
-      border-left: 4px solid #ffc107;
+      border-left: 3px solid var(--hf-err);
       margin: 32px;
     }
 
@@ -337,28 +419,29 @@ class AdminApp extends LitElement {
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.75);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 10000;
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(6px);
     }
 
     .service-reload-content {
-      background: white;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
       border-radius: 12px;
       padding: 32px;
       text-align: center;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      box-shadow: var(--hf-shadow-lg);
       max-width: 400px;
     }
 
     .service-reload-spinner {
       width: 48px;
       height: 48px;
-      border: 4px solid rgba(102, 126, 234, 0.1);
-      border-top-color: #667eea;
+      border: 4px solid var(--hf-border);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
       margin: 0 auto 16px;
@@ -367,21 +450,118 @@ class AdminApp extends LitElement {
     .service-reload-title {
       font-size: 18px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
       margin-bottom: 8px;
     }
 
     .service-reload-message {
       font-size: 14px;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .module-content {
-      background: white;
+      background: var(--hf-bg);
       border-radius: 0;
       padding: 24px;
       box-shadow: none;
       min-height: 100%;
+      color: var(--hf-text);
+    }
+
+    /* Toast container positioning */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 10001;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* JSON config viewer (Advanced tab) */
+    .config-details {
+      margin-top: 20px;
+    }
+
+    .config-details > summary {
+      cursor: pointer;
+      font-weight: 500;
+      color: var(--hf-text);
+      user-select: none;
+      padding: 4px 0;
+    }
+
+    .config-details > summary:hover {
+      color: var(--hf-accent);
+    }
+
+    .config-json {
+      background: var(--hf-surface);
+      color: var(--hf-text);
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-top: 8px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      border: 1px solid var(--hf-border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      tab-size: 2;
+      white-space: pre;
+    }
+
+    .config-json .json-key   { color: #93c5fd; }   /* light blue */
+    .config-json .json-str   { color: #86efac; }   /* light green */
+    .config-json .json-num   { color: #fcd34d; }   /* amber */
+    .config-json .json-bool  { color: #f0abfc; }   /* magenta */
+    .config-json .json-null  { color: var(--hf-text-muted); font-style: italic; }
+
+    /* Update-available banner: shown when the deployed system closure
+       changes underneath an open tab (a rebuild succeeded after this tab
+       loaded). Sits above the admin layout. */
+    .update-banner {
+      height: 40px;
+      background: var(--hf-accent);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      flex-shrink: 0;
+    }
+
+    .update-banner-icon {
+      font-size: 14px;
+      animation: spin 3s linear infinite;
+      animation-play-state: paused;
+    }
+
+    .update-banner:hover .update-banner-icon {
+      animation-play-state: running;
+    }
+
+    .update-banner-btn {
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .update-banner-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .admin-container.with-banner {
+      height: calc(100% - 40px);
     }
 
     /* Responsive */
@@ -425,6 +605,27 @@ class AdminApp extends LitElement {
     this.serviceReloading = false;
     this.serviceReloadMessage = '';
     this.serviceStateCheckInterval = null;
+
+    // Auto-save state
+    this.saveStatus = 'idle';        // idle | saving | saved | error
+    this.saveError = '';
+    this._saveTimer = null;
+    this._saveInFlight = false;
+    this._savePending = false;       // queue one trailing save while in-flight
+    this.SAVE_DEBOUNCE_MS = 800;
+    this._savedFlashTimer = null;
+
+    // Apply / dirty state
+    this.hasUnappliedChanges = false;
+    this.dirtyPollInterval = null;
+
+    // System closure tracking — detects when the deployed code changed
+    // out from under us (a rebuild succeeded, the frontend bundle Caddy
+    // serves is now newer than what this tab loaded). When that happens,
+    // we surface a "Refresh" banner so the user can pick up new code.
+    this._initialClosureId = null;
+    this.updateAvailable = false;
+    this.closureIdPollInterval = null;
 
     // Navigation modules
     this.modules = [
@@ -517,6 +718,16 @@ class AdminApp extends LitElement {
     // Start continuous polling to keep status icon up-to-date
     // This ensures the icon updates even after backend restarts or external rebuilds
     this.statusPollInterval = setInterval(() => this.checkRebuildStatus(), 3000);
+
+    // Initial dirty check + periodic refresh for the Apply button enabled state
+    this.checkConfigDirty();
+    this.dirtyPollInterval = setInterval(() => this.checkConfigDirty(), 5000);
+
+    // Capture the system closure id at page-load time, then poll for
+    // changes. When it shifts, the deployed UI is newer than what this
+    // tab has loaded — show a Refresh banner.
+    this.initClosureTracking();
+    this.closureIdPollInterval = setInterval(() => this.checkClosureId(), 5000);
   }
 
   disconnectedCallback() {
@@ -533,6 +744,18 @@ class AdminApp extends LitElement {
     }
     if (this.serviceStateCheckInterval) {
       clearTimeout(this.serviceStateCheckInterval);
+    }
+    if (this.dirtyPollInterval) {
+      clearInterval(this.dirtyPollInterval);
+    }
+    if (this.closureIdPollInterval) {
+      clearInterval(this.closureIdPollInterval);
+    }
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+    }
+    if (this._savedFlashTimer) {
+      clearTimeout(this._savedFlashTimer);
     }
   }
 
@@ -628,7 +851,10 @@ class AdminApp extends LitElement {
 
   async checkRebuildStatus() {
     try {
-      const response = await fetch('/api/config/rebuild-status', {
+      // include_history=1 returns the full log on this initial fetch, so a
+      // page reload mid-build (or after one finished) hydrates the build
+      // logs panel instead of showing empty.
+      const response = await fetch('/api/config/rebuild-status?include_history=1', {
         signal: this.rebuildStatusAbortController?.signal
       });
 
@@ -653,10 +879,16 @@ class AdminApp extends LitElement {
           lastUpdate: null
         };
 
+        // Hydrate logs from the include_history=1 fetch so we don't show
+        // an empty pane while reattaching to an in-progress rebuild.
+        if (status.output && status.output.trim()) {
+          this.buildLogs = status.output.trim().split('\n').filter(l => l.trim());
+        }
+
         // Start polling to show live updates (only if not already active)
         if (!this._pollRebuildActive) {
           this._pollRebuildActive = true;
-          this.pollRebuildStatus();
+          this.pollRebuildStatus({ preserveLogs: true });
         }
       } else if (status.exit_code !== null && status.exit_code !== undefined) {
         // Build has finished - restore final state
@@ -787,6 +1019,62 @@ class AdminApp extends LitElement {
     return module ? module.title : 'HomeFree Admin';
   }
 
+  renderSaveIndicator() {
+    switch (this.saveStatus) {
+      case 'saving':
+        return html`
+          <span class="save-indicator saving">
+            <span class="save-spinner"></span>
+            Saving…
+          </span>
+        `;
+      case 'saved':
+        return html`
+          <span class="save-indicator saved">
+            <span class="save-dot"></span>
+            Saved
+          </span>
+        `;
+      case 'error':
+        return html`
+          <span class="save-indicator error" title="${this.saveError}">
+            <span class="save-dot"></span>
+            Save error: ${this.saveError || 'unknown'}
+          </span>
+        `;
+      case 'idle':
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Lightweight JSON syntax highlighter. Returns HTML with span class
+   * markers; pair with .config-json CSS rules for actual coloring. Input
+   * MUST already be a stringified JSON value (passed through
+   * JSON.stringify) so we can rely on its quoting and escaping.
+   */
+  highlightJson(jsonStr) {
+    const escape = s => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return escape(jsonStr).replace(
+      /("(?:\\.|[^"\\])*"(?:\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)/g,
+      (match) => {
+        let cls = 'json-num';
+        if (/^"/.test(match)) {
+          cls = /:$/.test(match) ? 'json-key' : 'json-str';
+        } else if (/^(?:true|false)$/.test(match)) {
+          cls = 'json-bool';
+        } else if (/^null$/.test(match)) {
+          cls = 'json-null';
+        }
+        return `<span class="${cls}">${match}</span>`;
+      }
+    );
+  }
+
   getStatusBadgeClass() {
     // Use systemHealth directly (same as status-module.js)
     // This ensures left nav badge matches status page title
@@ -804,6 +1092,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add(moduleName);
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleServiceToggle(e) {
@@ -835,6 +1124,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleServicePublicToggle(e) {
@@ -866,6 +1156,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleServiceOptionChanged(e) {
@@ -897,6 +1188,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleInstanceFieldChanged(e) {
@@ -940,6 +1232,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleInstanceAdd(e) {
@@ -990,6 +1283,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
     console.log('[handleInstanceAdd] Instance added, config updated:', {
       parentLabel,
       newInstance,
@@ -1038,6 +1332,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleInstanceToggle(e) {
@@ -1091,6 +1386,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   handleInstancePublicToggle(e) {
@@ -1143,6 +1439,7 @@ class AdminApp extends LitElement {
     this.dirtyModules.add('services');
     this.updateMergedConfig();
     this.requestUpdate();
+    this.scheduleAutoSave();
   }
 
   /**
@@ -1197,68 +1494,189 @@ class AdminApp extends LitElement {
     this.config = this.getMergedConfig();
   }
 
-  async handleSaveChanges() {
+  /**
+   * Schedule a debounced auto-save. Called after every config mutation.
+   * If a save is already in flight, queues one trailing save.
+   */
+  scheduleAutoSave() {
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+    }
+    // Reset "Saved" flash if we're getting more edits
+    if (this._savedFlashTimer) {
+      clearTimeout(this._savedFlashTimer);
+      this._savedFlashTimer = null;
+    }
+    this._saveTimer = setTimeout(() => this.autoSave(), this.SAVE_DEBOUNCE_MS);
+  }
+
+  async autoSave() {
+    if (this._saveInFlight) {
+      // Coalesce: schedule one trailing save once the current one returns
+      this._savePending = true;
+      return;
+    }
+    this._saveInFlight = true;
+    this.saveStatus = 'saving';
+    this.saveError = '';
+    this.requestUpdate();
+
     try {
-      // Merge server config with pending changes for validation and submission
       const configToSave = this.getMergedConfig();
+      const result = await saveConfigChanges(configToSave);
+      if (result.success) {
+        this.saveStatus = 'saved';
+        this.saveError = '';
+        // Mark as having unapplied changes (we just wrote new content to disk)
+        this.hasUnappliedChanges = true;
+        // Refresh dirty state from server in case other clients are editing
+        this.checkConfigDirty();
+        // Auto-fade the "Saved" pill back to idle after a moment
+        if (this._savedFlashTimer) clearTimeout(this._savedFlashTimer);
+        this._savedFlashTimer = setTimeout(() => {
+          if (this.saveStatus === 'saved') {
+            this.saveStatus = 'idle';
+            this.requestUpdate();
+          }
+        }, 1800);
+      } else {
+        this.saveStatus = 'error';
+        this.saveError = (result.errors && result.errors[0]) || result.message || 'Save failed';
+      }
+    } catch (error) {
+      console.error('Auto-save failed:', error);
+      this.saveStatus = 'error';
+      this.saveError = error.message || 'Network error';
+    } finally {
+      this._saveInFlight = false;
+      this.requestUpdate();
+      // Trailing save if more edits came in while we were saving
+      if (this._savePending) {
+        this._savePending = false;
+        this.scheduleAutoSave();
+      }
+    }
+  }
 
-      // Validate configuration
-      const validation = await validateConfig(configToSave);
+  async checkConfigDirty() {
+    try {
+      const result = await getConfigDirty();
+      this.hasUnappliedChanges = !!result.dirty;
+      this.requestUpdate();
+    } catch (error) {
+      // Don't spam logs while admin-api is restarting
+      if (error.name !== 'AbortError') {
+        console.warn('Failed to check config dirty state:', error.message);
+      }
+    }
+  }
 
+  /**
+   * Capture the current system closure id at page-load. Subsequent polls
+   * compare against this value; if it changes, new code has been deployed
+   * and the user should reload.
+   */
+  async initClosureTracking() {
+    try {
+      const result = await getClosureId();
+      this._initialClosureId = result.closure_id || null;
+    } catch (error) {
+      // Non-fatal: skip update detection. Older backends without this
+      // endpoint will trip this on every poll, which we suppress below.
+      this._initialClosureId = null;
+    }
+  }
+
+  async checkClosureId() {
+    if (!this._initialClosureId) return;
+    try {
+      const result = await getClosureId();
+      const current = result.closure_id || null;
+      if (current && current !== this._initialClosureId) {
+        this.updateAvailable = true;
+        // Stop polling once we know — no point re-asking.
+        if (this.closureIdPollInterval) {
+          clearInterval(this.closureIdPollInterval);
+          this.closureIdPollInterval = null;
+        }
+      }
+    } catch (error) {
+      // Transient — admin-api restarting, etc. Just skip this tick.
+    }
+  }
+
+  handleRefreshForUpdate() {
+    // Bypass any cached HTML/JS. Setting location.href forces the browser
+    // to re-request the document; the existing Cache-Control: no-cache
+    // header on .js/.css means hashes won't be reused either.
+    window.location.reload();
+  }
+
+  async handleApplyChanges() {
+    try {
+      // Flush any pending save first so we apply the latest in-memory state
+      if (this._saveTimer) {
+        clearTimeout(this._saveTimer);
+        this._saveTimer = null;
+      }
+      if (this._saveInFlight || this.saveStatus === 'saving') {
+        // Wait briefly for the in-flight save to settle
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      // Force a synchronous save now if we have pending in-memory changes
+      if (this.dirtyModules.size > 0 || this.saveStatus === 'error') {
+        await this.autoSave();
+      }
+
+      const configToApply = this.getMergedConfig();
+
+      const validation = await validateConfig(configToApply);
       if (!validation.valid) {
-        // Show error toast with first error
         const firstError = validation.errors[0] || 'Validation failed';
         this.showToast(`Validation failed: ${firstError}`, 'error', 7000);
         return;
       }
 
-      // Show warnings if any
       if (validation.warnings && validation.warnings.length > 0) {
-        // Show warning toast but continue
         const firstWarning = validation.warnings[0];
         this.showToast(`Warning: ${firstWarning}`, 'warning', 5000);
       }
 
-      // Apply changes (skip preview/dry-activate step)
-      const result = await applyConfigChanges(configToSave);
+      const result = await applyConfigChanges(configToApply);
 
       if (!result.success) {
-        this.showToast(`Failed to apply configuration: ${result.message || 'Unknown error'}`, 'error', 7000);
+        this.showToast(`Failed to apply: ${result.message || 'Unknown error'}`, 'error', 7000);
         return;
       }
 
-      // Show success toast
-      this.showToast('Configuration saved successfully', 'success', 5000);
-
-      // Flash Status nav item for 2 seconds
+      this.showToast('Applying configuration…', 'success', 4000);
       this.flashStatus(2000);
 
-      // Keep pendingConfig during rebuild for optimistic updates
-      // Will be cleared after serverConfig is reloaded when rebuild completes
-      // this.pendingConfig = {};  // Don't clear yet - prevents flicker during rebuild
       this.dirtyModules.clear();
       this.updateMergedConfig();
 
-      // Set rebuild status
       this.rebuildStatus = {
         running: true,
         message: 'Starting system rebuild...',
         lastUpdate: null
       };
 
-      // Start background polling
       this.pollRebuildStatus();
 
     } catch (error) {
-      console.error('Error saving changes:', error);
+      console.error('Error applying changes:', error);
       this.showToast(`Error: ${error.message || 'Unknown error'}`, 'error', 7000);
     }
   }
 
-  async pollRebuildStatus() {
+  async pollRebuildStatus(opts = {}) {
     // Reset build logs ONLY when starting a NEW poll (not on repeated calls from statusPollInterval)
-    // The flag ensures we only reset once per build
-    this.buildLogs = [];
+    // The flag ensures we only reset once per build. When reattaching to an
+    // in-progress rebuild after a reload, pass {preserveLogs:true} so the
+    // history we just fetched isn't wiped before incremental polling starts.
+    if (!opts.preserveLogs) {
+      this.buildLogs = [];
+    }
 
     const checkStatus = async () => {
       try {
@@ -1317,6 +1735,9 @@ class AdminApp extends LitElement {
                 // Now that serverConfig is updated, clear optimistic updates
                 this.pendingConfig = {};
                 this.updateMergedConfig();
+                // Refresh applied/dirty state — the backend wrote the
+                // applied-config marker, so the Apply button should disable.
+                this.checkConfigDirty();
                 this.requestUpdate();
               }, 2000);
             } else if (partialSuccess) {
@@ -1339,6 +1760,7 @@ class AdminApp extends LitElement {
                 // Now that serverConfig is updated, clear optimistic updates
                 this.pendingConfig = {};
                 this.updateMergedConfig();
+                this.checkConfigDirty();
                 this.requestUpdate();
               }, 2000);
             } else {
@@ -1353,8 +1775,19 @@ class AdminApp extends LitElement {
               // Set persistent flash on failure - will continue until user clicks Status
               this.setStatusNeedsAttention(true);
             }
+          } else {
+            // Backend says not-running but doesn't know the exit code.
+            // Don't leave the spinner stuck — clear it and report
+            // an indeterminate completion. Refresh dirty state so the
+            // Apply button gets re-enabled if the system is out of sync.
+            this.systemHealth = 'warning';
+            this.rebuildStatus = {
+              running: false,
+              message: 'Rebuild completed (status unknown)',
+              lastUpdate: { success: null, warning: true }
+            };
+            this.checkConfigDirty();
           }
-          // If exit_code is null, keep previous systemHealth (don't change it)
 
           // Stop polling - build is complete
           return;
@@ -1460,13 +1893,10 @@ class AdminApp extends LitElement {
             <p>Advanced configuration options will be available in a future update.</p>
 
             ${this.config ? html`
-              <details style="margin-top: 20px;">
-                <summary style="cursor: pointer; font-weight: 500;">
-                  View Current Configuration (Debug)
-                </summary>
-                <pre style="background: #f5f5f7; padding: 16px; border-radius: 8px; overflow-x: auto; margin-top: 8px; font-size: 12px;">
-${JSON.stringify(this.config, null, 2)}
-                </pre>
+              <details open class="config-details">
+                <summary>View Current Configuration (Debug)</summary>
+                <pre class="config-json"
+                     .innerHTML=${this.highlightJson(JSON.stringify(this.config, null, 2))}></pre>
               </details>
             ` : ''}
           </div>
@@ -1512,7 +1942,18 @@ ${JSON.stringify(this.config, null, 2)}
     });
 
     return html`
-      <div class="admin-container">
+      ${this.updateAvailable ? html`
+        <div class="update-banner" role="status">
+          <span class="update-banner-icon">↻</span>
+          <span class="update-banner-text">
+            New version of HomeFree Admin available
+          </span>
+          <button class="update-banner-btn" @click=${this.handleRefreshForUpdate}>
+            Refresh
+          </button>
+        </div>
+      ` : ''}
+      <div class="admin-container ${this.updateAvailable ? 'with-banner' : ''}">
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">
@@ -1546,7 +1987,10 @@ ${JSON.stringify(this.config, null, 2)}
         <!-- Main Content -->
         <div class="main-content">
           <div class="top-bar">
-            <h2>${this.getCurrentModuleTitle()}</h2>
+            <div class="top-bar-title">
+              <h2>${this.getCurrentModuleTitle()}</h2>
+              ${this.renderSaveIndicator()}
+            </div>
 
             <div class="top-bar-actions">
               <button class="btn" @click=${this.loadConfig}>
@@ -1554,10 +1998,11 @@ ${JSON.stringify(this.config, null, 2)}
               </button>
               <button
                 class="btn btn-primary"
-                @click=${this.handleSaveChanges}
-                ?disabled=${this.rebuildStatus.running}
+                @click=${this.handleApplyChanges}
+                ?disabled=${this.rebuildStatus.running || (!this.hasUnappliedChanges && this.dirtyModules.size === 0)}
+                title="${this.rebuildStatus.running ? 'Rebuild in progress' : (!this.hasUnappliedChanges && this.dirtyModules.size === 0) ? 'No unapplied changes' : 'Apply pending configuration'}"
               >
-                Save & Apply
+                Apply
               </button>
             </div>
           </div>

@@ -44,7 +44,7 @@ class SystemModule extends LitElement {
       align-items: center;
       gap: 12px;
       padding: 12px;
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       border-radius: 8px;
       margin-bottom: 8px;
     }
@@ -61,7 +61,7 @@ class SystemModule extends LitElement {
     .btn-icon {
       background: none;
       border: none;
-      color: #ff3b30;
+      color: var(--hf-err);
       cursor: pointer;
       padding: 4px;
       font-size: 16px;
@@ -70,9 +70,9 @@ class SystemModule extends LitElement {
     .add-key-btn {
       padding: 10px 16px;
       border-radius: 8px;
-      border: 1px solid #667eea;
-      background: white;
-      color: #667eea;
+      border: 1px solid var(--hf-accent);
+      background: var(--hf-surface);
+      color: var(--hf-accent);
       font-size: 14px;
       font-weight: 500;
       cursor: pointer;
@@ -80,15 +80,15 @@ class SystemModule extends LitElement {
     }
 
     .add-key-btn:hover {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
     }
 
     textarea {
       width: 100%;
       padding: 10px 12px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       font-family: monospace;
       resize: vertical;
@@ -97,7 +97,7 @@ class SystemModule extends LitElement {
 
     textarea:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
     }
   `;
 
@@ -346,7 +346,7 @@ class SystemModule extends LitElement {
                 </div>
               `)}
             ` : html`
-              <p style="color: #86868b; font-size: 14px; margin-bottom: 16px;">
+              <p style="color: var(--hf-text-muted); font-size: 14px; margin-bottom: 16px;">
                 No SSH keys configured. Add one below for secure remote access.
               </p>
             `}
@@ -366,7 +366,7 @@ class SystemModule extends LitElement {
             </button>
           </div>
 
-          <div style="margin-top: 16px; padding: 12px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px; font-size: 13px; color: #1d1d1f;">
+          <div style="margin-top: 16px; padding: 12px; background: var(--hf-accent-soft); border-left: 4px solid var(--hf-accent); border-radius: 4px; font-size: 13px; color: var(--hf-text);">
             <strong>💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
             <ul style="margin: 8px 0 0 20px; padding: 0;">
               <li>After adding a key, click "Save & Apply" to activate it</li>

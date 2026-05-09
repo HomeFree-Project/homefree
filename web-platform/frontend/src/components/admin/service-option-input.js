@@ -30,10 +30,10 @@ class ServiceOptionInput extends LitElement {
     }
 
     .option-field {
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       padding: 14px;
-      background: #fafafa;
+      background: var(--hf-surface-2);
     }
 
     .option-field.disabled {
@@ -51,21 +51,21 @@ class ServiceOptionInput extends LitElement {
     .field-label {
       font-size: 14px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .field-type {
       font-size: 11px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       font-family: monospace;
-      background: #f5f5f7;
+      background: var(--hf-surface-3);
       padding: 2px 6px;
       border-radius: 4px;
     }
 
     .field-description {
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-bottom: 10px;
     }
 
@@ -74,7 +74,9 @@ class ServiceOptionInput extends LitElement {
       width: 100%;
       padding: 8px 12px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-bg);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       font-family: inherit;
       box-sizing: border-box;
@@ -83,18 +85,19 @@ class ServiceOptionInput extends LitElement {
     input[type="text"]:focus,
     input[type="number"]:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     input[type="text"]:disabled,
     input[type="number"]:disabled {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       cursor: not-allowed;
     }
 
     input[type="text"]::placeholder,
     input[type="number"]::placeholder {
-      color: #c7c7cc;
+      color: var(--hf-text-subtle);
       font-style: italic;
     }
 
@@ -110,9 +113,9 @@ class ServiceOptionInput extends LitElement {
 
     .btn-browse {
       padding: 8px 16px;
-      background: #f5f5f7;
-      color: #1d1d1f;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
@@ -122,7 +125,7 @@ class ServiceOptionInput extends LitElement {
     }
 
     .btn-browse:hover:not(:disabled) {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
 
     .btn-browse:disabled {
@@ -147,6 +150,7 @@ class ServiceOptionInput extends LitElement {
       opacity: 0;
       width: 0;
       height: 0;
+      accent-color: var(--hf-accent);
     }
 
     .toggle-slider {
@@ -156,7 +160,7 @@ class ServiceOptionInput extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #d2d2d7;
+      background-color: var(--hf-border-2);
       transition: 0.3s;
       border-radius: 28px;
     }
@@ -168,13 +172,13 @@ class ServiceOptionInput extends LitElement {
       width: 20px;
       left: 4px;
       bottom: 4px;
-      background-color: white;
+      background-color: var(--hf-text);
       transition: 0.3s;
       border-radius: 50%;
     }
 
     input:checked + .toggle-slider {
-      background-color: #667eea;
+      background-color: var(--hf-accent);
     }
 
     input:checked + .toggle-slider:before {
@@ -188,7 +192,7 @@ class ServiceOptionInput extends LitElement {
 
     .default-hint {
       font-size: 11px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-top: 4px;
       font-style: italic;
     }
@@ -198,14 +202,14 @@ class ServiceOptionInput extends LitElement {
       align-items: center;
       gap: 6px;
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-top: 6px;
     }
 
     .clear-btn {
       padding: 4px 8px;
-      background: #ff3b30;
-      color: white;
+      background: var(--hf-err);
+      color: var(--hf-text);
       border: none;
       border-radius: 4px;
       font-size: 11px;
@@ -214,7 +218,7 @@ class ServiceOptionInput extends LitElement {
     }
 
     .clear-btn:hover:not(:disabled) {
-      background: #e02020;
+      background: #dc2626;
     }
 
     .clear-btn:disabled {
@@ -225,7 +229,7 @@ class ServiceOptionInput extends LitElement {
     .submodule-fields {
       margin-left: 16px;
       padding-left: 16px;
-      border-left: 2px solid #e5e5e7;
+      border-left: 2px solid var(--hf-border);
       display: flex;
       flex-direction: column;
       gap: 12px;

@@ -67,9 +67,33 @@ export const configureNetwork = (wanInterface, lanInterface) =>
     lan_interface: lanInterface,
   });
 
-// Locale & Timezone
-export const getTimezones = () => get('/api/locale/timezones');
-export const getKeyboardLayouts = () => get('/api/locale/keyboard-layouts');
+// Locale & Timezone — cached module-level so the network call only happens
+// once per page load. The data is large but immutable for the session, so
+// holding the promise eliminates the empty-dropdown flicker when navigating
+// back to a module that consumes it.
+let _timezonesPromise = null;
+let _keyboardLayoutsPromise = null;
+
+export const getTimezones = () => {
+  if (!_timezonesPromise) {
+    _timezonesPromise = get('/api/locale/timezones').catch((err) => {
+      // Don't cache failures — let the next caller retry.
+      _timezonesPromise = null;
+      throw err;
+    });
+  }
+  return _timezonesPromise;
+};
+
+export const getKeyboardLayouts = () => {
+  if (!_keyboardLayoutsPromise) {
+    _keyboardLayoutsPromise = get('/api/locale/keyboard-layouts').catch((err) => {
+      _keyboardLayoutsPromise = null;
+      throw err;
+    });
+  }
+  return _keyboardLayoutsPromise;
+};
 
 // Configuration
 export const setHostname = (hostname) =>
@@ -103,6 +127,7 @@ export const getInstallStatus = () => get('/api/install/status');
 
 // System Control
 export const rebootSystem = () => post('/api/system/reboot', {});
+export const getClosureId = () => get('/api/system/closure-id');
 
 // Admin Mode
 export const getMode = () => get('/api/mode');
@@ -111,7 +136,9 @@ export const getCurrentConfig = () => get('/api/config/current');
 export const validateConfig = (config) => post('/api/config/validate', config);
 export const getConfigDiff = () => get('/api/config/diff');
 export const previewConfigChanges = (config) => post('/api/config/preview', config);
+export const saveConfigChanges = (config) => post('/api/config/save', config);
 export const applyConfigChanges = (config) => post('/api/config/apply', config);
+export const getConfigDirty = () => get('/api/config/dirty');
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
 
 // Services

@@ -35,20 +35,21 @@ class ListInput extends LitElement {
     .list-label {
       font-size: 13px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .list-count {
       font-size: 11px;
-      color: #86868b;
-      background: #f5f5f7;
+      color: var(--hf-text-muted);
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
       padding: 2px 8px;
       border-radius: 10px;
     }
 
     .list-description {
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-bottom: 4px;
     }
 
@@ -57,38 +58,42 @@ class ListInput extends LitElement {
       min-height: 100px;
       padding: 10px 12px;
       font-size: 13px;
-      font-family: monospace;
-      border: 1px solid #d2d2d7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
       resize: vertical;
       box-sizing: border-box;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
 
     textarea:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     textarea:disabled {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       cursor: not-allowed;
       opacity: 0.6;
     }
 
     textarea::placeholder {
-      color: #c7c7cc;
+      color: var(--hf-text-subtle);
       font-style: italic;
     }
 
     .list-hint {
       font-size: 11px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       font-style: italic;
     }
 
     .validation-error {
       font-size: 12px;
-      color: #ff3b30;
+      color: var(--hf-err);
       margin-top: 4px;
     }
   `;

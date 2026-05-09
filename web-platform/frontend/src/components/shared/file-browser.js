@@ -39,9 +39,9 @@ class FileBrowser extends LitElement {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: white;
+      background: var(--hf-surface);
       border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--hf-shadow-lg);
       width: 90%;
       max-width: 600px;
       max-height: 80vh;
@@ -51,7 +51,7 @@ class FileBrowser extends LitElement {
 
     .modal-header {
       padding: 20px;
-      border-bottom: 1px solid #e5e5e7;
+      border-bottom: 1px solid var(--hf-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -60,14 +60,14 @@ class FileBrowser extends LitElement {
     .modal-title {
       font-size: 18px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .close-btn {
       background: none;
       border: none;
       font-size: 24px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       cursor: pointer;
       padding: 0;
       width: 32px;
@@ -80,16 +80,16 @@ class FileBrowser extends LitElement {
     }
 
     .close-btn:hover {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
     }
 
     .breadcrumb {
       padding: 12px 20px;
-      background: #f9f9f9;
-      border-bottom: 1px solid #e5e5e7;
+      background: var(--hf-surface-2);
+      border-bottom: 1px solid var(--hf-border);
       font-size: 13px;
       font-family: monospace;
-      color: #1d1d1f;
+      color: var(--hf-text);
       overflow-x: auto;
       white-space: nowrap;
     }
@@ -108,7 +108,7 @@ class FileBrowser extends LitElement {
 
     .directory-item {
       padding: 12px 20px;
-      border-bottom: 1px solid #f5f5f7;
+      border-bottom: 1px solid var(--hf-border);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -117,11 +117,11 @@ class FileBrowser extends LitElement {
     }
 
     .directory-item:hover {
-      background: #f9f9f9;
+      background: var(--hf-surface-2);
     }
 
     .directory-item.parent {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
       font-weight: 500;
     }
 
@@ -130,7 +130,7 @@ class FileBrowser extends LitElement {
     }
 
     .directory-item.non-selectable .directory-name {
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .directory-icon {
@@ -140,29 +140,29 @@ class FileBrowser extends LitElement {
     .directory-name {
       flex: 1;
       font-size: 14px;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .loading-indicator {
       padding: 40px;
       text-align: center;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .error-message {
       padding: 20px;
       margin: 20px;
-      background: #fff3f3;
-      border: 1px solid #ffccc7;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--hf-err);
       border-radius: 8px;
-      color: #d32f2f;
+      color: var(--hf-err);
     }
 
     .info-message {
       padding: 12px 20px;
-      background: #f0f7ff;
-      border-bottom: 1px solid #d0e7ff;
-      color: #0066cc;
+      background: var(--hf-accent-soft);
+      border-bottom: 1px solid var(--hf-border);
+      color: var(--hf-accent);
       font-size: 13px;
       display: flex;
       align-items: center;
@@ -172,13 +172,13 @@ class FileBrowser extends LitElement {
     .empty-message {
       padding: 40px;
       text-align: center;
-      color: #86868b;
+      color: var(--hf-text-muted);
       font-style: italic;
     }
 
     .modal-footer {
       padding: 16px 20px;
-      border-top: 1px solid #e5e5e7;
+      border-top: 1px solid var(--hf-border);
       display: flex;
       gap: 12px;
       justify-content: flex-end;
@@ -200,27 +200,27 @@ class FileBrowser extends LitElement {
     }
 
     .btn-cancel {
-      background: #f5f5f7;
-      color: #1d1d1f;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
     }
 
     .btn-cancel:hover:not(:disabled) {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
 
     .btn-select {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
     }
 
     .btn-select:hover:not(:disabled) {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .create-folder-section {
       padding: 16px 20px;
-      background: #f9f9f9;
-      border-bottom: 1px solid #e5e5e7;
+      background: var(--hf-surface-2);
+      border-bottom: 1px solid var(--hf-border);
     }
 
     .create-folder-form {
@@ -233,14 +233,21 @@ class FileBrowser extends LitElement {
       flex: 1;
       padding: 8px 12px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-bg);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       font-family: inherit;
     }
 
+    .create-folder-form input::placeholder {
+      color: var(--hf-text-subtle);
+    }
+
     .create-folder-form input:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     .create-folder-form .btn {
@@ -249,27 +256,27 @@ class FileBrowser extends LitElement {
     }
 
     .btn-create {
-      background: #34c759;
-      color: white;
+      background: var(--hf-ok);
+      color: var(--hf-text);
     }
 
     .btn-create:hover:not(:disabled) {
-      background: #2da84a;
+      background: #0ea271;
     }
 
     .create-folder-toggle {
       padding: 12px 20px;
-      background: #f9f9f9;
-      border-bottom: 1px solid #e5e5e7;
+      background: var(--hf-surface-2);
+      border-bottom: 1px solid var(--hf-border);
       display: flex;
       justify-content: flex-end;
     }
 
     .btn-toggle-create {
       padding: 8px 16px;
-      background: #f5f5f7;
-      color: #1d1d1f;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
@@ -278,7 +285,7 @@ class FileBrowser extends LitElement {
     }
 
     .btn-toggle-create:hover:not(:disabled) {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
   `;
 

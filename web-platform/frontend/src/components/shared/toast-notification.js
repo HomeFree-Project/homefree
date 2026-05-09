@@ -16,10 +16,6 @@ export class ToastNotification extends LitElement {
   static styles = css`
     :host {
       display: block;
-      position: fixed;
-      bottom: 20px;
-      left: 20px;
-      z-index: 10000;
       max-width: 400px;
       min-width: 300px;
     }
@@ -31,36 +27,43 @@ export class ToastNotification extends LitElement {
     .toast {
       display: flex;
       align-items: flex-start;
-      padding: 16px;
+      padding: 14px 16px;
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      background: white;
+      box-shadow: var(--hf-shadow-lg);
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
       animation: slideIn 0.3s ease-out;
       margin-bottom: 10px;
-      border-left: 4px solid #ddd;
+      border-left: 3px solid var(--hf-text-subtle);
     }
 
     .toast.success {
-      border-left-color: #10b981;
+      border-left-color: var(--hf-ok);
     }
 
     .toast.error {
-      border-left-color: #ef4444;
+      border-left-color: var(--hf-err);
     }
 
     .toast.warning {
-      border-left-color: #f59e0b;
+      border-left-color: var(--hf-warn);
     }
 
     .toast.info {
-      border-left-color: #3b82f6;
+      border-left-color: var(--hf-accent);
     }
 
     .toast-icon {
-      font-size: 20px;
+      font-size: 18px;
       margin-right: 12px;
       flex-shrink: 0;
+      color: var(--hf-text-muted);
     }
+
+    .toast.success .toast-icon { color: var(--hf-ok); }
+    .toast.error .toast-icon { color: var(--hf-err); }
+    .toast.warning .toast-icon { color: var(--hf-warn); }
+    .toast.info .toast-icon { color: var(--hf-accent); }
 
     .toast-content {
       flex: 1;
@@ -70,8 +73,8 @@ export class ToastNotification extends LitElement {
     }
 
     .toast-message {
-      font-size: 14px;
-      color: #1f2937;
+      font-size: 13px;
+      color: var(--hf-text);
       line-height: 1.5;
       word-wrap: break-word;
     }
@@ -79,29 +82,29 @@ export class ToastNotification extends LitElement {
     .toast-close {
       background: none;
       border: none;
-      color: #6b7280;
+      color: var(--hf-text-muted);
       cursor: pointer;
-      font-size: 20px;
+      font-size: 18px;
       padding: 0;
       margin-left: 12px;
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       display: flex;
       align-items: center;
       justify-content: center;
       border-radius: 4px;
       flex-shrink: 0;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .toast-close:hover {
-      background: #f3f4f6;
-      color: #1f2937;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
     }
 
     @keyframes slideIn {
       from {
-        transform: translateX(-100%);
+        transform: translateX(120%);
         opacity: 0;
       }
       to {
@@ -116,7 +119,7 @@ export class ToastNotification extends LitElement {
         opacity: 1;
       }
       to {
-        transform: translateX(-100%);
+        transform: translateX(120%);
         opacity: 0;
       }
     }

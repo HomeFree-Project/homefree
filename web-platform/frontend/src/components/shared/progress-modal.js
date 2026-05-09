@@ -30,12 +30,13 @@ class ProgressModal extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.6);
+      background: rgba(0, 0, 0, 0.7);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 10000;
       animation: fadeIn 0.2s ease-in;
+      backdrop-filter: blur(4px);
     }
 
     @keyframes fadeIn {
@@ -44,13 +45,15 @@ class ProgressModal extends LitElement {
     }
 
     .modal {
-      background: white;
-      border-radius: 16px;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
+      border-radius: 12px;
       padding: 32px;
       max-width: 500px;
       width: 90%;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--hf-shadow-lg);
       animation: slideUp 0.3s ease-out;
+      color: var(--hf-text);
     }
 
     @keyframes slideUp {
@@ -66,10 +69,11 @@ class ProgressModal extends LitElement {
 
     .modal-header {
       margin: 0 0 24px 0;
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
       text-align: center;
+      letter-spacing: -0.01em;
     }
 
     .modal-body {
@@ -77,11 +81,11 @@ class ProgressModal extends LitElement {
     }
 
     .spinner {
-      width: 64px;
-      height: 64px;
+      width: 56px;
+      height: 56px;
       margin: 0 auto 20px;
-      border: 4px solid #f3f4f6;
-      border-top-color: #667eea;
+      border: 4px solid var(--hf-border);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
@@ -91,35 +95,36 @@ class ProgressModal extends LitElement {
     }
 
     .status-icon {
-      width: 64px;
-      height: 64px;
+      width: 56px;
+      height: 56px;
       margin: 0 auto 20px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 32px;
+      font-size: 28px;
     }
 
     .status-icon.success {
-      background: #10b981;
+      background: var(--hf-ok);
       color: white;
     }
 
     .status-icon.error {
-      background: #ef4444;
+      background: var(--hf-err);
       color: white;
     }
 
     .message {
-      font-size: 16px;
-      color: #6b7280;
+      font-size: 14px;
+      color: var(--hf-text-muted);
       margin-bottom: 20px;
       line-height: 1.5;
     }
 
     .details {
-      background: #f9fafb;
+      background: var(--hf-bg);
+      border: 1px solid var(--hf-border);
       border-radius: 8px;
       padding: 16px;
       margin-top: 20px;
@@ -130,7 +135,7 @@ class ProgressModal extends LitElement {
 
     .detail-item {
       font-size: 13px;
-      color: #374151;
+      color: var(--hf-text);
       margin-bottom: 8px;
       padding-left: 16px;
       position: relative;
@@ -140,7 +145,7 @@ class ProgressModal extends LitElement {
       content: '•';
       position: absolute;
       left: 0;
-      color: #9ca3af;
+      color: var(--hf-text-subtle);
     }
 
     .detail-item.warning:before {
@@ -153,50 +158,56 @@ class ProgressModal extends LitElement {
 
     .modal-actions {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       justify-content: center;
       margin-top: 24px;
     }
 
     .btn {
-      padding: 12px 24px;
-      border-radius: 8px;
-      border: none;
-      font-size: 14px;
+      padding: 9px 20px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .btn-primary {
-      background: #667eea;
+      background: var(--hf-accent);
       color: white;
+      border-color: var(--hf-accent);
     }
 
     .btn-primary:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
 
     .btn-secondary {
-      background: #e5e7eb;
-      color: #374151;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border-color: var(--hf-border-2);
     }
 
     .btn-secondary:hover {
-      background: #d1d5db;
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
     .btn-danger {
-      background: #ef4444;
+      background: var(--hf-err);
       color: white;
+      border-color: var(--hf-err);
     }
 
     .btn-danger:hover {
       background: #dc2626;
+      border-color: #dc2626;
     }
 
     .status-icon.warning {
-      background: #f59e0b;
+      background: var(--hf-warn);
       color: white;
     }
   `;

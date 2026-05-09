@@ -32,29 +32,30 @@ class SubmoduleListEditor extends LitElement {
     .list-title {
       font-size: 14px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .list-description {
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-bottom: 12px;
     }
 
     .btn-add {
-      padding: 8px 16px;
-      background: #667eea;
+      padding: 8px 14px;
+      background: var(--hf-accent);
       color: white;
-      border: none;
+      border: 1px solid var(--hf-accent);
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.15s;
     }
 
     .btn-add:hover:not(:disabled) {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
 
     .btn-add:disabled {
@@ -69,9 +70,9 @@ class SubmoduleListEditor extends LitElement {
     }
 
     .item-card {
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border);
       border-radius: 8px;
-      background: white;
+      background: var(--hf-surface);
       overflow: hidden;
     }
 
@@ -83,14 +84,15 @@ class SubmoduleListEditor extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
-      background: #f5f5f7;
+      padding: 11px 16px;
+      background: var(--hf-surface-2);
       cursor: pointer;
       user-select: none;
+      border-bottom: 1px solid var(--hf-border);
     }
 
     .item-header:hover {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
 
     .item-title-section {
@@ -101,7 +103,8 @@ class SubmoduleListEditor extends LitElement {
     }
 
     .expand-icon {
-      font-size: 16px;
+      font-size: 14px;
+      color: var(--hf-text-muted);
       transition: transform 0.2s;
     }
 
@@ -110,14 +113,14 @@ class SubmoduleListEditor extends LitElement {
     }
 
     .item-title {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .item-subtitle {
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
       margin-left: 8px;
     }
 
@@ -128,17 +131,18 @@ class SubmoduleListEditor extends LitElement {
 
     .btn-remove {
       padding: 6px 12px;
-      background: #ff3b30;
+      background: var(--hf-err);
       color: white;
-      border: none;
+      border: 1px solid var(--hf-err);
       border-radius: 4px;
       font-size: 12px;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.15s;
     }
 
     .btn-remove:hover:not(:disabled) {
-      background: #e02020;
+      background: #dc2626;
+      border-color: #dc2626;
     }
 
     .btn-remove:disabled {
@@ -151,6 +155,7 @@ class SubmoduleListEditor extends LitElement {
       display: none;
       flex-direction: column;
       gap: 12px;
+      background: var(--hf-surface);
     }
 
     .item-content.expanded {
@@ -160,18 +165,18 @@ class SubmoduleListEditor extends LitElement {
     .empty-state {
       padding: 32px;
       text-align: center;
-      color: #86868b;
+      color: var(--hf-text-muted);
       font-style: italic;
-      border: 1px dashed #d2d2d7;
+      border: 1px dashed var(--hf-border-2);
       border-radius: 8px;
     }
 
     .validation-error {
       padding: 8px 12px;
-      background: #fff3f3;
-      border: 1px solid #ffccc7;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
       border-radius: 6px;
-      color: #d32f2f;
+      color: var(--hf-err);
       font-size: 12px;
       margin-top: 8px;
     }

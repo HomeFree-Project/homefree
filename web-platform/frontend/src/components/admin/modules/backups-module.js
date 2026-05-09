@@ -63,12 +63,12 @@ class BackupsModule extends LitElement {
     }
 
     .info-box {
-      background: #e3f2fd;
-      border-left: 4px solid #2196f3;
+      background: var(--hf-accent-soft);
+      border-left: 4px solid var(--hf-accent);
       padding: 16px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: #1565c0;
+      color: var(--hf-accent);
       max-width: 1200px;
     }
 
@@ -81,7 +81,7 @@ class BackupsModule extends LitElement {
       display: flex;
       gap: 8px;
       margin-bottom: 24px;
-      border-bottom: 2px solid #e5e5e7;
+      border-bottom: 2px solid var(--hf-border);
     }
 
     .tab {
@@ -92,18 +92,18 @@ class BackupsModule extends LitElement {
       cursor: pointer;
       font-size: 15px;
       font-weight: 500;
-      color: #86868b;
+      color: var(--hf-text-muted);
       transition: all 0.2s;
       margin-bottom: -2px;
     }
 
     .tab:hover {
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .tab.active {
-      color: #667eea;
-      border-bottom-color: #667eea;
+      color: var(--hf-accent);
+      border-bottom-color: var(--hf-accent);
     }
 
     .restore-container {
@@ -121,32 +121,32 @@ class BackupsModule extends LitElement {
     }
 
     .status-indicator.ready {
-      background: #d4edda;
-      color: #155724;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--hf-ok);
     }
 
     .status-indicator.not-ready {
-      background: #f8d7da;
-      color: #721c24;
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--hf-err);
     }
 
     .status-indicator.warning {
-      background: #fff3cd;
-      color: #856404;
+      background: rgba(245, 158, 11, 0.1);
+      color: var(--hf-warn);
     }
 
     select {
       width: 100%;
       padding: 12px;
       font-size: 14px;
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
-      background: white;
+      background: var(--hf-surface);
       margin-bottom: 16px;
     }
 
     .snapshots-list {
-      border: 1px solid #d2d2d7;
+      border: 1px solid var(--hf-border-2);
       border-radius: 8px;
       max-height: 400px;
       overflow-y: auto;
@@ -155,7 +155,7 @@ class BackupsModule extends LitElement {
 
     .snapshot-item {
       padding: 12px 16px;
-      border-bottom: 1px solid #e5e5e7;
+      border-bottom: 1px solid var(--hf-border);
       cursor: pointer;
       transition: background 0.2s;
     }
@@ -165,24 +165,24 @@ class BackupsModule extends LitElement {
     }
 
     .snapshot-item:hover {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
     }
 
     .snapshot-item.selected {
-      background: #e3f2fd;
-      border-left: 4px solid #2196f3;
+      background: var(--hf-accent-soft);
+      border-left: 4px solid var(--hf-accent);
     }
 
     .snapshot-id {
       font-family: monospace;
       font-size: 12px;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .snapshot-time {
       font-size: 14px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
       margin-bottom: 4px;
     }
 
@@ -212,31 +212,31 @@ class BackupsModule extends LitElement {
     }
 
     .btn-primary {
-      background: #667eea;
-      color: white;
+      background: var(--hf-accent);
+      color: var(--hf-text);
     }
 
     .btn-primary:hover:not(:disabled) {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
     }
 
     .btn-secondary {
-      background: #f5f5f7;
-      color: #1d1d1f;
-      border: 1px solid #d2d2d7;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
     }
 
     .btn-secondary:hover:not(:disabled) {
-      background: #e5e5e7;
+      background: var(--hf-surface-3);
     }
 
     .btn-danger {
-      background: #ff3b30;
-      color: white;
+      background: var(--hf-err);
+      color: var(--hf-text);
     }
 
     .btn-danger:hover:not(:disabled) {
-      background: #ff2d20;
+      background: #dc2626;
     }
   `;
 
@@ -976,7 +976,7 @@ class BackupsModule extends LitElement {
               ?disabled=${this.triggerInProgress || !this.secretsStatus?.['restic-password']}
             >
               ${this.triggerInProgress ? html`
-                <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid white; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
+                <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
                 Triggering Backups...
               ` : '▶️ Run Backup Now'}
             </button>
@@ -988,14 +988,14 @@ class BackupsModule extends LitElement {
                 ?disabled=${this.syncInProgress || !this.secretsStatus?.['restic-password']}
               >
                 ${this.syncInProgress ? html`
-                  <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid white; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
+                  <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
                   Syncing...
                 ` : '☁️ Sync to Backblaze'}
               </button>
             ` : ''}
 
             ${!this.secretsStatus?.['restic-password'] ? html`
-              <p style="font-size: 13px; color: #666; margin-top: 8px; width: 100%;">
+              <p style="font-size: 13px; color: var(--hf-text-muted); margin-top: 8px; width: 100%;">
                 ⚠️ Configure Restic password below before running backups
               </p>
             ` : ''}
@@ -1003,20 +1003,20 @@ class BackupsModule extends LitElement {
 
           <!-- Backup Status Display -->
           ${this.backupStatus?.backup_running || this.backupStatus?.sync_running ? html`
-            <div style="margin-top: 16px; padding: 16px; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 8px;">
-              <div style="font-weight: 600; margin-bottom: 8px; color: #1565c0; display: flex; align-items: center; gap: 8px;">
-                <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid #2196f3; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
+            <div style="margin-top: 16px; padding: 16px; background: var(--hf-accent-soft); border-left: 4px solid var(--hf-accent); border-radius: 8px;">
+              <div style="font-weight: 600; margin-bottom: 8px; color: var(--hf-accent); display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid var(--hf-accent); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
                 Active Operations
               </div>
 
               ${this.backupStatus.backup_running ? html`
                 <div style="margin-bottom: 12px;">
-                  <div style="font-size: 14px; color: #1565c0; margin-bottom: 4px;">
+                  <div style="font-size: 14px; color: var(--hf-accent); margin-bottom: 4px;">
                     <strong>Backing up:</strong>
                   </div>
                   <div style="display: flex; flex-wrap: wrap; gap: 6px;">
                     ${this.backupStatus.active_backups.map(service => html`
-                      <span style="display: inline-block; padding: 4px 8px; background: #2196f3; color: white; border-radius: 4px; font-size: 12px;">
+                      <span style="display: inline-block; padding: 4px 8px; background: var(--hf-accent); color: var(--hf-text); border-radius: 4px; font-size: 12px;">
                         ${service}
                       </span>
                     `)}
@@ -1025,7 +1025,7 @@ class BackupsModule extends LitElement {
               ` : ''}
 
               ${this.backupStatus.sync_running ? html`
-                <div style="font-size: 14px; color: #1565c0;">
+                <div style="font-size: 14px; color: var(--hf-accent);">
                   ☁️ Syncing to Backblaze...
                 </div>
               ` : ''}
@@ -1040,10 +1040,10 @@ class BackupsModule extends LitElement {
         description="Encryption password and cloud storage credentials"
       >
         ${!this.hasAuthorizedKeys ? html`
-          <div class="info-box" style="background: #fff3cd; border-left-color: #ffc107; color: #856404;">
+          <div class="info-box" style="background: rgba(245, 158, 11, 0.1); border-left-color: var(--hf-warn); color: var(--hf-warn);">
             <strong>⚠️ SSH Key Required</strong>
             <div style="font-size: 14px; margin-top: 8px;">
-              Before you can manage secrets, you need to add an SSH authorized key in the <a href="#/system" style="color: #856404; text-decoration: underline;">System settings</a>.
+              Before you can manage secrets, you need to add an SSH authorized key in the <a href="#/system" style="color: var(--hf-warn); text-decoration: underline;">System settings</a>.
             </div>
           </div>
         ` : ''}
@@ -1124,7 +1124,7 @@ class BackupsModule extends LitElement {
         title="Backup Schedule"
         description="Configure backup timing and retention (Coming Soon)"
       >
-        <p style="color: #86868b; font-size: 14px;">
+        <p style="color: var(--hf-text-muted); font-size: 14px;">
           Custom backup schedules and retention policies will be available in a future update. Currently, backups run daily at 2 AM with automatic retention management.
         </p>
       </config-section>
@@ -1148,10 +1148,10 @@ class BackupsModule extends LitElement {
               ⚠️ Restic password not configured. Please configure it in the Configuration tab before restoring.
             </div>
           ` : this.loading ? html`
-            <div class="status-indicator" style="background: #f5f5f7; border-color: #d1d1d6;">
+            <div class="status-indicator" style="background: var(--hf-surface-2); border-color: var(--hf-border-2);">
               <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="display: block; width: 16px; height: 16px; border: 2px solid #86868b; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0; margin-top: 2px;"></span>
-                <div style="color: #86868b;">
+                <span style="display: block; width: 16px; height: 16px; border: 2px solid var(--hf-text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0; margin-top: 2px;"></span>
+                <div style="color: var(--hf-text-muted);">
                   <div style="font-weight: 600; margin-bottom: 4px;">Loading backup information...</div>
                   <div style="font-size: 14px;">Checking available backup repositories</div>
                 </div>
@@ -1172,15 +1172,15 @@ class BackupsModule extends LitElement {
                     <li>Backblaze configured but not mounted (enable in Configuration to restore)</li>
                   ` : ''}
                   ${!hasLocalBackups && !backblazeMounted ? html`
-                    <li style="color: #856404;">⚠️ No backup sources found. Configure Backblaze or check local backup path.</li>
+                    <li style="color: var(--hf-warn);">⚠️ No backup sources found. Configure Backblaze or check local backup path.</li>
                   ` : ''}
                 </ul>
               </div>
             </div>
 
             <!-- Last Refreshed Timestamp and Refresh Button -->
-            <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f5f5f7; border-radius: 8px;">
-              <div style="font-size: 13px; color: #666;">
+            <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; padding: 12px; background: var(--hf-surface-2); border-radius: 8px;">
+              <div style="font-size: 13px; color: var(--hf-text-muted);">
                 ${this.lastServicesRefresh ? html`
                   <strong>Last refreshed:</strong> ${this.formatTimestamp(this.lastServicesRefresh)}
                 ` : html`
@@ -1199,12 +1199,12 @@ class BackupsModule extends LitElement {
 
             <!-- Restore Status Display -->
             ${this.backupStatus?.restore_running ? html`
-              <div style="margin-top: 16px; padding: 16px; background: #fff3cd; border-left: 4px solid #ff9500; border-radius: 8px;">
-                <div style="font-weight: 600; margin-bottom: 8px; color: #856404; display: flex; align-items: center; gap: 8px;">
-                  <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid #ff9500; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
+              <div style="margin-top: 16px; padding: 16px; background: rgba(245, 158, 11, 0.1); border-left: 4px solid var(--hf-warn); border-radius: 8px;">
+                <div style="font-weight: 600; margin-bottom: 8px; color: var(--hf-warn); display: flex; align-items: center; gap: 8px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid var(--hf-warn); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
                   Restore in Progress
                 </div>
-                <div style="font-size: 14px; color: #856404;">
+                <div style="font-size: 14px; color: var(--hf-warn);">
                   ${this.backupStatus.restore_type === 'all' ? html`
                     <strong>🔄 Restoring entire system...</strong>
                   ` : html`
@@ -1215,21 +1215,21 @@ class BackupsModule extends LitElement {
             ` : ''}
 
             ${this.loading ? html`
-              <div style="padding: 40px; text-align: center; color: #86868b;">
+              <div style="padding: 40px; text-align: center; color: var(--hf-text-muted);">
                 <div style="font-size: 16px; margin-bottom: 8px;">Loading available repositories...</div>
                 <div style="font-size: 14px;">Checking backup repositories</div>
               </div>
             ` : html`
               <!-- Restore All Button -->
-              <div style="margin-bottom: 32px; padding: 20px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;">
-                <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #856404;">
+              <div style="margin-bottom: 32px; padding: 20px; background: rgba(245, 158, 11, 0.1); border: 2px solid var(--hf-warn); border-radius: 8px;">
+                <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; color: var(--hf-warn);">
                   🔄 Restore Entire System
                 </div>
-                <div style="font-size: 14px; color: #856404; margin-bottom: 12px;">
+                <div style="font-size: 14px; color: var(--hf-warn); margin-bottom: 12px;">
                   Restore all backup repositories from their latest snapshots. This includes ${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories: services, databases, system configuration, and arbitrary paths. This is useful when setting up a new machine or performing disaster recovery.
                 </div>
                 <div style="margin-bottom: 12px;">
-                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: #856404;">
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: var(--hf-warn);">
                     <input
                       type="checkbox"
                       ?checked=${this.includeSystemConfig}
@@ -1255,11 +1255,11 @@ class BackupsModule extends LitElement {
 
                 <!-- Services Section -->
                 ${this.services.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
+                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid var(--hf-border-2); border-radius: 8px;">
                     <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
                       📦 Services
                     </h4>
-                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
+                    <p style="font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;">
                       Service data, databases, and application configurations
                     </p>
                     <div style="display: grid; gap: 8px;">
@@ -1271,9 +1271,9 @@ class BackupsModule extends LitElement {
                           ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
                         >
                           <div>
-                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: #666;">(Local)</span></div>
+                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span></div>
                             ${this.repositoryPaths[`local:${service}`] ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 ${this.repositoryPaths[`local:${service}`].slice(0, 2).join(', ')}${this.repositoryPaths[`local:${service}`].length > 2 ? ` +${this.repositoryPaths[`local:${service}`].length - 2} more` : ''}
                               </div>
                             ` : ''}
@@ -1288,9 +1288,9 @@ class BackupsModule extends LitElement {
                           ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
                         >
                           <div>
-                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: #007bff;">☁️ Backblaze</span></div>
+                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span></div>
                             ${this.repositoryPaths[`backblaze:${service}`] ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 ${this.repositoryPaths[`backblaze:${service}`].slice(0, 2).join(', ')}${this.repositoryPaths[`backblaze:${service}`].length > 2 ? ` +${this.repositoryPaths[`backblaze:${service}`].length - 2} more` : ''}
                               </div>
                             ` : ''}
@@ -1303,11 +1303,11 @@ class BackupsModule extends LitElement {
 
                 <!-- Extra Paths Section -->
                 ${this.extraPaths.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid #d1d1d6; border-radius: 8px;">
+                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid var(--hf-border-2); border-radius: 8px;">
                     <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
                       📁 Extra Paths
                     </h4>
-                    <p style="font-size: 13px; color: #666; margin: 0 0 12px 0;">
+                    <p style="font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;">
                       User-defined custom paths
                     </p>
                     <div style="display: grid; gap: 8px;">
@@ -1319,9 +1319,9 @@ class BackupsModule extends LitElement {
                           ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
                         >
                           <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #666;">(Local)</span></div>
+                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span></div>
                             ${this.repositoryPaths[`local:${repo}`] && this.repositoryPaths[`local:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 📂 ${this.repositoryPaths[`local:${repo}`][0]}
                               </div>
                             ` : ''}
@@ -1336,9 +1336,9 @@ class BackupsModule extends LitElement {
                           ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
                         >
                           <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: #007bff;">☁️ Backblaze</span></div>
+                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span></div>
                             ${this.repositoryPaths[`backblaze:${repo}`] && this.repositoryPaths[`backblaze:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 📂 ${this.repositoryPaths[`backblaze:${repo}`][0]}
                               </div>
                             ` : ''}
@@ -1351,11 +1351,11 @@ class BackupsModule extends LitElement {
 
                 <!-- System Configuration Section -->
                 ${this.systemConfig.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 2px solid #ff9500; border-radius: 8px; background: #fff9f0;">
-                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 8px 0; color: #856404;">
+                  <div style="margin-bottom: 24px; padding: 16px; border: 2px solid var(--hf-warn); border-radius: 8px; background: rgba(245, 158, 11, 0.1);">
+                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 8px 0; color: var(--hf-warn);">
                       ⚙️ System Configuration
                     </h4>
-                    <div style="padding: 8px 12px; background: #fff3cd; border-left: 3px solid #ffc107; margin-bottom: 12px;">
+                    <div style="padding: 8px 12px; background: rgba(245, 158, 11, 0.1); border-left: 3px solid var(--hf-warn); margin-bottom: 12px;">
                       <strong>⚠️ Warning:</strong> Restoring system configuration will overwrite /etc/nixos. This may affect network settings, service configurations, and system behavior.
                     </div>
                     <div style="display: grid; gap: 8px;">
@@ -1368,10 +1368,10 @@ class BackupsModule extends LitElement {
                         >
                           <div>
                             <div style="font-weight: 600;">
-                              /etc/nixos <span style="font-size: 11px; color: #666;">(Local)</span>
+                              /etc/nixos <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span>
                             </div>
                             ${this.repositoryPaths[`local:${repo}`] ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 ${this.repositoryPaths[`local:${repo}`].length} files
                               </div>
                             ` : ''}
@@ -1387,10 +1387,10 @@ class BackupsModule extends LitElement {
                         >
                           <div>
                             <div style="font-weight: 600;">
-                              /etc/nixos <span style="font-size: 11px; color: #007bff;">☁️ Backblaze</span>
+                              /etc/nixos <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span>
                             </div>
                             ${this.repositoryPaths[`backblaze:${repo}`] ? html`
-                              <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
                                 ${this.repositoryPaths[`backblaze:${repo}`].length} files
                               </div>
                             ` : ''}
@@ -1410,9 +1410,9 @@ class BackupsModule extends LitElement {
                 </label>
 
                 ${this.loading ? html`
-                  <p style="color: #86868b;">Loading snapshots...</p>
+                  <p style="color: var(--hf-text-muted);">Loading snapshots...</p>
                 ` : this.snapshots.length === 0 ? html`
-                  <p style="color: #86868b;">No snapshots found for this repository.</p>
+                  <p style="color: var(--hf-text-muted);">No snapshots found for this repository.</p>
                 ` : html`
                   <div class="snapshots-list">
                     ${this.snapshots.map((snapshot, index) => html`
@@ -1434,7 +1434,7 @@ class BackupsModule extends LitElement {
                       ?disabled=${this.restoreServiceInProgress || this.restoreAllInProgress || !this.selectedSnapshot}
                     >
                       ${this.restoreServiceInProgress === this.selectedSnapshot ? html`
-                        <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid white; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
                         Restoring...
                       ` : 'Restore Snapshot'}
                     </button>

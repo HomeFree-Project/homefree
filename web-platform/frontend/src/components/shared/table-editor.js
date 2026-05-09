@@ -17,9 +17,10 @@ class TableEditor extends LitElement {
     }
 
     .table-container {
-      border: 1px solid #e5e5e7;
+      border: 1px solid var(--hf-border);
       border-radius: 8px;
       overflow: hidden;
+      background: var(--hf-surface);
     }
 
     table {
@@ -28,28 +29,29 @@ class TableEditor extends LitElement {
     }
 
     thead {
-      background: #f5f5f7;
+      background: var(--hf-surface-2);
     }
 
     th {
-      padding: 12px 16px;
+      padding: 10px 16px;
       text-align: left;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
-      color: #86868b;
+      color: var(--hf-text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--hf-border);
     }
 
     td {
-      padding: 12px 16px;
-      border-top: 1px solid #e5e5e7;
-      font-size: 14px;
-      color: #1d1d1f;
+      padding: 11px 16px;
+      border-top: 1px solid var(--hf-border);
+      font-size: 13px;
+      color: var(--hf-text);
     }
 
     tr:hover {
-      background: #fafafa;
+      background: var(--hf-surface-2);
     }
 
     .actions-cell {
@@ -60,11 +62,11 @@ class TableEditor extends LitElement {
     .btn-icon {
       background: none;
       border: none;
-      color: #667eea;
+      color: var(--hf-accent);
       cursor: pointer;
       padding: 4px 8px;
-      font-size: 16px;
-      transition: opacity 0.2s;
+      font-size: 15px;
+      transition: opacity 0.15s;
     }
 
     .btn-icon:hover {
@@ -72,29 +74,30 @@ class TableEditor extends LitElement {
     }
 
     .btn-icon.delete {
-      color: #ff3b30;
+      color: var(--hf-err);
     }
 
     .empty-state {
       padding: 40px;
       text-align: center;
-      color: #86868b;
+      color: var(--hf-text-muted);
     }
 
     .add-row-btn {
       width: 100%;
-      padding: 12px;
-      background: #f5f5f7;
+      padding: 11px;
+      background: var(--hf-surface-2);
       border: none;
-      color: #667eea;
-      font-size: 14px;
+      border-top: 1px solid var(--hf-border);
+      color: var(--hf-accent);
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.15s;
     }
 
     .add-row-btn:hover {
-      background: #ebebed;
+      background: var(--hf-surface-3);
     }
 
     /* Modal for editing */
@@ -104,27 +107,30 @@ class TableEditor extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: rgba(0, 0, 0, 0.7);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 1000;
+      backdrop-filter: blur(4px);
     }
 
     .modal {
-      background: white;
-      border-radius: 12px;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
+      border-radius: 10px;
       padding: 24px;
       max-width: 500px;
       width: 90%;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+      box-shadow: var(--hf-shadow-lg);
+      color: var(--hf-text);
     }
 
     .modal-header {
       margin: 0 0 20px 0;
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--hf-text);
     }
 
     .modal-body {
@@ -137,58 +143,64 @@ class TableEditor extends LitElement {
 
     .modal-field label {
       display: block;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
-      color: #1d1d1f;
+      color: var(--hf-text);
       margin-bottom: 6px;
     }
 
     .modal-field input,
     .modal-field select {
       width: 100%;
-      padding: 10px 12px;
-      font-size: 14px;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
       font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
 
     .modal-field input:focus,
     .modal-field select:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
 
     .modal-actions {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       justify-content: flex-end;
     }
 
     .btn {
-      padding: 10px 20px;
-      border-radius: 8px;
-      border: 1px solid #d2d2d7;
-      background: white;
-      color: #1d1d1f;
-      font-size: 14px;
+      padding: 9px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .btn:hover {
-      background: #f5f5f7;
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
     .btn-primary {
-      background: #667eea;
+      background: var(--hf-accent);
       color: white;
-      border-color: #667eea;
+      border-color: var(--hf-accent);
     }
 
     .btn-primary:hover {
-      background: #5568d3;
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
   `;
 
