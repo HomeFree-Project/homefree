@@ -661,20 +661,29 @@ async def reboot_system():
 @app.get("/api/system/closure-id")
 async def get_closure_id():
     """
-    Return an opaque fingerprint of the currently activated system closure.
+    Return a fingerprint of the currently-deployed admin frontend.
 
-    The frontend polls this and when the value changes, knows new code has
-    been deployed and prompts the user to refresh the page.
+    The frontend polls this and prompts the user to refresh ONLY when the
+    served JS/CSS has actually changed. Previously we returned
+    /run/current-system, which changes on ANY system change (including
+    just toggling an unrelated service) and produced false-positive
+    "new version available" banners.
 
-    Implementation: /run/current-system is a symlink to the active system
-    closure (/nix/store/<hash>-nixos-system-...). The hash changes IFF any
-    part of the system — including the bundled frontend — has changed.
+    HOMEFREE_FRONTEND_PATH is set by the admin-api systemd unit
+    (services/admin-web.nix) to the nix-store path of the frontend
+    directory. The hash embedded in that path changes IFF the frontend
+    files themselves change.
     """
     try:
+        frontend_path = os.environ.get("HOMEFREE_FRONTEND_PATH")
+        if frontend_path:
+            return JSONResponse(content={"closure_id": frontend_path})
+
+        # Fallback for older deployments without the env var.
         link = os.readlink("/run/current-system")
         return JSONResponse(content={"closure_id": link})
     except Exception as e:
-        logger.error(f"Error reading current-system: {e}")
+        logger.error(f"Error computing frontend closure-id: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Admin Mode Endpoints

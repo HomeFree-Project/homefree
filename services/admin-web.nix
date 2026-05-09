@@ -414,6 +414,10 @@ in
             pkgs.gnugrep
             pkgs.findutils
           ]}"
+          # Path of the served frontend bundle, used by the closure-id
+          # endpoint. Embeds the nix-store hash, so it changes IFF the
+          # frontend itself changed (not on every unrelated rebuild).
+          "HOMEFREE_FRONTEND_PATH=${installerWebPath}/frontend"
         ];
       };
     };

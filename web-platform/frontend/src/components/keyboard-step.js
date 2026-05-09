@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import './shared/dropdown-select.js';
 
 class KeyboardStep extends LitElement {
   static properties = {
@@ -112,25 +113,26 @@ class KeyboardStep extends LitElement {
 
         <div class="form-group">
           <label for="layout">Keyboard Layout</label>
-          <select
-            id="layout"
-            @change="${(e) => {
-              this.selectedLayout = e.target.value;
+          <dropdown-select
+            .options=${[
+              { value: 'us', label: 'English (US)' },
+              { value: 'uk', label: 'English (UK)' },
+              { value: 'de', label: 'German' },
+              { value: 'fr', label: 'French' },
+              { value: 'es', label: 'Spanish' },
+              { value: 'it', label: 'Italian' },
+              { value: 'pt', label: 'Portuguese' },
+              { value: 'ru', label: 'Russian' },
+              { value: 'jp', label: 'Japanese' },
+              { value: 'dvorak', label: 'Dvorak' },
+              { value: 'colemak', label: 'Colemak' },
+            ]}
+            .value=${this.selectedLayout || 'us'}
+            @change=${(e) => {
+              this.selectedLayout = e.detail.value;
               this.notifyParent();
-            }}"
-          >
-            <option value="us" selected>English (US)</option>
-            <option value="uk">English (UK)</option>
-            <option value="de">German</option>
-            <option value="fr">French</option>
-            <option value="es">Spanish</option>
-            <option value="it">Italian</option>
-            <option value="pt">Portuguese</option>
-            <option value="ru">Russian</option>
-            <option value="jp">Japanese</option>
-            <option value="dvorak">Dvorak</option>
-            <option value="colemak">Colemak</option>
-          </select>
+            }}
+          ></dropdown-select>
           <div class="description">
             Select your keyboard layout for the console and desktop
           </div>

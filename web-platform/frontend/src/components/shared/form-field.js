@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import './dropdown-select.js';
 
 /**
  * Generic form field component
@@ -171,18 +172,13 @@ class FormField extends LitElement {
           ${this.label}
           ${this.required ? html`<span class="required">*</span>` : ''}
         </label>
-        <select
-          .value=${this.value}
+        <dropdown-select
+          .options=${this.options}
+          .value=${this.value || null}
+          .placeholder=${this.placeholder || 'Select an option...'}
           ?disabled=${this.disabled}
-          ?required=${this.required}
-          class="${this.error ? 'error' : ''}"
-          @change=${this.handleInput}
-        >
-          ${this.placeholder ? html`<option value="" ?selected=${!this.value}>${this.placeholder}</option>` : ''}
-          ${this.options.map(opt => html`
-            <option value="${opt.value}" ?selected=${opt.value === this.value}>${opt.label}</option>
-          `)}
-        </select>
+          @change=${(e) => this.handleInput({ target: { value: e.detail.value } })}
+        ></dropdown-select>
       `;
     }
 

@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import './shared/dropdown-select.js';
 
 class WelcomeStep extends LitElement {
   static properties = {
@@ -127,11 +128,14 @@ class WelcomeStep extends LitElement {
 
         <div class="language-selector">
           <label for="language">Installation Language: </label>
-          <select id="language" @change="${this.handleLanguageChange}">
-            <option value="en_US" selected>English (US)</option>
-            <option value="en_GB">English (UK)</option>
-            <!-- Add more languages as needed -->
-          </select>
+          <dropdown-select
+            .options=${[
+              { value: 'en_US', label: 'English (US)' },
+              { value: 'en_GB', label: 'English (UK)' },
+            ]}
+            .value=${this.selectedLanguage || 'en_US'}
+            @change=${(e) => this.handleLanguageChange({ target: { value: e.detail.value } })}
+          ></dropdown-select>
         </div>
 
         <div class="features">

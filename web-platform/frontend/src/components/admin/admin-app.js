@@ -321,6 +321,24 @@ class AdminApp extends LitElement {
       animation: spin 1s linear infinite;
     }
 
+    /* Spinner sized + colored to read inside the primary button. */
+    .btn-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: -2px;
+      margin-right: 8px;
+    }
+
+    .btn:disabled .btn-spinner {
+      border-color: var(--hf-text-subtle);
+      border-top-color: var(--hf-text-muted);
+    }
+
     .status-badge {
       margin-left: auto;
       width: 8px;
@@ -2015,7 +2033,7 @@ class AdminApp extends LitElement {
                 ?disabled=${this.rebuildStatus.running}
                 title="${this.rebuildStatus.running ? 'Rebuild in progress — wait for it to finish before applying again' : 'Apply pending configuration'}"
               >
-                Apply
+                ${this.rebuildStatus.running ? html`<span class="btn-spinner"></span>Applying…` : 'Apply'}
               </button>
             </div>
           </div>

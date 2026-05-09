@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getTimezones, setLocation } from '../api/client.js';
+import './shared/dropdown-select.js';
 
 class LocationStep extends LitElement {
   static properties = {
@@ -113,44 +114,41 @@ class LocationStep extends LitElement {
 
         <div class="form-group">
           <label for="timezone">Timezone</label>
-          <select
-            id="timezone"
-            @change="${(e) => {
-              this.selectedTimezone = e.target.value;
+          <dropdown-select
+            .options=${[
+              { group: 'Americas' },
+              { value: 'America/New_York', label: 'New York (EST)' },
+              { value: 'America/Chicago', label: 'Chicago (CST)' },
+              { value: 'America/Denver', label: 'Denver (MST)' },
+              { value: 'America/Los_Angeles', label: 'Los Angeles (PST)' },
+              { value: 'America/Anchorage', label: 'Anchorage (AKST)' },
+              { value: 'America/Toronto', label: 'Toronto' },
+              { value: 'America/Mexico_City', label: 'Mexico City' },
+              { group: 'Europe' },
+              { value: 'Europe/London', label: 'London (GMT)' },
+              { value: 'Europe/Paris', label: 'Paris (CET)' },
+              { value: 'Europe/Berlin', label: 'Berlin (CET)' },
+              { value: 'Europe/Rome', label: 'Rome (CET)' },
+              { value: 'Europe/Madrid', label: 'Madrid (CET)' },
+              { value: 'Europe/Moscow', label: 'Moscow (MSK)' },
+              { group: 'Asia' },
+              { value: 'Asia/Dubai', label: 'Dubai' },
+              { value: 'Asia/Kolkata', label: 'Kolkata' },
+              { value: 'Asia/Singapore', label: 'Singapore' },
+              { value: 'Asia/Tokyo', label: 'Tokyo' },
+              { value: 'Asia/Shanghai', label: 'Shanghai' },
+              { value: 'Asia/Seoul', label: 'Seoul' },
+              { group: 'Pacific' },
+              { value: 'Australia/Sydney', label: 'Sydney' },
+              { value: 'Australia/Melbourne', label: 'Melbourne' },
+              { value: 'Pacific/Auckland', label: 'Auckland' },
+            ]}
+            .value=${this.selectedTimezone || 'America/Los_Angeles'}
+            @change=${(e) => {
+              this.selectedTimezone = e.detail.value;
               this.notifyParent();
-            }}"
-          >
-            <optgroup label="Americas">
-              <option value="America/New_York">New York (EST)</option>
-              <option value="America/Chicago">Chicago (CST)</option>
-              <option value="America/Denver">Denver (MST)</option>
-              <option value="America/Los_Angeles" selected>Los Angeles (PST)</option>
-              <option value="America/Anchorage">Anchorage (AKST)</option>
-              <option value="America/Toronto">Toronto</option>
-              <option value="America/Mexico_City">Mexico City</option>
-            </optgroup>
-            <optgroup label="Europe">
-              <option value="Europe/London">London (GMT)</option>
-              <option value="Europe/Paris">Paris (CET)</option>
-              <option value="Europe/Berlin">Berlin (CET)</option>
-              <option value="Europe/Rome">Rome (CET)</option>
-              <option value="Europe/Madrid">Madrid (CET)</option>
-              <option value="Europe/Moscow">Moscow (MSK)</option>
-            </optgroup>
-            <optgroup label="Asia">
-              <option value="Asia/Dubai">Dubai</option>
-              <option value="Asia/Kolkata">Kolkata</option>
-              <option value="Asia/Singapore">Singapore</option>
-              <option value="Asia/Tokyo">Tokyo</option>
-              <option value="Asia/Shanghai">Shanghai</option>
-              <option value="Asia/Seoul">Seoul</option>
-            </optgroup>
-            <optgroup label="Pacific">
-              <option value="Australia/Sydney">Sydney</option>
-              <option value="Australia/Melbourne">Melbourne</option>
-              <option value="Pacific/Auckland">Auckland</option>
-            </optgroup>
-          </select>
+            }}
+          ></dropdown-select>
           <div class="description">
             Select your timezone for accurate time settings
           </div>
@@ -158,26 +156,27 @@ class LocationStep extends LitElement {
 
         <div class="form-group">
           <label for="locale">Language & Locale</label>
-          <select
-            id="locale"
-            @change="${(e) => {
-              this.selectedLocale = e.target.value;
+          <dropdown-select
+            .options=${[
+              { value: 'en_US.UTF-8', label: 'English (United States)' },
+              { value: 'en_GB.UTF-8', label: 'English (United Kingdom)' },
+              { value: 'en_CA.UTF-8', label: 'English (Canada)' },
+              { value: 'en_AU.UTF-8', label: 'English (Australia)' },
+              { value: 'de_DE.UTF-8', label: 'German (Germany)' },
+              { value: 'fr_FR.UTF-8', label: 'French (France)' },
+              { value: 'es_ES.UTF-8', label: 'Spanish (Spain)' },
+              { value: 'it_IT.UTF-8', label: 'Italian (Italy)' },
+              { value: 'pt_BR.UTF-8', label: 'Portuguese (Brazil)' },
+              { value: 'ja_JP.UTF-8', label: 'Japanese (Japan)' },
+              { value: 'zh_CN.UTF-8', label: 'Chinese (Simplified)' },
+              { value: 'ko_KR.UTF-8', label: 'Korean (Korea)' },
+            ]}
+            .value=${this.selectedLocale || 'en_US.UTF-8'}
+            @change=${(e) => {
+              this.selectedLocale = e.detail.value;
               this.notifyParent();
-            }}"
-          >
-            <option value="en_US.UTF-8" selected>English (United States)</option>
-            <option value="en_GB.UTF-8">English (United Kingdom)</option>
-            <option value="en_CA.UTF-8">English (Canada)</option>
-            <option value="en_AU.UTF-8">English (Australia)</option>
-            <option value="de_DE.UTF-8">German (Germany)</option>
-            <option value="fr_FR.UTF-8">French (France)</option>
-            <option value="es_ES.UTF-8">Spanish (Spain)</option>
-            <option value="it_IT.UTF-8">Italian (Italy)</option>
-            <option value="pt_BR.UTF-8">Portuguese (Brazil)</option>
-            <option value="ja_JP.UTF-8">Japanese (Japan)</option>
-            <option value="zh_CN.UTF-8">Chinese (Simplified)</option>
-            <option value="ko_KR.UTF-8">Korean (Korea)</option>
-          </select>
+            }}
+          ></dropdown-select>
           <div class="description">
             This sets the system language and regional formats
           </div>

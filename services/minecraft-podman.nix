@@ -304,6 +304,17 @@ in
           extraOptions = [
             # "--pull=always"
             "--add-host=host.docker.internal:host-gateway"
+            # Disable the image's bundled healthcheck. The itzg/minecraft-server
+            # image registers a HEALTHCHECK that podman runs as a transient
+            # systemd unit. The check returns "starting" with exit 1 during
+            # the 30-60s Java cold-start window. Each nixos-rebuild
+            # immediately restarts the container (because its ExecStart path
+            # transitively depends on glibc/coreutils/podman, all of which
+            # rotate on rebuilds), so the healthcheck fires while still
+            # "starting" and the rebuild logs report a failed unit and
+            # nixos-rebuild exits with status 4. We don't act on the
+            # healthcheck result anywhere, so suppressing it is harmless.
+            "--no-healthcheck"
           ];
 
           ports = [
@@ -395,6 +406,13 @@ in
         after = [ "dns-ready.service" ];
         requires = [ "dns-ready.service" ];
         partOf =  [ "nftables.service" ];
+        # Don't kick the running game server on every nixos-rebuild just
+        # because some transitive dependency (glibc, podman, coreutils)
+        # rotated. The container itself doesn't change unless the image
+        # tag, env, volumes, or our preStart script content changes —
+        # those still go through the explicit reload path. Players don't
+        # want their world dropped mid-match for a routine system update.
+        restartIfChanged = false;
         serviceConfig = {
           ExecStartPre = [ "!${pkgs.writeShellScript "${instance-id}-prestart" preStart}" ];
         };

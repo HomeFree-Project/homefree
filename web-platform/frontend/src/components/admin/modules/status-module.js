@@ -217,6 +217,19 @@ class StatusModule extends LitElement {
     this._userHasToggledLogs = true;
   }
 
+  // True if we should follow the tail of the log on new lines. Starts on,
+  // turns off when the user scrolls up, turns back on when they scroll
+  // back to the bottom.
+  _logsFollowTail = true;
+
+  handleLogsScroll(e) {
+    const el = e.currentTarget;
+    // Treat "within 8px of bottom" as pinned — scrollHeight is fractional
+    // on hidpi screens, and a strict equality would never re-arm.
+    const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+    this._logsFollowTail = distanceFromBottom < 8;
+  }
+
   updated(changedProperties) {
     super.updated(changedProperties);
 
@@ -236,10 +249,17 @@ class StatusModule extends LitElement {
       if (prev.length === 0 && this.buildLogs.length > 0 && !this._userHasToggledLogs) {
         this.logsCollapsed = false;
       }
+      // Re-arm tail-following when fresh logs first show up so the new
+      // build starts pinned to the bottom by default.
+      if (prev.length === 0 && this.buildLogs.length > 0) {
+        this._logsFollowTail = true;
+      }
     }
 
-    // Auto-scroll to bottom when logs change (only if not collapsed)
-    if (changedProperties.has('buildLogs') && this.buildLogs.length > 0 && !this.logsCollapsed) {
+    // Auto-scroll only while the user is pinned to the tail. If they've
+    // scrolled up, leave their viewport alone — they're reading something.
+    if (changedProperties.has('buildLogs') && this.buildLogs.length > 0
+        && !this.logsCollapsed && this._logsFollowTail) {
       const logsContent = this.shadowRoot.querySelector('.logs-content');
       if (logsContent) {
         logsContent.scrollTop = logsContent.scrollHeight;
@@ -311,7 +331,10 @@ class StatusModule extends LitElement {
               Build Logs
             </span>
           </h3>
-          <div class="logs-content ${this.logsCollapsed ? 'collapsed' : ''}">
+          <div
+            class="logs-content ${this.logsCollapsed ? 'collapsed' : ''}"
+            @scroll=${this.handleLogsScroll}
+          >
             ${this.buildLogs.length > 0 ? html`
               ${this.buildLogs.map(line => html`<div class="log-line ${this.classifyLogLine(line)}">${line}</div>`)}
             ` : html`

@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getSystemInfo, setPartitioning } from '../api/client.js';
+import './shared/dropdown-select.js';
 
 class PartitionStep extends LitElement {
   static properties = {
@@ -248,16 +249,16 @@ class PartitionStep extends LitElement {
           <div class="auto-partition-options">
             <div class="form-group">
               <label for="disk">Select Disk</label>
-              <select id="disk" @change="${this.handleDiskChange}" ?disabled="${this.loading}">
-                <option value="">
-                  ${this.loading ? 'Loading disks...' : '-- Select a disk --'}
-                </option>
-                ${this.disks.map(disk => html`
-                  <option value="${disk.name}">
-                    ${disk.name} (${this.formatSize(disk.size)}${disk.model !== 'Unknown' ? ` - ${disk.model}` : ''})
-                  </option>
-                `)}
-              </select>
+              <dropdown-select
+                .options=${this.disks.map(disk => ({
+                  value: disk.name,
+                  label: `${disk.name} (${this.formatSize(disk.size)}${disk.model !== 'Unknown' ? ` - ${disk.model}` : ''})`
+                }))}
+                .value=${this.selectedDisk || null}
+                .placeholder=${this.loading ? 'Loading disks...' : '-- Select a disk --'}
+                ?disabled=${this.loading}
+                @change=${(e) => this.handleDiskChange({ target: { value: e.detail.value } })}
+              ></dropdown-select>
               ${!this.loading && this.disks.length === 0 ? html`
                 <p style="color: #d32f2f; margin-top: 8px;">
                   ⚠️ No disks detected. Please check your hardware.

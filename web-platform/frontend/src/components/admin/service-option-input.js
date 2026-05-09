@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import '../shared/list-input.js';
 import '../shared/file-browser.js';
 import '../shared/submodule-list-editor.js';
+import '../shared/dropdown-select.js';
 
 /**
  * Service option input component
@@ -27,6 +28,7 @@ class ServiceOptionInput extends LitElement {
     :host {
       display: block;
       margin-bottom: 16px;
+      color-scheme: dark;
     }
 
     .option-field {
@@ -100,6 +102,7 @@ class ServiceOptionInput extends LitElement {
       color: var(--hf-text-subtle);
       font-style: italic;
     }
+
 
     .input-with-browse {
       display: flex;
@@ -406,18 +409,12 @@ class ServiceOptionInput extends LitElement {
       : this.defaultValue;
 
     return html`
-      <select
-        .value=${value || ''}
+      <dropdown-select
+        .options=${this.enumValues || []}
+        .value=${value || null}
         ?disabled=${this.disabled}
-        @change=${(e) => this.handleChange(e.target.value)}
-      >
-        <option value="">Select an option...</option>
-        ${this.enumValues.map(option => html`
-          <option value=${option} ?selected=${value === option}>
-            ${option}
-          </option>
-        `)}
-      </select>
+        @change=${(e) => this.handleChange(e.detail.value)}
+      ></dropdown-select>
       ${this.renderDefaultHint()}
     `;
   }

@@ -363,6 +363,25 @@ in
 
       minecraft.enable = jsonData.services.minecraft.enable or false;
       minecraft.public = jsonData.services.minecraft.public or false;
+      minecraft.instances = map (instance: {
+        enable = instance.enable or true;
+        public = instance.public or false;
+        subdomain = instance.subdomain;
+        name = instance.name;
+        memory = if (instance.memory or null) == null || instance.memory == "" then null else instance.memory;
+        image-tag = if (instance."image-tag" or null) == null || instance."image-tag" == "" then null else instance."image-tag";
+        mode = instance.mode or "survival";
+        type = if (instance.type or null) == null || instance.type == "" then null else instance.type;
+        mods = map (mod: {
+          download-url = mod."download-url";
+          project-slug = mod."project-slug";
+        }) (instance.mods or []);
+      } // (if (instance."mod-pack" or null) == null then {} else {
+        mod-pack = {
+          download-url = instance."mod-pack"."download-url";
+          project-slug = instance."mod-pack"."project-slug";
+        };
+      })) (jsonData.services.minecraft.instances or []);
 
       logseq.enable = jsonData.services.logseq.enable or false;
       logseq.public = jsonData.services.logseq.public or false;
