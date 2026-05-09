@@ -17,6 +17,11 @@
 
     sops-nix.url = "github:Mic92/sops-nix";
 
+    headplane = {
+      url = "github:tale/headplane";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
+
     adblock-unbound = {
       url = "github:MayNiklas/nixos-adblock-unbound";
       inputs.nixpkgs.follows = "nixpkgs";

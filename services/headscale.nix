@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, homefree-inputs, ... }:
 let
   cfg = config.homefree;
   lan-address = config.homefree.network.lan-address;
@@ -36,22 +36,191 @@ let
     }
   '';
 
-  # headplane-version = "0.3.9";
-  headplane-version = "0.6.2";
-  headplane-containerDataPath = "/var/lib/headplane";
+  headscaleEnabled = config.homefree.service-options.headscale.enable;
+  headscaleSecrets = config.homefree.service-options.headscale.secrets;
+
   headplane-port = 3009;
-  headplane-preStart = ''
-    mkdir -p ${headplane-containerDataPath}/data
-    mkdir -p ${headplane-containerDataPath}/configs
-  '';
+
+  ## Per-secret files written by the admin UI's SOPS-managed secrets
+  ## pipeline. Same pattern as services/zitadel-podman.nix: files are
+  ## populated out-of-band; nix only declares the option and reads the
+  ## paths via systemd LoadCredential at service start.
+  headplaneSecretsDir = "/var/lib/homefree-secrets/headscale";
+
+  ## Headplane is only deployed once the four credentials below are set.
+  ## Without them the service would fail to start (no cookie secret) or
+  ## fail OIDC discovery (no client_id/secret/api_key). Match Zitadel's
+  ## deployOauth2Proxy gating: enable + all-secrets-populated.
+  headplaneSecretsConfigured =
+    (headscaleSecrets.headplane-cookie-secret or null) != null
+    && (headscaleSecrets.oidc-client-id or null) != null
+    && (headscaleSecrets.oidc-client-secret or null) != null
+    && (headscaleSecrets.headscale-api-key or null) != null;
+  deployHeadplane = headscaleEnabled && headplaneSecretsConfigured;
+
+  ## Headplane 0.7+ takes a YAML config file. The upstream NixOS module
+  ## strips null values from the YAML, so optional fields can be left null.
+  ## Secret values are exposed via systemd LoadCredential below; we point
+  ## the *_path settings at the resolved paths under
+  ## /run/credentials/<unit>/<name> to avoid env-var expansion in YAML.
+  headplaneCredsDir = "/run/credentials/headplane.service";
+
+  headplaneSettings = {
+    server = {
+      host = "127.0.0.1";
+      port = headplane-port;
+      cookie_secret_path = "${headplaneCredsDir}/headplane-cookie-secret";
+      cookie_secure = true;
+    };
+    headscale = {
+      url = "http://${lan-address}:${toString config.services.headscale.port}";
+      config_path = "/etc/headscale/config.yaml";
+      config_strict = true;
+      api_key_path = "${headplaneCredsDir}/headscale-api-key";
+    };
+    integration = {
+      proc.enabled = true;
+      agent.enabled = false;
+    };
+    oidc = {
+      issuer = "https://sso.${cfg.system.domain}";
+      client_id = headscaleSecrets.oidc-client-id;
+      client_secret_path = "${headplaneCredsDir}/oidc-client-secret";
+      headscale_api_key_path = "${headplaneCredsDir}/headscale-api-key";
+      disable_api_key_login = false;
+      token_endpoint_auth_method = "client_secret_post";
+    };
+  };
 in
 {
-  environment.systemPackages = lib.optionals config.homefree.services.headscale.enable [
+  ## nixpkgs ships its own headplane module (services/networking/headplane.nix)
+  ## but it's pinned to nixpkgs's headplane version (0.6.x). Disable it so
+  ## the upstream flake module — which tracks 0.7+ and adds option fields the
+  ## nixpkgs version doesn't — wins without colliding.
+  disabledModules = [ "services/networking/headplane.nix" ];
+  imports = [
+    homefree-inputs.headplane.nixosModules.headplane
+  ];
+
+  options.homefree.service-options.headscale = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Headscale VPN service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "UI open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "headscale";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "VPN (Headscale)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Headscale";
+      internal = true;
+      description = "Project name";
+    };
+
+    stun-port = lib.mkOption {
+      type = lib.types.int;
+      description = "DERP STUN relay port";
+      default = 3478;
+    };
+
+    enable-public-derp-fallback = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Include Tailscale's public DERP relay servers as fallback.
+
+        When enabled, clients can relay traffic through Tailscale's
+        infrastructure if the embedded DERP server on this machine is
+        unreachable (e.g. after a network switch causes a DNS circular
+        dependency where MagicDNS needs the tunnel to resolve the
+        headscale server, but the tunnel needs DERP to recover).
+        The embedded DERP is always preferred when reachable; public
+        servers are only used as a last resort.
+
+        NOTE: This creates a dependency on Tailscale's infrastructure
+        (controlplane.tailscale.com). Disable this if you require
+        complete independence from Tailscale's services.
+      '';
+    };
+
+    secrets = {
+      tailscale-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
+      };
+
+      ## Deprecated. Headplane 0.6 (the previous version) consumed an env
+      ## file with COOKIE_SECRET, ROOT_API_KEY, OIDC_CLIENT_SECRET. From
+      ## 0.7 onward those secrets come from per-secret files via
+      ## LoadCredential — see the four fields below. Kept here so existing
+      ## configurations evaluate during the migration cycle.
+      headplane-env = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "(Deprecated) Location of Headplane env file. No longer used; see headplane-cookie-secret/oidc-* below.";
+      };
+
+      ## SOPS-managed secrets used by the headplane native module.
+      ## The actual secret values live as files under
+      ## /var/lib/homefree-secrets/headscale/<name>, written out of band
+      ## by the admin UI's secret manager. The string options below are
+      ## just markers so the admin UI knows the secret exists; they are
+      ## not read directly. Compare services/zitadel-podman.nix.
+      headplane-cookie-secret = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "32-byte session secret used by Headplane to sign cookies. Generate with: openssl rand -base64 32 | head -c 32";
+      };
+      oidc-client-id = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "OIDC Client ID for the Headplane application in Zitadel.";
+      };
+      oidc-client-secret = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "OIDC client secret paired with the client ID above.";
+      };
+      headscale-api-key = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Headscale API key. Create with: headscale apikeys create --expiration 999d";
+      };
+    };
+  };
+
+  config = {
+  ## Pull pkgs.headplane (and pkgs.headplane-agent) from the upstream
+  ## flake — newer than nixpkgs. Applying unconditionally is harmless;
+  ## the package is only referenced when headscale is enabled.
+  nixpkgs.overlays = [ homefree-inputs.headplane.overlays.default ];
+
+  environment.systemPackages = lib.optionals headscaleEnabled [
     pkgs.headscale
     pkgs.tailscale
   ];
 
-  services.headscale = lib.optionalAttrs config.homefree.services.headscale.enable {
+  services.headscale = lib.optionalAttrs headscaleEnabled {
     enable = true ;
     port = 8087;
     address = lan-address;
@@ -65,15 +234,14 @@ in
         base_domain = "homefree.vpn";
         # search_domains = search-domains;
         ## Add
+        ## Order matters in headscale 0.26+: the first reachable resolver is
+        ## preferred, so put the LAN resolver first to get split-horizon and
+        ## ad-blocking; the public resolvers are fallbacks for when the LAN
+        ## resolver is unreachable.
         nameservers.global = [
-          ## @TODO: It appears that these servers are round-robinned.
-          ##        Can ${lan-address} be set as default, and the rest as backups?
-          ##        Would be useful to support ad blocking over tailscale.
-
-          ## Internal DNS, has local domain names
-          # "${lan-address}"
-
-          ## Backup in case internal DNS not accessible due to connectivity issues
+          ## Internal DNS — has local domain names + ad-blocking via unbound
+          lan-address
+          ## Backup if LAN resolver is unreachable (e.g. before tunnel is up)
           "9.9.9.10"
           ## Secondary backup
           "1.1.1.1"
@@ -103,10 +271,10 @@ in
           region_id = 999;
           region_code = "headscale";
           region_name = "headscale Embedded DERP";
-          stun_listen_addr = "0.0.0.0:${toString cfg.services.headscale.stun-port}";
+          stun_listen_addr = "0.0.0.0:${toString cfg.service-options.headscale.stun-port}";
           automatically_add_embedded_derp_region = true;
         };
-        urls = if cfg.services.headscale.enable-public-derp-fallback
+        urls = if cfg.service-options.headscale.enable-public-derp-fallback
           then [ "https://controlplane.tailscale.com/derpmap/default" ]
           else [];
         paths = [];
@@ -115,9 +283,9 @@ in
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
-  services.tailscale = lib.optionalAttrs config.homefree.services.headscale.enable {
+  services.tailscale = lib.optionalAttrs headscaleEnabled {
     enable = true;
-    authKeyFile = config.homefree.services.headscale.secrets.tailscale-key;
+    authKeyFile = headscaleSecrets.tailscale-key;
     useRoutingFeatures = "server";
     extraUpFlags = [
       ## Connect directly to local headscale (bypasses Caddy proxy issues)
@@ -134,92 +302,77 @@ in
     ];
   };
 
-  systemd.services.headscale-enable-routes = lib.optionalAttrs config.homefree.services.headscale.enable {
+  ## Auto-approve the LAN subnet route advertised by the local tailscale
+  ## client (the router host itself).
+  ##
+  ## Headscale 0.27+ removed `headscale routes list/enable`. The new API is
+  ## `headscale nodes list-routes` (per-node view of advertised + approved
+  ## routes) and `headscale nodes approve-routes -i <ID> -r <CIDRs>` which
+  ## takes a node identifier and the comma-separated list of approved CIDRs.
+  ## We find the node by hostname (the router advertises homefree.lan via
+  ## tailscale up) and approve our LAN subnet on that node.
+  systemd.services.headscale-enable-routes = lib.optionalAttrs headscaleEnabled {
     after = [ "network.target" "network-online.target" "tailscale.service" ];
     requires = [ "network-online.target" "tailscaled.service" "tailscaled-set.service" "tailscaled-autoconnect.service" ];
     enable = true;
     serviceConfig = {
       User = "headscale";
     };
-    # script = builtins.readFile ../scripts/tune_router_performance.sh;
     script = ''
       HEADSCALE=${pkgs.headscale}/bin/headscale
-      GREP=${pkgs.gnugrep}/bin/grep
-      AWK=${pkgs.gawk}/bin/awk
-      $HEADSCALE routes enable -r $($HEADSCALE routes list | $GREP homefree | $GREP "${lan-subnet-prefix}" | $AWK '{ print $1 }')
+      JQ=${pkgs.jq}/bin/jq
+
+      ## Look up the router node ID by hostname. Match `homefree` and an
+      ## advertised route inside our LAN subnet prefix to be safe even if
+      ## additional nodes happen to share the hostname.
+      NODE_ID=$($HEADSCALE nodes list-routes -o json \
+        | $JQ -r --arg prefix "${lan-subnet-prefix}" \
+            '.[] | select(.given_name | test("homefree"))
+                 | select((.advertised_routes // []) | map(startswith($prefix)) | any)
+                 | .id' \
+        | head -n1)
+
+      if [ -z "$NODE_ID" ]; then
+        echo "headscale-enable-routes: no node advertising ${lan-subnet} found yet"
+        exit 0
+      fi
+
+      $HEADSCALE nodes approve-routes -i "$NODE_ID" -r "${lan-subnet}"
     '';
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.headscale.enable {
-    headplane = {
-      image = "ghcr.io/tale/headplane:${headplane-version}";
-
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
-
-      ports = [
-        "0.0.0.0:${toString headplane-port}:3000"
-      ];
-
-      volumes = [
-        "/var/lib/headscale:/var/lib/headscale"
-        "/etc/headscale:/etc/headscale"
-        "/run/headscale:/run/headscale"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-
-        DEBUG = "true";
-
-        ## Connect directly to headscale to avoid Caddy routing issues
-        HEADSCALE_URL = "http://${lan-address}:${toString config.services.headscale.port}";
-        # HEADSCALE_URL = "https://headscale.${config.homefree.system.domain}";
-
-        ## If headscale iteself is running in docker, set these
-        # HEADSCALE_INTEGRATION = "docker";
-        # HEADSCALE_CONTAINER = "headscale";
-
-        DISABLE_API_KEY_LOGIN = "true";
-        HOST = "0.0.0.0";    # default: 0.0.0.0
-        PORT = "3000";       # default: 3000
-
-        ## Only set this to false if you aren't behind a reverse proxy
-        COOKIE_SECURE = "true";
-
-        ## Overrides the configuration file values if they are set in config.yaml
-        ## If you want to share the same OIDC configuration you do not need this
-        # OIDC_CLIENT_ID = "headscale";
-        # OIDC_ISSUER = "https://sso.example.com";
-      };
-
-      environmentFiles = [
-        config.homefree.services.headscale.secrets.headplane-env
-      ];
-    };
+  ## Headplane is the Headscale admin UI. From 0.7 it ships a NixOS
+  ## module (imported above) and runs as a native systemd service rather
+  ## than a podman container. It picks up its YAML config from
+  ## /etc/headplane/config.yaml (written by the upstream module from the
+  ## settings attrset below) and reads four runtime secrets from systemd
+  ## credentials populated via LoadCredential.
+  services.headplane = lib.mkIf deployHeadplane {
+    enable = true;
+    settings = headplaneSettings;
   };
 
-  systemd.services.podman-headplane = lib.optionalAttrs config.homefree.services.headscale.enable {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
+  ## LoadCredential bridges the SOPS-managed per-secret files into the
+  ## headplane.service mount namespace at /run/credentials/headplane.service/<name>.
+  ## The headplaneSettings YAML above points the *_path fields at exactly
+  ## those resolved paths.
+  systemd.services.headplane = lib.mkIf deployHeadplane {
+    after = [ "headscale.service" "dns-ready.service" ];
+    requires = [ "headscale.service" "dns-ready.service" ];
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "headplane-prestart" headplane-preStart}" ];
+      LoadCredential = [
+        "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"
+        "oidc-client-secret:${headplaneSecretsDir}/oidc-client-secret"
+        "headscale-api-key:${headplaneSecretsDir}/headscale-api-key"
+      ];
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.headscale.enable [
+  homefree.service-config = lib.optionals headscaleEnabled [
     {
-      label = "headscale";
-      name = "VPN";
-      project-name = "Headscale";
-      systemd-service-names = [
-        "headscale"
-        "podman-headplane"
-      ];
+      inherit (cfg.service-options.headscale) label name project-name;
+      systemd-service-names = [ "headscale" ]
+        ++ lib.optional deployHeadplane "headplane";
       admin = {
         urlPathOverride = "/admin";
       };
@@ -269,11 +422,11 @@ in
         open-ports = {
           tcp = [
             ## Allow Headscale DERP connections
-            config.homefree.services.headscale.stun-port
+            cfg.service-options.headscale.stun-port
           ];
           udp = [
             ## Allow Headscale DERP connections
-            config.homefree.services.headscale.stun-port
+            cfg.service-options.headscale.stun-port
             # Headscale connections
             41641
           ];
@@ -303,6 +456,52 @@ in
           default = 3478;
           description = "DERP STUN relay port";
         }
+        {
+          path = "enable-public-derp-fallback";
+          type = "bool";
+          default = false;
+          description = "Fall back to Tailscale public DERP if embedded relay is unreachable";
+        }
+        {
+          path = "secrets";
+          type = "submodule";
+          description = "Headplane SSO + API credentials (via Zitadel). All four required for the Headplane admin UI to deploy.";
+          sops-managed = true;
+          submodule-fields = [
+            {
+              path = "headplane-cookie-secret";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "32-byte session secret used by Headplane to sign cookies. Generate with: openssl rand -base64 32 | head -c 32";
+              sops-managed = true;
+            }
+            {
+              path = "oidc-client-id";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "OIDC Client ID for the Headplane application in Zitadel.";
+              sops-managed = true;
+            }
+            {
+              path = "oidc-client-secret";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "OIDC client secret paired with the client ID above.";
+              sops-managed = true;
+            }
+            {
+              path = "headscale-api-key";
+              type = "str";
+              nullable = true;
+              default = null;
+              description = "Headscale API key for Headplane to query the gRPC API. Create with: headscale apikeys create --expiration 999d";
+              sops-managed = true;
+            }
+          ];
+        }
       ];
     }
   ];
@@ -311,4 +510,5 @@ in
   # networking.hosts = {
   #   "${lan-address}" = [ "headscale.homefree.host" "vpn.homefree.host" ];
   # };
+  };
 }

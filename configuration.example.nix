@@ -757,10 +757,18 @@ in
         enable = true;
       };
 
+      ## NOTE: `services.headscale` is the legacy option path; a compat shim
+      ## in module.nix mirrors it onto the new `service-options.headscale.*`
+      ## namespace declared in services/headscale.nix. New configuration
+      ## should prefer `homefree.service-options.headscale = { ... }`.
       headscale = {
         enable = true;
         secrets = {
           tailscale-key = config.sops.secrets."tailscale/key".path;
+          ## headplane-env is deprecated as of headplane 0.7. Per-secret
+          ## fields (headplane-cookie-secret, oidc-client-id,
+          ## oidc-client-secret, headscale-api-key) are managed via the
+          ## admin UI under homefree.service-options.headscale.secrets.
           headplane-env = config.sops.secrets."headplane/env".path;
         };
       };
@@ -859,6 +867,16 @@ in
           curseforge-api-key = config.sops.secrets."minecraft/curseforge-api-key".path;
         };
       };
+
+      ## NetBird is a second VPN platform that coexists with Headscale.
+      ## All four secrets must be populated via the admin UI's SOPS surface
+      ## before the server containers will deploy. See services/netbird.nix
+      ## for the Zitadel pre-flight steps (OIDC app + machine user).
+      ## Lives under service-options.* (no compat shim — it's a new service).
+      # service-options.netbird = {
+      #   enable = false;
+      #   client.enable = false;  # router-as-peer; defer until tested
+      # };
 
       nextcloud = {
         enable = true;

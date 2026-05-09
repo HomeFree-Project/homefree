@@ -727,7 +727,8 @@
             description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
           };
           headplane-env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Headplane environment var file. Contains COOKIE_SECRET, ROOT_API_KEY, OIDC_CLIENT_SECRET. Should not be a file included in your source repo.";
           };
         };
@@ -1446,6 +1447,33 @@
         };
       };
 
+      ## NetBird is a second VPN service alongside Headscale. The full
+      ## option schema lives in services/netbird.nix under
+      ## homefree.service-options.netbird; the legacy declarations below
+      ## are the path the admin UI's JSON config writes to. A compat shim
+      ## further down mirrors them onto the new namespace.
+      netbird = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable NetBird VPN server";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Dashboard accessible from WAN";
+        };
+
+        client = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Run the NetBird client on this host (router as peer). Independent of server.";
+          };
+        };
+      };
+
       admin = {
         # Note: admin service is always enabled - the enable option exists for config consistency
         # but the service will run regardless of this setting
@@ -2160,6 +2188,24 @@
     homefree.service-options.zitadel.enable = config.homefree.services.zitadel.enable;
     homefree.service-options.zitadel.public = config.homefree.services.zitadel.public;
     homefree.service-options.zitadel.secrets = config.homefree.services.zitadel.secrets;
+
+    # Compat shim: bridge legacy `homefree.services.headscale.*` writes to the
+    # new colocated `homefree.service-options.headscale.*` namespace declared
+    # in services/headscale.nix. Remove this shim once all configuration.nix
+    # files have migrated to the new path.
+    homefree.service-options.headscale.enable = config.homefree.services.headscale.enable;
+    homefree.service-options.headscale.public = config.homefree.services.headscale.public;
+    homefree.service-options.headscale.stun-port = config.homefree.services.headscale.stun-port;
+    homefree.service-options.headscale.enable-public-derp-fallback = config.homefree.services.headscale.enable-public-derp-fallback;
+    homefree.service-options.headscale.secrets.tailscale-key = config.homefree.services.headscale.secrets.tailscale-key;
+    homefree.service-options.headscale.secrets.headplane-env = config.homefree.services.headscale.secrets.headplane-env;
+
+    # Same shim for NetBird. The admin UI's JSON config writes to
+    # homefree.services.netbird.*; mirror onto the colocated namespace
+    # declared in services/netbird.nix.
+    homefree.service-options.netbird.enable = config.homefree.services.netbird.enable;
+    homefree.service-options.netbird.public = config.homefree.services.netbird.public;
+    homefree.service-options.netbird.client.enable = config.homefree.services.netbird.client.enable;
 
     warnings =
       (if config.homefree.backups.enable == false then [

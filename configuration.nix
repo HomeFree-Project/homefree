@@ -26,6 +26,7 @@ in
     ./services/ddclient.nix
     ./services/dnsmasq.nix
     ./services/headscale.nix
+    ./services/netbird.nix
     ./services/landing-page
     ./services/unbound.nix
 
