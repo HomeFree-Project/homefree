@@ -41,27 +41,48 @@ let
 
   headplane-port = 3009;
 
-  ## Per-secret files written by the admin UI's SOPS-managed secrets
-  ## pipeline. Same pattern as services/zitadel-podman.nix: files are
-  ## populated out-of-band; nix only declares the option and reads the
-  ## paths via systemd LoadCredential at service start.
+  ## Per-secret files for SOPS-managed secrets — same pattern as
+  ## services/zitadel-podman.nix. The cookie secret is the one
+  ## exception: it doesn't *need* to be SOPS-managed because losing it
+  ## just invalidates active sessions, so we auto-generate it on first
+  ## boot if absent (see headplaneCookiePreStart below). The OIDC creds
+  ## and the headscale API key, in contrast, must be set deliberately.
   headplaneSecretsDir = "/var/lib/homefree-secrets/headscale";
 
-  ## Headplane is only deployed once the four credentials below are set.
-  ## Without them the service would fail to start (no cookie secret) or
-  ## fail OIDC discovery (no client_id/secret/api_key). Match Zitadel's
-  ## deployOauth2Proxy gating: enable + all-secrets-populated.
-  headplaneSecretsConfigured =
-    (headscaleSecrets.headplane-cookie-secret or null) != null
-    && (headscaleSecrets.oidc-client-id or null) != null
+  ## OIDC is opt-in. Headplane runs fine without it (falls back to API
+  ## key login or unauthenticated, depending on
+  ## `oidc.disable_api_key_login`). We only fold the oidc block into
+  ## the YAML once all three OIDC-related secrets are populated.
+  oidcConfigured =
+       (headscaleSecrets.oidc-client-id or null) != null
     && (headscaleSecrets.oidc-client-secret or null) != null
     && (headscaleSecrets.headscale-api-key or null) != null;
-  deployHeadplane = headscaleEnabled && headplaneSecretsConfigured;
 
-  ## Headplane 0.7+ takes a YAML config file. The upstream NixOS module
-  ## strips null values from the YAML, so optional fields can be left null.
-  ## Secret values are exposed via systemd LoadCredential below; we point
-  ## the *_path settings at the resolved paths under
+  ## Headplane is deployed whenever headscale is enabled. The cookie
+  ## secret is auto-generated, so there's no chicken-and-egg problem:
+  ## you can use the admin UI immediately to generate the
+  ## `headscale apikeys create` value and configure OIDC after.
+  deployHeadplane = headscaleEnabled;
+
+  ## Generate the cookie secret on first boot if missing. Headplane
+  ## requires *some* cookie secret to start; we don't want a fresh
+  ## install to be locked out of its own admin UI just because the
+  ## sysadmin hasn't visited the SOPS settings page yet.
+  headplaneCookiePreStart = pkgs.writeShellScript "headplane-cookie-prestart" ''
+    set -eu
+    mkdir -p ${headplaneSecretsDir}
+    if [ ! -s "${headplaneSecretsDir}/headplane-cookie-secret" ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
+        > "${headplaneSecretsDir}/headplane-cookie-secret"
+    fi
+    ## systemd LoadCredential reads the file as root before the unit
+    ## drops privileges, so ownership doesn't actually need to match
+    ## the headplane user — but leave the file 600 to keep it tight.
+    chmod 600 "${headplaneSecretsDir}/headplane-cookie-secret"
+  '';
+
+  ## Secret values are exposed via systemd LoadCredential below; we
+  ## point the *_path settings at the resolved paths under
   ## /run/credentials/<unit>/<name> to avoid env-var expansion in YAML.
   headplaneCredsDir = "/run/credentials/headplane.service";
 
@@ -76,12 +97,17 @@ let
       url = "http://${lan-address}:${toString config.services.headscale.port}";
       config_path = "/etc/headscale/config.yaml";
       config_strict = true;
+    } // lib.optionalAttrs oidcConfigured {
+      ## Only set api_key_path when the API key is actually present —
+      ## the headplane module fails activation if the LoadCredential
+      ## source file is missing.
       api_key_path = "${headplaneCredsDir}/headscale-api-key";
     };
     integration = {
       proc.enabled = true;
       agent.enabled = false;
     };
+  } // lib.optionalAttrs oidcConfigured {
     oidc = {
       issuer = "https://sso.${cfg.system.domain}";
       client_id = headscaleSecrets.oidc-client-id;
@@ -355,13 +381,18 @@ in
   ## LoadCredential bridges the SOPS-managed per-secret files into the
   ## headplane.service mount namespace at /run/credentials/headplane.service/<name>.
   ## The headplaneSettings YAML above points the *_path fields at exactly
-  ## those resolved paths.
+  ## those resolved paths. We only load OIDC-related credentials when
+  ## OIDC is actually configured — LoadCredential of a non-existent
+  ## file is fatal at unit start.
   systemd.services.headplane = lib.mkIf deployHeadplane {
     after = [ "headscale.service" "dns-ready.service" ];
     requires = [ "headscale.service" "dns-ready.service" ];
     serviceConfig = {
+      ## Auto-generate the cookie secret on first boot if absent.
+      ExecStartPre = [ "+${headplaneCookiePreStart}" ];
       LoadCredential = [
         "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"
+      ] ++ lib.optionals oidcConfigured [
         "oidc-client-secret:${headplaneSecretsDir}/oidc-client-secret"
         "headscale-api-key:${headplaneSecretsDir}/headscale-api-key"
       ];
@@ -475,7 +506,7 @@ in
         {
           path = "secrets";
           type = "submodule";
-          description = "Headplane SSO + API credentials (via Zitadel). All four required for the Headplane admin UI to deploy.";
+          description = "Headplane Zitadel SSO + API credentials. Optional — when all three OIDC fields are set the admin UI is locked behind Zitadel login; when empty, the admin UI is open behind Caddy/oauth2-proxy.";
           sops-managed = true;
           submodule-fields = [
             {
@@ -483,7 +514,7 @@ in
               type = "str";
               nullable = true;
               default = null;
-              description = "32-byte session secret used by Headplane to sign cookies. Generate with: openssl rand -base64 32 | head -c 32";
+              description = "32-byte session secret used by Headplane to sign cookies. Auto-generated on first boot if not set; setting it here just lets you carry the same value across re-installs.";
               sops-managed = true;
             }
             {
