@@ -76,6 +76,27 @@ let
   ## /run/credentials/<unit>/<name> to avoid env-var expansion in YAML.
   headplaneCredsDir = "/run/credentials/headplane.service";
 
+  ## The nixpkgs `services.headscale` module installs a deliberately
+  ## minimal /etc/headscale/config.yaml — just the unix-socket path and
+  ## the disable-update-check flag — and passes the full settings to
+  ## the daemon via `--config <store-path>` instead. Headplane, by
+  ## contrast, expects the full config so it can render and validate
+  ## it in the UI; pointing it at the stub makes it reject the file
+  ## with "database / derp / dns / listen_addr / noise / prefixes /
+  ## server_url must be present" errors. We regenerate the same content
+  ## using the same YAML formatter and write it next to the stub.
+  ##
+  ## Headplane's validator additionally rejects explicit null values
+  ## where it expects a string/array (e.g. `tls_cert_path: null`,
+  ## `policy.path: null`, `dns.extra_records: null`). The headscale
+  ## daemon happily accepts these as "unset", but headplane treats
+  ## the field as ill-typed. Strip nulls recursively before serialising.
+  headscaleSettingsForHeadplane =
+    lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings;
+  headscaleFullConfigFile =
+    (pkgs.formats.yaml {}).generate "headscale-full.yaml"
+      headscaleSettingsForHeadplane;
+
   headplaneSettings = {
     server = {
       host = "127.0.0.1";
@@ -85,7 +106,7 @@ let
     };
     headscale = {
       url = "http://${lan-address}:${toString config.services.headscale.port}";
-      config_path = "/etc/headscale/config.yaml";
+      config_path = "/etc/headscale/headplane-view.yaml";
       config_strict = true;
     } // lib.optionalAttrs oidcConfigured {
       ## Only set api_key_path when the API key is actually present —
@@ -235,6 +256,18 @@ in
     pkgs.headscale
     pkgs.tailscale
   ];
+
+  ## Expose the full headscale config to Headplane at a separate path,
+  ## leaving the nixpkgs-managed /etc/headscale/config.yaml stub alone
+  ## (some headscale CLI invocations depend on its minimal shape).
+  environment.etc."headscale/headplane-view.yaml" = lib.mkIf deployHeadplane {
+    source = headscaleFullConfigFile;
+    ## Headplane runs as the headscale user (per the upstream module),
+    ## so make this readable by that group.
+    mode = "0440";
+    user = "headscale";
+    group = "headscale";
+  };
 
   services.headscale = lib.optionalAttrs headscaleEnabled {
     enable = true ;
@@ -401,6 +434,11 @@ in
   systemd.services.headplane = lib.mkIf deployHeadplane {
     after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
     requires = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
+    ## Headplane reads the headscale config file at startup; if we
+    ## regenerate that file but the unit definition is otherwise
+    ## unchanged, NixOS won't restart the unit on rebuild and the new
+    ## config goes unread. Tie restarts to the file's store path.
+    restartTriggers = [ headscaleFullConfigFile ];
     serviceConfig = {
       LoadCredential = [
         "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"

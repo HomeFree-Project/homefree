@@ -162,7 +162,9 @@
       "Bash(bash -n /home/erahhal/Code/homefree/scripts/build.sh)",
       "Bash(nix build *)",
       "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh --help)",
-      "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh run *)"
+      "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh run *)",
+      "WebFetch(domain:headplane.net)",
+      "WebFetch(domain:headscale.net)"
     ]
   }
 }
