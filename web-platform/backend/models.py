@@ -135,6 +135,14 @@ class ConfigDiff:
 
 
 @dataclass
+class UnitState:
+    """Per-unit systemd state, for surfacing partial failures in the UI."""
+    name: str
+    active_state: str
+    sub_state: str
+
+
+@dataclass
 class ServiceStatus:
     """Service runtime status"""
     label: str
@@ -148,3 +156,6 @@ class ServiceStatus:
     url: Optional[str] = None
     parent: Optional[str] = None  # Label of parent service (for instances)
     partial: bool = False  # True if parent service has some instances disabled
+    # Per-unit breakdown so the UI can flag specific units that aren't
+    # running when the aggregate is "degraded".
+    unit_states: Optional[List[UnitState]] = None

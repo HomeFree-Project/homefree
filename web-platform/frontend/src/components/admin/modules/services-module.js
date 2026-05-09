@@ -172,6 +172,11 @@ class ServicesModule extends LitElement {
       box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
     }
 
+    .status-dot.degraded {
+      background: var(--hf-warn);
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+    }
+
     .status-dot.starting {
       background: var(--hf-warn);
       animation: pulse 1.5s ease-in-out infinite;
@@ -198,6 +203,7 @@ class ServicesModule extends LitElement {
 
     .status-text.running { color: var(--hf-ok); }
     .status-text.failed { color: var(--hf-err); }
+    .status-text.degraded { color: var(--hf-warn); }
     .status-text.starting { color: var(--hf-warn); }
 
     .service-info {
@@ -234,6 +240,23 @@ class ServicesModule extends LitElement {
       color: var(--hf-text-muted);
       font-family: 'SF Mono', Monaco, 'Courier New', monospace;
       margin-top: 4px;
+    }
+
+    .service-systemd .unit {
+      display: inline;
+    }
+
+    .service-systemd .unit.unit-bad {
+      color: var(--hf-err);
+      font-weight: 600;
+      text-decoration: underline;
+      text-decoration-color: var(--hf-err);
+      text-decoration-style: wavy;
+      text-underline-offset: 2px;
+    }
+
+    .service-systemd .unit.unit-unknown {
+      color: var(--hf-text-muted);
     }
 
     .service-controls {
@@ -715,9 +738,9 @@ class ServicesModule extends LitElement {
     if (activeState === 'active' && subState === 'running') {
       return 'running';  // Green - includes partial
     } else if (activeState === 'active' && subState === 'degraded') {
-      return 'failed';  // Red - actual degradation/problems
+      return 'degraded';  // Yellow - some units up, some down
     } else if (activeState === 'failed') {
-      return 'failed';  // Red
+      return 'failed';  // Red - all-failed case
     } else if (activeState === 'activating' || subState === 'start') {
       return 'starting';  // Orange
     } else if (activeState === 'inactive' || subState === 'dead') {
@@ -733,9 +756,9 @@ class ServicesModule extends LitElement {
     if (activeState === 'active' && subState === 'running') {
       return partial ? 'Running (partial)' : 'Running';
     } else if (activeState === 'active' && subState === 'degraded') {
-      return 'Degraded';  // Actual problems with enabled instances
+      return 'Degraded';  // Some units up, some not
     } else if (activeState === 'failed') {
-      return 'Degraded';  // Failed = Degraded for consistency
+      return 'Failed';  // All units failed
     } else if (activeState === 'activating') {
       return 'Starting';
     } else if (activeState === 'inactive' && subState === 'dead') {
@@ -862,7 +885,33 @@ class ServicesModule extends LitElement {
             ` : ''}
             ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
               <div class="service-systemd">
-                systemd: ${service.systemd_services.join(', ')}
+                systemd:
+                ${(() => {
+                  // Per-unit breakdown is optional. If the backend didn't
+                  // populate it, derive each unit's health from the
+                  // aggregate state — running aggregates mean every unit
+                  // is healthy; "degraded" or non-running aggregates with
+                  // no breakdown mean we don't know per-unit, so treat as
+                  // unknown (not as bad).
+                  const aggHealthy = service.active_state === 'active' && service.sub_state === 'running';
+                  const fallbackState = aggHealthy
+                    ? { active_state: 'active', sub_state: 'running' }
+                    : { active_state: service.active_state || 'unknown', sub_state: service.sub_state || 'unknown' };
+                  const units = (service.unit_states && service.unit_states.length > 0)
+                    ? service.unit_states
+                    : service.systemd_services.map(n => ({ name: n, ...fallbackState }));
+                  return units.map((u, i, arr) => {
+                    const healthy = u.active_state === 'active' && u.sub_state === 'running';
+                    const unknown = u.active_state === 'unknown';
+                    const cls = healthy ? 'unit-ok' : (unknown ? 'unit-unknown' : 'unit-bad');
+                    const tip = healthy
+                      ? `${u.name}: ${u.active_state} (${u.sub_state})`
+                      : unknown
+                        ? `${u.name}: status unknown`
+                        : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
+                    return html`<span class="unit ${cls}" title="${tip}">${u.name}</span>${i < arr.length - 1 ? html`<span class="unit-sep">, </span>` : ''}`;
+                  });
+                })()}
               </div>
             ` : ''}
           </div>

@@ -60,7 +60,6 @@ in
     ./services/nextcloud-podman.nix
     ./services/nzbget-podman.nix
     ./services/odoo-podman.nix
-    ./services/oauth2-proxy-podman.nix
     ./services/ollama-podman.nix
     ./services/postgres-vectorchord-podman.nix
     ./services/radicale-podman.nix

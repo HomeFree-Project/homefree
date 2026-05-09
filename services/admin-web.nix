@@ -475,12 +475,27 @@ in
               }
             }
 
-            # Override default caching for JS/CSS - disable aggressive caching
-            # This runs after the default @assets matcher, overriding those headers
-            @jscss {
-              path *.js *.css
+            # Disable caching entirely for the admin UI's static files.
+            # The frontend is served straight from /nix/store, where every
+            # file has mtime=epoch (1970-01-01) and Caddy's file_server
+            # generates an empty/identical ETag. Combined with
+            # `Cache-Control: no-cache` (which only requires revalidation,
+            # not skipping the cache), the browser sends `If-None-Match: ""`
+            # + `If-Modified-Since: epoch`, Caddy returns 304, and the
+            # browser serves the OLD cached file even after a rebuild —
+            # nothing short of shift+reload picks up new JS.
+            #
+            # `no-store` forces a fresh fetch every time and side-steps
+            # the validation entirely. Cost is trivial on a LAN; benefit
+            # is "Refresh" actually works.
+            @adminstatic {
+              path *.js *.css *.html *.svg *.png *.woff *.woff2
             }
-            header @jscss Cache-Control "no-cache, must-revalidate"
+            header @adminstatic {
+              Cache-Control "no-store"
+              -ETag
+              -Last-Modified
+            }
           '';
         };
       }

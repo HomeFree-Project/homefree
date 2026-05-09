@@ -51,9 +51,9 @@ class ServicesResolver:
 
             # Get runtime status from systemd only if enabled
             if enabled and systemd_service_names:
-                active_state, sub_state = ServicesResolver._get_systemd_status(systemd_service_names)
+                active_state, sub_state, unit_states = ServicesResolver._get_systemd_status(systemd_service_names)
             else:
-                active_state, sub_state = "inactive", "dead"
+                active_state, sub_state, unit_states = "inactive", "dead", []
 
             service_status = ServiceStatus(
                 label=service_label,
@@ -65,7 +65,8 @@ class ServicesResolver:
                 sub_state=sub_state,
                 systemd_services=systemd_service_names,
                 url=url,
-                parent=parent
+                parent=parent,
+                unit_states=unit_states,
             )
 
             services_status.append(service_status)
@@ -111,9 +112,9 @@ class ServicesResolver:
 
             # Get runtime status from systemd
             if systemd_service_names:
-                active_state, sub_state = ServicesResolver._get_systemd_status(systemd_service_names)
+                active_state, sub_state, unit_states = ServicesResolver._get_systemd_status(systemd_service_names)
             else:
-                active_state, sub_state = "unknown", "unknown"
+                active_state, sub_state, unit_states = "unknown", "unknown", []
 
             service_status = ServiceStatus(
                 label=service_label,
@@ -125,7 +126,8 @@ class ServicesResolver:
                 sub_state=sub_state,
                 systemd_services=systemd_service_names,
                 url=url,
-                parent=parent
+                parent=parent,
+                unit_states=unit_states,
             )
 
             services_status.append(service_status)
@@ -275,95 +277,99 @@ class ServicesResolver:
             return {}
 
     @staticmethod
-    def _get_systemd_status(service_names: List[str]) -> tuple[str, str]:
+    def _get_systemd_status(service_names: List[str]):
         """
-        Get systemd status for a list of services.
-        Returns the "worst" status (failed > inactive > active).
+        Query each systemd unit's state and return:
+          (aggregate_active_state, aggregate_sub_state, unit_states)
+
+        unit_states is a list of {"name", "active_state", "sub_state"} —
+        one entry per unit, so the UI can flag specific stragglers when
+        the aggregate is "degraded".
+
+        Aggregate semantics (the part that drives the colored dot):
+        - All units active+running  -> ("active", "running")     -> green "Running"
+        - Some active, some not     -> ("active", "degraded")    -> yellow "Degraded"
+        - All units failed          -> ("failed", "failed")      -> red "Failed"
+        - All units inactive/dead   -> ("inactive", "dead")      -> grey "Stopped"
+        - Anything still starting   -> ("activating", "start")   -> orange "Starting"
+        - Mix of failed + inactive  -> ("failed", "failed")      -> red "Failed"
+
+        The "degraded" sentinel sub_state is what the frontend uses to
+        decide between a hard-fail red dot and a partial yellow dot.
         """
         if not service_names:
-            return "unknown", "unknown"
+            return "unknown", "unknown", []
 
-        worst_active = "active"
-        worst_sub = "running"
-
-        # Status priority (higher number = worse)
-        active_priority = {
-            "active": 0,
-            "activating": 1,
-            "reloading": 2,
-            "deactivating": 3,
-            "inactive": 4,
-            "failed": 5,
-            "maintenance": 6,
-            "unknown": 7
-        }
-
-        sub_priority = {
-            "running": 0,
-            "exited": 1,
-            "start": 2,
-            "stop": 3,
-            "reloading": 4,
-            "auto-restart": 5,
-            "dead": 6,
-            "failed": 7,
-            "unknown": 8
-        }
-
+        unit_states = []
         for service_name in service_names:
+            active_state = "unknown"
+            sub_state = "unknown"
             try:
-                # Query systemd for service status
                 result = subprocess.run(
                     ['systemctl', 'show', service_name,
-                     '--property=ActiveState,SubState'],
+                     '--property=ActiveState,SubState,LoadState'],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
                 )
 
                 if result.returncode == 0:
-                    # Parse output like:
-                    # ActiveState=active
-                    # SubState=running
-                    lines = result.stdout.strip().split('\n')
-                    active_state = "unknown"
-                    sub_state = "unknown"
-
-                    for line in lines:
+                    load_state = "loaded"
+                    for line in result.stdout.strip().split('\n'):
                         if line.startswith('ActiveState='):
                             active_state = line.split('=', 1)[1].lower()
                         elif line.startswith('SubState='):
                             sub_state = line.split('=', 1)[1].lower()
-
-                    # Update worst status
-                    current_active_priority = active_priority.get(active_state, 999)
-                    worst_active_priority = active_priority.get(worst_active, 0)
-
-                    if current_active_priority > worst_active_priority:
-                        worst_active = active_state
-                        worst_sub = sub_state
-                    elif current_active_priority == worst_active_priority:
-                        # Same active state, check sub state
-                        current_sub_priority = sub_priority.get(sub_state, 999)
-                        worst_sub_priority = sub_priority.get(worst_sub, 0)
-                        if current_sub_priority > worst_sub_priority:
-                            worst_sub = sub_state
-
+                        elif line.startswith('LoadState='):
+                            load_state = line.split('=', 1)[1].lower()
+                    # Treat a missing/not-found unit as inactive so it
+                    # contributes to "degraded" rather than masking the
+                    # reason. ("not-found" + active_state == "inactive"
+                    # is what systemctl reports for unknown units.)
+                    if load_state == "not-found":
+                        active_state = "inactive"
+                        sub_state = "dead"
                 else:
                     logger.warning(f"Failed to get status for {service_name}: {result.stderr}")
-                    worst_active = "unknown"
-                    worst_sub = "unknown"
-
             except subprocess.TimeoutExpired:
                 logger.error(f"Timeout querying systemd for {service_name}")
-                worst_active = "unknown"
-                worst_sub = "unknown"
             except Exception as e:
                 logger.error(f"Error getting status for {service_name}: {e}")
-                worst_active = "unknown"
-                worst_sub = "unknown"
 
-        return worst_active, worst_sub
+            from models import UnitState
+            unit_states.append(UnitState(
+                name=service_name,
+                active_state=active_state,
+                sub_state=sub_state,
+            ))
+
+        # Compute aggregate
+        running = [u for u in unit_states if u.active_state == "active" and u.sub_state == "running"]
+        failed = [u for u in unit_states if u.active_state == "failed"]
+        starting = [u for u in unit_states if u.active_state in ("activating", "reloading") or u.sub_state == "start"]
+        # "Not running" = anything that isn't healthy: inactive, failed, unknown, etc.
+        not_running = [u for u in unit_states if u not in running]
+
+        total = len(unit_states)
+        if not_running == []:
+            agg_active, agg_sub = "active", "running"
+        elif starting and len(running) + len(starting) == total:
+            agg_active, agg_sub = "activating", "start"
+        elif failed and len(failed) == total:
+            agg_active, agg_sub = "failed", "failed"
+        elif len(running) == 0 and not starting:
+            # Nothing running at all — call it stopped (or failed if any
+            # failed). Failed wins because it's actionable.
+            if failed:
+                agg_active, agg_sub = "failed", "failed"
+            else:
+                agg_active, agg_sub = "inactive", "dead"
+        else:
+            # The interesting case: at least one healthy, at least one not.
+            # This is "degraded" — service is partially up.
+            agg_active, agg_sub = "active", "degraded"
+
+        return agg_active, agg_sub, unit_states
 
     @staticmethod
     def get_service_options_schema() -> Dict[str, Dict[str, Any]]:

@@ -65,11 +65,13 @@ class AdminApp extends LitElement {
     }
 
     .sidebar-header {
-      padding: 24px 20px;
+      height: 64px;
+      padding: 0 20px;
       border-bottom: 1px solid var(--hf-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-shrink: 0;
     }
 
     .sidebar.collapsed .sidebar-header h1 {
@@ -157,10 +159,27 @@ class AdminApp extends LitElement {
       letter-spacing: 0.08em;
       color: var(--hf-text-subtle);
       white-space: nowrap;
+      overflow: hidden;
     }
 
+    /* When the sidebar is collapsed, replace the section title text with
+       a divider line so each section's icons stay vertically aligned with
+       their expanded position. The container keeps the same vertical
+       footprint as the expanded title (20px top + ~14px line + 8px bottom). */
     .sidebar.collapsed .nav-section-title {
-      display: none;
+      color: transparent;
+      padding: 20px 12px 8px 12px;
+      position: relative;
+    }
+
+    .sidebar.collapsed .nav-section-title::after {
+      content: '';
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 50%;
+      height: 1px;
+      background: var(--hf-border);
     }
 
     /* Main Content */
@@ -278,19 +297,15 @@ class AdminApp extends LitElement {
       border-color: var(--hf-accent-hover);
     }
 
-    .btn:disabled {
+    .btn:disabled,
+    .btn:disabled:hover,
+    .btn-primary:disabled,
+    .btn-primary:disabled:hover {
       opacity: 0.4;
       cursor: not-allowed;
-    }
-
-    .btn-primary:disabled:hover {
-      background: var(--hf-accent);
-      border-color: var(--hf-accent);
-    }
-
-    .btn:disabled:hover {
       background: var(--hf-surface-2);
       border-color: var(--hf-border-2);
+      color: var(--hf-text-muted);
     }
 
     @keyframes spin {
@@ -1606,13 +1621,14 @@ class AdminApp extends LitElement {
   }
 
   handleRefreshForUpdate() {
-    // Bypass any cached HTML/JS. Setting location.href forces the browser
-    // to re-request the document; the existing Cache-Control: no-cache
-    // header on .js/.css means hashes won't be reused either.
     window.location.reload();
   }
 
   async handleApplyChanges() {
+    if (this.rebuildStatus.running) {
+      this.showToast('A rebuild is already in progress.', 'warning', 4000);
+      return;
+    }
     try {
       // Flush any pending save first so we apply the latest in-memory state
       if (this._saveTimer) {
@@ -1993,14 +2009,11 @@ class AdminApp extends LitElement {
             </div>
 
             <div class="top-bar-actions">
-              <button class="btn" @click=${this.loadConfig}>
-                Refresh
-              </button>
               <button
                 class="btn btn-primary"
                 @click=${this.handleApplyChanges}
-                ?disabled=${this.rebuildStatus.running || (!this.hasUnappliedChanges && this.dirtyModules.size === 0)}
-                title="${this.rebuildStatus.running ? 'Rebuild in progress' : (!this.hasUnappliedChanges && this.dirtyModules.size === 0) ? 'No unapplied changes' : 'Apply pending configuration'}"
+                ?disabled=${this.rebuildStatus.running}
+                title="${this.rebuildStatus.running ? 'Rebuild in progress — wait for it to finish before applying again' : 'Apply pending configuration'}"
               >
                 Apply
               </button>

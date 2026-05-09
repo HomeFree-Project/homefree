@@ -39,6 +39,17 @@ let
     mkdir -p ${containerDataPath}/thumbs
     mkdir -p ${containerDataPath}/upload
     mkdir -p /var/cache/immich
+
+    # Immich's startup verifies that the host volume is actually mounted by
+    # reading a `.immich` sentinel file inside each of its known folders. If
+    # any sentinel is missing (or returns ENOENT, e.g. because the bind mount
+    # silently failed), the microservices worker exits with code 1 and the
+    # podman unit goes into a restart loop — which is exactly what we hit
+    # before adding these. See:
+    #   https://docs.immich.app/administration/system-integrity#folder-checks
+    for d in backups encoded-video library profile thumbs upload; do
+      touch "${containerDataPath}/$d/.immich"
+    done
   '';
 in
 {
@@ -296,7 +307,7 @@ in
         "podman-immich-server"
         "podman-immich-machine-learning"
         "podman-immich-redis"
-        "podman-postgresql-vectorchord"
+        "podman-postgres-vectorchord"
       ];
       reverse-proxy = {
         enable = config.homefree.service-options.immich.enable;

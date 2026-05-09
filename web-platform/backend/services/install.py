@@ -384,6 +384,18 @@ in
 
       mediawiki.enable = jsonData.services.mediawiki.enable or false;
       mediawiki.public = jsonData.services.mediawiki.public or false;
+      mediawiki.instances = map (instance: {
+        enable = instance.enable or true;
+        public = instance.public or false;
+        subdomain = instance.subdomain;
+        name = instance.name;
+        logo-path = if (instance."logo-path" or null) == null || instance."logo-path" == "" then null else instance."logo-path";
+        readonly = instance.readonly or false;
+        disable-anonymous-editing = instance."disable-anonymous-editing" or false;
+        disable-anonymous-viewing = instance."disable-anonymous-viewing" or false;
+        disable-user-editing = instance."disable-user-editing" or false;
+        disable-user-registration = instance."disable-user-registration" or false;
+      }) (jsonData.services.mediawiki.instances or []);
 
       screeenly.enable = jsonData.services.screeenly.enable or false;
       screeenly.public = jsonData.services.screeenly.public or false;

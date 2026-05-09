@@ -960,11 +960,17 @@
           description = "Open to public on WAN port";
         };
 
-        sites = lib.mkOption {
+        instances = lib.mkOption {
           description = "Wiki site config";
           default = [];
           type = with lib.types; listOf (submodule {
             options = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Enable this MediaWiki site";
+              };
+
               public = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
@@ -984,8 +990,9 @@
               };
 
               logo-path = lib.mkOption {
-                type = lib.types.path;
-                description = "Location of MediaWiki logo file";
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Location of MediaWiki logo file. Optional — when null, MediaWiki's default placeholder logo is used.";
               };
 
               readonly = lib.mkOption {
@@ -1021,23 +1028,10 @@
           });
         };
 
-        secrets = {
-          mysql-password = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of MediaWiki mysql password file. Should not be a file included in your source repo.";
-          };
-          wgSecretKey = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of MediaWiki wgSecretKey file. Should not be a file included in your source repo.";
-          };
-          env = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of MediaWiki env file. Contains DB_PASSWORD";
-          };
-        };
+        # NB: MediaWiki has no user-facing secrets. Both the MySQL user
+        # password and wgSecretKey are auto-generated on first start (see
+        # mediawiki-podman.nix preStart). Everything is internal to this
+        # host, so there's nothing for the user to provide.
       };
 
       minecraft = {
@@ -1743,6 +1737,18 @@
                   description = "UI rendering hints (string or attrs)";
                 };
 
+                enum-values = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                  default = null;
+                  description = "For enum types, the list of valid string values";
+                };
+
+                sops-managed = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether this option (or its sub-fields) holds SOPS-encrypted secrets";
+                };
+
                 submodule-fields = lib.mkOption {
                   type = with lib.types; nullOr (listOf (submodule {
                     options = {
@@ -1778,6 +1784,16 @@
                         type = lib.types.nullOr lib.types.anything;
                         default = null;
                         description = "UI rendering hints";
+                      };
+                      enum-values = lib.mkOption {
+                        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                        default = null;
+                        description = "For enum types, the list of valid string values";
+                      };
+                      sops-managed = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether this field holds a SOPS-encrypted secret";
                       };
                     };
                   }));
@@ -2102,8 +2118,7 @@
 
     homefree.service-options.mediawiki.enable = config.homefree.services.mediawiki.enable;
     homefree.service-options.mediawiki.public = config.homefree.services.mediawiki.public;
-    homefree.service-options.mediawiki.sites = config.homefree.services.mediawiki.sites;
-    homefree.service-options.mediawiki.secrets = config.homefree.services.mediawiki.secrets;
+    homefree.service-options.mediawiki.instances = config.homefree.services.mediawiki.instances;
 
     homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
     homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
