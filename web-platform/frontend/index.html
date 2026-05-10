@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
   <title>HomeFree Installer</title>
 
   <!-- Import map for Lit module resolution (vendored locally) -->
@@ -23,28 +22,6 @@
   </script>
 
   <style>
-    :root {
-      --hf-bg:           #0a0a0a;
-      --hf-surface:      #111111;
-      --hf-surface-2:    #1a1a1a;
-      --hf-surface-3:    #242424;
-      --hf-border:       #222222;
-      --hf-border-2:     #2e2e2e;
-      --hf-text:         #ededed;
-      --hf-text-muted:   #888888;
-      --hf-text-subtle:  #555555;
-      --hf-accent:       #6366f1;
-      --hf-accent-hover: #5558e0;
-      --hf-accent-soft:  rgba(99, 102, 241, 0.15);
-      --hf-ok:           #10b981;
-      --hf-warn:         #f59e0b;
-      --hf-err:          #ef4444;
-      --hf-focus-ring:   rgba(99, 102, 241, 0.4);
-      --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.4);
-      --hf-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.6);
-      color-scheme: dark;
-    }
-
     * {
       margin: 0;
       padding: 0;
@@ -53,8 +30,7 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: var(--hf-bg);
-      color: var(--hf-text);
+      background: #f5f5f7;
       min-height: 100vh;
       overflow: hidden;
     }
@@ -74,8 +50,8 @@
       width: 48px;
       height: 48px;
       margin: -24px 0 0 -24px;
-      border: 4px solid var(--hf-border);
-      border-top-color: var(--hf-accent);
+      border: 4px solid rgba(102, 126, 234, 0.1);
+      border-top-color: #667eea;
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
@@ -87,7 +63,7 @@
       left: 50%;
       transform: translate(-50%, 40px);
       font-size: 16px;
-      color: var(--hf-text-muted);
+      color: #86868b;
       font-weight: 500;
     }
 

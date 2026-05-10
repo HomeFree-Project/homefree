@@ -17,6 +17,13 @@ USE_VIRTVIEWER="${USE_VIRTVIEWER:-false}"
 USE_HEADLESS="${USE_HEADLESS:-false}"
 USE_UEFI="${USE_UEFI:-true}"
 
+# Script-scope state used by the cleanup trap. These must NOT be `local` to
+# cmd_run: when set -e aborts cmd_run, the function returns first and only
+# then does the EXIT trap fire — by which point any locals are out of scope
+# and `set -u` would make the trap blow up before it can kill virtiofsd.
+VIRTIOFSD_PID=""
+BRIDGE_NAME=""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -230,7 +237,6 @@ cmd_run() {
     local LAUNCH_LAN_CLIENT=false
     local USE_BRIDGE=false
     local USE_DEV=true
-    local VIRTIOFSD_PID=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -332,7 +338,6 @@ cmd_run() {
     mkdir -p "$VM_STATE_DIR"
 
     # User-mode networking is the default; --bridge opts into router topology
-    local BRIDGE_NAME=""
     local QEMU_BRIDGE_HELPER=""
     if [[ "$USE_BRIDGE" == "true" ]]; then
         BRIDGE_NAME="hfbr0"
@@ -345,9 +350,15 @@ cmd_run() {
         create_bridge "$BRIDGE_NAME"
     fi
 
-    # Trap to cleanup on exit
+    # Trap to cleanup on exit. Uses socket-path matching rather than PID
+    # because `sudo virtiofsd &` records sudo's PID in $!, not the daemon's,
+    # and killing sudo doesn't take down the underlying virtiofsd children.
     cleanup() {
-        [[ -n "$VIRTIOFSD_PID" ]] && sudo kill "$VIRTIOFSD_PID" 2>/dev/null
+        if [[ -n "$VIRTIOFSD_PID" ]]; then
+            local sock="$VM_STATE_DIR/vhostqemu.sock"
+            sudo pkill -f "virtiofsd.*${sock}" 2>/dev/null || true
+            sudo rm -f "$sock" "$sock.pid" 2>/dev/null || true
+        fi
         [[ -n "$BRIDGE_NAME" ]] && destroy_bridge "$BRIDGE_NAME"
     }
     trap cleanup EXIT INT TERM

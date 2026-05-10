@@ -22,6 +22,26 @@ class InstallerApp extends LitElement {
       display: flex;
       flex-direction: column;
       height: 100%;
+      color-scheme: light;
+
+      --hf-bg:           #ffffff;
+      --hf-surface:      #ffffff;
+      --hf-surface-2:    #f5f5f7;
+      --hf-surface-3:    #ebebeb;
+      --hf-border:       #e0e0e0;
+      --hf-border-2:     #d0d0d0;
+      --hf-text:         #333333;
+      --hf-text-muted:   #666666;
+      --hf-text-subtle:  #999999;
+      --hf-accent:       #6366f1;
+      --hf-accent-hover: #5558e0;
+      --hf-accent-soft:  rgba(99, 102, 241, 0.1);
+      --hf-ok:           #10b981;
+      --hf-warn:         #f59e0b;
+      --hf-err:          #ef4444;
+      --hf-focus-ring:   rgba(99, 102, 241, 0.3);
+      --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.08);
+      --hf-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.15);
     }
 
     .header {

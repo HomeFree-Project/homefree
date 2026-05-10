@@ -41,6 +41,27 @@ class AdminApp extends LitElement {
       height: 100vh;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       color: var(--hf-text);
+      background: var(--hf-bg);
+      color-scheme: dark;
+
+      --hf-bg:           #0a0a0a;
+      --hf-surface:      #111111;
+      --hf-surface-2:    #1a1a1a;
+      --hf-surface-3:    #242424;
+      --hf-border:       #222222;
+      --hf-border-2:     #2e2e2e;
+      --hf-text:         #ededed;
+      --hf-text-muted:   #888888;
+      --hf-text-subtle:  #555555;
+      --hf-accent:       #6366f1;
+      --hf-accent-hover: #5558e0;
+      --hf-accent-soft:  rgba(99, 102, 241, 0.15);
+      --hf-ok:           #10b981;
+      --hf-warn:         #f59e0b;
+      --hf-err:          #ef4444;
+      --hf-focus-ring:   rgba(99, 102, 241, 0.4);
+      --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.4);
+      --hf-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.6);
     }
 
     .admin-container {
