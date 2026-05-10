@@ -952,22 +952,30 @@ in
 
         # Generate hashed password using mkpasswd
         password = config.get('password', '')
-        if password:
-            try:
-                # Use mkpasswd to generate SHA-512 hashed password
-                result = subprocess.run(
-                    ['mkpasswd', '-m', 'sha-512', password],
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                hashed_password = result.stdout.strip()
-                logger.info("Generated hashed password for user")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Failed to hash password: {e}")
-                hashed_password = ""
-        else:
-            hashed_password = ""
+        if not password:
+            raise Exception(
+                "No password configured for the admin user; cannot generate "
+                "hashedPassword for NixOS configuration"
+            )
+
+        # Pass the password via stdin to keep it out of /proc/<pid>/cmdline
+        # and to avoid a leading '-' being parsed as a flag.
+        try:
+            result = subprocess.run(
+                ['mkpasswd', '-m', 'sha-512', '--stdin'],
+                input=password,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to hash password: {e.stderr}")
+            raise Exception(f"Failed to hash admin password with mkpasswd: {e.stderr.strip() or e}") from e
+
+        hashed_password = result.stdout.strip()
+        if not hashed_password:
+            raise Exception("mkpasswd produced an empty hash for the admin password")
+        logger.info("Generated hashed password for user")
 
         # Development mode template variables
         if is_dev_mode:
@@ -1321,33 +1329,35 @@ in
 
         # Set password using chpasswd in the installed system
         # This matches the standard NixOS installer behavior
-        if password:
-            try:
-                logger.info(f"Setting password for user {username} using chpasswd")
+        if not password:
+            raise Exception(
+                "No password configured for the admin user; cannot run chpasswd "
+                "in the installed system"
+            )
 
-                # Use nixos-enter with a shell command to pipe password to chpasswd
-                # Format: username:password
-                passwd_input = f"{username}:{password}\n"
+        logger.info(f"Setting password for user {username} using chpasswd")
 
-                # Run chpasswd in the chroot environment
-                process = popen_privileged(
-                    ["nixos-enter", "--root", root_mount_point, "--", "chpasswd"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                stdout, stderr = process.communicate(input=passwd_input)
+        # Format: username:password (chpasswd splits on the first colon, so a
+        # colon in the password is preserved). Password has already been
+        # validated to contain no newlines.
+        passwd_input = f"{username}:{password}\n"
 
-                if process.returncode != 0:
-                    logger.error(f"chpasswd failed: {stderr}")
-                    logger.warning("Password may not be set correctly - hashedPassword in config should work")
-                else:
-                    logger.info(f"Successfully set password for user {username} via chpasswd")
+        process = popen_privileged(
+            ["nixos-enter", "--root", root_mount_point, "--", "chpasswd"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = process.communicate(input=passwd_input)
 
-            except Exception as e:
-                logger.warning(f"Failed to set password via chpasswd: {e}")
-                logger.info("Falling back to hashedPassword in configuration file")
+        if process.returncode != 0:
+            logger.error(f"chpasswd failed: {stderr}")
+            raise Exception(
+                f"Failed to set password for user {username} via chpasswd: "
+                f"{stderr.strip() or 'exit code ' + str(process.returncode)}"
+            )
+        logger.info(f"Successfully set password for user {username} via chpasswd")
 
         # Update flake.nix for development mode
         if ConfigService.is_development_mode():

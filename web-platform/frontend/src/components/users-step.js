@@ -143,11 +143,25 @@ class UsersStep extends LitElement {
     return 'medium';
   }
 
+  get passwordError() {
+    const pw = this.password;
+    if (!pw) return '';
+    if (pw.length < 8) return 'Password must be at least 8 characters';
+    if (pw.length > 128) return 'Password must be at most 128 characters';
+    // Reject control characters that would be silently truncated by chpasswd
+    // or mishandled by mkpasswd / PAM on the installed system.
+    if (/[\x00-\x1F\x7F]/.test(pw)) {
+      return 'Password contains a control character (newline, tab, etc.) that cannot be used as a Linux password';
+    }
+    return '';
+  }
+
   get isValid() {
     const emailValid = !this.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email);
     return this.username.length >= 3 &&
            this.fullname.length >= 2 &&
            emailValid &&
+           !this.passwordError &&
            this.password.length >= 8 &&
            this.password === this.confirmPassword &&
            this.hostname.length >= 2 &&
@@ -171,8 +185,8 @@ class UsersStep extends LitElement {
   }
 
   async saveUserConfig() {
-    // Only save if all required fields are filled
-    if (this.username.length >= 3 && this.fullname.length >= 2 && this.password.length >= 8) {
+    // Only save if all required fields are filled and the password is valid
+    if (this.username.length >= 3 && this.fullname.length >= 2 && this.password.length >= 8 && !this.passwordError) {
       try {
         await setUser(this.username, this.fullname, this.email, this.password);
         console.log('User config saved:', { username: this.username, fullname: this.fullname, email: this.email });
@@ -288,6 +302,7 @@ class UsersStep extends LitElement {
               this.password = e.target.value;
               this.notifyParent();
             }}"
+            class="${this.passwordError ? 'error' : ''}"
           />
           ${this.password ? html`
             <div class="password-strength">
@@ -297,6 +312,9 @@ class UsersStep extends LitElement {
           <div class="description">
             At least 8 characters. Longer is better.
           </div>
+          ${this.passwordError ? html`
+            <div class="error-message">${this.passwordError}</div>
+          ` : ''}
         </div>
 
         <div class="form-group">
@@ -310,7 +328,7 @@ class UsersStep extends LitElement {
               this.confirmPassword = e.target.value;
               this.notifyParent();
               // Auto-save when passwords match and form is complete
-              if (this.password === e.target.value && this.password.length >= 8) {
+              if (this.password === e.target.value && this.password.length >= 8 && !this.passwordError) {
                 this.saveUserConfig();
               }
             }}"

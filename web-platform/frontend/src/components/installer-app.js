@@ -240,6 +240,8 @@ class InstallerApp extends LitElement {
       return !data.username || data.username.length < 3 ||
              !data.fullname || data.fullname.length < 2 ||
              !data.password || data.password.length < 8 ||
+             data.password.length > 128 ||
+             /[\x00-\x1F\x7F]/.test(data.password) ||
              !data.confirmPassword ||
              data.password !== data.confirmPassword ||
              !data.hostname || data.hostname.length < 2 ||

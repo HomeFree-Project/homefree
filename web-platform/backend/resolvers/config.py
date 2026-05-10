@@ -2,6 +2,7 @@
 Configuration resolvers for timezone, keyboard, user, etc.
 """
 
+import re
 from typing import List, Optional
 from models import (
     TimezoneRegion, KeyboardLayout, InstallSummary,
@@ -9,6 +10,33 @@ from models import (
 )
 from services.config import ConfigService
 from services.network import NetworkService
+
+
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+_PASSWORD_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1F\x7F]')
+
+
+def validate_password(password: str) -> Optional[str]:
+    """Return an error message if the password cannot be used as a Linux
+    password through the installer's code path, or None if it is acceptable.
+
+    The installer hands the password to mkpasswd (for hashedPassword in the
+    NixOS config) and chpasswd (in _post_install). Control characters can
+    truncate or corrupt either, producing a system the user cannot log into.
+    """
+    if not password:
+        return "Password is required"
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
+    if len(password) > PASSWORD_MAX_LENGTH:
+        return f"Password must be at most {PASSWORD_MAX_LENGTH} characters"
+    if _PASSWORD_CONTROL_CHAR_RE.search(password):
+        return (
+            "Password contains a control character (newline, tab, etc.) "
+            "that cannot be used as a Linux password"
+        )
+    return None
 
 
 class ConfigResolver:
@@ -114,10 +142,11 @@ class ConfigResolver:
                 )
 
             # Validate password
-            if not password or len(password) < 8:
+            password_error = validate_password(password)
+            if password_error:
                 return MutationResult(
                     success=False,
-                    message="Password must be at least 8 characters"
+                    message=password_error
                 )
 
             ConfigService.set_user(username, fullname, email, password)
