@@ -72,6 +72,12 @@ class UsersStep extends LitElement {
       margin-top: 4px;
     }
 
+    .match-ok {
+      color: #4caf50;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
     .password-strength {
       margin-top: 8px;
       height: 4px;
@@ -308,9 +314,11 @@ class UsersStep extends LitElement {
               }
             }}
           ></password-input>
-          ${!passwordsMatch ? html`
-            <div class="error-message">Passwords do not match</div>
-          ` : ''}
+          ${this.confirmPassword
+            ? (this.password === this.confirmPassword
+                ? html`<div class="match-ok">✓ Passwords match</div>`
+                : html`<div class="error-message">× Passwords do not match</div>`)
+            : ''}
         </div>
 
         <div class="info-box">

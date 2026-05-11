@@ -217,10 +217,30 @@ class UsersModule extends LitElement {
     .edit-form .section-title.first {
       margin-top: 0; padding-top: 0; border-top: none;
     }
-    .password-mismatch {
-      color: #fca5a5;
+    .pw-confirm-status {
       font-size: 12px;
       margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pw-confirm-status.match    { color: #7cb342; }
+    .pw-confirm-status.mismatch { color: #fca5a5; }
+    .pw-confirm-status .check {
+      display: inline-flex;
+      width: 14px;
+      height: 14px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: bold;
+    }
+    .pw-confirm-status.match .check {
+      background: rgba(124, 179, 66, 0.2);
+    }
+    .pw-confirm-status.mismatch .check {
+      background: rgba(248, 113, 113, 0.2);
     }
   `;
 
@@ -465,6 +485,23 @@ class UsersModule extends LitElement {
     }
   }
 
+  /** Inline confirm-match indicator. Shows nothing if the confirm
+   *  field is empty (no nag while still typing), green check + text
+   *  when the two match, red × + text when they don't. */
+  _renderMatchStatus(pw, confirm) {
+    if (!confirm) return '';
+    if (pw === confirm) {
+      return html`
+        <div class="pw-confirm-status match">
+          <span class="check">✓</span><span>Passwords match</span>
+        </div>`;
+    }
+    return html`
+      <div class="pw-confirm-status mismatch">
+        <span class="check">×</span><span>Passwords do not match</span>
+      </div>`;
+  }
+
   render() {
     return html`
       <div class="module-container">
@@ -573,8 +610,6 @@ class UsersModule extends LitElement {
 
   _renderCreateForm() {
     const f = this.form;
-    const pwMatches = !f.password || !f.confirm_password
-                      || f.password === f.confirm_password;
     return html`
       <form class="create-form" @submit=${this._submitCreate}>
         <div class="section-title first full">New user</div>
@@ -621,9 +656,7 @@ class UsersModule extends LitElement {
             .value=${f.confirm_password}
             @input=${(e) => this._updateCreateField('confirm_password', e.detail.value)}
           ></password-input>
-          ${!pwMatches ? html`
-            <div class="password-mismatch">Passwords do not match.</div>
-          ` : ''}
+          ${this._renderMatchStatus(f.password, f.confirm_password)}
         </div>
         <label class="checkbox-row full">
           <input type="checkbox"
@@ -652,8 +685,6 @@ class UsersModule extends LitElement {
     if (!f) return '';
     const isMe = this._isMe({ username: f.username });
     const isProtected = this._isProtectedAdmin({ username: f.username });
-    const pwMatches = !f.new_password || !f.confirm_password
-                      || f.new_password === f.confirm_password;
     return html`
       <form class="edit-form" @submit=${this._submitEdit}>
         <div class="section-title first full">
@@ -727,9 +758,7 @@ class UsersModule extends LitElement {
               .value=${f.confirm_password}
               @input=${(e) => this._updateEditField('confirm_password', e.detail.value)}
             ></password-input>
-            ${!pwMatches ? html`
-              <div class="password-mismatch">Passwords do not match.</div>
-            ` : ''}
+            ${this._renderMatchStatus(f.new_password, f.confirm_password)}
           </div>
         ` : ''}
 
