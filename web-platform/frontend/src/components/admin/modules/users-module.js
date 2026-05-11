@@ -1,28 +1,46 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
-import { listUsers, createUser, deleteUser, setUserAdmin } from '../../../api/client.js';
+import '../../shared/password-input.js';
+import {
+  listUsers, createUser, deleteUser, setUserAdmin,
+  getCurrentUser, updateUser, setUserPassword, changeOwnPassword,
+} from '../../../api/client.js';
+import { validatePassword } from '../../../shared/password-policy.js';
 
 /**
- * Users admin module — wraps the Zitadel management API exposed by
- * the FastAPI backend at /api/users[/...]. The backend holds the
- * Zitadel admin PAT and is the only thing that talks to Zitadel
- * directly; this module just renders state and dispatches actions.
+ * Users admin module — wraps the Zitadel management API behind the
+ * FastAPI backend. The backend holds the Zitadel admin PAT; this
+ * module never sees a secret.
  *
  * Capabilities:
- *   - List human users (machine users like homefree-provisioner are
- *     filtered out by the backend).
- *   - Add a user with username, name, email, password, admin flag.
- *   - Delete a user.
- *   - Toggle admin on/off (maps to IAM_OWNER instance member role).
+ *   - List human users (machine users filtered out).
+ *   - Create a user with policy-validated password.
+ *   - Edit a user (name, email, admin flag, optional password change).
+ *   - Delete a user — EXCEPT the HomeFree admin user, which is
+ *     protected because it's tied to the OS account and PAM bridge.
+ *   - Toggle admin (IAM_OWNER) inline from the table.
+ *
+ * Password rules:
+ *   - All password fields use <password-input> which shows a strength
+ *     meter and validates against the shared policy.
+ *   - "Confirm password" required for create AND for password change
+ *     during edit.
+ *   - When the *current* user changes their own password, the form
+ *     requires their current password (proof of possession). The
+ *     backend's /api/users/me/password verifies it against Zitadel.
  */
 class UsersModule extends LitElement {
   static properties = {
     users: { type: Array, state: true },
+    me: { type: Object, state: true },
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
     showCreate: { type: Boolean, state: true },
     creating: { type: Boolean, state: true },
     form: { type: Object, state: true },
+    editingId: { type: String, state: true },
+    editForm: { type: Object, state: true },
+    saving: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -48,10 +66,7 @@ class UsersModule extends LitElement {
       margin-bottom: 16px;
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
+    table { width: 100%; border-collapse: collapse; }
     th, td {
       padding: 12px;
       text-align: left;
@@ -68,6 +83,12 @@ class UsersModule extends LitElement {
     tr:last-child td { border-bottom: none; }
 
     .username { font-weight: 500; color: var(--hf-text); }
+    .username .you-tag {
+      font-size: 11px;
+      color: var(--hf-text-muted);
+      margin-left: 6px;
+      font-weight: 400;
+    }
     .muted { color: var(--hf-text-muted); font-size: 13px; }
 
     .pill {
@@ -80,6 +101,11 @@ class UsersModule extends LitElement {
     }
     .pill.admin { background: rgba(250,204,21,0.12); color: #facc15; }
     .pill.user  { background: rgba(96,165,250,0.12); color: #60a5fa; }
+    .pill.protected {
+      background: rgba(168,85,247,0.12);
+      color: #c084fc;
+      margin-left: 6px;
+    }
 
     .toggle {
       width: 36px;
@@ -106,6 +132,10 @@ class UsersModule extends LitElement {
       transition: left 0.15s;
     }
     .toggle.on::after { left: 18px; }
+    .toggle.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
 
     button.btn {
       padding: 6px 12px;
@@ -116,18 +146,19 @@ class UsersModule extends LitElement {
       cursor: pointer;
       font-size: 13px;
     }
-    button.btn:hover { background: var(--hf-surface-2); }
+    button.btn:hover:not(:disabled) { background: var(--hf-surface-2); }
     button.btn.danger { color: #fca5a5; border-color: rgba(248,113,113,0.3); }
     button.btn.primary {
       background: var(--hf-accent);
       color: white;
       border-color: var(--hf-accent);
     }
-    button.btn:disabled { opacity: 0.5; cursor: wait; }
+    button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .actions { display: flex; gap: 8px; }
+    .row-actions { display: flex; gap: 6px; }
 
-    .create-form {
+    .edit-form, .create-form {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
@@ -137,16 +168,17 @@ class UsersModule extends LitElement {
       border: 1px solid var(--hf-border-2);
       margin-bottom: 16px;
     }
-    .create-form label {
+    .edit-form label, .create-form label {
       display: block;
       font-size: 12px;
       font-weight: 600;
       color: var(--hf-text-muted);
       margin-bottom: 4px;
     }
+    .edit-form input[type="text"],
+    .edit-form input[type="email"],
     .create-form input[type="text"],
-    .create-form input[type="email"],
-    .create-form input[type="password"] {
+    .create-form input[type="email"] {
       width: 100%;
       padding: 8px 10px;
       font-size: 14px;
@@ -156,8 +188,8 @@ class UsersModule extends LitElement {
       border-radius: 4px;
       box-sizing: border-box;
     }
-    .create-form .full { grid-column: 1 / -1; }
-    .create-form .form-actions {
+    .edit-form .full, .create-form .full { grid-column: 1 / -1; }
+    .edit-form .form-actions, .create-form .form-actions {
       grid-column: 1 / -1;
       display: flex;
       gap: 8px;
@@ -171,26 +203,66 @@ class UsersModule extends LitElement {
       font-size: 14px;
       color: var(--hf-text);
     }
+
+    .edit-form .section-title {
+      grid-column: 1 / -1;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hf-text);
+      margin-top: 8px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hf-border-2);
+    }
+    .edit-form .section-title.first {
+      margin-top: 0; padding-top: 0; border-top: none;
+    }
+    .password-mismatch {
+      color: #fca5a5;
+      font-size: 12px;
+      margin-top: 6px;
+    }
   `;
 
   constructor() {
     super();
     this.users = [];
+    this.me = null;
     this.loading = true;
     this.error = '';
     this.showCreate = false;
     this.creating = false;
-    this.form = this._blankForm();
+    this.form = this._blankCreateForm();
+    this.editingId = null;
+    this.editForm = null;
+    this.saving = false;
   }
 
-  _blankForm() {
+  _blankCreateForm() {
     return {
       username: '',
       first_name: '',
       last_name: '',
       email: '',
       password: '',
+      confirm_password: '',
       is_admin: false,
+    };
+  }
+
+  _blankEditForm(user) {
+    return {
+      id: user.id,
+      username: user.username,
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
+      email: user.email || '',
+      is_admin: !!user.is_admin,
+      // Password change is optional within edit. All three blank
+      // means "don't touch the password".
+      change_password: false,
+      current_password: '',
+      new_password: '',
+      confirm_password: '',
     };
   }
 
@@ -203,26 +275,52 @@ class UsersModule extends LitElement {
     this.loading = true;
     this.error = '';
     try {
-      const r = await listUsers();
-      this.users = r.users || [];
+      const [users, me] = await Promise.all([
+        listUsers(),
+        getCurrentUser().catch(() => null),
+      ]);
+      this.users = users.users || [];
+      this.me = me;
     } catch (e) {
-      this.error = `Failed to load users: ${e.message || JSON.stringify(e)}`;
+      this.error = `Failed to load users: ${this._errMsg(e)}`;
     } finally {
       this.loading = false;
     }
   }
 
+  _errMsg(e) {
+    if (!e) return 'Unknown error';
+    if (typeof e === 'string') return e;
+    return e.detail || e.message || JSON.stringify(e);
+  }
+
+  /** Is this user the one currently logged in? */
+  _isMe(user) {
+    return !!(this.me && this.me.username === user.username);
+  }
+
+  /** Is this user the HomeFree admin (OS-side, set during install)?
+   *  We protect them from deletion regardless of who's looking. */
+  _isProtectedAdmin(user) {
+    return !!(this.me && this.me.admin_username
+              && user.username === this.me.admin_username);
+  }
+
   async _toggleAdmin(user) {
+    if (this._isProtectedAdmin(user)) {
+      // Revoking admin from the protected admin user would leave
+      // the system with no admin. Refuse.
+      this.error = `Cannot revoke admin from the HomeFree admin user.`;
+      return;
+    }
     const next = !user.is_admin;
-    // Optimistic update so the toggle feels instant.
     this.users = this.users.map(u =>
       u.id === user.id ? { ...u, is_admin: next } : u
     );
     try {
       await setUserAdmin(user.id, next);
     } catch (e) {
-      this.error = `Failed to update admin: ${e.message || JSON.stringify(e)}`;
-      // Roll back on failure.
+      this.error = `Failed to update admin: ${this._errMsg(e)}`;
       this.users = this.users.map(u =>
         u.id === user.id ? { ...u, is_admin: !next } : u
       );
@@ -230,6 +328,7 @@ class UsersModule extends LitElement {
   }
 
   async _delete(user) {
+    if (this._isProtectedAdmin(user)) return;
     if (!confirm(
       `Delete user "${user.username}"? This is permanent. They will be ` +
       `signed out of all integrated services on next session refresh.`
@@ -238,33 +337,125 @@ class UsersModule extends LitElement {
       await deleteUser(user.id);
       this.users = this.users.filter(u => u.id !== user.id);
     } catch (e) {
-      this.error = `Failed to delete user: ${e.message || JSON.stringify(e)}`;
+      this.error = `Failed to delete user: ${this._errMsg(e)}`;
+    }
+  }
+
+  _startEdit(user) {
+    this.editingId = user.id;
+    this.editForm = this._blankEditForm(user);
+    this.showCreate = false;
+    this.error = '';
+  }
+
+  _cancelEdit() {
+    this.editingId = null;
+    this.editForm = null;
+  }
+
+  _updateEditField(field, value) {
+    this.editForm = { ...this.editForm, [field]: value };
+  }
+
+  _updateCreateField(field, value) {
+    this.form = { ...this.form, [field]: value };
+  }
+
+  async _submitEdit(e) {
+    e.preventDefault();
+    if (!this.editForm) return;
+    const f = this.editForm;
+
+    // Password change branch — validate up front so we don't make
+    // half the API calls and then fail.
+    if (f.change_password) {
+      const v = validatePassword(f.new_password);
+      if (!v.ok) {
+        this.error = v.error;
+        return;
+      }
+      if (f.new_password !== f.confirm_password) {
+        this.error = 'New passwords do not match.';
+        return;
+      }
+      if (this._isMe({ username: f.username }) && !f.current_password) {
+        this.error = 'Current password is required when changing your own password.';
+        return;
+      }
+    }
+
+    this.saving = true;
+    this.error = '';
+    try {
+      // Profile updates (name/email).
+      const patch = {};
+      const orig = this.users.find(u => u.id === f.id) || {};
+      if (f.first_name !== (orig.first_name || '')) patch.first_name = f.first_name;
+      if (f.last_name !== (orig.last_name || ''))   patch.last_name = f.last_name;
+      if (f.email !== (orig.email || ''))           patch.email = f.email;
+      if (Object.keys(patch).length > 0) {
+        await updateUser(f.id, patch);
+      }
+
+      // Admin flag.
+      if (f.is_admin !== !!orig.is_admin) {
+        await setUserAdmin(f.id, f.is_admin);
+      }
+
+      // Password change.
+      if (f.change_password) {
+        if (this._isMe({ username: f.username })) {
+          await changeOwnPassword(f.current_password, f.new_password);
+        } else {
+          await setUserPassword(f.id, f.new_password);
+        }
+      }
+
+      this._cancelEdit();
+      await this.refresh();
+    } catch (e) {
+      this.error = `Failed to save: ${this._errMsg(e)}`;
+    } finally {
+      this.saving = false;
     }
   }
 
   async _submitCreate(e) {
     e.preventDefault();
-    if (!this.form.username || !this.form.email || !this.form.password) {
-      this.error = 'Username, email, and password are required.';
+    const f = this.form;
+    if (!f.username || !f.email) {
+      this.error = 'Username and email are required.';
+      return;
+    }
+    const v = validatePassword(f.password);
+    if (!v.ok) {
+      this.error = v.error || 'Password does not meet requirements.';
+      return;
+    }
+    if (f.password !== f.confirm_password) {
+      this.error = 'Passwords do not match.';
       return;
     }
     this.creating = true;
     this.error = '';
     try {
-      const r = await createUser(this.form);
+      const r = await createUser({
+        username: f.username,
+        first_name: f.first_name,
+        last_name: f.last_name,
+        email: f.email,
+        password: f.password,
+        is_admin: f.is_admin,
+      });
       if (r.warning) this.error = r.warning;
-      this.form = this._blankForm();
+      this.form = this._blankCreateForm();
       this.showCreate = false;
       await this.refresh();
     } catch (e) {
-      this.error = `Failed to create user: ${e.message || JSON.stringify(e)}`;
+      this.error = `Failed to create user: ${this._errMsg(e)}`;
     } finally {
       this.creating = false;
     }
-  }
-
-  _updateField(field, value) {
-    this.form = { ...this.form, [field]: value };
   }
 
   render() {
@@ -274,7 +465,7 @@ class UsersModule extends LitElement {
           <strong>Users</strong>
           Add and remove users for all HomeFree services. Authentication
           flows through Zitadel; the same credentials work for every
-          integrated app (Immich, Nextcloud, Forgejo, Home Assistant…).
+          integrated app.
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
@@ -287,112 +478,261 @@ class UsersModule extends LitElement {
             <button class="btn" @click=${this.refresh} ?disabled=${this.loading}>
               ${this.loading ? 'Refreshing…' : 'Refresh'}
             </button>
-            <button class="btn primary" @click=${() => { this.showCreate = !this.showCreate; this.error = ''; }}>
-              ${this.showCreate ? 'Cancel' : 'Add user'}
-            </button>
+            <button class="btn primary"
+              @click=${() => {
+                this.showCreate = !this.showCreate;
+                this.editingId = null;
+                this.error = '';
+              }}
+            >${this.showCreate ? 'Cancel' : 'Add user'}</button>
           </div>
 
-          ${this.showCreate ? html`
-            <form class="create-form" @submit=${this._submitCreate}>
-              <div>
-                <label>Username</label>
-                <input type="text" required autofocus
-                  .value=${this.form.username}
-                  @input=${(e) => this._updateField('username', e.target.value)}
-                />
-              </div>
-              <div>
-                <label>Email</label>
-                <input type="email" required
-                  .value=${this.form.email}
-                  @input=${(e) => this._updateField('email', e.target.value)}
-                />
-              </div>
-              <div>
-                <label>First name</label>
-                <input type="text"
-                  .value=${this.form.first_name}
-                  @input=${(e) => this._updateField('first_name', e.target.value)}
-                />
-              </div>
-              <div>
-                <label>Last name</label>
-                <input type="text"
-                  .value=${this.form.last_name}
-                  @input=${(e) => this._updateField('last_name', e.target.value)}
-                />
-              </div>
-              <div class="full">
-                <label>Initial password</label>
-                <input type="password" required minlength="8"
-                  .value=${this.form.password}
-                  @input=${(e) => this._updateField('password', e.target.value)}
-                />
-              </div>
-              <label class="checkbox-row full">
-                <input type="checkbox"
-                  .checked=${this.form.is_admin}
-                  @change=${(e) => this._updateField('is_admin', e.target.checked)}
-                />
-                <span>Grant admin privileges (IAM_OWNER in Zitadel)</span>
-              </label>
-              <div class="form-actions">
-                <button type="button" class="btn"
-                  @click=${() => { this.showCreate = false; this.form = this._blankForm(); }}
-                >Cancel</button>
-                <button type="submit" class="btn primary" ?disabled=${this.creating}>
-                  ${this.creating ? 'Creating…' : 'Create user'}
-                </button>
-              </div>
-            </form>
-          ` : ''}
+          ${this.showCreate ? this._renderCreateForm() : ''}
+          ${this.editingId ? this._renderEditForm() : ''}
 
           ${this.loading && this.users.length === 0
             ? html`<p class="muted">Loading users…</p>`
             : this.users.length === 0
               ? html`<p class="muted">No users yet. Click "Add user" to create one.</p>`
-              : html`
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Username</th>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Role</th>
-                      <th>Admin</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${this.users.map(u => html`
-                      <tr>
-                        <td class="username">${u.username}</td>
-                        <td>${u.display_name || ''}</td>
-                        <td class="muted">${u.email}</td>
-                        <td>
-                          ${u.is_admin
-                            ? html`<span class="pill admin">Admin</span>`
-                            : html`<span class="pill user">User</span>`}
-                        </td>
-                        <td>
-                          <div
-                            class="toggle ${u.is_admin ? 'on' : ''}"
-                            @click=${() => this._toggleAdmin(u)}
-                            title=${u.is_admin ? 'Click to revoke admin' : 'Click to grant admin'}
-                          ></div>
-                        </td>
-                        <td>
-                          <button class="btn danger" @click=${() => this._delete(u)}>
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    `)}
-                  </tbody>
-                </table>
-              `}
+              : this._renderTable()}
         </config-section>
       </div>
+    `;
+  }
+
+  _renderTable() {
+    return html`
+      <table>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Admin</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${this.users.map(u => {
+            const isMe = this._isMe(u);
+            const isProtected = this._isProtectedAdmin(u);
+            return html`
+              <tr>
+                <td class="username">
+                  ${u.username}
+                  ${isMe ? html`<span class="you-tag">(you)</span>` : ''}
+                  ${isProtected
+                    ? html`<span class="pill protected" title="Set during install — cannot be deleted">HomeFree admin</span>`
+                    : ''}
+                </td>
+                <td>${u.display_name || ''}</td>
+                <td class="muted">${u.email}</td>
+                <td>
+                  ${u.is_admin
+                    ? html`<span class="pill admin">Admin</span>`
+                    : html`<span class="pill user">User</span>`}
+                </td>
+                <td>
+                  <div
+                    class="toggle ${u.is_admin ? 'on' : ''} ${isProtected ? 'disabled' : ''}"
+                    @click=${() => isProtected ? null : this._toggleAdmin(u)}
+                    title=${isProtected
+                      ? 'The HomeFree admin must remain an admin'
+                      : (u.is_admin ? 'Click to revoke admin' : 'Click to grant admin')}
+                  ></div>
+                </td>
+                <td>
+                  <div class="row-actions" style="justify-content: flex-end;">
+                    <button class="btn" @click=${() => this._startEdit(u)}>
+                      Edit
+                    </button>
+                    <button class="btn danger"
+                      @click=${() => this._delete(u)}
+                      ?disabled=${isProtected}
+                      title=${isProtected
+                        ? 'The HomeFree admin user cannot be deleted from the UI'
+                        : 'Delete this user'}
+                    >Delete</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          })}
+        </tbody>
+      </table>
+    `;
+  }
+
+  _renderCreateForm() {
+    const f = this.form;
+    const pwMatches = !f.password || !f.confirm_password
+                      || f.password === f.confirm_password;
+    return html`
+      <form class="create-form" @submit=${this._submitCreate}>
+        <div class="section-title first full">New user</div>
+        <div>
+          <label>Username</label>
+          <input type="text" required autofocus
+            .value=${f.username}
+            @input=${(e) => this._updateCreateField('username', e.target.value)}
+          />
+        </div>
+        <div>
+          <label>Email</label>
+          <input type="email" required
+            .value=${f.email}
+            @input=${(e) => this._updateCreateField('email', e.target.value)}
+          />
+        </div>
+        <div>
+          <label>First name</label>
+          <input type="text"
+            .value=${f.first_name}
+            @input=${(e) => this._updateCreateField('first_name', e.target.value)}
+          />
+        </div>
+        <div>
+          <label>Last name</label>
+          <input type="text"
+            .value=${f.last_name}
+            @input=${(e) => this._updateCreateField('last_name', e.target.value)}
+          />
+        </div>
+        <div class="full">
+          <label>Password</label>
+          <password-input
+            withStrength
+            .value=${f.password}
+            @input=${(e) => this._updateCreateField('password', e.detail.value)}
+          ></password-input>
+        </div>
+        <div class="full">
+          <label>Confirm password</label>
+          <password-input
+            .value=${f.confirm_password}
+            @input=${(e) => this._updateCreateField('confirm_password', e.detail.value)}
+          ></password-input>
+          ${!pwMatches ? html`
+            <div class="password-mismatch">Passwords do not match.</div>
+          ` : ''}
+        </div>
+        <label class="checkbox-row full">
+          <input type="checkbox"
+            .checked=${f.is_admin}
+            @change=${(e) => this._updateCreateField('is_admin', e.target.checked)}
+          />
+          <span>Grant admin privileges (IAM_OWNER in Zitadel)</span>
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn"
+            @click=${() => {
+              this.showCreate = false;
+              this.form = this._blankCreateForm();
+            }}
+          >Cancel</button>
+          <button type="submit" class="btn primary" ?disabled=${this.creating}>
+            ${this.creating ? 'Creating…' : 'Create user'}
+          </button>
+        </div>
+      </form>
+    `;
+  }
+
+  _renderEditForm() {
+    const f = this.editForm;
+    if (!f) return '';
+    const isMe = this._isMe({ username: f.username });
+    const isProtected = this._isProtectedAdmin({ username: f.username });
+    const pwMatches = !f.new_password || !f.confirm_password
+                      || f.new_password === f.confirm_password;
+    return html`
+      <form class="edit-form" @submit=${this._submitEdit}>
+        <div class="section-title first full">
+          Edit ${f.username}${isMe ? ' (you)' : ''}
+        </div>
+        <div>
+          <label>First name</label>
+          <input type="text"
+            .value=${f.first_name}
+            @input=${(e) => this._updateEditField('first_name', e.target.value)}
+          />
+        </div>
+        <div>
+          <label>Last name</label>
+          <input type="text"
+            .value=${f.last_name}
+            @input=${(e) => this._updateEditField('last_name', e.target.value)}
+          />
+        </div>
+        <div class="full">
+          <label>Email</label>
+          <input type="email"
+            .value=${f.email}
+            @input=${(e) => this._updateEditField('email', e.target.value)}
+          />
+        </div>
+
+        <label class="checkbox-row full">
+          <input type="checkbox"
+            .checked=${f.is_admin}
+            ?disabled=${isProtected}
+            @change=${(e) => this._updateEditField('is_admin', e.target.checked)}
+          />
+          <span>
+            Admin privileges
+            ${isProtected ? html`<span class="muted">— required for the HomeFree admin</span>` : ''}
+          </span>
+        </label>
+
+        <label class="checkbox-row full">
+          <input type="checkbox"
+            .checked=${f.change_password}
+            @change=${(e) => this._updateEditField('change_password', e.target.checked)}
+          />
+          <span>Change password</span>
+        </label>
+
+        ${f.change_password ? html`
+          ${isMe ? html`
+            <div class="full">
+              <label>Current password (required to change your own password)</label>
+              <password-input
+                autocomplete="current-password"
+                .value=${f.current_password}
+                @input=${(e) => this._updateEditField('current_password', e.detail.value)}
+              ></password-input>
+            </div>
+          ` : ''}
+          <div class="full">
+            <label>New password</label>
+            <password-input
+              withStrength
+              .value=${f.new_password}
+              @input=${(e) => this._updateEditField('new_password', e.detail.value)}
+            ></password-input>
+          </div>
+          <div class="full">
+            <label>Confirm new password</label>
+            <password-input
+              .value=${f.confirm_password}
+              @input=${(e) => this._updateEditField('confirm_password', e.detail.value)}
+            ></password-input>
+            ${!pwMatches ? html`
+              <div class="password-mismatch">Passwords do not match.</div>
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <div class="form-actions">
+          <button type="button" class="btn" @click=${this._cancelEdit}>
+            Cancel
+          </button>
+          <button type="submit" class="btn primary" ?disabled=${this.saving}>
+            ${this.saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
     `;
   }
 }

@@ -156,6 +156,23 @@ export const deleteUser = (id) =>
 export const setUserAdmin = (id, isAdmin) =>
   post(`/api/users/${encodeURIComponent(id)}/admin`, { is_admin: isAdmin });
 
+export const getCurrentUser = () => get('/api/users/me');
+
+export const updateUser = (id, patch) =>
+  fetch(`/api/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j)));
+
+export const setUserPassword = (id, newPassword) =>
+  post(`/api/users/${encodeURIComponent(id)}/password`,
+    { new_password: newPassword });
+
+export const changeOwnPassword = (currentPassword, newPassword) =>
+  post('/api/users/me/password',
+    { current_password: currentPassword, new_password: newPassword });
+
 // Elevation lookup. Open-Meteo first (more reliable, 10k req/day non-
 // commercial, no key), Open-Elevation as fallback if Open-Meteo errors.
 // Both are CORS-enabled so this stays browser-side — the user's network
@@ -306,6 +323,10 @@ export default {
   createUser,
   deleteUser,
   setUserAdmin,
+  getCurrentUser,
+  updateUser,
+  setUserPassword,
+  changeOwnPassword,
   setHostname,
   setLocation,
   setKeyboard,

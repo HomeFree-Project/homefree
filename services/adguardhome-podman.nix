@@ -10,11 +10,19 @@ let
       address = "${config.homefree.network.lan-address}:${toString port}";
       session_ttl = "720h";
     };
+    ## AdGuard requires a non-empty `users:` block — an empty list
+    ## triggers its first-run setup wizard, which we don't want.
+    ## But we don't want a hardcoded credential either: the SSO-only
+    ## rule says no per-service local passwords. So we declare a
+    ## sentinel hash here and rewrite it at preStart with a random
+    ## per-install bcrypt hash. The plaintext is stashed in
+    ## /var/lib/homefree-secrets/adguard/admin-password for emergency
+    ## LAN-direct access (if SSO is broken and the Caddy gate has to
+    ## be bypassed) — root-only, never shown in the UI.
     users = [
       {
         name = config.homefree.system.adminUsername;
-        password = "$2a$10$Tt4QvbLQxnspv2TbcLMP7ug8eJ0NqMsGyVPbpEqtmkyCVrFpvh4GS";
-        # password = config.homefree.system.adminHashedPassword;
+        password = "@@ADGUARD_PASSWORD_HASH@@";
       }
     ];
     auth_attempts = 5;
@@ -169,11 +177,50 @@ let
 
   config-yaml = (pkgs.formats.yaml {}).generate "AdGuardHome.yaml" settings;
 
+  adguardSecretsDir = "/var/lib/homefree-secrets/adguard";
+
   preStart = ''
     mkdir -p ${containerDataPath}/conf
     mkdir -p ${containerDataPath}/work
+    mkdir -p ${adguardSecretsDir}
+    chmod 700 ${adguardSecretsDir}
 
-    cp ${config-yaml} ${containerDataPath}/conf/AdGuardHome.yaml
+    ## ── Random per-install admin password ──────────────────────────
+    ## Generate once and reuse across restarts so existing sessions
+    ## (if any) don't get invalidated. Stored as plaintext in the
+    ## secrets dir (mode 0400) for emergency LAN access; the bcrypt
+    ## hash is what gets spliced into AdGuardHome.yaml.
+    if [ ! -s ${adguardSecretsDir}/admin-password ] \
+       || [ ! -s ${adguardSecretsDir}/admin-password.bcrypt ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 32 \
+        | tr -d '\n' \
+        > ${adguardSecretsDir}/admin-password
+      chmod 400 ${adguardSecretsDir}/admin-password
+      # htpasswd -bnBC 10 produces `username:$2y$10$...`; we want
+      # only the hash. -i reads from stdin; we use -b with the
+      # password on the command line because htpasswd doesn't
+      # accept a hash-only output mode.
+      HASH=$(${pkgs.apacheHttpd}/bin/htpasswd -bnBC 10 "" \
+        "$(cat ${adguardSecretsDir}/admin-password)" \
+        | tr -d '\n' \
+        | sed 's/^://')
+      printf '%s' "$HASH" > ${adguardSecretsDir}/admin-password.bcrypt
+      chmod 400 ${adguardSecretsDir}/admin-password.bcrypt
+    fi
+
+    ## Splice the bcrypt hash into the generated YAML. We can't put
+    ## the real hash in the Nix expression because (a) it's random per
+    ## install and (b) Nix store contents are world-readable, which
+    ## would defeat the secrecy.
+    HASH=$(cat ${adguardSecretsDir}/admin-password.bcrypt)
+    # Escape characters that have meaning to sed's replacement side:
+    # &, /, and our delimiter |. The hash contains $ and . which are
+    # fine in the replacement context.
+    ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
+    ${pkgs.gnused}/bin/sed \
+      "s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
+      ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml
+    chmod 600 ${containerDataPath}/conf/AdGuardHome.yaml
 
     ## There is no DNS running yet at port 53, so start a temporary
     ## proxy service (managed by systemd) so that podman pull works

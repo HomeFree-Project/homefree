@@ -26,24 +26,39 @@ _PASSWORD_CONTROL_CHAR_RE = re.compile(r'[\x00-\x1F\x7F]')
 
 
 def validate_password(password: str) -> Optional[str]:
-    """Return an error message if the password cannot be used as a Linux
-    password through the installer's code path, or None if it is acceptable.
+    """Return an error message if the password isn't acceptable, or None
+    if it is. Combines the Linux-side rules (no control chars, length
+    bounds — the installer hands the password to mkpasswd / chpasswd
+    which would corrupt or truncate on control chars) with Zitadel's
+    default complexity policy (upper + lower + number + symbol).
 
-    The installer hands the password to mkpasswd (for hashedPassword in the
-    NixOS config) and chpasswd (in _post_install). Control characters can
-    truncate or corrupt either, producing a system the user cannot log into.
+    Kept in sync with the frontend validator in
+    web-platform/frontend/src/shared/password-policy.js.
     """
     if not password:
         return "Password is required"
-    if len(password) < PASSWORD_MIN_LENGTH:
-        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
-    if len(password) > PASSWORD_MAX_LENGTH:
-        return f"Password must be at most {PASSWORD_MAX_LENGTH} characters"
     if _PASSWORD_CONTROL_CHAR_RE.search(password):
         return (
             "Password contains a control character (newline, tab, etc.) "
             "that cannot be used as a Linux password"
         )
+    if len(password) > PASSWORD_MAX_LENGTH:
+        return f"Password must be at most {PASSWORD_MAX_LENGTH} characters"
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
+
+    missing = []
+    if not re.search(r'[A-Z]', password):
+        missing.append("an uppercase letter")
+    if not re.search(r'[a-z]', password):
+        missing.append("a lowercase letter")
+    if not re.search(r'[0-9]', password):
+        missing.append("a number")
+    if not re.search(r'[^A-Za-z0-9]', password):
+        missing.append("a symbol")
+    if missing:
+        return "Password must include " + ", ".join(missing)
+
     return None
 
 

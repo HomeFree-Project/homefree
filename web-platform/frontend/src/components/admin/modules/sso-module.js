@@ -278,12 +278,23 @@ class SsoModule extends LitElement {
                 <th>Service</th>
                 <th>Type</th>
                 <th>Provisioned</th>
+                <!--
+                  The "SSO enabled" toggle column is intentionally
+                  hidden for now. Most integrated services have no
+                  local-registration path (no UI to create an account)
+                  so disabling SSO for one of them just makes the app
+                  impossible to log into without command-line hacks.
+                  The toggle plumbing (_isEnabled, _toggleService,
+                  homefree.sso.per-service.*) is still in place — if
+                  you decide to expose this again, restoring the
+                  <th> + <td> below is the only change needed here.
                 <th>SSO enabled</th>
+                -->
               </tr>
             </thead>
             <tbody>
               ${s.services.map(svc => {
-                const enabled = this._isEnabled(svc.label);
+                // Toggle hidden; `_isEnabled` retained for future use.
                 return html`
                   <tr>
                     <td class="svc-label">${svc.label}</td>
@@ -303,15 +314,14 @@ class SsoModule extends LitElement {
                             : html`<span class="pill warn">No</span>`)
                         : html`<span class="pill disabled">n/a</span>`}
                     </td>
+                    <!--
                     <td>
                       <div
-                        class="toggle ${enabled ? 'on' : ''}"
-                        @click=${() => this._toggleService(svc.label, enabled)}
-                        title=${enabled
-                          ? 'Click to disable SSO gating for this service'
-                          : 'Click to enable SSO gating for this service'}
+                        class="toggle ${'' /*this._isEnabled(svc.label) ? 'on' : ''*/}"
+                        @click=${() => this._toggleService(svc.label, this._isEnabled(svc.label))}
                       ></div>
                     </td>
+                    -->
                   </tr>
                 `;
               })}

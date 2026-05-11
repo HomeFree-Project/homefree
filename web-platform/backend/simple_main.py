@@ -919,6 +919,57 @@ class CreateUserRequest(BaseModel):
     password: str
     is_admin: bool = False
 
+class SetAdminRequest(BaseModel):
+    is_admin: bool
+
+class UpdateUserRequest(BaseModel):
+    """Profile updates — first/last/display name + email. Password
+    changes go through a separate endpoint so we can require the
+    current password when editing self."""
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+
+class SetPasswordRequest(BaseModel):
+    """Admin-set password for *another* user. No current password
+    required because admins don't know other users' passwords."""
+    new_password: str
+
+class ChangeOwnPasswordRequest(BaseModel):
+    """Self password change. Requires current password as the
+    proof-of-possession step the user asked for."""
+    current_password: str
+    new_password: str
+
+def _homefree_admin_username():
+    """The OS admin user (set during install). This user can't be
+    deleted from the UI."""
+    import json
+    try:
+        with open("/etc/nixos/homefree-config.json") as f:
+            cfg = json.load(f)
+        return cfg["system"]["adminUsername"]
+    except Exception:
+        return None
+
+@app.get("/api/users/me")
+async def get_current_user(request: Request):
+    """Return the currently-authenticated user's record. Auth comes
+    from the oauth2-proxy header that gated this request. Useful
+    so the frontend can flag the "you" row and disable Delete on
+    the admin user, regardless of which username happens to match."""
+    username = (
+        request.headers.get("x-auth-request-preferred-username")
+        or request.headers.get("x-auth-request-user")
+        or ""
+    )
+    admin_username = _homefree_admin_username()
+    return JSONResponse(content={
+        "username": username,
+        "is_admin_user": bool(admin_username and username == admin_username),
+        "admin_username": admin_username,
+    })
+
 @app.post("/api/users")
 async def create_user(req: CreateUserRequest):
     """Create a new human user. If is_admin is true, also adds them
@@ -976,13 +1027,33 @@ async def create_user(req: CreateUserRequest):
 
 @app.delete("/api/users/{user_id}")
 async def delete_user(user_id: str):
-    """Delete a user. The PAT's IAM-OWNER role can delete any human
-    user; the bootstrap machine user (used by this very endpoint)
-    can't be deleted through here because list_users filters to
-    TYPE_HUMAN."""
+    """Delete a user. Refuses to delete the OS admin (homefree.system.
+    adminUsername) — that user is special: the PAM bridge syncs OS
+    password changes to their Zitadel record, and there's no other
+    way to recreate them without re-running the installer."""
     import httpx
     base = _zitadel_base_url()
+    admin_username = _homefree_admin_username()
     async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        # Resolve username for the target to compare against the
+        # admin-protected name. Zitadel ids are opaque; we need the
+        # name to enforce the rule.
+        if admin_username:
+            r = await cx.get(
+                f"{base}/management/v1/users/{user_id}",
+                headers=_zitadel_headers(),
+            )
+            if r.status_code < 400:
+                target_username = (r.json().get("user") or {}).get("userName")
+                if target_username == admin_username:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=("Cannot delete the HomeFree admin user "
+                                f"'{admin_username}'. Change the admin "
+                                "in the installer config or via the "
+                                "command line if you really need to."),
+                    )
+
         r = await cx.delete(
             f"{base}/management/v1/users/{user_id}",
             headers=_zitadel_headers(),
@@ -992,8 +1063,150 @@ async def delete_user(user_id: str):
                                 detail=f"Zitadel: {r.text}")
     return JSONResponse(content={"success": True})
 
-class SetAdminRequest(BaseModel):
-    is_admin: bool
+@app.patch("/api/users/{user_id}")
+async def update_user(user_id: str, req: UpdateUserRequest):
+    """Update a user's profile (first/last/display name, email).
+    All fields are optional; only the ones that are not-None get
+    written. Email change re-marks the email verified to keep the
+    SSO login flow working without re-verification."""
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        if (req.first_name is not None or req.last_name is not None):
+            # Need to fetch existing names so we don't blank them when
+            # the caller only sends one field. Zitadel's PUT replaces
+            # the whole profile.
+            r = await cx.get(
+                f"{base}/management/v1/users/{user_id}",
+                headers=_zitadel_headers(),
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel: {r.text}")
+            existing = (r.json().get("user") or {}).get("human", {}).get("profile", {})
+            first = req.first_name if req.first_name is not None else existing.get("firstName", "")
+            last = req.last_name if req.last_name is not None else existing.get("lastName", "")
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/profile",
+                headers=_zitadel_headers(),
+                json={
+                    "firstName": first or "",
+                    "lastName": last or "",
+                    "displayName": f"{first} {last}".strip() or "",
+                    "preferredLanguage": existing.get("preferredLanguage") or "en",
+                },
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel profile: {r.text}")
+
+        if req.email is not None:
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/email",
+                headers=_zitadel_headers(),
+                json={"email": req.email, "isEmailVerified": True},
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel email: {r.text}")
+
+    return JSONResponse(content={"success": True})
+
+@app.post("/api/users/{user_id}/password")
+async def set_password(user_id: str, req: SetPasswordRequest):
+    """Admin-set a target user's password. Used when an admin resets
+    someone else's password from the Users page. The new password is
+    validated against the same policy used elsewhere."""
+    from resolvers.config import validate_password
+    err = validate_password(req.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        r = await cx.post(
+            f"{base}/management/v1/users/{user_id}/password",
+            headers=_zitadel_headers(),
+            json={"password": req.new_password},
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel: {r.text}")
+    return JSONResponse(content={"success": True})
+
+@app.post("/api/users/me/password")
+async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
+    """Self-service password change. Verifies the user's current
+    password by attempting a Zitadel `verifyMyPassword` call before
+    setting the new one — that's the proof-of-possession step.
+    The new password is policy-checked the same as everywhere else."""
+    from resolvers.config import validate_password
+    err = validate_password(req.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    username = (
+        request.headers.get("x-auth-request-preferred-username")
+        or request.headers.get("x-auth-request-user")
+        or ""
+    )
+    if not username:
+        raise HTTPException(status_code=401, detail="No authenticated user")
+
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        # Resolve the user record by username.
+        r = await cx.post(
+            f"{base}/management/v1/users/_search",
+            headers=_zitadel_headers(),
+            json={
+                "queries": [{
+                    "userNameQuery": {
+                        "userName": username,
+                        "method": "TEXT_QUERY_METHOD_EQUALS",
+                    },
+                }],
+            },
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel user lookup: {r.text}")
+        users = r.json().get("result") or []
+        if not users:
+            raise HTTPException(
+                status_code=404,
+                detail=f"User '{username}' not found in Zitadel",
+            )
+        user_id = users[0]["id"]
+
+        # Verify the current password by hitting the password-change
+        # endpoint that requires the old password. Zitadel returns 400
+        # if the current password is wrong.
+        r = await cx.post(
+            f"{base}/management/v1/users/{user_id}/password",
+            headers=_zitadel_headers(),
+            json={
+                "password": req.new_password,
+                "currentPassword": req.current_password,
+            },
+        )
+        if r.status_code >= 400:
+            # 400 usually means "wrong current password" or "policy
+            # violation"; surface Zitadel's message so the user knows
+            # which it was.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Password change failed: {r.text}",
+            )
+    return JSONResponse(content={"success": True})
+
+## (Request models and the @app.get("/api/users/me") endpoint that
+## previously lived here were moved up to immediately follow
+## CreateUserRequest so they're defined before the @app.* decorators
+## that reference them at import time. Python's FastAPI decorator
+## evaluation happens at module load, so a forward reference in a
+## type annotation here would NameError on startup.)
 
 async def _set_admin_role(cx, base, user_id, is_admin):
     """Grant or revoke the IAM_OWNER role for the user at the

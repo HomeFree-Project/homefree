@@ -1,5 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { setUser } from '../api/client.js';
+import { validatePassword } from '../shared/password-policy.js';
+import './shared/password-input.js';
 
 class UsersStep extends LitElement {
   static properties = {
@@ -133,27 +135,13 @@ class UsersStep extends LitElement {
     this.error = '';
   }
 
-  get passwordStrength() {
-    const pw = this.password;
-    if (pw.length < 6) return 'weak';
-    if (pw.length < 10) return 'medium';
-    if (pw.length >= 10 && /[A-Z]/.test(pw) && /[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) {
-      return 'strong';
-    }
-    return 'medium';
-  }
-
   get passwordError() {
-    const pw = this.password;
-    if (!pw) return '';
-    if (pw.length < 8) return 'Password must be at least 8 characters';
-    if (pw.length > 128) return 'Password must be at most 128 characters';
-    // Reject control characters that would be silently truncated by chpasswd
-    // or mishandled by mkpasswd / PAM on the installed system.
-    if (/[\x00-\x1F\x7F]/.test(pw)) {
-      return 'Password contains a control character (newline, tab, etc.) that cannot be used as a Linux password';
-    }
-    return '';
+    // Routes through the shared validator; same rules as Zitadel +
+    // the Linux-side mkpasswd/chpasswd constraints. The strength
+    // meter is drawn by <password-input> itself, so this only needs
+    // to return an error string for the parent-side validation
+    // (isNextDisabled / saveUserConfig).
+    return validatePassword(this.password).error;
   }
 
   get isValid() {
@@ -293,47 +281,33 @@ class UsersStep extends LitElement {
 
         <div class="form-group">
           <label for="password">Password</label>
-          <input
-            type="password"
-            id="password"
+          <password-input
             placeholder="Enter password"
-            .value="${this.password}"
-            @input="${(e) => {
-              this.password = e.target.value;
+            withStrength
+            .value=${this.password}
+            @input=${(e) => {
+              this.password = e.detail.value;
               this.notifyParent();
-            }}"
-            class="${this.passwordError ? 'error' : ''}"
-          />
-          ${this.password ? html`
-            <div class="password-strength">
-              <div class="password-strength-fill ${this.passwordStrength}"></div>
-            </div>
-          ` : ''}
+            }}
+          ></password-input>
           <div class="description">
-            At least 8 characters. Longer is better.
+            At least 8 characters with upper, lower, number, and symbol.
           </div>
-          ${this.passwordError ? html`
-            <div class="error-message">${this.passwordError}</div>
-          ` : ''}
         </div>
 
         <div class="form-group">
           <label for="confirm-password">Confirm Password</label>
-          <input
-            type="password"
-            id="confirm-password"
+          <password-input
             placeholder="Confirm password"
-            .value="${this.confirmPassword}"
-            @input="${(e) => {
-              this.confirmPassword = e.target.value;
+            .value=${this.confirmPassword}
+            @input=${(e) => {
+              this.confirmPassword = e.detail.value;
               this.notifyParent();
-              // Auto-save when passwords match and form is complete
-              if (this.password === e.target.value && this.password.length >= 8 && !this.passwordError) {
+              if (this.password === e.detail.value && this.password.length >= 8 && !this.passwordError) {
                 this.saveUserConfig();
               }
-            }}"
-            class="${passwordsMatch ? '' : 'error'}"
-          />
+            }}
+          ></password-input>
           ${!passwordsMatch ? html`
             <div class="error-message">Passwords do not match</div>
           ` : ''}
