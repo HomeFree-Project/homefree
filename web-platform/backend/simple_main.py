@@ -233,6 +233,16 @@ class HostnameRequest(BaseModel):
 class LocationRequest(BaseModel):
     timezone: str
     locale: str
+    # Optional localization extras — all default to None to keep
+    # backwards-compatibility with existing callers (admin UI, older
+    # installers) that only send {timezone, locale}.
+    country_code: Optional[str] = None
+    language: Optional[str] = None
+    currency: Optional[str] = None
+    unit_system: Optional[str] = None
+    elevation: Optional[int] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class KeyboardRequest(BaseModel):
     layout: str
@@ -627,6 +637,122 @@ async def get_keyboard_layouts():
         logger.error(f"Error getting keyboard layouts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+## ── Locale data from babel (POSIX locales, ISO 3166 countries, ISO
+##    4217 currencies, BCP 47 languages). All of these used to be
+##    short hand-maintained inline arrays in the frontend; routing
+##    them through one source — the babel CLDR data — keeps the lists
+##    accurate and gives us one place to filter/curate.
+@app.get("/api/locale/locales")
+async def get_locales():
+    """All POSIX locale codes for which babel has data, returned in
+    a form ready for a <select>: { value: 'en_US.UTF-8', label: 'English (United States)' }.
+    """
+    try:
+        from babel import Locale, localedata
+        out = []
+        for tag in sorted(localedata.locale_identifiers()):
+            try:
+                loc = Locale.parse(tag)
+            except Exception:
+                continue
+            name = loc.english_name
+            if not name:
+                continue
+            out.append({
+                "value": f"{tag}.UTF-8",
+                "label": name,
+                "bcp47": str(loc).replace("_", "-"),
+            })
+        return JSONResponse(content=out)
+    except Exception as e:
+        logger.error(f"Error getting locales: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/locale/countries")
+async def get_countries():
+    """ISO 3166-1 alpha-2 country codes with English names, alphabetized
+    by name so dropdowns are scannable."""
+    try:
+        from babel import Locale
+        en = Locale("en")
+        out = [
+            {"value": code, "label": name}
+            for code, name in sorted(en.territories.items(), key=lambda kv: kv[1])
+            if len(code) == 2 and code.isalpha()
+        ]
+        return JSONResponse(content=out)
+    except Exception as e:
+        logger.error(f"Error getting countries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/locale/currencies")
+async def get_currencies():
+    """ISO 4217 currency codes. Labels are 'CODE — Name' so users can
+    search by either."""
+    try:
+        from babel import Locale
+        en = Locale("en")
+        out = [
+            {"value": code, "label": f"{code} — {name}"}
+            for code, name in sorted(en.currencies.items())
+            if len(code) == 3
+        ]
+        return JSONResponse(content=out)
+    except Exception as e:
+        logger.error(f"Error getting currencies: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/locale/languages")
+async def get_languages():
+    """BCP 47 base language tags with English names. These are the
+    primary language subtags only (no region) — distinct from the
+    locale list, which is region-qualified."""
+    try:
+        from babel import Locale
+        en = Locale("en")
+        out = [
+            {"value": code, "label": name}
+            for code, name in sorted(en.languages.items(), key=lambda kv: kv[1])
+            if code.isalpha() and 2 <= len(code) <= 3
+        ]
+        return JSONResponse(content=out)
+    except Exception as e:
+        logger.error(f"Error getting languages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geocode")
+async def geocode_address(q: str):
+    """Forward `q` to OpenStreetMap Nominatim. We proxy server-side so
+    the required User-Agent header is set (Nominatim rejects requests
+    without it). Returns up to 5 hits as
+    [{lat, lon, display_name}]. Caller should debounce."""
+    try:
+        import httpx
+        q = (q or "").strip()
+        if len(q) < 3:
+            return JSONResponse(content=[])
+        async with httpx.AsyncClient(timeout=10.0) as cx:
+            r = await cx.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"format": "jsonv2", "q": q, "limit": 5},
+                headers={
+                    "User-Agent": "HomeFree-Admin/1.0 (+https://homefree.host)"
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+        return JSONResponse(content=[
+            {
+                "lat": float(hit["lat"]),
+                "lon": float(hit["lon"]),
+                "display_name": hit.get("display_name", ""),
+            }
+            for hit in data
+        ])
+    except Exception as e:
+        logger.error(f"Error geocoding '{q}': {e}")
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {e}")
+
 # Configuration Endpoints
 
 @app.post("/api/config/hostname")
@@ -641,9 +767,20 @@ async def set_hostname(request: HostnameRequest):
 
 @app.post("/api/config/location")
 async def set_location(request: LocationRequest):
-    """Set timezone and locale"""
+    """Set timezone, locale, and the optional localization extras
+    (country, language, currency, unit system, elevation, GPS)."""
     try:
+        from services.config import ConfigService
         result = ConfigResolver.set_location(request.timezone, request.locale)
+        ConfigService.set_localization(
+            country_code=request.country_code,
+            language=request.language,
+            currency=request.currency,
+            unit_system=request.unit_system,
+            elevation=request.elevation,
+            latitude=request.latitude,
+            longitude=request.longitude,
+        )
         return JSONResponse(content=to_dict(result))
     except Exception as e:
         logger.error(f"Error setting location: {e}")

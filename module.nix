@@ -51,6 +51,60 @@
         '';
       };
 
+      elevation = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = ''
+          Elevation above sea level in meters. Used by Home Assistant
+          for sunrise/sunset and other location-aware integrations.
+        '';
+      };
+
+      latitude = lib.mkOption {
+        type = lib.types.nullOr (lib.types.either lib.types.float lib.types.int);
+        default = null;
+        description = ''
+          Latitude in decimal degrees. Used by Home Assistant for
+          location-based automations (sun, weather, etc.).
+        '';
+      };
+
+      longitude = lib.mkOption {
+        type = lib.types.nullOr (lib.types.either lib.types.float lib.types.int);
+        default = null;
+        description = "Longitude in decimal degrees.";
+      };
+
+      unitSystem = lib.mkOption {
+        type = lib.types.enum [ "metric" "us_customary" ];
+        default = "metric";
+        description = ''
+          Unit system. Values match Home Assistant's
+          `homeassistant.unit_system` config key exactly.
+        '';
+      };
+
+      currency = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          ISO 4217 three-letter currency code (e.g., USD, EUR, JPY).
+          Used by Home Assistant and finance-related services.
+        '';
+      };
+
+      language = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          BCP 47 user-facing language tag (e.g., en, en-GB, de).
+          Distinct from `defaultLocale` (the POSIX system locale like
+          en_US.UTF-8) — this is the preferred UI language passed to
+          apps that have their own language setting (Home Assistant,
+          Nextcloud, etc.).
+        '';
+      };
+
       ## @TODO: Detect during setup
       defaultLocale = lib.mkOption {
         type = lib.types.str;

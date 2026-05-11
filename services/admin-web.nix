@@ -17,6 +17,8 @@ let
     pyudev
     pydantic
     pyyaml
+    babel
+    httpx
   ]);
 
   # Admin backend service package

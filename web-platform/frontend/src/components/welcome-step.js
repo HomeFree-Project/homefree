@@ -1,10 +1,8 @@
 import { LitElement, html, css } from 'lit';
-import './shared/dropdown-select.js';
 
 class WelcomeStep extends LitElement {
   static properties = {
     data: { type: Object },
-    selectedLanguage: { type: String },
   };
 
   static styles = css`
@@ -75,25 +73,6 @@ class WelcomeStep extends LitElement {
       margin-right: 8px;
     }
 
-    .language-selector {
-      margin: 24px 0;
-    }
-
-    select {
-      padding: 12px 20px;
-      font-size: 14px;
-      border: 2px solid #e0e0e0;
-      border-radius: 6px;
-      background: white;
-      cursor: pointer;
-      min-width: 200px;
-    }
-
-    select:focus {
-      outline: none;
-      border-color: #667eea;
-    }
-
     .warning {
       background: #fff3cd;
       border: 1px solid #ffc107;
@@ -112,7 +91,6 @@ class WelcomeStep extends LitElement {
 
   constructor() {
     super();
-    this.selectedLanguage = 'en_US';
   }
 
   render() {
@@ -125,18 +103,6 @@ class WelcomeStep extends LitElement {
           router functionality with integrated services. This installer will guide
           you through setting up your HomeFree system.
         </p>
-
-        <div class="language-selector">
-          <label for="language">Installation Language: </label>
-          <dropdown-select
-            .options=${[
-              { value: 'en_US', label: 'English (US)' },
-              { value: 'en_GB', label: 'English (UK)' },
-            ]}
-            .value=${this.selectedLanguage || 'en_US'}
-            @change=${(e) => this.handleLanguageChange({ target: { value: e.detail.value } })}
-          ></dropdown-select>
-        </div>
 
         <div class="features">
           <h3>What's Included:</h3>
@@ -160,9 +126,6 @@ class WelcomeStep extends LitElement {
     `;
   }
 
-  handleLanguageChange(e) {
-    this.selectedLanguage = e.target.value;
-  }
 }
 
 customElements.define('welcome-step', WelcomeStep);

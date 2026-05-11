@@ -47,6 +47,8 @@
       pyudev
       pydantic
       pyyaml
+      babel
+      httpx
     ]);
   in {
     description = "HomeFree Web Platform Backend";

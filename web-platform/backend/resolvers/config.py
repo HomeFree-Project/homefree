@@ -4,12 +4,20 @@ Configuration resolvers for timezone, keyboard, user, etc.
 
 import re
 from typing import List, Optional
+from zoneinfo import available_timezones
 from models import (
     TimezoneRegion, KeyboardLayout, InstallSummary,
     PartitioningConfig, MutationResult
 )
 from services.config import ConfigService
 from services.network import NetworkService
+
+# Region prefixes we don't want to show in the picker — these are
+# alias/legacy trees that duplicate the canonical Continent/City names.
+_TZ_SKIP_PREFIXES = (
+    "SystemV/", "US/", "Canada/", "Brazil/", "Chile/", "Mexico/",
+    "Etc/GMT+",  # confusing sign convention; keep just "Etc/UTC" and a few canonicals
+)
 
 
 PASSWORD_MIN_LENGTH = 8
@@ -42,37 +50,20 @@ def validate_password(password: str) -> Optional[str]:
 class ConfigResolver:
     @staticmethod
     def get_timezones() -> List[TimezoneRegion]:
-        """Get available timezones grouped by region"""
-        # Return common timezones organized by region
+        """All IANA timezones from the system tzdata, grouped by the
+        first segment (Continent or special bucket like Etc, Pacific).
+        Sourced via zoneinfo.available_timezones() so we don't maintain
+        a list by hand and we stay in sync with system tzdata updates.
+        """
+        regions: dict[str, list[str]] = {}
+        for tz in sorted(available_timezones()):
+            if tz.startswith(_TZ_SKIP_PREFIXES):
+                continue
+            region = tz.split("/", 1)[0] if "/" in tz else "Other"
+            regions.setdefault(region, []).append(tz)
         return [
-            TimezoneRegion(
-                region="Americas",
-                zones=[
-                    "America/New_York", "America/Chicago", "America/Denver",
-                    "America/Los_Angeles", "America/Anchorage", "America/Toronto",
-                    "America/Mexico_City", "America/Sao_Paulo"
-                ]
-            ),
-            TimezoneRegion(
-                region="Europe",
-                zones=[
-                    "Europe/London", "Europe/Paris", "Europe/Berlin",
-                    "Europe/Rome", "Europe/Madrid", "Europe/Moscow"
-                ]
-            ),
-            TimezoneRegion(
-                region="Asia",
-                zones=[
-                    "Asia/Dubai", "Asia/Kolkata", "Asia/Singapore",
-                    "Asia/Tokyo", "Asia/Shanghai", "Asia/Seoul"
-                ]
-            ),
-            TimezoneRegion(
-                region="Pacific",
-                zones=[
-                    "Australia/Sydney", "Australia/Melbourne", "Pacific/Auckland"
-                ]
-            ),
+            TimezoneRegion(region=r, zones=z)
+            for r, z in sorted(regions.items())
         ]
 
     @staticmethod

@@ -95,12 +95,88 @@ export const getKeyboardLayouts = () => {
   return _keyboardLayoutsPromise;
 };
 
+// Locales, countries, currencies, languages — cached the same way as
+// timezones since these are large but immutable per session.
+let _localesPromise = null;
+let _countriesPromise = null;
+let _currenciesPromise = null;
+let _languagesPromise = null;
+
+const _cachedGet = (path, promiseRef) => {
+  if (!promiseRef.p) {
+    promiseRef.p = get(path).catch((err) => {
+      promiseRef.p = null;
+      throw err;
+    });
+  }
+  return promiseRef.p;
+};
+
+const _localesRef = { p: null };
+const _countriesRef = { p: null };
+const _currenciesRef = { p: null };
+const _languagesRef = { p: null };
+
+export const getLocales = () => _cachedGet('/api/locale/locales', _localesRef);
+export const getCountries = () => _cachedGet('/api/locale/countries', _countriesRef);
+export const getCurrencies = () => _cachedGet('/api/locale/currencies', _currenciesRef);
+export const getLanguages = () => _cachedGet('/api/locale/languages', _languagesRef);
+
+// Geocoding — server-proxied to OpenStreetMap Nominatim. Caller is
+// responsible for debouncing input (~600ms is a good default given
+// Nominatim's 1-req/sec usage policy).
+export const geocodeAddress = (q) =>
+  get(`/api/geocode?q=${encodeURIComponent(q)}`);
+
+// IP-based geolocation — direct browser call to ipapi.co (CORS-enabled,
+// 1000 req/day free, no key). Returns { latitude, longitude,
+// country_code, timezone, city, ... }. Used as a one-click prefill for
+// the location form.
+export const ipGeolocate = async () => {
+  const r = await fetch('https://ipapi.co/json/', { mode: 'cors' });
+  if (!r.ok) throw new Error(`IP lookup failed: HTTP ${r.status}`);
+  return r.json();
+};
+
+// Elevation lookup. Open-Meteo first (more reliable, 10k req/day non-
+// commercial, no key), Open-Elevation as fallback if Open-Meteo errors.
+// Both are CORS-enabled so this stays browser-side — the user's network
+// reaches the API directly, no proxy needed. Returns meters above sea
+// level as a number, or null if both services fail.
+export const lookupElevation = async (latitude, longitude) => {
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+    throw new Error('Latitude and longitude required');
+  }
+  // Open-Meteo: returns { elevation: [<meters>] }
+  try {
+    const url = `https://api.open-meteo.com/v1/elevation?latitude=${latitude}&longitude=${longitude}`;
+    const r = await fetch(url, { mode: 'cors' });
+    if (r.ok) {
+      const d = await r.json();
+      if (Array.isArray(d.elevation) && d.elevation.length > 0) {
+        return Math.round(d.elevation[0]);
+      }
+    }
+  } catch (e) {
+    // fall through to Open-Elevation
+  }
+  // Open-Elevation: returns { results: [{ elevation: <meters>, ... }] }
+  const url = `https://api.open-elevation.com/api/v1/lookup?locations=${latitude},${longitude}`;
+  const r = await fetch(url, { mode: 'cors' });
+  if (!r.ok) throw new Error(`Elevation lookup failed: HTTP ${r.status}`);
+  const d = await r.json();
+  if (d.results && d.results[0] && typeof d.results[0].elevation === 'number') {
+    return Math.round(d.results[0].elevation);
+  }
+  throw new Error('Elevation lookup returned no data');
+};
+
 // Configuration
 export const setHostname = (hostname) =>
   post('/api/config/hostname', { hostname });
 
-export const setLocation = (timezone, locale) =>
-  post('/api/config/location', { timezone, locale });
+export const setLocation = (timezone, locale, extras = {}) =>
+  post('/api/config/location', { timezone, locale, ...extras });
 
 export const setKeyboard = (layout, vconsole) =>
   post('/api/config/keyboard', { layout, vconsole });
@@ -199,6 +275,13 @@ export default {
   configureNetwork,
   getTimezones,
   getKeyboardLayouts,
+  getLocales,
+  getCountries,
+  getCurrencies,
+  getLanguages,
+  geocodeAddress,
+  ipGeolocate,
+  lookupElevation,
   setHostname,
   setLocation,
   setKeyboard,

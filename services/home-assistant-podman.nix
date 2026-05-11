@@ -14,6 +14,32 @@ let
   adminUser = config.homefree.system.adminUsername;
   adminDescription = config.homefree.system.adminDescription or adminUser;
 
+  ## ── Build the `homeassistant:` YAML block from homefree.system.*.
+  ## Done in Nix (not in the heredoc) so the indentation of optional
+  ## fields stays correct — HA's YAML parser is strict about 2-space
+  ## indentation inside a top-level block and `lib.optionalString`
+  ## inside a `''` heredoc loses leading whitespace.
+  ##
+  ## All of these are sourced from the system config the admin set
+  ## during install (or later on the admin System page). HA reads
+  ## this block on every restart and writes the values to
+  ## .storage/core.config, so changing a value in admin → rebuild
+  ## propagates to HA without any UI step.
+  sys = config.homefree.system;
+  haYamlLine = key: value: "  ${key}: ${value}";
+  haOptionalLine = key: value:
+    if value == null then "" else "  ${key}: ${value}\n";
+  haCoreYaml = ''
+    homeassistant:
+    ${haYamlLine "time_zone" ''"${sys.timeZone}"''}
+    ${haYamlLine "country" ''"${if sys.countryCode != null then sys.countryCode else "US"}"''}
+    ${haYamlLine "unit_system" ''"${sys.unitSystem}"''}
+  '' + haOptionalLine "latitude" (if sys.latitude != null then toString sys.latitude else null)
+     + haOptionalLine "longitude" (if sys.longitude != null then toString sys.longitude else null)
+     + haOptionalLine "elevation" (if sys.elevation != null then toString sys.elevation else null)
+     + haOptionalLine "currency" (if sys.currency != null then ''"${sys.currency}"'' else null)
+     + haOptionalLine "language" (if sys.language != null then ''"${sys.language}"'' else null);
+
   ## configuration.yaml shipped to the container as a template with
   ## placeholders. The auth_oidc client_id and client_secret are
   ## substituted at preStart from the on-disk OIDC creds written by
@@ -25,6 +51,11 @@ let
   ## literal values, not !secret indirection.
   configTemplate = pkgs.writeText "configuration.yaml.tmpl" ''
     default_config:
+
+    ## Core location/time settings, generated from homefree.system.*
+    ## via `haCoreYaml` above. HA reads this on every restart and
+    ## writes the resolved values into .storage/core.config.
+    ${haCoreYaml}
 
     frontend:
       themes: !include_dir_merge_named themes
@@ -202,8 +233,10 @@ let
       | ${pkgs.jq}/bin/jq -r '.[] | select(.step=="user") | .done' 2>/dev/null \
       || echo "")
 
-    if [ "$USER_DONE" = "true" ]; then
-      echo "ha postStart: onboarding already complete, nothing to do" >&2
+    ALL_DONE=$(printf '%s' "''${STATE:-}" \
+      | ${pkgs.jq}/bin/jq -r 'all(.done)' 2>/dev/null || echo "")
+    if [ "$ALL_DONE" = "true" ]; then
+      echo "ha postStart: onboarding fully complete, nothing to do" >&2
       exit 0
     fi
 
@@ -212,6 +245,36 @@ let
       exit 0
     fi
     ADMIN_PASS=$(cat ${haSecretsDir}/admin-password)
+
+    ## Need an access_token. If the admin user is already created
+    ## from a previous run, we can't replay /api/onboarding/users —
+    ## that returns HTTP 403 once user step is done. Use the standard
+    ## auth flow with the stored admin password instead.
+    if [ "$USER_DONE" = "true" ]; then
+      echo "ha postStart: user step already done; logging in to complete remaining steps" >&2
+      FLOW=$(${pkgs.curl}/bin/curl -sS -X POST "http://127.0.0.1:${toString port}/auth/login_flow" \
+        -H "Content-Type: application/json" \
+        -d "$(${pkgs.jq}/bin/jq -nc '{client_id:"https://ha.${domain}/", handler:["homeassistant",null], redirect_uri:"https://ha.${domain}/"}')") || true
+      FLOW_ID=$(printf '%s' "$FLOW" | ${pkgs.jq}/bin/jq -r '.flow_id // empty')
+      if [ -z "$FLOW_ID" ]; then
+        echo "ha postStart: failed to start login_flow; response: $FLOW" >&2
+        exit 0
+      fi
+      LOGIN_RESP=$(${pkgs.curl}/bin/curl -sS -X POST "http://127.0.0.1:${toString port}/auth/login_flow/$FLOW_ID" \
+        -H "Content-Type: application/json" \
+        -d "$(${pkgs.jq}/bin/jq -nc \
+          --arg c "https://ha.${domain}/" \
+          --arg u "${adminUser}" \
+          --arg p "$ADMIN_PASS" \
+          '{client_id:$c, username:$u, password:$p}')") || true
+      AUTH_CODE=$(printf '%s' "$LOGIN_RESP" | ${pkgs.jq}/bin/jq -r '.result // empty')
+      if [ -z "$AUTH_CODE" ]; then
+        echo "ha postStart: login_flow failed; response: $LOGIN_RESP" >&2
+        exit 0
+      fi
+      ## Now exchange and mark remaining steps (jump to the exchange block below)
+      RESP="{\"auth_code\":\"$AUTH_CODE\"}"
+    else
 
     echo "ha postStart: creating admin user '${adminUser}' via onboarding API" >&2
     RESP=$(${pkgs.curl}/bin/curl -sS -X POST "$ONBOARD/users" \
@@ -223,20 +286,65 @@ let
         '{client_id:"https://ha.${domain}/", name:$n, username:$u, password:$p, language:"en"}')") \
       || true
 
-    if printf '%s' "$RESP" | ${pkgs.jq}/bin/jq -e '.auth_code // .access_token' >/dev/null 2>&1; then
-      echo "ha postStart: admin user created" >&2
-    else
+    if ! printf '%s' "$RESP" | ${pkgs.jq}/bin/jq -e '.auth_code // .access_token' >/dev/null 2>&1; then
       echo "ha postStart: onboarding user creation may have failed; response:" >&2
       printf '%s\n' "$RESP" >&2
+      exit 0
+    fi
+    echo "ha postStart: admin user created" >&2
     fi
 
     ## After user creation, HA wants the rest of onboarding marked
-    ## done (core_config, integration, analytics). Each is a POST
-    ## to /api/onboarding/<step> with an auth bearer token. For our
-    ## headless-SSO purposes we don't strictly need to complete them
-    ## — HA stays usable and the SSO path works the moment the user
-    ## record exists. The wizard re-runs on next browser visit if
-    ## these aren't marked done, but our Caddy redirect bypasses it.
+    ## done (core_config, integration, analytics). If we leave them
+    ## undone, HA redirects every browser visit on / to
+    ## /onboarding.html, breaking SSO. Need to mark them all done.
+    ##
+    ## /api/onboarding/users returns an auth_code; we exchange it for
+    ## a bearer access_token via /auth/token, then POST each remaining
+    ## step (which are all parameterless).
+    AUTH_CODE=$(printf '%s' "$RESP" | ${pkgs.jq}/bin/jq -r '.auth_code // empty')
+    if [ -z "$AUTH_CODE" ]; then
+      echo "ha postStart: no auth_code in onboarding/users response; skipping remaining steps" >&2
+      exit 0
+    fi
+
+    TOKEN_RESP=$(${pkgs.curl}/bin/curl -sS -X POST "http://127.0.0.1:${toString port}/auth/token" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      --data-urlencode "client_id=https://ha.${domain}/" \
+      --data-urlencode "grant_type=authorization_code" \
+      --data-urlencode "code=$AUTH_CODE") || true
+    ACCESS_TOKEN=$(printf '%s' "$TOKEN_RESP" | ${pkgs.jq}/bin/jq -r '.access_token // empty')
+    if [ -z "$ACCESS_TOKEN" ]; then
+      echo "ha postStart: failed to exchange auth_code for access_token; response:" >&2
+      printf '%s\n' "$TOKEN_RESP" >&2
+      exit 0
+    fi
+
+    for STEP in core_config analytics integration; do
+      STEP_DONE=$(printf '%s' "''${STATE:-}" \
+        | ${pkgs.jq}/bin/jq -r --arg s "$STEP" '.[] | select(.step==$s) | .done' 2>/dev/null \
+        || echo "")
+      if [ "$STEP_DONE" = "true" ]; then
+        continue
+      fi
+      ## `integration` requires client_id + redirect_uri so HA can mint
+      ## a fresh auth_code for the SPA. core_config and analytics take
+      ## an empty body.
+      case "$STEP" in
+        integration)
+          BODY='{"client_id":"https://ha.${domain}/","redirect_uri":"https://ha.${domain}/"}'
+          ;;
+        *)
+          BODY='{}'
+          ;;
+      esac
+      echo "ha postStart: marking onboarding step '$STEP' done" >&2
+      ${pkgs.curl}/bin/curl -sS -o /dev/null -X POST "$ONBOARD/$STEP" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$BODY" || echo "ha postStart: failed to mark $STEP" >&2
+    done
+    echo "ha postStart: all onboarding steps complete" >&2
   '';
 in
 {
@@ -349,8 +457,25 @@ in
         ## reverse_proxy handler. See feedback_caddy_ordering.md
         ## (homefree memory) for the lesson behind this — we hit
         ## the same trap on Forgejo's /user/login redirect.
+        ## Only short-circuit the onboarding paths. DO NOT add
+        ## /auth/authorize here — auth_oidc registers its own handler
+        ## at /auth/authorize that base64-encodes the full HA-internal
+        ## OAuth URL (client_id, redirect_uri, state) and forwards it
+        ## to welcome via the `?redirect_uri=...` query param. The
+        ## finish POST relies on that encoded redirect_uri to land the
+        ## browser back in HA's first-party OAuth flow, where the
+        ## session token gets minted. Bypassing the handler with a
+        ## Caddy redir strips the OAuth params; welcome falls back to
+        ## /?storeToken=true; finish redirects to /?storeToken=true&
+        ## skip_oidc_redirect=true which doesn't trigger HA's auth
+        ## flow → user lands on / with no session → frontend re-opens
+        ## the auth dialog → /auth/authorize → injected handler runs
+        ## (correctly this time, with proper params) → welcome → ...
+        ## In other words: skipping the redir lets auth_oidc do its
+        ## job once and the flow completes; adding the redir creates
+        ## a loop because finish-time redirect_uri is wrong.
         extraCaddyConfig = ''
-          @ha_login_paths path /onboarding.html /onboarding /auth/authorize
+          @ha_login_paths path /onboarding.html /onboarding
           redir @ha_login_paths /auth/oidc/welcome 302
         '';
       };

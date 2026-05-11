@@ -1,17 +1,28 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
-import { getTimezones } from '../../../api/client.js';
+import '../../shared/lat-lng-picker.js';
+import {
+  getTimezones, getLocales, getCountries, getCurrencies, getLanguages,
+  lookupElevation,
+} from '../../../api/client.js';
 
 /**
  * System configuration module
- * Handles: hostname, domain, timezone, locale, keyboard, admin user
+ * Handles: hostname, domain, timezone, locale, country, language,
+ * currency, unit system, GPS, elevation, keyboard, admin user.
  */
 class SystemModule extends LitElement {
   static properties = {
     config: { type: Object },
     timezones: { type: Array },
-    modified: { type: Boolean }
+    locales: { type: Array },
+    countries: { type: Array },
+    currencies: { type: Array },
+    languages: { type: Array },
+    modified: { type: Boolean },
+    elevationLookupBusy: { type: Boolean, state: true },
+    elevationLookupError: { type: String, state: true },
   };
 
   static styles = css`
@@ -113,34 +124,91 @@ class SystemModule extends LitElement {
         defaultLocale: 'en_US.UTF-8',
         keyMap: 'us',
         countryCode: '',
+        elevation: null,
+        latitude: null,
+        longitude: null,
+        unitSystem: 'metric',
+        currency: '',
+        language: '',
         adminUsername: '',
         adminEmail: '',
         authorizedKeys: []
       }
     };
     this.timezones = [];
+    this.locales = [];
+    this.countries = [];
+    this.currencies = [];
+    this.languages = [];
     this.modified = false;
     this.newSshKey = '';
+    this.elevationLookupBusy = false;
+    this.elevationLookupError = '';
+  }
+
+  async _lookupElevation() {
+    const lat = this.config?.system?.latitude;
+    const lon = this.config?.system?.longitude;
+    if (typeof lat !== 'number' || typeof lon !== 'number') {
+      this.elevationLookupError = 'Set latitude and longitude first.';
+      return;
+    }
+    this.elevationLookupError = '';
+    this.elevationLookupBusy = true;
+    try {
+      const elevation = await lookupElevation(lat, lon);
+      this.handleFieldChange('system.elevation', elevation);
+    } catch (e) {
+      this.elevationLookupError = `Lookup failed: ${e.message || e}`;
+    } finally {
+      this.elevationLookupBusy = false;
+    }
   }
 
   async connectedCallback() {
     super.connectedCallback();
-    await this.loadTimezones();
+    await this.loadLists();
   }
 
-  async loadTimezones() {
-    try {
-      const tzRegions = await getTimezones();
-      // Flatten timezone regions into a single list
-      // Note: zones already include the region (e.g., "America/Los_Angeles")
-      this.timezones = tzRegions.flatMap(region =>
-        region.zones.map(zone => ({
-          value: zone,
-          label: zone
-        }))
+  async loadLists() {
+    // Load all dropdown data in parallel. Each failure is logged
+    // and leaves its dropdown empty rather than blocking the others.
+    const [tzRegions, locales, countries, currencies, languages] =
+      await Promise.allSettled([
+        getTimezones(), getLocales(), getCountries(),
+        getCurrencies(), getLanguages(),
+      ]);
+
+    if (tzRegions.status === 'fulfilled') {
+      this.timezones = tzRegions.value.flatMap(region =>
+        region.zones.map(zone => ({ value: zone, label: zone }))
       );
-    } catch (error) {
-      console.error('Failed to load timezones:', error);
+    } else {
+      console.error('Failed to load timezones:', tzRegions.reason);
+    }
+
+    if (locales.status === 'fulfilled') {
+      this.locales = locales.value;
+    } else {
+      console.error('Failed to load locales:', locales.reason);
+    }
+
+    if (countries.status === 'fulfilled') {
+      this.countries = countries.value;
+    } else {
+      console.error('Failed to load countries:', countries.reason);
+    }
+
+    if (currencies.status === 'fulfilled') {
+      this.currencies = currencies.value;
+    } else {
+      console.error('Failed to load currencies:', currencies.reason);
+    }
+
+    if (languages.status === 'fulfilled') {
+      this.languages = languages.value;
+    } else {
+      console.error('Failed to load languages:', languages.reason);
     }
   }
 
@@ -197,25 +265,20 @@ class SystemModule extends LitElement {
   render() {
     const { system } = this.config;
 
-    // Locale options
-    const localeOptions = [
-      { value: 'en_US.UTF-8', label: 'English (US)' },
-      { value: 'en_GB.UTF-8', label: 'English (UK)' },
-      { value: 'de_DE.UTF-8', label: 'German' },
-      { value: 'fr_FR.UTF-8', label: 'French' },
-      { value: 'es_ES.UTF-8', label: 'Spanish' },
-      { value: 'it_IT.UTF-8', label: 'Italian' },
-      { value: 'ja_JP.UTF-8', label: 'Japanese' },
-      { value: 'zh_CN.UTF-8', label: 'Chinese (Simplified)' }
-    ];
-
-    // Keyboard layout options
+    // Keyboard layout options — small fixed list since these mirror the
+    // X11/console keymaps we explicitly support. The other dropdowns
+    // (locale, country, currency, language) come from the API.
     const keyboardOptions = [
       { value: 'us', label: 'US' },
       { value: 'uk', label: 'UK' },
       { value: 'de', label: 'German' },
       { value: 'fr', label: 'French' },
       { value: 'es', label: 'Spanish' }
+    ];
+
+    const unitSystemOptions = [
+      { value: 'metric', label: 'Metric' },
+      { value: 'us_customary', label: 'US Customary (Imperial)' }
     ];
 
     return html`
@@ -273,11 +336,12 @@ class SystemModule extends LitElement {
             ></form-field>
 
             <form-field
-              label="Country Code"
-              type="text"
-              .value=${system.countryCode}
-              placeholder="US"
-              help="Two-letter ISO country code"
+              label="Country"
+              type="select"
+              .value=${system.countryCode || ''}
+              .options=${this.countries}
+              placeholder="Select country..."
+              help="ISO 3166-1 alpha-2 country code"
               @field-change=${(e) => this.handleFieldChange('system.countryCode', e.detail.value)}
             ></form-field>
           </div>
@@ -286,12 +350,26 @@ class SystemModule extends LitElement {
             <form-field
               label="Locale"
               type="select"
-              .value=${system.defaultLocale}
-              .options=${localeOptions}
+              .value=${system.defaultLocale || 'en_US.UTF-8'}
+              .options=${this.locales}
+              placeholder="Select locale..."
+              help="POSIX system locale (formatting, sorting)"
               required
               @field-change=${(e) => this.handleFieldChange('system.defaultLocale', e.detail.value)}
             ></form-field>
 
+            <form-field
+              label="Language"
+              type="select"
+              .value=${system.language || ''}
+              .options=${this.languages}
+              placeholder="Select language..."
+              help="UI language for apps that have their own (BCP 47)"
+              @field-change=${(e) => this.handleFieldChange('system.language', e.detail.value)}
+            ></form-field>
+          </div>
+
+          <div class="field-row">
             <form-field
               label="Keyboard Layout"
               type="select"
@@ -299,6 +377,65 @@ class SystemModule extends LitElement {
               .options=${keyboardOptions}
               required
               @field-change=${(e) => this.handleFieldChange('system.keyMap', e.detail.value)}
+            ></form-field>
+
+            <form-field
+              label="Currency"
+              type="select"
+              .value=${system.currency || ''}
+              .options=${this.currencies}
+              placeholder="Select currency..."
+              help="ISO 4217 currency code"
+              @field-change=${(e) => this.handleFieldChange('system.currency', e.detail.value)}
+            ></form-field>
+          </div>
+        </config-section>
+
+        <!-- Location coordinates -->
+        <config-section
+          title="Geographic Location"
+          description="Used by Home Assistant for location-aware automations (sun, weather, etc.) and similar services. Optional."
+        >
+          <lat-lng-picker
+            .latitude=${system.latitude}
+            .longitude=${system.longitude}
+            @change=${(e) => {
+              this.handleFieldChange('system.latitude', e.detail.latitude);
+              this.handleFieldChange('system.longitude', e.detail.longitude);
+            }}
+          ></lat-lng-picker>
+
+          <div class="field-row" style="margin-top: 16px;">
+            <div>
+              <form-field
+                label="Elevation above sea level (meters)"
+                type="number"
+                .value=${system.elevation == null ? '' : String(system.elevation)}
+                placeholder="0"
+                @field-change=${(e) => {
+                  const v = e.detail.value;
+                  this.handleFieldChange('system.elevation', v === '' || v == null ? null : parseInt(v, 10));
+                }}
+              ></form-field>
+              <button
+                type="button"
+                style="margin-top: 6px; padding: 6px 12px; font-size: 12px; border: 1px solid var(--hf-border-2); background: var(--hf-surface); color: var(--hf-text); border-radius: 6px; cursor: pointer;"
+                ?disabled=${this.elevationLookupBusy ||
+                            typeof system.latitude !== 'number' ||
+                            typeof system.longitude !== 'number'}
+                @click=${this._lookupElevation}
+              >${this.elevationLookupBusy ? 'Looking up…' : 'Look up from coords'}</button>
+              ${this.elevationLookupError
+                ? html`<div style="color: var(--hf-err); font-size: 12px; margin-top: 6px;">${this.elevationLookupError}</div>`
+                : ''}
+            </div>
+
+            <form-field
+              label="Unit System"
+              type="select"
+              .value=${system.unitSystem || 'metric'}
+              .options=${unitSystemOptions}
+              @field-change=${(e) => this.handleFieldChange('system.unitSystem', e.detail.value)}
             ></form-field>
           </div>
         </config-section>

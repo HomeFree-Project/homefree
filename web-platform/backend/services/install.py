@@ -71,6 +71,12 @@ class InstallationService:
     "timeZone": "@@timezone@@",
     "defaultLocale": "@@locale@@",
     "countryCode": "@@country_code@@",
+    "elevation": @@elevation@@,
+    "latitude": @@latitude@@,
+    "longitude": @@longitude@@,
+    "unitSystem": "@@unit_system@@",
+    "currency": @@currency_json@@,
+    "language": @@language_json@@,
     "keyMap": "@@vconsole@@",
     "adminUsername": "@@username@@",
     "adminDescription": "@@fullname@@",
@@ -254,6 +260,14 @@ in
       timeZone = jsonData.system.timeZone;
       defaultLocale = jsonData.system.defaultLocale;
       countryCode = jsonData.system.countryCode;
+      ## Localization extras — `or null`/default so an older JSON
+      ## file (pre-2026-05) without these keys evals cleanly.
+      elevation = jsonData.system.elevation or null;
+      latitude = jsonData.system.latitude or null;
+      longitude = jsonData.system.longitude or null;
+      unitSystem = jsonData.system.unitSystem or "metric";
+      currency = jsonData.system.currency or null;
+      language = jsonData.system.language or null;
       keyMap = jsonData.system.keyMap;
       adminUsername = jsonData.system.adminUsername;
       adminDescription = jsonData.system.adminDescription;
@@ -1029,13 +1043,26 @@ in
                 dhcp_range_start = "10.0.0.100"
                 dhcp_range_end = "10.0.0.200"
 
-        # Template variables
+        # Template variables. Localization fields use helpers so an
+        # unset (None / "") value renders as JSON `null` rather than
+        # the string "None" — homefree-config.json must be valid JSON.
+        def _json_or_null(v):
+            return "null" if v in (None, "") else str(v)
+        def _json_or_quoted_str(v):
+            return "null" if v in (None, "") else '"%s"' % str(v).replace('"', '\\"')
+
         variables = {
             'hostname': config.get('hostname', 'homefree'),
             'domain': config.get('domain', 'homefree.host'),
             'timezone': config.get('timezone', 'America/Los_Angeles'),
             'locale': config.get('locale', 'en_US.UTF-8'),
             'country_code': config.get('country_code', 'US'),
+            'elevation': _json_or_null(config.get('elevation')),
+            'latitude': _json_or_null(config.get('latitude')),
+            'longitude': _json_or_null(config.get('longitude')),
+            'unit_system': config.get('unit_system', 'metric'),
+            'currency_json': _json_or_quoted_str(config.get('currency')),
+            'language_json': _json_or_quoted_str(config.get('language')),
             'vconsole': config.get('vconsole', 'us'),
             'username': username,
             'fullname': config.get('fullname', 'HomeFree Admin'),

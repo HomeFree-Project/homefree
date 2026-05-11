@@ -14,6 +14,13 @@ class ConfigService:
         'domain': 'homefree.host',
         'timezone': 'America/Los_Angeles',
         'locale': 'en_US.UTF-8',
+        'country_code': None,
+        'elevation': None,
+        'latitude': None,
+        'longitude': None,
+        'unit_system': 'metric',
+        'currency': None,
+        'language': None,
         'keymap': 'us',
         'vconsole': 'us',
         'username': 'admin',
@@ -43,6 +50,19 @@ class ConfigService:
     def set_locale(locale: str):
         """Set system locale"""
         ConfigService._config['locale'] = locale
+
+    @staticmethod
+    def set_localization(**kwargs):
+        """Bulk-set the optional localization fields (country, language,
+        currency, unit_system, elevation, latitude, longitude). Any
+        kwarg that is None is left unchanged; pass an explicit empty
+        string '' to clear a field."""
+        for key in (
+            'country_code', 'language', 'currency', 'unit_system',
+            'elevation', 'latitude', 'longitude',
+        ):
+            if key in kwargs and kwargs[key] is not None:
+                ConfigService._config[key] = kwargs[key]
 
     @staticmethod
     def set_keyboard(layout: str, vconsole: str):
