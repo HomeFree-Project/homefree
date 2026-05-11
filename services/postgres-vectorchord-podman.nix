@@ -6,7 +6,17 @@ let
   # version = "pg16-v0.3.0";
   image = "ghcr.io/immich-app/postgres";
   # update-check: pin
-  version = "16-vectorchord0.4.2-pgvectors0.3.0";
+  ## Tag scheme: <pgmajor>-vectorchord<vchord-ver>-pgvector<pgvector-ver>
+  ## Note the spelling: this is the NEW `pgvector` extension (singular)
+  ## paired with VectorChord 0.5.x, which Immich v2.7+ requires for the
+  ## new `CREATE EXTENSION vchord CASCADE` (which pulls in `vector`).
+  ## The older `pgvectors` (plural, pgvecto.rs) is incompatible with
+  ## current Immich. See:
+  ##   https://github.com/immich-app/base-images/blob/main/postgres/versions.yaml
+  ## When bumping Immich, check the destination version's expected
+  ## extensions — Immich is mid-migration between the two ecosystems
+  ## and their docker-compose.yml lags behind their server image.
+  version = "18-vectorchord0.5.3-pgvector0.8.1";
   port = 6432;
   containerDataPath = "/var/lib/postgres-vectorchord-podman";
   containerDataPathInternal = "/var/lib/postgresql/data";
@@ -35,8 +45,23 @@ let
     host    replication     all             fd00::/8                 trust
   '';
 
-  config-file = pkgs.writeText "postgres.conf" ''
-    hba_file = '${containerDataPathInternal}/pgdata/pg_hba.conf'
+  ## Override config injected via the include_if_exists hook the
+  ## image's stock /etc/postgresql/postgresql.conf already has:
+  ##   include_if_exists '/etc/postgresql/postgresql.override.conf'
+  ## We bind-mount our config there read-only, so it takes effect
+  ## on the very first container start (before initdb has even
+  ## run) — without this we'd hit the chicken-and-egg problem
+  ## where the container starts on default port 5432 during init
+  ## and our preStart-injected config only takes effect on the
+  ## NEXT restart, leaving the host port mapping (6432:6432)
+  ## pointing at nothing during the post-init startup window.
+  ##
+  ## hba_file is also overridden here so our pg_hba lives at a
+  ## known path (no copy-into-pgdata needed). Keeps the host
+  ## bind-mount surface to two well-known files instead of
+  ## trying to mutate the data dir.
+  config-override-file = pkgs.writeText "postgresql.override.conf" ''
+    hba_file = '/etc/postgresql/pg_hba.conf'
     listen_addresses = '*'
     max_connections = 100
     port = ${toString port}
@@ -55,17 +80,6 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/pgdata
-
-    # If PostgreSQL has been initialized (PG_VERSION exists), copy our custom configs
-    if [ -f "${containerDataPath}/pgdata/PG_VERSION" ]; then
-      echo "PostgreSQL already initialized, applying custom configs..."
-      cp ${hba-file} ${containerDataPath}/pgdata/pg_hba.conf
-      cp ${config-file} ${containerDataPath}/pgdata/postgresql.conf
-      chmod 600 ${containerDataPath}/pgdata/pg_hba.conf
-      chmod 600 ${containerDataPath}/pgdata/postgresql.conf
-    else
-      echo "PostgreSQL not yet initialized, will use defaults for first start..."
-    fi
   '';
 in
 {
@@ -123,6 +137,12 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:${containerDataPathInternal}"
+        ## Mounted via the image's stock include_if_exists hook so
+        ## settings (including `port = 6432` and `hba_file = ...`)
+        ## are in effect from the FIRST container start, not just
+        ## after a restart. See the long comment in the let-binding.
+        "${config-override-file}:/etc/postgresql/postgresql.override.conf:ro"
+        "${hba-file}:/etc/postgresql/pg_hba.conf:ro"
       ];
 
       environment = {

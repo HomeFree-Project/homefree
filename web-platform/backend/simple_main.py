@@ -67,7 +67,21 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         "/api/service-state",
         "/api/closure-id",
     }
-    USER_HEADER = "x-auth-request-user"
+    ## oauth2-proxy v7's behavior:
+    ##   - X-Auth-Request-Preferred-Username always carries the OIDC
+    ##     `preferred_username` claim (Zitadel sets this to the bare
+    ##     username, e.g. "erahhal").
+    ##   - X-Auth-Request-User carries whatever USER_ID_CLAIM points
+    ##     at, but in practice we've seen it stick to the OIDC `sub`
+    ##     (Zitadel's numeric internal ID, e.g. "372429767272238115")
+    ##     even after setting USER_ID_CLAIM=preferred_username.
+    ##
+    ## Read the username header first; fall back to X-Auth-Request-User
+    ## only if the preferred_username header is absent. This makes the
+    ## comparison against /var/lib/homefree-admin/admin-username
+    ## (which is the bare username) work in either case.
+    USER_HEADER = "x-auth-request-preferred-username"
+    USER_HEADER_FALLBACK = "x-auth-request-user"
 
     async def dispatch(self, request: Request, call_next):
         # Bootstrap mode: SSO not yet provisioned → backend is open.
@@ -81,7 +95,8 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
 
-        user = request.headers.get(self.USER_HEADER)
+        user = request.headers.get(self.USER_HEADER) \
+            or request.headers.get(self.USER_HEADER_FALLBACK)
         if not user:
             # Direct hit on the backend (bypassing Caddy) or oauth2-
             # proxy didn't set the header. Reject so we never act on

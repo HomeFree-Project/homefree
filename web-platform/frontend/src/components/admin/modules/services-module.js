@@ -246,13 +246,14 @@ class ServicesModule extends LitElement {
       display: inline;
     }
 
+    .service-systemd .unit.unit-starting {
+      color: var(--hf-warn);
+      font-weight: 600;
+    }
+
     .service-systemd .unit.unit-bad {
       color: var(--hf-err);
       font-weight: 600;
-      text-decoration: underline;
-      text-decoration-color: var(--hf-err);
-      text-decoration-style: wavy;
-      text-underline-offset: 2px;
     }
 
     .service-systemd .unit.unit-unknown {
@@ -887,28 +888,30 @@ class ServicesModule extends LitElement {
               <div class="service-systemd">
                 systemd:
                 ${(() => {
-                  // Per-unit breakdown is optional. If the backend didn't
-                  // populate it, derive each unit's health from the
-                  // aggregate state — running aggregates mean every unit
-                  // is healthy; "degraded" or non-running aggregates with
-                  // no breakdown mean we don't know per-unit, so treat as
-                  // unknown (not as bad).
-                  const aggHealthy = service.active_state === 'active' && service.sub_state === 'running';
-                  const fallbackState = aggHealthy
-                    ? { active_state: 'active', sub_state: 'running' }
-                    : { active_state: service.active_state || 'unknown', sub_state: service.sub_state || 'unknown' };
                   const units = (service.unit_states && service.unit_states.length > 0)
                     ? service.unit_states
-                    : service.systemd_services.map(n => ({ name: n, ...fallbackState }));
+                    : service.systemd_services.map(n => ({
+                        name: n,
+                        active_state: 'unknown',
+                        sub_state: 'unknown',
+                      }));
                   return units.map((u, i, arr) => {
-                    const healthy = u.active_state === 'active' && u.sub_state === 'running';
-                    const unknown = u.active_state === 'unknown';
-                    const cls = healthy ? 'unit-ok' : (unknown ? 'unit-unknown' : 'unit-bad');
+                    const healthy  = u.active_state === 'active' && u.sub_state === 'running';
+                    const unknown  = u.active_state === 'unknown';
+                    const starting = u.active_state === 'activating'
+                                  || u.active_state === 'reloading'
+                                  || u.sub_state === 'start';
+                    const cls = healthy  ? 'unit-ok'
+                              : unknown  ? 'unit-unknown'
+                              : starting ? 'unit-starting'
+                              :            'unit-bad';
                     const tip = healthy
                       ? `${u.name}: ${u.active_state} (${u.sub_state})`
                       : unknown
                         ? `${u.name}: status unknown`
-                        : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
+                        : starting
+                          ? `${u.name}: ${u.active_state} (${u.sub_state}) — starting`
+                          : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
                     return html`<span class="unit ${cls}" title="${tip}">${u.name}</span>${i < arr.length - 1 ? html`<span class="unit-sep">, </span>` : ''}`;
                   });
                 })()}

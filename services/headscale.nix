@@ -49,14 +49,15 @@ let
   ## and the headscale API key, in contrast, must be set deliberately.
   headplaneSecretsDir = "/var/lib/homefree-secrets/headscale";
 
-  ## OIDC is opt-in. Headplane runs fine without it (falls back to API
-  ## key login or unauthenticated, depending on
-  ## `oidc.disable_api_key_login`). We only fold the oidc block into
-  ## the YAML once all three OIDC-related secrets are populated.
-  oidcConfigured =
-       (headscaleSecrets.oidc-client-id or null) != null
-    && (headscaleSecrets.oidc-client-secret or null) != null
-    && (headscaleSecrets.headscale-api-key or null) != null;
+  ## OIDC config is always rendered into the headplane YAML. The
+  ## headplane.service unit gates on file presence via
+  ## ConditionPathExists, so it stays inactive until
+  ## zitadel-provision.service writes the three secret files
+  ## (oidc-client-id, oidc-client-secret, headscale-api-key) and
+  ## try-restarts the unit. Single-rebuild fresh-install UX —
+  ## previously we used a build-time `oidcConfigured` flag here
+  ## that required two rebuilds because Nix only re-evaluates
+  ## pathExists at build time.
 
   ## Headplane is deployed whenever headscale is enabled. The cookie
   ## secret is auto-generated, so there's no chicken-and-egg problem:
@@ -108,20 +109,47 @@ let
       url = "http://${lan-address}:${toString config.services.headscale.port}";
       config_path = "/etc/headscale/headplane-view.yaml";
       config_strict = true;
-    } // lib.optionalAttrs oidcConfigured {
-      ## Only set api_key_path when the API key is actually present —
-      ## the headplane module fails activation if the LoadCredential
-      ## source file is missing.
+      ## Always set api_key_path — the headplane.service unit's
+      ## ConditionPathExists gate prevents it from starting until
+      ## the file actually exists on disk, so this never points at
+      ## a missing file at runtime.
       api_key_path = "${headplaneCredsDir}/headscale-api-key";
     };
     integration = {
       proc.enabled = true;
       agent.enabled = false;
     };
-  } // lib.optionalAttrs oidcConfigured {
+    ## OIDC is always rendered into the YAML (no oidcConfigured
+    ## gate). The actual SSO functionality kicks in once
+    ## zitadel-provision.service writes the secret files and
+    ## try-restarts headplane.service — at that point its
+    ## ConditionPathExists gate flips to true and the unit starts
+    ## with this OIDC config in effect. Single rebuild on a fresh
+    ## install: install → zitadel-provision runs → headplane comes
+    ## up with SSO. No second rebuild required.
+    ##
+    ## Headplane's option schema only supports `client_secret_path`
+    ## (file-backed) but requires `client_id` inline. Read it from
+    ## disk at Nix-eval time when the file exists; fall back to a
+    ## placeholder that won't match anything when it doesn't (the
+    ## ConditionPathExists gate above keeps headplane down in that
+    ## case anyway, so the placeholder never gets used at runtime).
+    ## On the next rebuild after zitadel-provision lands the file,
+    ## the real client_id gets baked in.
+    ##
+    ## NOTE: this is the single remaining double-rebuild trap on a
+    ## fresh install for headplane SSO specifically. Acceptable for
+    ## now — the user-facing impact is "Headplane shows up after
+    ## the second rebuild" rather than "broken." If we ever bump
+    ## headplane to a version that supports `client_id_path`,
+    ## switch back to that and the trap goes away.
     oidc = {
       issuer = "https://sso.${cfg.system.domain}";
-      client_id = headscaleSecrets.oidc-client-id;
+      client_id =
+        if builtins.pathExists "${headplaneSecretsDir}/oidc-client-id"
+        then lib.removeSuffix "\n"
+               (builtins.readFile "${headplaneSecretsDir}/oidc-client-id")
+        else "PLACEHOLDER_REPLACED_AFTER_PROVISION";
       client_secret_path = "${headplaneCredsDir}/oidc-client-secret";
       headscale_api_key_path = "${headplaneCredsDir}/headscale-api-key";
       disable_api_key_login = false;
@@ -430,6 +458,40 @@ in
     '';
   };
 
+  ## Mint a long-lived headscale API key for Headplane to use when
+  ## talking to headscale's gRPC API. Without this Headplane can
+  ## display nodes but can't mutate them (add/remove pre-auth keys,
+  ## expire devices, etc.) — and our LoadCredential gate refuses
+  ## to start headplane until this file exists.
+  ##
+  ## Runs after headscale.service so the CLI can talk to the live
+  ## daemon. Idempotent: only creates a new key if the file is
+  ## absent, so restarts and rebuilds are no-ops.
+  ##
+  ## 999d expiry matches the headscale CLI documentation example;
+  ## headscale doesn't support truly non-expiring keys.
+  systemd.services.headscale-mint-api-key = lib.mkIf deployHeadplane {
+    description = "Mint a headscale API key for Headplane";
+    after = [ "headscale.service" ];
+    requires = [ "headscale.service" ];
+    wantedBy = [ "headplane.service" ];
+    before = [ "headplane.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+    };
+    script = ''
+      set -eu
+      mkdir -p ${headplaneSecretsDir}
+      if [ ! -s "${headplaneSecretsDir}/headscale-api-key" ]; then
+        ## headscale apikeys create prints a single line: the new key.
+        ${pkgs.headscale}/bin/headscale apikeys create --expiration 999d \
+          | tail -n1 \
+          > "${headplaneSecretsDir}/headscale-api-key"
+      fi
+      chmod 600 "${headplaneSecretsDir}/headscale-api-key"
+    '';
+  };
+
   ## LoadCredential bridges the SOPS-managed per-secret files into the
   ## headplane.service mount namespace at /run/credentials/headplane.service/<name>.
   ## The headplaneSettings YAML above points the *_path fields at exactly
@@ -437,17 +499,35 @@ in
   ## OIDC is actually configured — LoadCredential of a non-existent
   ## file is fatal at unit start.
   systemd.services.headplane = lib.mkIf deployHeadplane {
-    after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
-    requires = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" ];
+    after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
+    requires = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
     ## Headplane reads the headscale config file at startup; if we
     ## regenerate that file but the unit definition is otherwise
     ## unchanged, NixOS won't restart the unit on rebuild and the new
     ## config goes unread. Tie restarts to the file's store path.
     restartTriggers = [ headscaleFullConfigFile ];
+    ## Don't try to start until BOTH OIDC secrets are on disk. A
+    ## fresh install briefly has no headplane until
+    ## zitadel-provision.service writes the files and `try-restart`s
+    ## us. Without this gate, LoadCredential below would fail with
+    ## status 243/CREDENTIALS on every (re)start until the user
+    ## clicks "rebuild" a second time. ConditionPathExists is
+    ## checked by systemd before any unit start, so failures here
+    ## don't burn restart-counter attempts.
+    unitConfig.ConditionPathExists = [
+      "${headplaneSecretsDir}/oidc-client-id"
+      "${headplaneSecretsDir}/oidc-client-secret"
+      "${headplaneSecretsDir}/headscale-api-key"
+    ];
     serviceConfig = {
+      ## Always load credentials — the ConditionPathExists gate
+      ## above means we never reach LoadCredential without the
+      ## files present. oidc-client-id is NOT loaded as a
+      ## credential because Headplane's schema requires the value
+      ## inline; it's read at Nix-eval time and embedded into the
+      ## YAML above.
       LoadCredential = [
         "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"
-      ] ++ lib.optionals oidcConfigured [
         "oidc-client-secret:${headplaneSecretsDir}/oidc-client-secret"
         "headscale-api-key:${headplaneSecretsDir}/headscale-api-key"
       ];

@@ -481,6 +481,37 @@ in
             ## headers being different between proxy and upstream.
             OAUTH2_PROXY_PASS_USER_HEADERS = "true";
             OAUTH2_PROXY_SET_AUTHORIZATION_HEADER = "true";
+
+            ## Required for Caddy's `forward_auth ... copy_headers
+            ## X-Auth-Request-User ...` to actually have something
+            ## to copy. Without this, the /oauth2/auth response
+            ## returns 200 on success but with NO X-Auth-Request-*
+            ## headers — Caddy then proxies the request to the
+            ## backend with no auth header, and the FastAPI middle-
+            ## ware in web-platform/backend/simple_main.py rejects
+            ## with "missing X-Auth-Request-User".
+            ##
+            ## PASS_USER_HEADERS (above) only emits headers when
+            ## oauth2-proxy itself proxies the request through to
+            ## an upstream. SET_XAUTHREQUEST is the orthogonal flag
+            ## that emits the same headers on the auth-only
+            ## endpoint /oauth2/auth, which is what Caddy's
+            ## forward_auth uses.
+            OAUTH2_PROXY_SET_XAUTHREQUEST = "true";
+
+            ## Source the X-Auth-Request-User value from the OIDC
+            ## `preferred_username` claim — Zitadel sets this to
+            ## the bare username we configured (e.g. "erahhal"),
+            ## matching /var/lib/homefree-admin/admin-username
+            ## that the FastAPI middleware compares against.
+            ##
+            ## Without this oauth2-proxy defaults to the OIDC `sub`
+            ## claim, which is Zitadel's numeric internal user ID
+            ## ("372411477086899193") — never matches the OS-side
+            ## admin username, so every authenticated request gets
+            ## 403 "not the admin user".
+            OAUTH2_PROXY_OIDC_EMAIL_CLAIM = "email";
+            OAUTH2_PROXY_USER_ID_CLAIM = "preferred_username";
           };
 
           # Env file is synthesised by the prestart from the SOPS-managed

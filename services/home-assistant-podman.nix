@@ -22,6 +22,29 @@ let
     sed -i -e "s/'\!\([a-z_]\+\) \(.*\)'/\!\1 \2/;s/^\!\!/\!/;" $out
   '';
 
+  ## Home Assistant SSO is currently unwired. Previous iterations
+  ## installed the `auth_header` custom component to trust an
+  ## upstream proxy's X-Remote-User header — but (a) the auth-header
+  ## attribute disappeared from this nixpkgs revision, and (b)
+  ## oauth2-proxy emits X-Forwarded-User not X-Remote-User, so the
+  ## flow never worked end-to-end anyway.
+  ##
+  ## Follow-up work to wire HA SSO properly:
+  ##  1. Add a service entry to services/zitadel-provision.nix's
+  ##     SERVICES table for "home-assistant" with a redirect URI
+  ##     of https://ha.<domain>/auth/external/callback.
+  ##  2. Switch to the auth_oidc custom component
+  ##     (pkgs.home-assistant-custom-components.auth_oidc), which
+  ##     does a full OIDC dance from inside HA — no upstream-proxy
+  ##     header trust needed. Render its client_id + client_secret
+  ##     into configuration.yaml at preStart from the on-disk
+  ##     /var/lib/homefree-secrets/home-assistant/oidc-client-*
+  ##     files (same pattern as netbird's management.json synth).
+  ##  3. Mount Caddy's local CA into the container so HA can
+  ##     reach https://sso.<domain>/.well-known/openid-configuration.
+  ##  4. Drop the Caddy oauth2 gate for the HA reverse-proxy entry
+  ##     (or keep it for the LAN-direct path only) — auth_oidc
+  ##     handles auth itself.
   ha-config = {
     default_config = {};
 
@@ -36,18 +59,10 @@ let
 
     http = {
       use_x_forwarded_for = true;
-      trusted_proxies = "${config.homefree.network.lan-address}";
-    };
-
-    auth_header = {
-      debug = true;
-    };
-
-    logger = {
-      default = "info";
-      logs = {
-        custom_components.auth_header = "debug";
-      };
+      ## HA expects trusted_proxies to be a YAML list, not a scalar.
+      ## Caddy hits this container from the host's LAN IP, so adding
+      ## that one entry is enough to satisfy the trust check.
+      trusted_proxies = [ config.homefree.network.lan-address ];
     };
   };
 
@@ -55,10 +70,19 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/config
-    mkdir -p ${containerDataPath}/config/custom_components
-    ln -sfn ${pkgs.home-assistant-custom-components.auth-header}/custom_components/auth_header ${containerDataPath}/config/custom_components/
-
     cp ${config-yaml} ${containerDataPath}/config/configuration.yaml
+
+    ## configuration.yaml uses `!include` for the four files below.
+    ## If any are missing, HA fails YAML parsing and falls back to
+    ## "recovery mode" — which serves a stripped-down config with
+    ## NO trusted_proxies, breaking every reverse-proxied request
+    ## with HTTP 400. Touch them so they exist as empty files; HA
+    ## treats empty includes as "no entries", which is what a fresh
+    ## install wants anyway.
+    for f in automations.yaml scripts.yaml scenes.yaml groups.yaml; do
+      [ -f "${containerDataPath}/config/$f" ] || \
+        touch "${containerDataPath}/config/$f"
+    done
   '';
 in
 {
@@ -145,20 +169,9 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.homeassistant.public;
-        ## Home Assistant has a built-in `auth_header` custom
-        ## component that trusts X-Remote-User from upstream proxies.
-        ## We gate at the Caddy oauth2-proxy layer; HA reads the
-        ## forwarded user header and creates/maps an HA user.
-        ## See services/home-assistant/configuration.yaml for the
-        ## auth_header trusted_proxies + header_name config.
-        ##
-        ## Caveat: oauth2-proxy emits X-Forwarded-User by default;
-        ## HA's auth_header reads X-Remote-User. Either configure
-        ## the auth_header component to accept X-Forwarded-User OR
-        ## leave HA's own login as the auth surface and use this
-        ## flag only for the LAN-direct path (which is what we do
-        ## by default — header mapping is opt-in).
-        oauth2 = config.homefree.sso.per-service.home-assistant.enable or true;
+        ## SSO is unwired for HA — see the long comment above the
+        ## ha-config let-binding for the follow-up plan to wire it
+        ## via auth_oidc. For now HA uses its own local login.
       };
       backup = {
         paths = [

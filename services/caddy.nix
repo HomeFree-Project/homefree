@@ -222,38 +222,41 @@ in
             ${if reverse-proxy-config.oauth2 == true then ''
               ## SSO gate (static-served path). Every request inside
               ## this site goes through oauth2-proxy validation via
-              ## forward_auth. The previous cookie-presence shortcut
-              ## (`not header Cookie *oauth2_proxy*`) was security-
-              ## broken — it only checked that *some* cookie matching
-              ## the substring existed, not that the cookie was
-              ## valid, so any `Cookie: _oauth2_proxy=anything` made
-              ## it through. Now we always ask oauth2-proxy.
+              ## forward_auth.
+              ##
+              ## CRITICAL: `forward_auth` is a TOP-LEVEL directive,
+              ## not wrapped in `handle` or `route`. Caddy's
+              ## directive ordering places `forward_auth` BEFORE
+              ## `handle`/`route` — when wrapped in `route`, the
+              ## directive runs at the `route` slot (very late),
+              ## so `handle /api/*` blocks fire first and never
+              ## see the auth header. Top-level keeps it at the
+              ## proper ordering position.
               ##
               ## Design notes:
               ##  - `file` matcher is evaluated at REQUEST time, so
               ##    pre-provisioning (sentinel absent) the gate is
               ##    skipped entirely — no double-rebuild on fresh
               ##    install (see commit history for rationale).
-              ##  - `route` (not `handle`) is non-exclusive: after
-              ##    the auth check, subsequent file_server/encode/
-              ##    header directives still run.
               ##  - On 401, `handle_response` short-circuits with a
               ##    302 to /oauth2/start; the browser does the OIDC
               ##    dance and lands back here with a valid cookie.
+              ##  - On 2xx, `copy_headers` writes X-Auth-Request-*
+              ##    onto the inbound request, then control falls
+              ##    through to whatever handler matches downstream
+              ##    (file_server, the @api reverse_proxy, etc.).
               @sso_gate {
                 file {
                   root /
                   try_files /var/lib/homefree-secrets/.sso-provisioned
                 }
               }
-              route @sso_gate {
-                forward_auth http://${lan-address}:4180 {
-                  uri /oauth2/auth
-                  copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
-                  @bad_status status 401
-                  handle_response @bad_status {
-                    redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
-                  }
+              forward_auth @sso_gate http://${lan-address}:4180 {
+                uri /oauth2/auth
+                copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token
+                @bad_status status 401
+                handle_response @bad_status {
+                  redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
                 }
               }
             '' else ""}
@@ -335,14 +338,12 @@ in
                 try_files /var/lib/homefree-secrets/.sso-provisioned
               }
             }
-            route @sso_gate {
-              forward_auth http://${lan-address}:4180 {
-                uri /oauth2/auth
-                copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
-                @bad_status status 401
-                handle_response @bad_status {
-                  redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
-                }
+            forward_auth @sso_gate http://${lan-address}:4180 {
+              uri /oauth2/auth
+              copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token
+              @bad_status status 401
+              handle_response @bad_status {
+                redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
               }
             }
           '' else "")

@@ -373,9 +373,22 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
-      # Prevent automatic restart during system activation
-      # Admin service will be manually restarted after rebuild if it changed
-      restartIfChanged = false;
+      ## restartIfChanged = false used to live here, with a separate
+      ## activation script (`reconcile-admin-api`, below) that did a
+      ## deferred systemd-run restart. That introduced a 15-20s
+      ## window post-rebuild where the OLD admin-api kept serving
+      ## requests with stale code — and the same auto-restart
+      ## mechanism we needed for code-only changes is what NixOS
+      ## already does natively when `restartIfChanged` is the
+      ## default (true).
+      ##
+      ## Letting NixOS restart admin-api on activation is now safe
+      ## because the rebuild itself runs in a transient unit
+      ## (homefree-rebuild.service, see nix_operations.py) owned by
+      ## PID 1 — admin-api going down mid-rebuild doesn't kill the
+      ## rebuild. The HTTP response to /api/rebuild dies, but the
+      ## frontend's polling on /api/config/rebuild-status picks it
+      ## up again as soon as the new admin-api is up (~2s).
 
       serviceConfig = {
         Type = "simple";
@@ -546,53 +559,18 @@ in
       deps = [];
     };
 
-    # Reconcile admin-api after every system activation. Runs as part of
-    # `switch-to-configuration` so it fires for ALL rebuild origins — UI
-    # Apply, sudo from shell, anything. Replaces the previous attempt at
-    # using systemd.paths to watch /run/current-system, which doesn't fire
-    # reliably for symlink swaps via rename(2).
-    #
-    # The script defers the actual restart via systemd-run so this
-    # activation step doesn't block waiting for the restart and so we
-    # don't kill ourselves if admin-api is the one running the rebuild
-    # (its transient unit lives in PID 1's cgroup, separate from us).
-    system.activationScripts.reconcile-admin-api = {
-      text = ''
-        # Only act if admin-api's unit definition changed since the running
-        # daemon last loaded it. NeedDaemonReload=yes is the canonical
-        # signal for "the unit file in /etc/systemd differs from what
-        # systemd has in memory."
-        needs_reload=$(${pkgs.systemd}/bin/systemctl show admin-api \
-          --property=NeedDaemonReload --value 2>/dev/null || echo no)
-
-        if [ "$needs_reload" = "yes" ]; then
-          echo "admin-api unit changed; scheduling deferred restart"
-
-          # Best-effort: tell the frontend a restart is coming so it can
-          # show its overlay during the brief window.
-          ${pkgs.coreutils}/bin/mkdir -p /var/lib/homefree-admin
-          ts=$(${pkgs.coreutils}/bin/date -Iseconds 2>/dev/null || ${pkgs.coreutils}/bin/date)
-          ${pkgs.coreutils}/bin/printf '%s\n' \
-            "{\"admin_api_status\":\"restarting\",\"timestamp\":\"$ts\",\"estimated_duration_seconds\":10,\"message\":\"Admin API is restarting after rebuild\"}" \
-            > /var/lib/homefree-admin/service-state.json
-
-          # Defer 2s so this activation script returns first. PID 1 owns
-          # the transient unit, so admin-api restarting can't kill it.
-          # We use a unique unit name (with timestamp) so multiple back-to-
-          # back rebuilds don't conflict on the unit name.
-          ${pkgs.systemd}/bin/systemd-run \
-            --unit="homefree-admin-restart-$(${pkgs.coreutils}/bin/date +%s).service" \
-            --collect \
-            --service-type=oneshot \
-            ${pkgs.bash}/bin/bash -c \
-              "sleep 2 && ${pkgs.systemd}/bin/systemctl daemon-reload && ${pkgs.systemd}/bin/systemctl restart admin-api" \
-            >/dev/null 2>&1 || true
-        else
-          echo "admin-api unit unchanged; no restart needed"
-        fi
-      '';
-      deps = [ "setup-admin-config" ];
-    };
+    ## NOTE: the `reconcile-admin-api` activation script used to live
+    ## here. It was a deferred systemd-run that restarted admin-api
+    ## ~15-20s after rebuild completed (a small sleep + activation
+    ## handoff). Combined with `restartIfChanged = false`, that left
+    ## a window where the old admin-api kept serving stale code.
+    ##
+    ## We've now removed both — admin-api uses NixOS's default
+    ## `restartIfChanged = true`, so the unit gets restarted as
+    ## part of standard activation. Rebuild safety is preserved by
+    ## homefree-rebuild.service (transient, PID 1-owned) decoupling
+    ## the rebuild's lifetime from admin-api's. See the comment
+    ## above the admin-api systemd.services definition.
 
   };
 }

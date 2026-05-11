@@ -31,6 +31,11 @@ let
   database-name = "immich";
   database-user = "immich";
 
+  immichSecretsDir = "/var/lib/homefree-secrets/immich";
+  domain = config.homefree.system.domain;
+  adminUser = config.homefree.system.adminUsername;
+  adminEmail = config.homefree.system.adminEmail or "${adminUser}@${domain}";
+
   preStart = ''
     mkdir -p ${containerDataPath}/backups
     mkdir -p ${containerDataPath}/encoded-video
@@ -39,6 +44,7 @@ let
     mkdir -p ${containerDataPath}/thumbs
     mkdir -p ${containerDataPath}/upload
     mkdir -p /var/cache/immich
+    mkdir -p ${immichSecretsDir}
 
     # Immich's startup verifies that the host volume is actually mounted by
     # reading a `.immich` sentinel file inside each of its known folders. If
@@ -50,6 +56,163 @@ let
     for d in backups encoded-video library profile thumbs upload; do
       touch "${containerDataPath}/$d/.immich"
     done
+
+    ## Auto-generate the bootstrap admin password on first boot.
+    ## This is write-once garbage: we use it exactly once to call
+    ## /api/auth/admin-sign-up and /api/auth/login, then disable
+    ## password login entirely via passwordLogin.enabled=false.
+    ## Stays on disk only so postStart can re-authenticate after
+    ## restarts (until SSO is fully wired and the token survives).
+    ## The end-user is never shown this password — they log in via
+    ## Zitadel.
+    if [ ! -s ${immichSecretsDir}/admin-password ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 24 \
+        > ${immichSecretsDir}/admin-password
+      chmod 600 ${immichSecretsDir}/admin-password
+    fi
+
+    ## Build a CA bundle the container can mount over its own
+    ## /etc/ssl/certs/ca-certificates.crt so Immich's Node OIDC
+    ## client can validate https://sso.<domain>/.well-known/
+    ## openid-configuration. Caddy issues internal certs from a
+    ## runtime-generated local CA that the stock node base image
+    ## doesn't trust. Same pattern as netbird/forgejo.
+    {
+      cat /etc/ssl/certs/ca-certificates.crt
+      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        echo
+        cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+      fi
+    } > ${containerDataPath}/ca-bundle.crt
+    chmod 644 ${containerDataPath}/ca-bundle.crt
+  '';
+
+  ## postStart bootstraps Immich into an SSO-only state. It runs in
+  ## two phases:
+  ##
+  ##   1. Bootstrap a bare admin user via /api/auth/admin-sign-up
+  ##      (Immich requires this for migrations to mark
+  ##      `isInitialized=true`; without it the UI shows the signup
+  ##      form). Idempotent — returns 400 if admin already exists.
+  ##      The auto-generated password is never used again after
+  ##      this; the user never sees it.
+  ##
+  ##   2. Update Immich's system_metadata table DIRECTLY via SQL
+  ##      to enable OAuth and disable password login. We bypass
+  ##      Immich's /api/system-config endpoint because that
+  ##      requires admin authentication — and once
+  ##      passwordLogin.enabled=false lands, we have no way to
+  ##      log in to UPDATE config in future runs (e.g., when
+  ##      zitadel-provision rotates the OIDC client_id). SQL
+  ##      writes work even with passwordLogin disabled, so this
+  ##      keeps the config converging across restarts.
+  ##
+  ## Pre-provisioning (no OIDC secrets on disk yet) the script
+  ## skips step 2 — Immich's API is up but unauthenticated
+  ## requests show the standard signup-already-done page until
+  ## zitadel-provision lands the secrets and try-restarts us.
+  postStart = pkgs.writeShellScript "immich-poststart" ''
+    set -u
+
+    API="http://127.0.0.1:${toString port}/api"
+    ADMIN_EMAIL="${adminEmail}"
+    ADMIN_NAME="${config.homefree.system.adminDescription or adminUser}"
+    ADMIN_PASS=$(cat ${immichSecretsDir}/admin-password)
+    DB_HOST="${config.homefree.network.lan-address}"
+    DB_PORT="6432"
+    DB_NAME="${database-name}"
+    DB_USER="postgres"
+    DB_PASS="changeme"   # matches POSTGRES_PASSWORD on the
+                         # postgres-vectorchord container
+
+    ## ── 1. Wait for Immich to come up ───────────────────────────
+    for i in $(seq 1 60); do
+      if ${pkgs.curl}/bin/curl -sf "$API/server/ping" >/dev/null 2>&1; then
+        break
+      fi
+      [ "$i" = 60 ] && {
+        echo "immich postStart: API not responsive after 120s" >&2
+        exit 0
+      }
+      sleep 2
+    done
+
+    ## ── 2. Ensure admin user exists ─────────────────────────────
+    ## admin-sign-up returns 201 the first time, 400 on subsequent
+    ## calls. Either is fine. After this step the admin password
+    ## is dead config — never used to log in again.
+    ${pkgs.curl}/bin/curl -sS -o /dev/null \
+      -H "Content-Type: application/json" \
+      -X POST "$API/auth/admin-sign-up" \
+      -d "$(${pkgs.jq}/bin/jq -nc \
+        --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASS" --arg n "$ADMIN_NAME" \
+        '{email:$e, password:$p, name:$n}')" || true
+
+    ## ── 3. SSO config via direct SQL ────────────────────────────
+    if [ ! -s ${immichSecretsDir}/oidc-client-id ] \
+       || [ ! -s ${immichSecretsDir}/oidc-client-secret ]; then
+      echo "immich postStart: no OIDC secrets yet, skipping SSO config" >&2
+      exit 0
+    fi
+
+    CID=$(cat ${immichSecretsDir}/oidc-client-id)
+    CSEC=$(cat ${immichSecretsDir}/oidc-client-secret)
+    ISSUER="https://sso.${domain}/.well-known/openid-configuration"
+
+    ## Wait briefly for Immich's first-boot migrations to land
+    ## the system_metadata table (a brand-new DB starts without
+    ## it; the schema is applied during server bootstrap).
+    for i in $(seq 1 30); do
+      if PGPASSWORD="$DB_PASS" ${pkgs.postgresql}/bin/psql \
+           -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+           -tc "SELECT 1 FROM information_schema.tables WHERE table_name='system_metadata';" \
+           2>/dev/null | ${pkgs.gnugrep}/bin/grep -q 1; then
+        break
+      fi
+      [ "$i" = 30 ] && {
+        echo "immich postStart: system_metadata table never appeared" >&2
+        exit 0
+      }
+      sleep 2
+    done
+
+    ## Build the JSON-patch SQL. We use jsonb_set to splice in
+    ## just the keys we care about, preserving anything else the
+    ## user or Immich itself wrote. INSERT-then-UPDATE pattern
+    ## handles the case where system_metadata has no row for
+    ## 'system-config' yet (fresh install before any UI tweak).
+    PGPASSWORD="$DB_PASS" ${pkgs.postgresql}/bin/psql \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 <<SQL 2>&1 | tail -3
+    INSERT INTO system_metadata (key, value)
+    VALUES ('system-config', '{}'::jsonb)
+    ON CONFLICT (key) DO NOTHING;
+
+    UPDATE system_metadata
+    SET value =
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+      jsonb_set(
+        COALESCE(value, '{}'::jsonb),
+        '{oauth,enabled}',         to_jsonb(true)),
+        '{oauth,issuerUrl}',       to_jsonb('$ISSUER'::text)),
+        '{oauth,clientId}',        to_jsonb('$CID'::text)),
+        '{oauth,clientSecret}',    to_jsonb('$CSEC'::text)),
+        '{oauth,scope}',           to_jsonb('openid email profile'::text)),
+        '{oauth,autoRegister}',    to_jsonb(true)),
+        '{oauth,autoLaunch}',      to_jsonb(true)),
+        '{oauth,buttonText}',      to_jsonb('Sign in with HomeFree SSO'::text)),
+        '{passwordLogin,enabled}', to_jsonb(false))
+    WHERE key = 'system-config';
+SQL
+
+    echo "immich postStart: SSO config applied via SQL" >&2
   '';
 in
 {
@@ -120,7 +283,7 @@ in
     postStartScript = pkgs.writeShellScript "postgres-vectorchord-poststart" ''
       # Wait for database to be ready (max 30 seconds)
       for i in {1..30}; do
-        if ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
+        if ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
           echo "Database is ready"
           break
         fi
@@ -128,7 +291,7 @@ in
         sleep 1
       done
 
-      ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -149,9 +312,9 @@ in
         \$do\$;
       EOF
 
-      ${pkgs.postgresql}/bin/psql -h localhost -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+      ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
-      ${pkgs.postgresql}/bin/psql -h localhost -p 6432 -X -U postgres << EOF
+      ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -X -U postgres << EOF
         DO
         \$do\$
         BEGIN
@@ -161,21 +324,27 @@ in
       EOF
 
       # Run the SQL extensions setup
-      ${lib.getExe' config.services.postgresql.package "psql"} -h localhost -p 6432 -U postgres -d "${database-name}" -f "${sqlFile}"
+      ${lib.getExe' config.services.postgresql.package "psql"} -h 127.0.0.1 -p 6432 -U postgres -d "${database-name}" -f "${sqlFile}"
     '';
-    sqlFile = pkgs.writeText "immich-pgvectors-setup.sql" ''
+    ## Immich v2.7+ uses the new pgvector + VectorChord extensions
+    ## (NOT the older pgvecto.rs / `vectors`). The CASCADE on vchord
+    ## pulls in `vector` automatically. Run as the postgres superuser
+    ## inside the postgres-vectorchord-poststart script, then the
+    ## extensions get owned by the cluster's superuser but become
+    ## *usable* by the immich role via GRANT USAGE on schemas.
+    ##
+    ## The pg_vector_index_stat view exists on VectorChord 0.5+ and
+    ## is used by Immich for index stats reporting; granting SELECT
+    ## to the immich role keeps Immich's UI status panel populated.
+    sqlFile = pkgs.writeText "immich-pgvector-setup.sql" ''
       CREATE EXTENSION IF NOT EXISTS unaccent;
       CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-      CREATE EXTENSION IF NOT EXISTS vectors;
       CREATE EXTENSION IF NOT EXISTS cube;
       CREATE EXTENSION IF NOT EXISTS earthdistance;
       CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
 
       ALTER SCHEMA public OWNER TO ${database-user};
-      ALTER SCHEMA vectors OWNER TO ${database-user};
-      GRANT SELECT ON TABLE pg_vector_index_stat TO ${database-user};
-
-      ALTER EXTENSION vectors UPDATE;
     '';
   in
   lib.optionals config.homefree.service-options.immich.enable [ "!${postStartScript}" ];
@@ -198,10 +367,18 @@ in
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:${uploadLocation}"
         "/run/postgresql:/run/postgresql"
+        ## Mount our combined CA bundle so the OIDC discovery fetch
+        ## from inside the Node runtime trusts Caddy's local cert.
+        "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
       ];
 
       environment = {
         TZ = config.homefree.system.timeZone;
+
+        ## Node.js doesn't read /etc/ssl/certs by default — point
+        ## NODE_EXTRA_CA_CERTS at our bundle so the OIDC client's
+        ## TLS handshake against https://sso.<domain> validates.
+        NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
 
         # IMMICH_LOG_LEVEL = "verbose";
         UPLOAD_LOCATION = "${uploadLocation}";
@@ -282,6 +459,7 @@ in
     partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "imimich-server-prestart" preStart}" ];
+      ExecStartPost = [ "!${postStart}" ];
     };
   };
 

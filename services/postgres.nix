@@ -3,7 +3,13 @@
   services.postgresql = {
     enable = true;
     # Authentik sets an older package for some reason
-    package = lib.mkForce pkgs.postgresql_16;
+    ## When bumping postgres major versions, existing data needs
+    ## `pg_upgrade`. NixOS doesn't run this automatically — for an
+    ## in-place upgrade you'd need to manually pg_dumpall on the old
+    ## version, drop the data dir, switch the package, restart, and
+    ## restore. Pinned to 18 (latest stable in this nixpkgs as of
+    ## the rebuild).
+    package = lib.mkForce pkgs.postgresql_18;
     enableTCPIP = true;
     authentication = pkgs.lib.mkOverride 10 ''
       #type database  DBuser  auth-method
