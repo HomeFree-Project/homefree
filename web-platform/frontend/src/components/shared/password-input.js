@@ -191,12 +191,22 @@ class PasswordInput extends LitElement {
   }
 
   _onInput(e) {
+    // Stop the native <input>'s bubbling input event. Otherwise the
+    // parent's @input=... listener fires twice per keystroke: once
+    // with the native event (e.detail === undefined → e.detail.value
+    // throws inside the parent's arrow function, kills the handler
+    // silently in Lit) and once with our CustomEvent. Worse, in some
+    // browsers the native event arrives AFTER our custom one,
+    // overwriting our state update with garbage. Stopping the native
+    // event here leaves only our well-formed CustomEvent for the
+    // parent to see.
+    e.stopPropagation();
+    this.value = e.target.value;
     this.dispatchEvent(new CustomEvent('input', {
       bubbles: true,
       composed: true,
       detail: { value: e.target.value },
     }));
-    this.value = e.target.value;
   }
 
   _toggleReveal(e) {
