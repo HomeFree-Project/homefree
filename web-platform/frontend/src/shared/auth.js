@@ -1,35 +1,60 @@
 /**
- * SSO sign-out helper.
+ * SSO sign-out.
  *
- * oauth2-proxy serves /oauth2/sign_out on its own host (auth.<domain>),
- * NOT on the per-app subdomain. Caddy on admin.<domain> sends every
- * path including /oauth2/* through forward_auth, which 302s an
- * unauthenticated /oauth2/sign_out request back to /oauth2/start —
- * which then immediately re-authenticates and the user appears to
- * not have signed out at all.
+ * The naive approach — just hitting oauth2-proxy's /oauth2/sign_out
+ * with rd=admin/ — clears oauth2-proxy's cookie but leaves Zitadel's
+ * SSO session intact. The browser is then redirected back to admin/,
+ * which has no oauth2-proxy cookie, so Caddy 302s to oauth2/start,
+ * which 302s to Zitadel /authorize, which sees the still-valid SSO
+ * session and silently signs the user right back in. Net effect: the
+ * user appears to have NOT signed out.
  *
- * The correct target is auth.<domain>/oauth2/sign_out with an
- * optional `rd` (return destination) query param so the user lands
- * somewhere sensible after the cookie is cleared.
+ * Worse, when the browser arrives back at admin/ in this state, any
+ * cached page resources (HTML, JS module scripts) may load partially
+ * while ancillary fetches get cross-origin-redirected to auth/, which
+ * the browser refuses with CORS errors — you get a half-mounted page
+ * stuck on the loading spinner.
  *
- * Derives the auth host from the current hostname:
- *   admin.example.com  -> auth.example.com
- *   admin.foo.bar.com  -> auth.foo.bar.com
+ * The proper flow is OIDC RP-Initiated Logout: hit Zitadel's
+ * end_session endpoint, which terminates the Zitadel session AND
+ * redirects to a post-logout URI we control. We chain:
  *
- * Falls back to /oauth2/sign_out (current host) if the hostname
- * doesn't have a leading subdomain — that's almost never the right
- * answer, but it'll at least make a request that someone can debug.
+ *   1. auth.<domain>/oauth2/sign_out?rd=<zitadel-end_session-url>
+ *      → oauth2-proxy clears its cookie, then redirects to Zitadel's
+ *        end_session.
+ *   2. sso.<domain>/oidc/v1/end_session?post_logout_redirect_uri=...
+ *      → Zitadel ends the SSO session, then redirects to the
+ *        post-logout URI.
+ *   3. Final landing: oauth2-proxy's /sign_out_landing on auth.<domain>
+ *      shows a static "you have been signed out" page that does NOT
+ *      itself require auth (so we don't bounce back into the SSO
+ *      flow).
+ *
+ * If we can't construct the full chain (e.g., we don't know Zitadel's
+ * host), fall back to plain oauth2-proxy sign_out — broken but at
+ * least clears the local cookie.
  */
 export function ssoSignOutUrl(returnTo) {
   const host = window.location.hostname;
   const parts = host.split('.');
-  let authHost;
-  if (parts.length >= 2) {
-    // Drop the first label, prepend "auth".
-    authHost = ['auth', ...parts.slice(1)].join('.');
-  } else {
-    authHost = host;
+  if (parts.length < 2) {
+    // Single-label host: nothing sensible to derive.
+    return `/oauth2/sign_out`;
   }
-  const rd = returnTo || window.location.origin + '/';
-  return `https://${authHost}/oauth2/sign_out?rd=${encodeURIComponent(rd)}`;
+  const rest = parts.slice(1).join('.');
+  const authHost = `auth.${rest}`;
+  const ssoHost = `sso.${rest}`;
+
+  // Where to land after BOTH sessions are killed. We want a page
+  // that doesn't require auth (otherwise we bounce right back in).
+  // The simplest such page is auth.<domain>/ — oauth2-proxy serves
+  // a tiny "Sign in" landing there with no auth required.
+  const postLogout = returnTo || `https://${authHost}/`;
+
+  const endSession =
+    `https://${ssoHost}/oidc/v1/end_session` +
+    `?post_logout_redirect_uri=${encodeURIComponent(postLogout)}`;
+
+  return `https://${authHost}/oauth2/sign_out` +
+         `?rd=${encodeURIComponent(endSession)}`;
 }
