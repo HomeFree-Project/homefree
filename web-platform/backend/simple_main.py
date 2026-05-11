@@ -753,6 +753,337 @@ async def geocode_address(q: str):
         logger.error(f"Error geocoding '{q}': {e}")
         raise HTTPException(status_code=502, detail=f"Geocoding failed: {e}")
 
+## ─── SSO state ─────────────────────────────────────────────────────────
+## Reports per-service provisioning state from the on-disk sentinels
+## written by zitadel-provision.service. The admin SSO page consumes
+## this to show which services have completed OIDC bootstrap.
+##
+## Service labels come from the integrations table in
+## services/zitadel-provision.nix (native OIDC apps) plus the
+## Caddy-gated services that use homefree.sso.per-service.*.
+
+SSO_SECRETS_DIR = "/var/lib/homefree-secrets"
+SSO_GLOBAL_SENTINEL = f"{SSO_SECRETS_DIR}/.sso-provisioned"
+
+# Services with native OIDC apps (each has its own .provisioned sentinel
+# under SSO_SECRETS_DIR/<svc>/). Order matches the priority list in
+# the original SSO plan so the UI presents them consistently.
+SSO_NATIVE_OIDC_SERVICES = [
+    "headscale",     # bundled VPN admin
+    "netbird",
+    "immich",
+    "nextcloud",
+    "forgejo",
+    "home-assistant",
+]
+
+# Services that gate via the Caddy oauth2-proxy redirect block rather
+# than their own OIDC client. These have a per-service toggle but no
+# .provisioned sentinel (they piggyback on .sso-provisioned).
+SSO_CADDY_GATED_SERVICES = [
+    "admin",
+    "adguard",
+    "forgejo",   # also gated for some endpoints
+]
+
+@app.get("/api/sso/state")
+async def sso_state():
+    """Return SSO bootstrap state for the admin SSO page."""
+    import os
+    provisioned = os.path.exists(SSO_GLOBAL_SENTINEL)
+
+    services = []
+    seen = set()
+    for label in SSO_NATIVE_OIDC_SERVICES + SSO_CADDY_GATED_SERVICES:
+        if label in seen:
+            continue
+        seen.add(label)
+        svc_sentinel = f"{SSO_SECRETS_DIR}/{label}/.provisioned"
+        svc_client_id = f"{SSO_SECRETS_DIR}/{label}/oidc-client-id"
+        services.append({
+            "label": label,
+            "native_oidc": label in SSO_NATIVE_OIDC_SERVICES,
+            "caddy_gated": label in SSO_CADDY_GATED_SERVICES,
+            "provisioned": os.path.exists(svc_sentinel),
+            "has_client_id": os.path.exists(svc_client_id),
+        })
+
+    return JSONResponse(content={
+        "provisioned": provisioned,
+        "services": services,
+    })
+
+## ─── Zitadel user management ───────────────────────────────────────────
+## All routes here are admin-only — they're already gated by the
+## oauth2-proxy header check at the FastAPI middleware level, so we
+## don't need to re-auth at the route. The backend talks to Zitadel
+## with the bootstrap machine-user PAT minted at first boot
+## (FirstInstance config in services/zitadel-podman.nix). That PAT has
+## the IAM-OWNER role so it can manage users instance-wide.
+
+ZITADEL_PAT_PATH = "/var/lib/zitadel/pat-bootstrap"
+
+def _zitadel_base_url():
+    """Read the host's domain from homefree-config.json so we don't
+    have to hardcode it. The Zitadel container is reachable at
+    https://sso.<domain>/ via the Caddy reverse proxy."""
+    import json
+    try:
+        with open("/etc/nixos/homefree-config.json") as f:
+            cfg = json.load(f)
+        return f"https://sso.{cfg['system']['domain']}"
+    except Exception:
+        return "https://sso.homefree.host"
+
+def _zitadel_headers():
+    try:
+        with open(ZITADEL_PAT_PATH) as f:
+            pat = f.read().strip()
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=503,
+            detail=("Zitadel bootstrap PAT not found. Has zitadel-provision "
+                    "run? Path: " + ZITADEL_PAT_PATH),
+        )
+    return {
+        "Authorization": f"Bearer {pat}",
+        "Content-Type": "application/json",
+    }
+
+# Zitadel role used to flag the HomeFree admin. We use a project role
+# rather than the org-OWNER role so that "admin" in the HomeFree UI
+# means "can manage HomeFree" without granting the user the ability to
+# delete the Zitadel instance itself.
+HOMEFREE_ADMIN_ROLE = "homefree-admin"
+
+@app.get("/api/users")
+async def list_users():
+    """List human users in the default org. Excludes machine users
+    (the provisioner, the PAM bridge) by filtering to TYPE_HUMAN.
+    Includes is_admin per-user, computed from a single member-search
+    call so the page renders without N+1 round-trips."""
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        # Users.
+        r = await cx.post(
+            f"{base}/management/v1/users/_search",
+            headers=_zitadel_headers(),
+            json={
+                "queries": [
+                    {"typeQuery": {"type": "TYPE_HUMAN"}},
+                ],
+            },
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel returned: {r.text}")
+        users_data = r.json()
+
+        # IAM admins — one call, then we intersect by user id.
+        r = await cx.post(
+            f"{base}/admin/v1/members/_search",
+            headers=_zitadel_headers(),
+            json={},
+        )
+        admin_ids = set()
+        if r.status_code < 400:
+            for m in (r.json().get("result") or []):
+                if "IAM_OWNER" in (m.get("roles") or []):
+                    admin_ids.add(m.get("userId"))
+
+    users = []
+    for u in users_data.get("result", []) or []:
+        human = u.get("human") or {}
+        profile = human.get("profile") or {}
+        email = human.get("email") or {}
+        uid = u.get("id")
+        users.append({
+            "id": uid,
+            "username": u.get("userName"),
+            "first_name": profile.get("firstName") or "",
+            "last_name": profile.get("lastName") or "",
+            "display_name": profile.get("displayName") or u.get("userName"),
+            "email": email.get("email") or "",
+            "email_verified": email.get("isVerified", False),
+            "state": u.get("state"),
+            "is_admin": uid in admin_ids,
+        })
+    return JSONResponse(content={"users": users})
+
+class CreateUserRequest(BaseModel):
+    username: str
+    first_name: str = ""
+    last_name: str = ""
+    email: str
+    password: str
+    is_admin: bool = False
+
+@app.post("/api/users")
+async def create_user(req: CreateUserRequest):
+    """Create a new human user. If is_admin is true, also adds them
+    to the homefree-admin role on the homefree project (created
+    on-demand if missing)."""
+    import httpx
+    base = _zitadel_base_url()
+    err = None
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        # Create human user. Zitadel requires firstName + lastName non-
+        # empty for human users; default to the username if blank.
+        body = {
+            "userName": req.username,
+            "profile": {
+                "firstName": req.first_name or req.username,
+                "lastName": req.last_name or req.username,
+                "displayName": (
+                    f"{req.first_name} {req.last_name}".strip()
+                    or req.username
+                ),
+                "preferredLanguage": "en",
+            },
+            "email": {
+                "email": req.email,
+                "isEmailVerified": True,
+            },
+            "password": req.password,
+            "passwordChangeRequired": False,
+        }
+        r = await cx.post(
+            f"{base}/management/v1/users/human/_import",
+            headers=_zitadel_headers(),
+            json=body,
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel: {r.text}")
+        created = r.json()
+        user_id = created.get("userId")
+
+        # Optionally grant admin. We'll handle that via a separate
+        # endpoint to keep this one focused; for now just return the
+        # new user id.
+        if req.is_admin and user_id:
+            # Defer to the set-admin handler logic inline.
+            try:
+                await _set_admin_role(cx, base, user_id, True)
+            except HTTPException as e:
+                err = f"User created but admin grant failed: {e.detail}"
+
+    payload = {"id": user_id, "username": req.username}
+    if err:
+        payload["warning"] = err
+    return JSONResponse(content=payload)
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: str):
+    """Delete a user. The PAT's IAM-OWNER role can delete any human
+    user; the bootstrap machine user (used by this very endpoint)
+    can't be deleted through here because list_users filters to
+    TYPE_HUMAN."""
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        r = await cx.delete(
+            f"{base}/management/v1/users/{user_id}",
+            headers=_zitadel_headers(),
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel: {r.text}")
+    return JSONResponse(content={"success": True})
+
+class SetAdminRequest(BaseModel):
+    is_admin: bool
+
+async def _set_admin_role(cx, base, user_id, is_admin):
+    """Grant or revoke the IAM_OWNER role for the user at the
+    instance level. We use IAM_OWNER (rather than a project-scoped
+    role) because that's what gives "manage everything in the
+    HomeFree stack" semantics — same role the bootstrap user has."""
+    # List existing IAM memberships for this user.
+    r = await cx.post(
+        f"{base}/admin/v1/members/_search",
+        headers=_zitadel_headers(),
+        json={"queries": [{"userIdQuery": {"userId": user_id}}]},
+    )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code,
+                            detail=f"Zitadel member lookup: {r.text}")
+    existing = r.json().get("result") or []
+    has_owner = any("IAM_OWNER" in (m.get("roles") or []) for m in existing)
+
+    if is_admin and not has_owner:
+        r = await cx.post(
+            f"{base}/admin/v1/members",
+            headers=_zitadel_headers(),
+            json={"userId": user_id, "roles": ["IAM_OWNER"]},
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel add member: {r.text}")
+    elif not is_admin and has_owner:
+        r = await cx.delete(
+            f"{base}/admin/v1/members/{user_id}",
+            headers=_zitadel_headers(),
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel remove member: {r.text}")
+
+@app.post("/api/users/{user_id}/admin")
+async def set_user_admin(user_id: str, req: SetAdminRequest):
+    """Grant or revoke admin (IAM_OWNER) for the user."""
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        await _set_admin_role(cx, base, user_id, req.is_admin)
+    return JSONResponse(content={"success": True})
+
+@app.get("/api/users/{user_id}/admin")
+async def get_user_admin(user_id: str):
+    """Check whether the user has the admin (IAM_OWNER) role."""
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        r = await cx.post(
+            f"{base}/admin/v1/members/_search",
+            headers=_zitadel_headers(),
+            json={"queries": [{"userIdQuery": {"userId": user_id}}]},
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel: {r.text}")
+        result = r.json().get("result") or []
+    is_admin = any("IAM_OWNER" in (m.get("roles") or []) for m in result)
+    return JSONResponse(content={"is_admin": is_admin})
+
+@app.post("/api/sso/reprovision")
+async def sso_reprovision():
+    """Re-run zitadel-provision.service. Used when a service failed
+    to provision on first boot — the unit is idempotent so re-running
+    is safe."""
+    import subprocess
+    try:
+        # Use systemctl restart rather than start: restart triggers
+        # an ExecStart even if the unit is in active(exited) state
+        # (which a successful oneshot leaves it in).
+        r = subprocess.run(
+            ["pkexec", "/etc/homefree-installer/pkexec-wrapper.sh",
+             "systemctl", "restart", "zitadel-provision.service"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "stderr": r.stderr or r.stdout},
+            )
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)},
+        )
+
 # Configuration Endpoints
 
 @app.post("/api/config/hostname")

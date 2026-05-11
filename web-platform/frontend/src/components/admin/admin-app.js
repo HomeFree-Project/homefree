@@ -5,6 +5,8 @@ import './modules/network-module.js';
 import './modules/dns-module.js';
 import './modules/services-module.js';
 import './modules/backups-module.js';
+import './modules/sso-module.js';
+import './modules/users-module.js';
 import './modules/status-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
@@ -712,6 +714,18 @@ class AdminApp extends LitElement {
         title: 'Backups',
         icon: '💾',
         section: 'Data'
+      },
+      {
+        id: 'sso',
+        title: 'SSO',
+        icon: '🔐',
+        section: 'Applications'
+      },
+      {
+        id: 'users',
+        title: 'Users',
+        icon: '👥',
+        section: 'Applications'
       },
       {
         id: 'advanced',
@@ -1939,6 +1953,19 @@ class AdminApp extends LitElement {
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @config-change=${this.handleConfigChange}
           ></backups-module>
+        `;
+
+      case 'sso':
+        return html`
+          <sso-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></sso-module>
+        `;
+
+      case 'users':
+        return html`
+          <users-module></users-module>
         `;
 
       case 'advanced':

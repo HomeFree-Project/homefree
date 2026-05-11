@@ -138,6 +138,24 @@ export const ipGeolocate = async () => {
   return r.json();
 };
 
+// SSO state — provisioning status and per-service sentinels. The admin
+// SSO page consumes this. Not cached: we want fresh state every visit
+// because the user may have just reprovisioned a service.
+export const getSsoState = () => get('/api/sso/state');
+
+export const reprovisionSso = () => post('/api/sso/reprovision', {});
+
+// Zitadel user management. All routes go through the FastAPI backend
+// which holds the Zitadel admin PAT — the frontend never sees that
+// secret. Errors bubble up as standard HTTP responses.
+export const listUsers = () => get('/api/users');
+export const createUser = (data) => post('/api/users', data);
+export const deleteUser = (id) =>
+  fetch(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j)));
+export const setUserAdmin = (id, isAdmin) =>
+  post(`/api/users/${encodeURIComponent(id)}/admin`, { is_admin: isAdmin });
+
 // Elevation lookup. Open-Meteo first (more reliable, 10k req/day non-
 // commercial, no key), Open-Elevation as fallback if Open-Meteo errors.
 // Both are CORS-enabled so this stays browser-side — the user's network
@@ -282,6 +300,12 @@ export default {
   geocodeAddress,
   ipGeolocate,
   lookupElevation,
+  getSsoState,
+  reprovisionSso,
+  listUsers,
+  createUser,
+  deleteUser,
+  setUserAdmin,
   setHostname,
   setLocation,
   setKeyboard,

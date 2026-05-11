@@ -101,6 +101,9 @@ class InstallationService:
   "dns": {
     "overrides": []
   },
+  "sso": {
+    "per-service": {}
+  },
   "services": {
     "adguard": {
       "enable": true,
@@ -306,6 +309,18 @@ in
           ip = override.ip;
         }) jsonData.dns.overrides;
       };
+    };
+
+    ## Per-service SSO opt-out toggles. The JSON stores
+    ##   { "per-service": { "adguard": { "enable": false }, ... } }
+    ## We map it 1:1 to homefree.sso.per-service. Missing entries fall
+    ## through to the option's default (enable = true) defined in
+    ## services/sso.nix, so a missing key means "SSO on" rather than
+    ## a build error.
+    sso = {
+      per-service = lib.mapAttrs (_: v: {
+        enable = v.enable or true;
+      }) (jsonData.sso.per-service or {});
     };
 
     services = {
