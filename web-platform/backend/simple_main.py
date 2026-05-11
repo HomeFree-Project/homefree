@@ -1136,10 +1136,23 @@ async def set_password(user_id: str, req: SetPasswordRequest):
 
 @app.post("/api/users/me/password")
 async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
-    """Self-service password change. Verifies the user's current
-    password by attempting a Zitadel `verifyMyPassword` call before
-    setting the new one — that's the proof-of-possession step.
-    The new password is policy-checked the same as everywhere else."""
+    """Self-service password change.
+
+    The management API's POST /users/{id}/password is admin-set: it
+    overwrites the password unconditionally and doesn't actually
+    verify a `currentPassword` field (passing one yields
+    `Password not found COMMAND-G8dh3`). The auth API's self-service
+    endpoint would verify, but requires the user's own session
+    token — we only have the admin PAT.
+
+    So we do verification via the sessions API: POST /v2/sessions
+    with a `password` check returns success iff the password is
+    correct. We create a transient session for that check, delete
+    it immediately, then admin-set the new password through the
+    management API.
+
+    The new password is policy-checked the same as everywhere else.
+    """
     from resolvers.config import validate_password
     err = validate_password(req.new_password)
     if err:
@@ -1156,7 +1169,8 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
     import httpx
     base = _zitadel_base_url()
     async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
-        # Resolve the user record by username.
+        # 1. Resolve the user record by username (we need the id for
+        #    the management password-set call below).
         r = await cx.post(
             f"{base}/management/v1/users/_search",
             headers=_zitadel_headers(),
@@ -1180,25 +1194,60 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
             )
         user_id = users[0]["id"]
 
-        # Verify the current password by hitting the password-change
-        # endpoint that requires the old password. Zitadel returns 400
-        # if the current password is wrong.
+        # 2. Verify the current password via a transient session.
+        #    The /v2/sessions endpoint runs the `password` check and
+        #    returns 400 with "Password is invalid" if it's wrong.
         r = await cx.post(
-            f"{base}/management/v1/users/{user_id}/password",
+            f"{base}/v2/sessions",
             headers=_zitadel_headers(),
             json={
-                "password": req.new_password,
-                "currentPassword": req.current_password,
+                "checks": {
+                    "user": {"loginName": username},
+                    "password": {"password": req.current_password},
+                },
             },
         )
         if r.status_code >= 400:
-            # 400 usually means "wrong current password" or "policy
-            # violation"; surface Zitadel's message so the user knows
-            # which it was.
+            # Zitadel returns CredentialsCheckError on bad password.
+            # Surface a clean message rather than the raw payload.
+            raise HTTPException(
+                status_code=400,
+                detail="Current password is incorrect.",
+            )
+        # Clean up the session so we don't leave verification artifacts
+        # accumulating. Failures here are non-fatal — the new password
+        # set has already succeeded by the time the user notices.
+        session_id = (r.json() or {}).get("sessionId")
+        session_token = (r.json() or {}).get("sessionToken")
+
+        # 3. Admin-set the new password.
+        r = await cx.post(
+            f"{base}/management/v1/users/{user_id}/password",
+            headers=_zitadel_headers(),
+            json={"password": req.new_password},
+        )
+        if r.status_code >= 400:
             raise HTTPException(
                 status_code=400,
                 detail=f"Password change failed: {r.text}",
             )
+
+        # 4. Best-effort session cleanup. The session delete requires
+        #    the session's own token in the Authorization header
+        #    (NOT the admin PAT — sessions delete themselves with
+        #    their bearer token).
+        if session_id and session_token:
+            try:
+                await cx.delete(
+                    f"{base}/v2/sessions/{session_id}",
+                    headers={
+                        "Authorization": f"Bearer {session_token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+            except Exception:
+                pass
+
     return JSONResponse(content={"success": True})
 
 ## (Request models and the @app.get("/api/users/me") endpoint that
