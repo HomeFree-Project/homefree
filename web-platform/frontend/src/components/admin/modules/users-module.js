@@ -5,7 +5,7 @@ import {
   listUsers, createUser, deleteUser, setUserAdmin,
   getCurrentUser, updateUser, setUserPassword, changeOwnPassword,
 } from '../../../api/client.js';
-import { validatePassword } from '../../../shared/password-policy.js';
+import { validatePassword, loadPasswordPolicy, DEFAULT_POLICY } from '../../../shared/password-policy.js';
 
 /**
  * Users admin module — wraps the Zitadel management API behind the
@@ -41,6 +41,7 @@ class UsersModule extends LitElement {
     editingId: { type: String, state: true },
     editForm: { type: Object, state: true },
     saving: { type: Boolean, state: true },
+    policy: { type: Object, state: true },
   };
 
   static styles = css`
@@ -235,6 +236,7 @@ class UsersModule extends LitElement {
     this.editingId = null;
     this.editForm = null;
     this.saving = false;
+    this.policy = DEFAULT_POLICY;
   }
 
   _blankCreateForm() {
@@ -268,6 +270,11 @@ class UsersModule extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    // Load the live Zitadel policy in parallel with the user list.
+    // password-input fetches it too but caches at the module level,
+    // so this just makes sure the policy is in our local state for
+    // submit-time validation, even before the user opens a form.
+    loadPasswordPolicy().then((p) => { this.policy = p; });
     await this.refresh();
   }
 
@@ -369,7 +376,7 @@ class UsersModule extends LitElement {
     // Password change branch — validate up front so we don't make
     // half the API calls and then fail.
     if (f.change_password) {
-      const v = validatePassword(f.new_password);
+      const v = validatePassword(f.new_password, this.policy);
       if (!v.ok) {
         this.error = v.error;
         return;
@@ -427,9 +434,9 @@ class UsersModule extends LitElement {
       this.error = 'Username and email are required.';
       return;
     }
-    const v = validatePassword(f.password);
+    const v = validatePassword(f.password, this.policy);
     if (!v.ok) {
-      this.error = v.error || 'Password does not meet requirements.';
+      this.error = v.error;
       return;
     }
     if (f.password !== f.confirm_password) {
@@ -603,6 +610,7 @@ class UsersModule extends LitElement {
           <label>Password</label>
           <password-input
             withStrength
+            .policy=${this.policy}
             .value=${f.password}
             @input=${(e) => this._updateCreateField('password', e.detail.value)}
           ></password-input>
@@ -708,6 +716,7 @@ class UsersModule extends LitElement {
             <label>New password</label>
             <password-input
               withStrength
+              .policy=${this.policy}
               .value=${f.new_password}
               @input=${(e) => this._updateEditField('new_password', e.detail.value)}
             ></password-input>

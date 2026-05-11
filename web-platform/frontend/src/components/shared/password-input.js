@@ -1,30 +1,37 @@
 import { LitElement, html, css } from 'lit';
-import { validatePassword, strengthBar } from '../../shared/password-policy.js';
+import {
+  validatePassword, strengthBar, loadPasswordPolicy, DEFAULT_POLICY,
+} from '../../shared/password-policy.js';
 
 /**
  * Password input with:
  *   - Eye icon on the right to toggle reveal
  *   - Live strength meter (4-step colored bar) when `withStrength`
- *   - Inline validation message against the policy in
- *     shared/password-policy.js (same as Zitadel + Linux constraints)
+ *   - Live per-requirement checklist below the field, with each item
+ *     turning green as the user satisfies it. Driven by the policy
+ *     fetched from /api/sso/password-policy (Zitadel) — falls back
+ *     to the static DEFAULT_POLICY if offline.
  *
  * Use as a controlled input — bind `.value`, listen to `input` to
  * read the new value. The component does NOT internally store state
- * other than the reveal toggle, so the parent stays the single
- * source of truth.
+ * other than the reveal toggle and the loaded policy, so the parent
+ * stays the single source of truth for the password text.
  *
  *   <password-input
  *     placeholder="New password"
  *     .value=${this.pw}
  *     withStrength
- *     @input=${(e) => { this.pw = e.target.value; }}
+ *     @input=${(e) => { this.pw = e.detail.value; }}
  *   ></password-input>
  *
  * Properties:
- *   - withStrength (bool): show the strength bar + label
- *   - placeholder, required, disabled, autocomplete, name: native input
- *   - hideErrors (bool): suppress the inline error line (e.g. for a
- *     "confirm" field where the parent shows a combined error)
+ *   - withStrength (bool): show the strength bar + requirement
+ *     checklist. Use this for "new password" fields. Confirm /
+ *     current-password fields should leave it off.
+ *   - placeholder, required, disabled, autocomplete, name: native
+ *   - policy (object, optional): pre-loaded policy to skip the
+ *     async fetch. Useful in the installer where Zitadel doesn't
+ *     exist yet.
  */
 class PasswordInput extends LitElement {
   static properties = {
@@ -35,7 +42,7 @@ class PasswordInput extends LitElement {
     autocomplete: { type: String },
     name: { type: String },
     withStrength: { type: Boolean },
-    hideErrors: { type: Boolean },
+    policy: { type: Object },
     _revealed: { type: Boolean, state: true },
   };
 
@@ -114,10 +121,45 @@ class PasswordInput extends LitElement {
     .meter-label.good { color: #7cb342; }
     .meter-label.strong { color: #4caf50; }
 
-    .error-msg {
-      color: #fca5a5;
+    ul.reqs {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 16px;
+    }
+    @media (max-width: 480px) {
+      ul.reqs { grid-template-columns: 1fr; }
+    }
+
+    ul.reqs li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       font-size: 12px;
-      margin-top: 6px;
+      color: var(--hf-text-muted, #888);
+      transition: color 0.15s;
+    }
+    ul.reqs li.met {
+      color: #7cb342;
+    }
+    ul.reqs li .check {
+      display: inline-flex;
+      width: 14px;
+      height: 14px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: bold;
+      flex-shrink: 0;
+      background: var(--hf-surface-2, #2a2a2a);
+      color: var(--hf-text-muted, #888);
+    }
+    ul.reqs li.met .check {
+      background: rgba(124, 179, 66, 0.2);
+      color: #7cb342;
     }
   `;
 
@@ -130,20 +172,30 @@ class PasswordInput extends LitElement {
     this.autocomplete = 'new-password';
     this.name = '';
     this.withStrength = false;
-    this.hideErrors = false;
+    this.policy = null;
     this._revealed = false;
   }
 
+  async connectedCallback() {
+    super.connectedCallback();
+    // Only fetch the policy if we need it (the requirement checklist
+    // only renders for `withStrength` fields) and the parent hasn't
+    // passed one explicitly.
+    if (this.withStrength && !this.policy) {
+      try {
+        this.policy = await loadPasswordPolicy();
+      } catch (e) {
+        this.policy = DEFAULT_POLICY;
+      }
+    }
+  }
+
   _onInput(e) {
-    // Re-dispatch as our own `input` event so the parent can bind
-    // @input naturally with e.target.value semantics.
     this.dispatchEvent(new CustomEvent('input', {
       bubbles: true,
       composed: true,
       detail: { value: e.target.value },
     }));
-    // Also assign so .value bindings stay in sync without parent
-    // round-trip via property re-render.
     this.value = e.target.value;
   }
 
@@ -153,7 +205,8 @@ class PasswordInput extends LitElement {
   }
 
   render() {
-    const v = validatePassword(this.value);
+    const policy = this.policy || DEFAULT_POLICY;
+    const v = validatePassword(this.value || '', policy);
     const bar = strengthBar(v.strength);
     const labelClass =
       v.strength === 1 ? 'weak'
@@ -199,7 +252,7 @@ class PasswordInput extends LitElement {
         </button>
       </div>
 
-      ${this.withStrength && this.value ? html`
+      ${this.withStrength ? html`
         <div class="meter">
           <div class="meter-fill"
             style="width: ${bar.width}; background: ${bar.color};"></div>
@@ -207,11 +260,16 @@ class PasswordInput extends LitElement {
         <div class="meter-row">
           <span class="meter-label ${labelClass}">${bar.label}</span>
         </div>
-      ` : ''}
 
-      ${this.withStrength && this.value && v.error && !this.hideErrors
-        ? html`<div class="error-msg">${v.error}</div>`
-        : ''}
+        <ul class="reqs">
+          ${v.requirements.map(r => html`
+            <li class=${r.satisfied ? 'met' : ''}>
+              <span class="check">${r.satisfied ? '✓' : ''}</span>
+              <span>${r.label}</span>
+            </li>
+          `)}
+        </ul>
+      ` : ''}
     `;
   }
 }

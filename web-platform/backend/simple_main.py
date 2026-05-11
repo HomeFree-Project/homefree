@@ -1270,6 +1270,64 @@ async def get_user_admin(user_id: str):
     is_admin = any("IAM_OWNER" in (m.get("roles") or []) for m in result)
     return JSONResponse(content={"is_admin": is_admin})
 
+## Password complexity policy lives in Zitadel and the admin can edit
+## it from the Zitadel UI. We surface it to the frontend so the same
+## rules apply on both ends (no client/server drift) and the UI can
+## tell the user exactly what's required.
+_PASSWORD_POLICY_CACHE = {"policy": None, "expires_at": 0.0}
+
+@app.get("/api/sso/password-policy")
+async def sso_password_policy():
+    """Return Zitadel's current password complexity policy.
+
+    Cached per-process for 60 seconds: the policy changes rarely
+    (only when the admin edits it in Zitadel) but we don't want a
+    stale value to hang around indefinitely. On Zitadel unreachable,
+    return our hard-coded defaults so the UI degrades gracefully
+    rather than blocking the user."""
+    import os, time, httpx
+    now = time.time()
+    if _PASSWORD_POLICY_CACHE["policy"] and now < _PASSWORD_POLICY_CACHE["expires_at"]:
+        return JSONResponse(content=_PASSWORD_POLICY_CACHE["policy"])
+
+    fallback = {
+        "min_length": 8,
+        "max_length": 128,
+        "has_uppercase": True,
+        "has_lowercase": True,
+        "has_number": True,
+        "has_symbol": True,
+        "source": "fallback",
+    }
+    if not os.path.exists(ZITADEL_PAT_PATH):
+        return JSONResponse(content=fallback)
+
+    base = _zitadel_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=5.0, verify=False) as cx:
+            r = await cx.get(
+                f"{base}/management/v1/policies/password/complexity",
+                headers=_zitadel_headers(),
+            )
+            r.raise_for_status()
+            p = (r.json().get("policy") or {})
+        policy = {
+            "min_length": int(p.get("minLength", 8)),
+            # Linux-side cap (mkpasswd/chpasswd can't handle >128).
+            "max_length": 128,
+            "has_uppercase": bool(p.get("hasUppercase", True)),
+            "has_lowercase": bool(p.get("hasLowercase", True)),
+            "has_number": bool(p.get("hasNumber", True)),
+            "has_symbol": bool(p.get("hasSymbol", True)),
+            "source": "zitadel",
+        }
+        _PASSWORD_POLICY_CACHE["policy"] = policy
+        _PASSWORD_POLICY_CACHE["expires_at"] = now + 60
+        return JSONResponse(content=policy)
+    except Exception as e:
+        logger.warning(f"Could not fetch Zitadel password policy: {e}")
+        return JSONResponse(content=fallback)
+
 @app.post("/api/sso/reprovision")
 async def sso_reprovision():
     """Re-run zitadel-provision.service. Used when a service failed
