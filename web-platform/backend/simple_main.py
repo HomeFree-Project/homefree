@@ -133,6 +133,56 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
 
 
 # Request logging middleware
+#
+# CRITICAL: Request bodies pass through here in cleartext. Any
+# endpoint that accepts a password, secret, token, or similar
+# credential MUST be path-matched in _SENSITIVE_PATH_PATTERNS so its
+# body is redacted before logging. Field-level redaction of known
+# key names (password / current_password / etc.) backs that up — if
+# someone adds a new endpoint and forgets to register the path, the
+# field-level pass still catches common credential fields.
+#
+# We log to systemd journal which goes to disk and is read by the
+# admin team. Leaking a cleartext password to the journal is a
+# severe incident — assume the journal is compromised threat-modelwise.
+_SENSITIVE_PATH_PATTERNS = (
+    "/password",        # any /api/users/.../password, /api/users/me/password
+    "/api/config/user", # installer user setup
+    "/secrets",         # any /api/secrets/... POST
+    "/api/users",       # POST /api/users (create) carries a `password` field
+)
+
+# Key names whose values get redacted regardless of path. Lowercase
+# match against JSON keys after parsing. This is the safety net.
+_SENSITIVE_KEYS = {
+    "password", "current_password", "new_password", "old_password",
+    "confirm_password", "secret", "client_secret", "token", "pat",
+    "api_key", "hashed_password", "passwd",
+}
+
+def _redact_body_for_log(path: str, body_str: str) -> str:
+    """Return a log-safe rendering of `body_str`. If the path is
+    flagged sensitive, swap the whole body for a placeholder. If not,
+    parse as JSON and scrub known-sensitive keys to a constant string.
+    Falls back to the placeholder on any parse error rather than
+    risk leaking a malformed payload that contains a credential."""
+    if any(p in path for p in _SENSITIVE_PATH_PATTERNS):
+        return "<redacted: sensitive path>"
+    try:
+        parsed = json.loads(body_str)
+    except Exception:
+        return body_str
+    def scrub(obj):
+        if isinstance(obj, dict):
+            return {
+                k: ("***REDACTED***" if k.lower() in _SENSITIVE_KEYS else scrub(v))
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [scrub(x) for x in obj]
+        return obj
+    return json.dumps(scrub(parsed), indent=2)
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Capture request details
@@ -147,12 +197,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 body_bytes = await request.body()
                 if body_bytes:
                     body = body_bytes.decode('utf-8')
-                    # Try to parse as JSON for pretty printing
-                    try:
-                        body_json = json.loads(body)
-                        body = json.dumps(body_json, indent=2)
-                    except:
-                        pass
+                    # Redact credentials BEFORE any pretty-printing —
+                    # we never want a cleartext password to touch the
+                    # logger, even transiently.
+                    body = _redact_body_for_log(path, body)
             except:
                 body = "<unable to read body>"
 
@@ -1204,7 +1252,7 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
         session_id = (r.json() or {}).get("sessionId")
         session_token = (r.json() or {}).get("sessionToken")
 
-        # 3. Admin-set the new password.
+        # 3. Admin-set the new password in Zitadel.
         r = await cx.post(
             f"{base}/management/v1/users/{user_id}/password",
             headers=_zitadel_headers(),
@@ -1232,7 +1280,51 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
             except Exception:
                 pass
 
+    # 5. Mirror to the local Linux account when the user is the OS
+    #    admin (homefree.system.adminUsername). The PAM bridge in
+    #    services/zitadel-pam-bridge.nix syncs OS→Zitadel via
+    #    pam_exec; this is the reverse path Zitadel→OS so the shell
+    #    password stays in sync with what the admin UI just set.
+    #
+    #    chpasswd writes /etc/shadow directly (not via PAM), so it
+    #    won't loop back through the bridge.
+    #
+    #    Non-admin users have no OS account, so we skip them.
+    admin_username = _homefree_admin_username()
+    if admin_username and username == admin_username:
+        try:
+            _os_sync_password(username, req.new_password)
+        except Exception as e:
+            # Don't fail the request — Zitadel is updated; surface a
+            # warning so the user knows to fix the OS side manually.
+            logger.error(f"Failed to mirror password to OS account: {e}")
+            return JSONResponse(content={
+                "success": True,
+                "warning": ("Password updated in Zitadel but OS sync "
+                            "failed. SSH access may use the old password "
+                            f"until you fix this manually: {e}"),
+            })
+
     return JSONResponse(content={"success": True})
+
+
+def _os_sync_password(username: str, new_password: str):
+    """Update the Linux account password to match Zitadel. The admin-
+    api runs as root (see services/admin-web.nix), so we can run
+    chpasswd directly. We pass the password on stdin so the cleartext
+    never appears in /proc/<pid>/cmdline."""
+    import subprocess
+    proc = subprocess.run(
+        ["chpasswd"],
+        input=f"{username}:{new_password}",
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"chpasswd exited {proc.returncode}: {proc.stderr.strip()}"
+        )
 
 @app.post("/api/users/{user_id}/password")
 async def set_password(user_id: str, req: SetPasswordRequest):
@@ -1256,7 +1348,17 @@ async def set_password(user_id: str, req: SetPasswordRequest):
         raise HTTPException(status_code=400, detail=err)
     import httpx
     base = _zitadel_base_url()
+    target_username = None
     async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        # Look up the target's username so we know whether to mirror
+        # the change to the OS account afterward.
+        r = await cx.get(
+            f"{base}/management/v1/users/{user_id}",
+            headers=_zitadel_headers(),
+        )
+        if r.status_code < 400:
+            target_username = (r.json().get("user") or {}).get("userName")
+
         r = await cx.post(
             f"{base}/management/v1/users/{user_id}/password",
             headers=_zitadel_headers(),
@@ -1265,6 +1367,22 @@ async def set_password(user_id: str, req: SetPasswordRequest):
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code,
                                 detail=f"Zitadel: {r.text}")
+
+    # Mirror to OS if we just changed the homefree admin's password,
+    # so SSH access stays in sync.
+    admin_username = _homefree_admin_username()
+    if (target_username and admin_username
+            and target_username == admin_username):
+        try:
+            _os_sync_password(target_username, req.new_password)
+        except Exception as e:
+            logger.error(f"Failed to mirror password to OS account: {e}")
+            return JSONResponse(content={
+                "success": True,
+                "warning": ("Password updated in Zitadel but OS sync "
+                            "failed. SSH access may use the old password "
+                            f"until you fix this manually: {e}"),
+            })
     return JSONResponse(content={"success": True})
 
 ## (Request models and the @app.get("/api/users/me") endpoint that

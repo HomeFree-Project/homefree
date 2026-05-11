@@ -428,6 +428,11 @@ in
             pkgs.gnused
             pkgs.gnugrep
             pkgs.findutils
+            ## chpasswd, used by the OS password sync in
+            ## /api/users/me/password and /api/users/{id}/password
+            ## (Zitadel→OS direction). The PAM bridge handles the
+            ## reverse OS→Zitadel direction.
+            pkgs.shadow
           ]}"
           # Path of the served frontend bundle, used by the closure-id
           # endpoint. Embeds the nix-store hash, so it changes IFF the
