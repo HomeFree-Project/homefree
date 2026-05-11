@@ -1112,27 +1112,11 @@ async def update_user(user_id: str, req: UpdateUserRequest):
 
     return JSONResponse(content={"success": True})
 
-@app.post("/api/users/{user_id}/password")
-async def set_password(user_id: str, req: SetPasswordRequest):
-    """Admin-set a target user's password. Used when an admin resets
-    someone else's password from the Users page. The new password is
-    validated against the same policy used elsewhere."""
-    from resolvers.config import validate_password
-    err = validate_password(req.new_password)
-    if err:
-        raise HTTPException(status_code=400, detail=err)
-    import httpx
-    base = _zitadel_base_url()
-    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
-        r = await cx.post(
-            f"{base}/management/v1/users/{user_id}/password",
-            headers=_zitadel_headers(),
-            json={"password": req.new_password},
-        )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code,
-                                detail=f"Zitadel: {r.text}")
-    return JSONResponse(content={"success": True})
+## NOTE: The /api/users/me/* routes MUST come before the parametric
+## /api/users/{user_id}/* routes. FastAPI matches in registration
+## order and "me" would otherwise be captured as a user_id, sending
+## the call to the admin-set handler with user_id="me" which fails
+## as "Password not found" inside Zitadel.
 
 @app.post("/api/users/me/password")
 async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
@@ -1248,6 +1232,39 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
             except Exception:
                 pass
 
+    return JSONResponse(content={"success": True})
+
+@app.post("/api/users/{user_id}/password")
+async def set_password(user_id: str, req: SetPasswordRequest):
+    """Admin-set a target user's password. Used when an admin resets
+    someone else's password from the Users page. The new password is
+    validated against the same policy used elsewhere.
+
+    user_id="me" is rejected here as a defensive check: route-order
+    is supposed to prevent that (change_own_password is registered
+    first), but if the order ever flips by accident, the explicit
+    reject keeps the call from going to Zitadel with a literal "me"
+    user id that yields the cryptic "Password not found" error."""
+    if user_id == "me":
+        raise HTTPException(
+            status_code=400,
+            detail="Use POST /api/users/me/password for self-service password change",
+        )
+    from resolvers.config import validate_password
+    err = validate_password(req.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        r = await cx.post(
+            f"{base}/management/v1/users/{user_id}/password",
+            headers=_zitadel_headers(),
+            json={"password": req.new_password},
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code,
+                                detail=f"Zitadel: {r.text}")
     return JSONResponse(content={"success": True})
 
 ## (Request models and the @app.get("/api/users/me") endpoint that
