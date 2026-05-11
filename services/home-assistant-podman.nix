@@ -145,6 +145,20 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.services.homeassistant.public;
+        ## Home Assistant has a built-in `auth_header` custom
+        ## component that trusts X-Remote-User from upstream proxies.
+        ## We gate at the Caddy oauth2-proxy layer; HA reads the
+        ## forwarded user header and creates/maps an HA user.
+        ## See services/home-assistant/configuration.yaml for the
+        ## auth_header trusted_proxies + header_name config.
+        ##
+        ## Caveat: oauth2-proxy emits X-Forwarded-User by default;
+        ## HA's auth_header reads X-Remote-User. Either configure
+        ## the auth_header component to accept X-Forwarded-User OR
+        ## leave HA's own login as the auth surface and use this
+        ## flag only for the LAN-direct path (which is what we do
+        ## by default — header mapping is opt-in).
+        oauth2 = config.homefree.sso.per-service.home-assistant.enable or true;
       };
       backup = {
         paths = [

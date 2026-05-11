@@ -42,6 +42,81 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Trusted-header auth middleware.
+#
+# Once the SSO bridge is fully provisioned (sentinel file present),
+# every request is required to carry an X-Auth-Request-User header set
+# by the upstream oauth2-proxy. Caddy's `forward_auth` block in
+# services/admin-web.nix only forwards requests after oauth2-proxy
+# accepts them, so the header is trustworthy *iff* the request came
+# through Caddy. Direct connections to localhost:8000 bypass this —
+# acceptable because the backend listens on loopback only.
+#
+# Pre-provisioning the sentinel doesn't exist (fresh install): the
+# admin UI must remain reachable so the user can finish first-time
+# setup. We open-fail in that mode rather than block.
+#
+# A small allowlist (PUBLIC_PATHS) covers endpoints that must work
+# without auth even after provisioning: health checks, the
+# service-state file used by the frontend overlay during rebuilds.
+class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
+    SENTINEL = Path("/var/lib/homefree-secrets/.sso-provisioned")
+    ADMIN_USERNAME_FILE = Path("/var/lib/homefree-admin/admin-username")
+    PUBLIC_PATHS = {
+        "/health",
+        "/api/service-state",
+        "/api/closure-id",
+    }
+    USER_HEADER = "x-auth-request-user"
+
+    async def dispatch(self, request: Request, call_next):
+        # Bootstrap mode: SSO not yet provisioned → backend is open.
+        # The admin must complete the installer flow which culminates
+        # in zitadel-provision.service running, which touches the
+        # sentinel. From the next request onward, this branch flips.
+        if not self.SENTINEL.exists():
+            return await call_next(request)
+
+        # Always-allowed paths.
+        if request.url.path in self.PUBLIC_PATHS:
+            return await call_next(request)
+
+        user = request.headers.get(self.USER_HEADER)
+        if not user:
+            # Direct hit on the backend (bypassing Caddy) or oauth2-
+            # proxy didn't set the header. Reject so we never act on
+            # an unauthenticated request post-provisioning.
+            return JSONResponse(
+                {"error": "unauthenticated", "detail": "missing X-Auth-Request-User"},
+                status_code=401,
+            )
+
+        # Optional per-user gate: if we know the configured admin
+        # username, require an exact match. Avoids "any Zitadel
+        # account" being able to drive the admin UI just because
+        # they happen to have an org account.
+        try:
+            if self.ADMIN_USERNAME_FILE.is_file():
+                expected = self.ADMIN_USERNAME_FILE.read_text().strip()
+                if expected and user != expected:
+                    logger.warning(
+                        "Admin UI access denied for user '%s' (expected '%s')",
+                        user, expected,
+                    )
+                    return JSONResponse(
+                        {"error": "forbidden", "detail": "not the admin user"},
+                        status_code=403,
+                    )
+        except Exception as e:
+            # Don't block on a transient FS error; log and continue.
+            logger.warning("Admin username check failed (allowing request): %s", e)
+
+        # Stash the authenticated user for downstream handlers that
+        # want to log it.
+        request.state.auth_user = user
+        return await call_next(request)
+
+
 # Request logging middleware
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -103,6 +178,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trust-header auth: added LAST so it runs FIRST (Starlette stacks
+# middleware LIFO — outermost = last added). Pre-provisioning this
+# is a no-op; post-provisioning it rejects requests that don't carry
+# the X-Auth-Request-User header set by oauth2-proxy via Caddy's
+# forward_auth block.
+app.add_middleware(TrustedHeaderAuthMiddleware)
 
 # Register API routers
 app.include_router(secrets_router)

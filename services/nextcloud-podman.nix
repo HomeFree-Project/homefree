@@ -41,6 +41,15 @@ let
         0 => 'tasks',
       ),
       'appstoreenabled' => true,
+      ## Nextcloud's HTTP client (Guzzle + DnsPinMiddleware) blocks
+      ## outbound requests to RFC1918 / link-local IPs by default
+      ## (SSRF guard). Our Zitadel runs on the same host at the LAN
+      ## address, so user_oidc's discovery fetch to
+      ## https://sso.<domain>/ resolves to a private IP and gets
+      ## refused with "violates local access rules". This switch
+      ## permits same-host / LAN service-to-service calls — required
+      ## for any internal-IdP OIDC setup.
+      'allow_local_remote_servers' => true,
       'csrf' =>
       array (
         'optout' =>
@@ -96,7 +105,17 @@ let
       ),
       'trusted_proxies' =>
       array (
-        0 => '10.0.0.0/16',
+        ## The Caddy reverse proxy lives on the LAN address. When it
+        ## proxies into the nextcloud container the request appears
+        ## to come from this IP — Nextcloud only honors X-Forwarded-*
+        ## headers (including X-Forwarded-Proto, which is what
+        ## convinces user_oidc the connection is HTTPS) when the
+        ## remote IP is in this list. Without it, OIDC bails with
+        ## "You must access Nextcloud with HTTPS to use OpenID
+        ## Connect" because PHP sees a plain-HTTP upstream call.
+        0 => '${config.homefree.network.lan-address}',
+        ## Podman default network — covers any same-host container
+        ## that talks to Nextcloud directly (e.g., HaRP proxy).
         1 => '10.88.0.0/16',
       ),
     );
@@ -106,6 +125,7 @@ let
     mkdir -p ${containerDataPath}/html
     mkdir -p ${containerDataPath}/config
     mkdir -p ${containerDataPath}/data
+    mkdir -p /var/lib/homefree-secrets/nextcloud
 
     # Copy override config
     cp -f ${nextcloud-config} ${containerDataPath}/config/override.config.php
@@ -124,6 +144,41 @@ let
       ## Env file used by app-api proxy docker container
       echo "HP_SHARED_KEY=$HARP_PASSWORD" > ${containerDataPath}/harp-env.txt
     fi
+
+    ## Note: an earlier iteration synthesised a system-CA bundle
+    ## here and bind-mounted it over /etc/ssl/certs/ca-certificates.crt
+    ## inside the container. That doesn't help Nextcloud — the
+    ## official PHP HTTP client (Guzzle in OC\Http\Client\Client)
+    ## ignores the system bundle and uses its own bundled cert
+    ## list at /var/www/html/resources/config/ca-bundle.crt. The
+    ## supported way to extend trust is `occ security:certificates:
+    ## import` (writes to data/files_external/rootcerts.crt which
+    ## Nextcloud loads in addition to the bundled certs). That
+    ## happens in postStart below; nothing to do here at preStart.
+    ##
+    ## Auto-generate the Nextcloud admin password on first boot. Once
+    ## SSO is provisioned the user will log in via Zitadel and never
+    ## need this — it stays as an emergency escape hatch and as the
+    ## password the install wizard uses to bootstrap the admin user.
+    ## Stored in /var/lib/homefree-secrets/nextcloud/admin-password
+    ## (mode 600) so the user can `cat` it if they need it.
+    if [ ! -s /var/lib/homefree-secrets/nextcloud/admin-password ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 24 \
+        > /var/lib/homefree-secrets/nextcloud/admin-password
+      chmod 600 /var/lib/homefree-secrets/nextcloud/admin-password
+    fi
+
+    ## Synthesise the env file the container reads. POSTGRES_PASSWORD
+    ## matches the literal 'changeme' baked into the role-creation
+    ## DO-block below — keep them in sync. NEXTCLOUD_ADMIN_PASSWORD
+    ## is what the install wizard uses to provision the initial admin
+    ## user named after homefree.system.adminUsername (set via
+    ## NEXTCLOUD_ADMIN_USER in the container env).
+    install -m 600 /dev/null ${containerDataPath}/runtime.env
+    {
+      echo "POSTGRES_PASSWORD=changeme"
+      echo "NEXTCLOUD_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/admin-password)"
+    } > ${containerDataPath}/runtime.env
 
     # Database initialization for postgres-vectorchord if needed
     ${''
@@ -205,6 +260,77 @@ let
     # Run maintenance tasks
     ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:repair --include-expensive || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ db:add-missing-indices
+
+    ## Register Zitadel as a user_oidc provider once the OIDC secrets
+    ## have been written by zitadel-provision.service. Idempotent: if
+    ## "Zitadel" already appears in `occ user_oidc:provider`, skip the
+    ## upsert. Pre-provisioning the secrets are absent, so we just
+    ## leave the existing local-account login flow in place.
+    if [ -s /var/lib/homefree-secrets/nextcloud/oidc-client-id ] \
+       && [ -s /var/lib/homefree-secrets/nextcloud/oidc-client-secret ]; then
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app:install user_oidc 2>/dev/null || true
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable user_oidc || true
+
+      ## Trust Caddy's local CA inside Nextcloud. user_oidc fetches
+      ## the discovery URL via Nextcloud's Guzzle client, which uses
+      ## its own bundle at /var/www/html/resources/config/ca-bundle.crt
+      ## (NOT the system /etc/ssl/certs bundle). The supported way to
+      ## extend trust is `occ security:certificates:import` — it
+      ## appends to data/files_external/rootcerts.crt, which Nextcloud
+      ## loads in addition to its bundled certs and survives upgrades.
+      ## Idempotent: importing the same cert twice is a no-op.
+      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        ${pkgs.podman}/bin/podman cp \
+          /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt \
+          nextcloud:/tmp/caddy-local-root.crt 2>/dev/null || true
+        ## podman cp preserves the source file's 0600 root:root mode,
+        ## but `occ` runs as www-data inside the container — without
+        ## a chmod here `security:certificates:import` fails with
+        ## "Certificate could not get parsed" (it can't even open
+        ## the file). Verified manually: with 0644 the import
+        ## succeeds and the discovery endpoint validates.
+        ${pkgs.podman}/bin/podman exec nextcloud chmod 644 /tmp/caddy-local-root.crt 2>/dev/null || true
+        ${pkgs.podman}/bin/podman exec nextcloud php occ \
+          security:certificates:import /tmp/caddy-local-root.crt 2>&1 \
+          | ${pkgs.gnugrep}/bin/grep -v "already exists" || true
+        ${pkgs.podman}/bin/podman exec nextcloud rm -f /tmp/caddy-local-root.crt 2>/dev/null || true
+      fi
+
+      EXISTS=$(${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider 2>/dev/null \
+                 | ${pkgs.gnugrep}/bin/grep -c "Zitadel" || true)
+      if [ "$EXISTS" -eq 0 ]; then
+        CID=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-id)
+        CSEC=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-secret)
+        ${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider Zitadel \
+          --clientid="$CID" \
+          --clientsecret="$CSEC" \
+          --discoveryuri="https://sso.${config.homefree.system.domain}/.well-known/openid-configuration" \
+          --scope="openid email profile" \
+          --mapping-display-name=name \
+          --mapping-email=email \
+          --mapping-uid=preferred_username \
+          --unique-uid=0 \
+          || echo "nextcloud postStart: user_oidc:provider registration failed (non-fatal)" >&2
+      fi
+
+      ## Force auto-redirect to Zitadel on every unauthenticated visit
+      ## by disabling Nextcloud's other login backends. The README
+      ## (https://github.com/nextcloud/user_oidc#disable-other-login-methods)
+      ## documents this exact behavior: with a single OIDC provider
+      ## configured AND allow_multiple_user_backends=0, the standard
+      ## login form is never shown — visiting nextcloud.<domain>
+      ## bounces straight to Zitadel.
+      ##
+      ## Emergency escape hatch: append `?direct=1` to the login URL
+      ## (https://nextcloud.<domain>/login?direct=1) to reach the
+      ## local password form for the auto-generated admin user (see
+      ## /var/lib/homefree-secrets/nextcloud/admin-password). Keep
+      ## this in mind if SSO breaks — without ?direct=1 you'll be
+      ## stuck in a redirect loop to a broken Zitadel.
+      ${pkgs.podman}/bin/podman exec nextcloud php occ \
+        config:app:set --type=string --value=0 user_oidc allow_multiple_user_backends \
+        || echo "nextcloud postStart: failed to set allow_multiple_user_backends (non-fatal)" >&2
+    fi
   '';
 in
 {
@@ -330,8 +456,13 @@ in
         APACHE_DISABLE_REWRITE_IP = "1";
       };
 
-      ## @TODO: this shouldn't need to be exposed to user config
-      environmentFiles = lib.optionals (config.homefree.service-options.nextcloud.secrets.env != null) [
+      ## runtime.env is synthesised by preStart from the on-disk
+      ## admin-password (auto-generated on first boot) plus the
+      ## hardcoded postgres password. The optional user-provided
+      ## env file overrides on top — order matters, last one wins.
+      environmentFiles = [
+        "${containerDataPath}/runtime.env"
+      ] ++ lib.optionals (config.homefree.service-options.nextcloud.secrets.env != null) [
         config.homefree.service-options.nextcloud.secrets.env
       ];
     };
@@ -416,6 +547,12 @@ in
         PHP_MEMORY_LIMIT = "1024M";
         PHP_UPLOAD_LIMIT = "1024M";
       };
+
+      ## Same runtime.env as the main container — POSTGRES_PASSWORD
+      ## is needed for the cron container's DB queries.
+      environmentFiles = [
+        "${containerDataPath}/runtime.env"
+      ];
     };
   };
 

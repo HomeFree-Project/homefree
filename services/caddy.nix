@@ -219,6 +219,44 @@ in
           '' else "")
           ## @TODO: throw an error if more than one host is using the same port
           + (if reverse-proxy-config.static-path != null then ''
+            ${if reverse-proxy-config.oauth2 == true then ''
+              ## SSO gate (static-served path). Every request inside
+              ## this site goes through oauth2-proxy validation via
+              ## forward_auth. The previous cookie-presence shortcut
+              ## (`not header Cookie *oauth2_proxy*`) was security-
+              ## broken — it only checked that *some* cookie matching
+              ## the substring existed, not that the cookie was
+              ## valid, so any `Cookie: _oauth2_proxy=anything` made
+              ## it through. Now we always ask oauth2-proxy.
+              ##
+              ## Design notes:
+              ##  - `file` matcher is evaluated at REQUEST time, so
+              ##    pre-provisioning (sentinel absent) the gate is
+              ##    skipped entirely — no double-rebuild on fresh
+              ##    install (see commit history for rationale).
+              ##  - `route` (not `handle`) is non-exclusive: after
+              ##    the auth check, subsequent file_server/encode/
+              ##    header directives still run.
+              ##  - On 401, `handle_response` short-circuits with a
+              ##    302 to /oauth2/start; the browser does the OIDC
+              ##    dance and lands back here with a valid cookie.
+              @sso_gate {
+                file {
+                  root /
+                  try_files /var/lib/homefree-secrets/.sso-provisioned
+                }
+              }
+              route @sso_gate {
+                forward_auth http://${lan-address}:4180 {
+                  uri /oauth2/auth
+                  copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
+                  @bad_status status 401
+                  handle_response @bad_status {
+                    redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
+                  }
+                }
+              }
+            '' else ""}
             root * ${reverse-proxy-config.static-path}
             file_server
 
@@ -281,14 +319,31 @@ in
             }
           '' else (
           (if reverse-proxy-config.oauth2 == true then ''
-            # Simple approach: check for cookie, redirect if missing
-            @no_auth {
-              not header Cookie *oauth2_proxy*
+            ## SSO gate (reverse-proxy site). Request-time `file`
+            ## matcher peeks at the sentinel: pre-provisioning the
+            ## gate is skipped, so the rendered config is correct
+            ## from day one of a fresh install (no double rebuild).
+            ## Post-provisioning every request runs through
+            ## oauth2-proxy /oauth2/auth via forward_auth; on 401
+            ## handle_response converts it into a 302 to
+            ## /oauth2/start. See the static-path branch above for
+            ## the full design rationale (same shape, same trade-
+            ## offs, same security properties).
+            @sso_gate {
+              file {
+                root /
+                try_files /var/lib/homefree-secrets/.sso-provisioned
+              }
             }
-
-            # Redirect unauthenticated users to OAuth2-Proxy
-            handle @no_auth {
-              redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
+            route @sso_gate {
+              forward_auth http://${lan-address}:4180 {
+                uri /oauth2/auth
+                copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
+                @bad_status status 401
+                handle_response @bad_status {
+                  redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
+                }
+              }
             }
           '' else "")
           +
@@ -342,12 +397,12 @@ in
           ''
               }
           ''
-          + (if reverse-proxy-config.oauth2 == true then ''
-              forward_auth http://${lan-address}:4180 {
-                uri /oauth2/auth
-                copy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Access-Token
-              }
-          '' else "")
+          ## Note: there used to be an inner `forward_auth` here for
+          ## the oauth2 path. It's been removed — the top-level
+          ## `route @sso_gate` block above already validates every
+          ## request before it reaches this reverse_proxy, so a
+          ## second forward_auth on the upstream call was redundant
+          ## (and didn't do redirect-on-401 anyway).
           + (if reverse-proxy-config.basic-auth == true then ''
               forward_auth ${lan-address}:3241 {
                 uri /oauth/v2/introspect

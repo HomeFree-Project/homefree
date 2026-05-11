@@ -454,6 +454,19 @@ in
           # Admin UI public access setting
           public = cfg.services.admin.public;
 
+          ## Gate the admin UI behind oauth2-proxy. The actual gate
+          ## runs at request time inside Caddy via a `file` matcher
+          ## on /var/lib/homefree-secrets/.sso-provisioned (see
+          ## services/caddy.nix's @no_auth matcher) — that way a
+          ## fresh install doesn't lock the user out before the
+          ## sentinel exists, AND doesn't require a second rebuild
+          ## to flip oauth2 on after provisioning lands.
+          ##
+          ## Honour the per-service.admin.enable opt-out for
+          ## environments that don't want SSO on the admin UI even
+          ## once provisioned.
+          oauth2 = cfg.sso.per-service.admin.enable or true;
+
           extraCaddyConfig = ''
             # Service state endpoint - always available (served directly by Caddy)
             handle /api/service-state {

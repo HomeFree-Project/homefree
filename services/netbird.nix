@@ -56,13 +56,19 @@ let
 
   enabled = netbirdCfg.enable;
   secretsDir = "/var/lib/homefree-secrets/netbird";
-  netbirdSecrets = netbirdCfg.secrets;
 
+  ## Gating switched from "user filled in 4 nullable string options"
+  ## to "the secrets exist on disk", since zitadel-provision.service
+  ## now writes all four files for us. Same evaluation-time
+  ## pathExists trick as services/zitadel-podman.nix used previously
+  ## — but the management.json preStart will refuse to start if
+  ## any are missing anyway, so a partial-state deploy still fails
+  ## cleanly.
   oidcConfigured =
-       (netbirdSecrets.oidc-client-id     or null) != null
-    && (netbirdSecrets.oidc-client-secret or null) != null
-    && (netbirdSecrets.mgmt-machine-token or null) != null
-    && (netbirdSecrets.data-store-encryption-key or null) != null;
+       builtins.pathExists "${secretsDir}/oidc-client-id"
+    && builtins.pathExists "${secretsDir}/oidc-client-secret"
+    && builtins.pathExists "${secretsDir}/mgmt-machine-token"
+    && builtins.pathExists "${secretsDir}/data-store-encryption-key";
   deployServer = enabled && oidcConfigured;
   deployClient = netbirdCfg.client.enable;
 
@@ -71,9 +77,40 @@ let
   ## a random TURN secret and password if they don't exist (coturn
   ## needs them but they're not user-visible — the management server
   ## hands them out to clients).
+  ##
+  ## Also gates the entire NetBird stack on the four Zitadel-provided
+  ## secrets being present — refuses to start (exit 1) if anything
+  ## is missing, which keeps the management container in a clean
+  ## "inactive" state pre-provisioning rather than crash-looping.
+  ## zitadel-provision.service `systemctl restart`s the unit once
+  ## the secrets land.
   managementJsonPreStart = ''
     set -eu
+
+    ## Secrets are guaranteed present at this point: the unit gates on
+    ## `ConditionPathExists=` for all four files, so systemd will skip
+    ## start (no failure, no restart-counter burn) if any are missing.
+    ## zitadel-provision.service `try-restart`s the unit once the files
+    ## land, at which point the conditions pass and we run.
+
     mkdir -p ${netbirdDataPath}
+
+    ## Build a CA bundle the container can mount over its own
+    ## /etc/ssl/certs/ca-certificates.crt. Caddy issues internal certs
+    ## for sso.${domain} from a runtime-generated local CA, which the
+    ## stock alpine bundle inside the container doesn't trust — that's
+    ## what produced the "x509: certificate signed by unknown
+    ## authority" failure on OIDC discovery. We concatenate the host
+    ## system bundle plus Caddy's local root (if it exists yet) so the
+    ## container has the same trust set as the host.
+    {
+      cat /etc/ssl/certs/ca-certificates.crt
+      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        echo
+        cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+      fi
+    } > ${netbirdDataPath}/ca-bundle.crt
+    chmod 644 ${netbirdDataPath}/ca-bundle.crt
     cd ${netbirdDataPath}
 
     if [ ! -s turn-secret ]; then
@@ -104,6 +141,23 @@ let
       -e "s|@@ZITADEL_DOMAIN@@|${zitadelDomain}|g" \
       ${./netbird/management.json.tmpl} \
       > ${netbirdDataPath}/management.json
+  '';
+
+  ## Synthesise /var/lib/netbird/dashboard.env from on-disk secrets
+  ## at preStart, so the dashboard container's auth-related env vars
+  ## come from runtime files (not Nix-time string substitution).
+  ## Same secrets gate as the management preStart.
+  dashboardEnvPreStart = ''
+    set -eu
+    ## Same `ConditionPathExists=` gate as netbird-management — see
+    ## the systemd.services.podman-netbird-dashboard block below.
+    mkdir -p ${netbirdDataPath}
+    install -m 600 /dev/null ${netbirdDataPath}/dashboard.env
+    {
+      CLIENT_ID=$(cat ${secretsDir}/oidc-client-id)
+      echo "AUTH_AUDIENCE=$CLIENT_ID"
+      echo "AUTH_CLIENT_ID=$CLIENT_ID"
+    } > ${netbirdDataPath}/dashboard.env
   '';
 
   ## coturn config — minimal; uses host networking so the listening
@@ -175,34 +229,49 @@ in
       };
     };
 
+    ## All four secrets are now auto-provisioned by
+    ## zitadel-provision.service (oidc-client-{id,secret} +
+    ## mgmt-machine-token via Zitadel API; data-store-encryption-key
+    ## locally generated). Marked internal so they no longer appear
+    ## as user-fillable fields in the admin UI.
     secrets = {
       oidc-client-id = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "OIDC Client ID for the netbird application in Zitadel.";
+        internal = true;
+        description = "(internal) written by zitadel-provision.service.";
       };
       oidc-client-secret = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "OIDC client secret paired with the client ID above.";
+        internal = true;
+        description = "(internal) written by zitadel-provision.service.";
       };
       mgmt-machine-token = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "PAT for the netbird-mgmt machine user in Zitadel (Org Owner role). NetBird mgmt uses this to read users/groups.";
+        internal = true;
+        description = "(internal) PAT for the netbird-mgmt machine user, minted by zitadel-provision.service.";
       };
       data-store-encryption-key = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "32-byte base64 key for at-rest encryption of the management datastore. Generate with: openssl rand -base64 32";
+        internal = true;
+        description = "(internal) 32-byte base64 key for at-rest encryption of the management datastore — locally generated by zitadel-provision.service.";
       };
     };
   };
 
   config = {
     ## ── NetBird server containers ──────────────────────────────────────
+    ## All five containers are always rendered when NetBird is
+    ## enabled. Pre-provisioning, the management + dashboard
+    ## containers refuse to start (their preStart bails on missing
+    ## secrets), and the others sit idle. zitadel-provision.service
+    ## kicks them via `systemctl restart` once secrets land — single
+    ## rebuild, no manual intervention.
     virtualisation.oci-containers.containers = lib.mkMerge [
-      (lib.optionalAttrs deployServer {
+      (lib.optionalAttrs enabled {
         netbird-management = {
           image = "netbirdio/management:${managementTag}";
           autoStart = true;
@@ -212,6 +281,10 @@ in
           volumes = [
             "${netbirdDataPath}:/var/lib/netbird"
             "${netbirdDataPath}/management.json:/etc/netbird/management.json:ro"
+            ## Trust Caddy's local CA so OIDC discovery against
+            ## https://sso.${domain} succeeds. See ca-bundle synthesis
+            ## in managementJsonPreStart.
+            "${netbirdDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
             "/etc/localtime:/etc/localtime:ro"
           ];
           cmd = [
@@ -261,8 +334,11 @@ in
           environment = {
             NETBIRD_MGMT_API_ENDPOINT = "https://netbird.${domain}";
             NETBIRD_MGMT_GRPC_API_ENDPOINT = "https://netbird.${domain}";
-            AUTH_AUDIENCE = netbirdSecrets.oidc-client-id;
-            AUTH_CLIENT_ID = netbirdSecrets.oidc-client-id;
+            ## AUTH_AUDIENCE + AUTH_CLIENT_ID are synthesised from the
+            ## on-disk client_id at preStart (see dashboard.env). We
+            ## can't bake them inline because the file may not exist
+            ## at Nix-eval time on a fresh install — that would force
+            ## a double-rebuild after provisioning.
             AUTH_CLIENT_SECRET = "";  # Native PKCE app — no secret in browser
             AUTH_AUTHORITY = "https://${zitadelDomain}";
             USE_AUTH0 = "false";
@@ -275,6 +351,7 @@ in
             LETSENCRYPT_DOMAIN = "";
             LETSENCRYPT_EMAIL = "";
           };
+          environmentFiles = [ "${netbirdDataPath}/dashboard.env" ];
         };
 
         netbird-coturn = {
@@ -293,41 +370,76 @@ in
     ## management container's preStart already creates the file under
     ## /var/lib/netbird/relay-secret; we just need to surface it as an
     ## env var via a separate file (kept tiny so it's easy to re-emit).
-    systemd.services.podman-netbird-management = lib.mkIf deployServer {
+    ##
+    ## The management container's preStart bails on missing Zitadel
+    ## secrets — see managementJsonPreStart's gate at the top of this
+    ## file. That's what keeps the unit cleanly inactive (rather than
+    ## crash-looping) until zitadel-provision lands the secrets.
+    systemd.services.podman-netbird-management = lib.mkIf enabled {
       after = [ "dns-ready.service" "podman-zitadel.service" ];
       requires = [ "dns-ready.service" ];
       partOf = [ "nftables.service" ];
+      ## Unit is silently skipped (ConditionResult=no) until all four
+      ## Zitadel-provided secrets land on disk. zitadel-provision
+      ## `try-restart`s us once they do — no crash-loop, no restart
+      ## counter burn.
+      unitConfig.ConditionPathExists = [
+        "${secretsDir}/oidc-client-id"
+        "${secretsDir}/oidc-client-secret"
+        "${secretsDir}/mgmt-machine-token"
+        "${secretsDir}/data-store-encryption-key"
+      ];
       serviceConfig.ExecStartPre = [
         "!${pkgs.writeShellScript "netbird-management-prestart" managementJsonPreStart}"
-        "!${pkgs.writeShellScript "netbird-relay-env" ''
-          set -eu
-          install -m 600 /dev/null ${netbirdDataPath}/relay.env
-          {
-            echo "NB_AUTH_SECRET=$(cat ${netbirdDataPath}/relay-secret)"
-          } > ${netbirdDataPath}/relay.env
+      ];
+    };
+
+    systemd.services.podman-netbird-signal = lib.mkIf enabled {
+      after = [ "dns-ready.service" ];
+      requires = [ "dns-ready.service" ];
+      partOf = [ "nftables.service" ];
+      ## Volume mount target needs to exist before podman tries to bind
+      ## it in. Independent of the OIDC secrets gate.
+      serviceConfig.ExecStartPre = [
+        "!${pkgs.writeShellScript "netbird-signal-prestart" ''
+          mkdir -p ${netbirdSignalDataPath}
         ''}"
       ];
     };
 
-    systemd.services.podman-netbird-signal = lib.mkIf deployServer {
-      after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
-      partOf = [ "nftables.service" ];
-    };
-
-    systemd.services.podman-netbird-relay = lib.mkIf deployServer {
+    systemd.services.podman-netbird-relay = lib.mkIf enabled {
       after = [ "dns-ready.service" "podman-netbird-management.service" ];
       requires = [ "dns-ready.service" ];
       partOf = [ "nftables.service" ];
+      ## Relay needs the auth secret that netbird-management generates
+      ## in its preStart. Gate on the file being present so we don't
+      ## crash-loop pre-provisioning.
+      unitConfig.ConditionPathExists = [
+        "${netbirdDataPath}/relay-secret"
+      ];
+      serviceConfig.ExecStartPre = [
+        "!${pkgs.writeShellScript "netbird-relay-env" ''
+          set -eu
+          install -m 600 /dev/null ${netbirdDataPath}/relay.env
+          echo "NB_AUTH_SECRET=$(cat ${netbirdDataPath}/relay-secret)" \
+            > ${netbirdDataPath}/relay.env
+        ''}"
+      ];
     };
 
-    systemd.services.podman-netbird-dashboard = lib.mkIf deployServer {
+    systemd.services.podman-netbird-dashboard = lib.mkIf enabled {
       after = [ "dns-ready.service" ];
       requires = [ "dns-ready.service" ];
       partOf = [ "nftables.service" ];
+      unitConfig.ConditionPathExists = [
+        "${secretsDir}/oidc-client-id"
+      ];
+      serviceConfig.ExecStartPre = [
+        "!${pkgs.writeShellScript "netbird-dashboard-prestart" dashboardEnvPreStart}"
+      ];
     };
 
-    systemd.services.podman-netbird-coturn = lib.mkIf deployServer {
+    systemd.services.podman-netbird-coturn = lib.mkIf enabled {
       after = [ "dns-ready.service" ];
       requires = [ "dns-ready.service" ];
       partOf = [ "nftables.service" ];
@@ -342,10 +454,15 @@ in
     };
 
     ## ── service-config (admin UI surface) ──────────────────────────────
+    ## All five server containers are always listed (and rendered) when
+    ## NetBird is enabled. Pre-provisioning the management + dashboard
+    ## containers will be inactive (their preStart bails on missing
+    ## secrets) and the admin UI's health check will reflect that —
+    ## NetBird shows as "needs SSO bootstrap" rather than "broken".
     homefree.service-config = lib.optionals enabled [
       {
         inherit (netbirdCfg) label name project-name;
-        systemd-service-names = lib.optionals deployServer [
+        systemd-service-names = [
           "podman-netbird-management"
           "podman-netbird-signal"
           "podman-netbird-relay"
@@ -356,7 +473,7 @@ in
           urlPathOverride = "/";
         };
         reverse-proxy = {
-          enable = deployServer;
+          enable = enabled;
           subdomains = [ "netbird" ];
           http-domains = [ "homefree.lan" cfg.system.localDomain ];
           https-domains = [ domain ];
@@ -418,46 +535,9 @@ in
             default = false;
             description = "Also run the NetBird client on this host (router as peer). Independent of server.";
           }
-          {
-            path = "secrets";
-            type = "submodule";
-            description = "OIDC + machine-user creds (via Zitadel) + datastore key. All four required for the NetBird server to deploy.";
-            sops-managed = true;
-            submodule-fields = [
-              {
-                path = "oidc-client-id";
-                type = "str";
-                nullable = true;
-                default = null;
-                description = "OIDC Client ID for the netbird application in Zitadel.";
-                sops-managed = true;
-              }
-              {
-                path = "oidc-client-secret";
-                type = "str";
-                nullable = true;
-                default = null;
-                description = "OIDC client secret paired with the client ID above.";
-                sops-managed = true;
-              }
-              {
-                path = "mgmt-machine-token";
-                type = "str";
-                nullable = true;
-                default = null;
-                description = "PAT for the netbird-mgmt machine user in Zitadel (Org Owner role).";
-                sops-managed = true;
-              }
-              {
-                path = "data-store-encryption-key";
-                type = "str";
-                nullable = true;
-                default = null;
-                description = "32-byte base64 key for at-rest encryption of the management datastore. Generate with: openssl rand -base64 32";
-                sops-managed = true;
-              }
-            ];
-          }
+          ## All four secrets are now provisioned automatically by
+          ## zitadel-provision.service. They no longer appear here as
+          ## user-fillable fields.
         ];
       }
     ];

@@ -71,7 +71,10 @@ in
     ./services/unifi-os-podman.nix
     ./services/vaultwarden-podman.nix
     ./services/webdav-podman.nix
+    ./services/sso.nix
     ./services/zitadel-podman.nix
+    ./services/zitadel-provision.nix
+    ./services/zitadel-pam-bridge.nix
     # ./services/zitadel-podman-oauth.nix
 
     ## @TODO: Move to podman

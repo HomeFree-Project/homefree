@@ -1359,6 +1359,27 @@ in
             )
         logger.info(f"Successfully set password for user {username} via chpasswd")
 
+        # Stash the plaintext password where Zitadel's first-instance
+        # bootstrap can find it. The Zitadel container's preStart reads
+        # this file to populate ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD,
+        # so the human user created on first boot has the same password
+        # as the OS admin user. Future password changes propagate via
+        # the PAM bridge (see services/zitadel-pam-bridge.nix).
+        zitadel_secrets_dir = f"{root_mount_point}/var/lib/homefree-secrets/zitadel"
+        zitadel_password_file = f"{zitadel_secrets_dir}/admin-password"
+        try:
+            mkdir_privileged(zitadel_secrets_dir)
+            run_privileged(["chmod", "700", zitadel_secrets_dir], check=True)
+            write_file_privileged(zitadel_password_file, password)
+            run_privileged(["chmod", "600", zitadel_password_file], check=True)
+            logger.info(f"Stashed admin password for Zitadel bootstrap at {zitadel_password_file}")
+        except Exception as e:
+            # Non-fatal: if this fails Zitadel just falls back to its
+            # initial-password default and the admin needs to set it
+            # manually on first login. We don't want a missing secrets
+            # dir to block the entire install.
+            logger.warning(f"Failed to stash Zitadel admin password (non-fatal): {e}")
+
         # Update flake.nix for development mode
         if ConfigService.is_development_mode():
             try:

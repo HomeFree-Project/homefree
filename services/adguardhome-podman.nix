@@ -351,6 +351,16 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.adguard.public;
+        ## AdGuard Home has no native OIDC support, so we gate it
+        ## entirely at the Caddy layer via oauth2-proxy. The actual
+        ## SSO check is enforced at request time by the @no_auth
+        ## matcher in services/caddy.nix — pre-provisioning, AdGuard
+        ## remains accessible (you can still hit it from the LAN
+        ## directly via http://<lan>:3000 too); post-provisioning,
+        ## any visit to https://adguard.<domain> requires a valid
+        ## Zitadel cookie. Per-service opt-out via
+        ## homefree.sso.per-service.adguard.enable=false.
+        oauth2 = config.homefree.sso.per-service.adguard.enable or true;
       };
       backup = {
         paths = [

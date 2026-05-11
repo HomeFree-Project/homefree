@@ -406,13 +406,18 @@ in
   ## *before* ExecStartPre runs, so we can't generate the file from
   ## within headplane.service itself — by the time ExecStartPre would
   ## run, LoadCredential has already failed with status 243.
+  ## RemainAfterExit deliberately omitted: headplane.service's `requires=`
+  ## re-triggers this oneshot on every (re)start, which is what we want
+  ## — if `/var/lib/homefree-secrets/headscale/` is wiped between
+  ## activations (e.g., the SSO bootstrap script's reset), the cookie
+  ## file gets regenerated before LoadCredential runs. The script is
+  ## idempotent: it only writes if the file is missing.
   systemd.services.headplane-prepare-secrets = lib.mkIf deployHeadplane {
     description = "Prepare Headplane runtime secrets (cookie secret)";
     wantedBy = [ "headplane.service" ];
     before = [ "headplane.service" ];
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = true;
     };
     script = ''
       set -eu
