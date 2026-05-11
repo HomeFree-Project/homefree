@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser } from '../../api/client.js';
+import { ssoSignOutUrl } from '../../shared/auth.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -33,7 +34,9 @@ class AdminApp extends LitElement {
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
     saveError: { type: String },           // First error message from a failed save, if any
     hasUnappliedChanges: { type: Boolean }, // Whether there are unapplied changes on disk
-    updateAvailable: { type: Boolean }     // System closure changed since page-load — UI is stale
+    updateAvailable: { type: Boolean },    // System closure changed since page-load — UI is stale
+    currentUser: { type: Object },         // {username, is_admin_user, admin_username} from /api/users/me
+    userMenuOpen: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -243,6 +246,111 @@ class AdminApp extends LitElement {
       display: flex;
       gap: 8px;
       align-items: center;
+    }
+
+    /* Sidebar Apply footer — pinned at the bottom by flex layout.
+       Pushes itself down by giving nav a flex: 1 above. */
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 12px;
+      border-top: 1px solid var(--hf-border);
+      flex-shrink: 0;
+    }
+    .sidebar.collapsed .sidebar-footer {
+      padding: 8px;
+    }
+    .sidebar-footer .apply-btn {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--hf-accent);
+      background: var(--hf-accent);
+      color: white;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.15s;
+    }
+    .sidebar-footer .apply-btn:hover:not(:disabled) {
+      opacity: 0.9;
+    }
+    .sidebar-footer .apply-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .sidebar.collapsed .sidebar-footer .apply-btn-text {
+      display: none;
+    }
+
+    /* User menu in the top bar */
+    .user-menu-wrap {
+      position: relative;
+    }
+    .user-menu-trigger {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface);
+      color: var(--hf-text);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .user-menu-trigger:hover,
+    .user-menu-trigger.open {
+      background: var(--hf-surface-2);
+      border-color: var(--hf-accent);
+    }
+    .user-menu-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 200px;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      box-shadow: var(--hf-shadow-lg);
+      z-index: 100;
+      overflow: hidden;
+    }
+    .user-menu-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--hf-border);
+      font-size: 13px;
+    }
+    .user-menu-header .user-name {
+      color: var(--hf-text);
+      font-weight: 500;
+    }
+    .user-menu-header .user-role {
+      color: var(--hf-text-muted);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    .user-menu-item {
+      display: block;
+      padding: 10px 14px;
+      color: var(--hf-text);
+      text-decoration: none;
+      font-size: 14px;
+      background: none;
+      border: none;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .user-menu-item:hover {
+      background: var(--hf-surface-2);
     }
 
     /* Save status indicator */
@@ -659,6 +767,9 @@ class AdminApp extends LitElement {
     this._toastIdCounter = 0;
     this.hasAuthorizedKeys = false;
     this.serviceReloading = false;
+    this.currentUser = null;
+    this.userMenuOpen = false;
+    this._closeUserMenuOnOutsideClick = null;
     this.serviceReloadMessage = '';
     this.serviceStateCheckInterval = null;
 
@@ -775,6 +886,12 @@ class AdminApp extends LitElement {
     // Check service availability before loading config
     await this.checkServiceAvailability();
 
+    // Load the currently-signed-in user so we can show them in the
+    // top-bar user menu. Non-blocking — falls back to a generic avatar.
+    getCurrentUser()
+      .then((u) => { this.currentUser = u; })
+      .catch(() => {});
+
     await this.loadConfig();
 
     // Load SSH key status for secrets management
@@ -824,6 +941,11 @@ class AdminApp extends LitElement {
     }
     if (this._savedFlashTimer) {
       clearTimeout(this._savedFlashTimer);
+    }
+    if (this._closeUserMenuOnOutsideClick) {
+      document.removeEventListener('mousedown',
+        this._closeUserMenuOnOutsideClick, true);
+      this._closeUserMenuOnOutsideClick = null;
     }
   }
 
@@ -1080,6 +1202,35 @@ class AdminApp extends LitElement {
 
   toggleSidebar() {
     this.sidebarCollapsed = !this.sidebarCollapsed;
+  }
+
+  /** Toggle the top-bar user menu. Sets up an outside-click handler
+   *  so clicking anywhere else dismisses the popover. */
+  toggleUserMenu(e) {
+    if (e) e.stopPropagation();
+    this.userMenuOpen = !this.userMenuOpen;
+    if (this.userMenuOpen) {
+      this._closeUserMenuOnOutsideClick = (evt) => {
+        const path = evt.composedPath();
+        const trigger = this.renderRoot?.querySelector('.user-menu-wrap');
+        if (trigger && !path.includes(trigger)) {
+          this.userMenuOpen = false;
+          document.removeEventListener('mousedown',
+            this._closeUserMenuOnOutsideClick, true);
+          this._closeUserMenuOnOutsideClick = null;
+        }
+      };
+      // Defer registration so the click that opened the menu doesn't
+      // immediately close it.
+      setTimeout(() => {
+        document.addEventListener('mousedown',
+          this._closeUserMenuOnOutsideClick, true);
+      }, 0);
+    } else if (this._closeUserMenuOnOutsideClick) {
+      document.removeEventListener('mousedown',
+        this._closeUserMenuOnOutsideClick, true);
+      this._closeUserMenuOnOutsideClick = null;
+    }
   }
 
   getCurrentModuleTitle() {
@@ -2003,6 +2154,41 @@ class AdminApp extends LitElement {
     }
   }
 
+  /** Top-right user menu: avatar circle with the signed-in user's
+   *  initial, click opens a popover with sign-out. Defensive on
+   *  missing currentUser (e.g. /api/users/me failed) — falls back to
+   *  a generic "Account" label. */
+  _renderUserMenu() {
+    const u = this.currentUser;
+    const username = u?.username || '';
+    const initial = username ? username[0].toUpperCase() : '?';
+    const role = u?.is_admin_user ? 'HomeFree admin' : 'Signed in';
+
+    return html`
+      <div class="user-menu-wrap">
+        <button
+          class="user-menu-trigger ${this.userMenuOpen ? 'open' : ''}"
+          @click=${this.toggleUserMenu}
+          title=${username ? `Signed in as ${username}` : 'Account menu'}
+          aria-haspopup="true"
+          aria-expanded=${this.userMenuOpen}
+        >${initial}</button>
+
+        ${this.userMenuOpen ? html`
+          <div class="user-menu-popover">
+            <div class="user-menu-header">
+              <div class="user-name">${username || 'Account'}</div>
+              <div class="user-role">${role}</div>
+            </div>
+            <a class="user-menu-item" href=${ssoSignOutUrl()}>
+              Sign out
+            </a>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   render() {
     // Show full-screen loading spinner on initial load
     if (this.loading) {
@@ -2064,6 +2250,24 @@ class AdminApp extends LitElement {
               `)}
             `)}
           </nav>
+
+          <!-- Apply button pinned to the sidebar bottom. nav-menu has
+               flex: 1 so the footer naturally lands here. Title shows
+               "Apply" when collapsed since the text is hidden. -->
+          <div class="sidebar-footer">
+            <button
+              class="apply-btn"
+              @click=${this.handleApplyChanges}
+              ?disabled=${this.rebuildStatus.running}
+              title=${this.rebuildStatus.running
+                ? 'Rebuild in progress — wait for it to finish before applying again'
+                : 'Apply pending configuration'}
+            >
+              ${this.rebuildStatus.running
+                ? html`<span class="btn-spinner"></span><span class="apply-btn-text">Applying…</span>`
+                : html`<span class="apply-btn-text">Apply</span>${this.sidebarCollapsed ? html`✓` : ''}`}
+            </button>
+          </div>
         </div>
 
         <!-- Main Content -->
@@ -2075,14 +2279,7 @@ class AdminApp extends LitElement {
             </div>
 
             <div class="top-bar-actions">
-              <button
-                class="btn btn-primary"
-                @click=${this.handleApplyChanges}
-                ?disabled=${this.rebuildStatus.running}
-                title="${this.rebuildStatus.running ? 'Rebuild in progress — wait for it to finish before applying again' : 'Apply pending configuration'}"
-              >
-                ${this.rebuildStatus.running ? html`<span class="btn-spinner"></span>Applying…` : 'Apply'}
-              </button>
+              ${this._renderUserMenu()}
             </div>
           </div>
 
