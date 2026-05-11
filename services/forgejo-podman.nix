@@ -8,8 +8,68 @@ let
   forgejoSecretsDir = "/var/lib/homefree-secrets/forgejo";
   domain = config.homefree.system.domain;
 
+  ## Where Forgejo's container expects to read secret values from.
+  ## We mount the host-side secrets dir read-only at this path so the
+  ## `..._FILE` env vars below resolve to readable paths inside the
+  ## container without having to bake secrets into the image or pass
+  ## them as plain env strings.
+  forgejoContainerSecretsDir = "/run/secrets/forgejo";
+
   preStart = ''
+    set -eu
     mkdir -p ${containerDataPath}
+    mkdir -p ${forgejoSecretsDir}
+
+    ## Auto-generate the four secrets needed to bypass Forgejo's
+    ## install wizard. Each one is generated only if missing, so
+    ## restarts and rebuilds are no-ops. Stored at mode 600 in the
+    ## existing forgejoSecretsDir alongside the OIDC secrets that
+    ## zitadel-provision writes — same access-control story.
+    ##
+    ## - secret-key: 64-char hex string used by Forgejo to derive
+    ##   internal MACs.
+    ## - internal-token: HS256-signed JWT secret used for
+    ##   inter-process API auth (ssh hooks, web ↔ background, etc.).
+    ##   Must be a JWT secret format ("base64-of-random-bytes" is
+    ##   what `forgejo generate secret INTERNAL_TOKEN` produces).
+    ## - admin-password: random 24-byte base64 string. Once SSO is
+    ##   wired in the user logs in via Zitadel; this stays as an
+    ##   emergency escape hatch (the local admin account remains).
+    if [ ! -s ${forgejoSecretsDir}/secret-key ]; then
+      ${pkgs.openssl}/bin/openssl rand -hex 32 \
+        > ${forgejoSecretsDir}/secret-key
+      chmod 600 ${forgejoSecretsDir}/secret-key
+    fi
+    if [ ! -s ${forgejoSecretsDir}/internal-token ]; then
+      ## Forgejo's INTERNAL_TOKEN is a JWT secret — base64url(random).
+      ## Length matches what `forgejo generate secret INTERNAL_TOKEN`
+      ## produces (~105 bytes after base64).
+      ${pkgs.openssl}/bin/openssl rand -base64 96 \
+        | ${pkgs.coreutils}/bin/tr -d '\n' \
+        > ${forgejoSecretsDir}/internal-token
+      chmod 600 ${forgejoSecretsDir}/internal-token
+    fi
+    if [ ! -s ${forgejoSecretsDir}/admin-password ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 24 \
+        > ${forgejoSecretsDir}/admin-password
+      chmod 600 ${forgejoSecretsDir}/admin-password
+    fi
+
+    ## Build a CA bundle the container can mount over its own
+    ## /etc/ssl/certs/ca-certificates.crt. Caddy issues internal
+    ## certs for sso.<domain> from a runtime-generated local CA
+    ## that the stock Alpine bundle doesn't trust — without this
+    ## `forgejo admin auth add-oauth` (and any subsequent OIDC
+    ## discovery fetch) fails with "x509: certificate signed by
+    ## unknown authority". Same pattern as netbird/nextcloud.
+    {
+      cat /etc/ssl/certs/ca-certificates.crt
+      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        echo
+        cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+      fi
+    } > ${containerDataPath}/ca-bundle.crt
+    chmod 644 ${containerDataPath}/ca-bundle.crt
   '';
 
   ## After Forgejo is up, register Zitadel as an OAuth auth source if
@@ -25,6 +85,52 @@ let
   postStart = pkgs.writeShellScript "forgejo-poststart" ''
     set -u
 
+    ## Wait up to 60s for forgejo to be ready inside the container.
+    ## Both the admin-user CLI and the auth CLI need the app DB to
+    ## be migrated, which doesn't finish until the web process is
+    ## past first-request initialization.
+    for i in $(seq 1 30); do
+      if ${pkgs.podman}/bin/podman exec --user git forgejo \
+           forgejo admin user list >/dev/null 2>&1; then
+        break
+      fi
+      [ "$i" = 30 ] && {
+        echo "forgejo postStart: forgejo CLI not responsive after 60s" >&2
+        exit 0
+      }
+      sleep 2
+    done
+
+    ## Idempotently create the admin user. With INSTALL_LOCK=true
+    ## (set in the container env) Forgejo skips the install wizard,
+    ## but that means there's no admin user either. We bootstrap
+    ## one here using the OS admin's username + email, with the
+    ## auto-generated password from
+    ## /var/lib/homefree-secrets/forgejo/admin-password.
+    ##
+    ## --must-change-password=false because Zitadel SSO will be the
+    ## primary login path; the user shouldn't be forced through a
+    ## password change for an account they may never use directly.
+    ADMIN_USER="${config.homefree.system.adminUsername}"
+    ADMIN_EMAIL="${config.homefree.system.adminEmail or "${config.homefree.system.adminUsername}@${domain}"}"
+    if ! ${pkgs.podman}/bin/podman exec --user git forgejo \
+           forgejo admin user list 2>/dev/null \
+           | ${pkgs.gnugrep}/bin/grep -qE "^[0-9]+[[:space:]]+$ADMIN_USER\b"; then
+      ADMIN_PASS=$(cat ${forgejoSecretsDir}/admin-password)
+      echo "forgejo postStart: creating admin user '$ADMIN_USER'" >&2
+      if ${pkgs.podman}/bin/podman exec --user git forgejo \
+           forgejo admin user create \
+             --username "$ADMIN_USER" \
+             --password "$ADMIN_PASS" \
+             --email "$ADMIN_EMAIL" \
+             --admin \
+             --must-change-password=false; then
+        echo "forgejo postStart: admin user '$ADMIN_USER' created" >&2
+      else
+        echo "forgejo postStart: admin user creation failed (non-fatal)" >&2
+      fi
+    fi
+
     ## Bail quietly if SSO secrets aren't on disk yet — fresh install
     ## before zitadel-provision has run, or homefree.sso.per-service.
     ## forgejo.enable=false (in which case the secrets are gone after
@@ -36,23 +142,9 @@ let
       exit 0
     fi
 
-    ## Wait up to 60s for forgejo to be ready inside the container.
-    ## The auth CLI requires the app DB to be migrated.
-    for i in $(seq 1 30); do
-      if ${pkgs.podman}/bin/podman exec forgejo \
-           forgejo admin auth list-oauth >/dev/null 2>&1; then
-        break
-      fi
-      [ "$i" = 30 ] && {
-        echo "forgejo postStart: forgejo CLI not responsive after 60s" >&2
-        exit 0
-      }
-      sleep 2
-    done
-
     ## Skip if the Zitadel auth source already exists.
-    if ${pkgs.podman}/bin/podman exec forgejo \
-         forgejo admin auth list-oauth 2>/dev/null \
+    if ${pkgs.podman}/bin/podman exec --user git forgejo \
+         forgejo admin auth list 2>/dev/null \
          | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+[[:space:]]+Zitadel\b'; then
       echo "forgejo postStart: Zitadel auth source already registered, skipping" >&2
       exit 0
@@ -62,7 +154,7 @@ let
     CSEC=$(cat ${forgejoSecretsDir}/oidc-client-secret)
 
     echo "forgejo postStart: registering Zitadel as OAuth source" >&2
-    if ${pkgs.podman}/bin/podman exec forgejo \
+    if ${pkgs.podman}/bin/podman exec --user git forgejo \
          forgejo admin auth add-oauth \
            --provider openidConnect \
            --name Zitadel \
@@ -144,10 +236,38 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:/data"
+        ## Mount the host secrets dir read-only so `..._FILE` env
+        ## vars below can resolve to files inside the container.
+        "${forgejoSecretsDir}:${forgejoContainerSecretsDir}:ro"
+        ## Trust Caddy's local CA so `forgejo admin auth add-oauth`
+        ## and the runtime OIDC discovery fetch succeed. See
+        ## ca-bundle synthesis in preStart.
+        "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
       ];
 
       environment = {
         TZ = config.homefree.system.timeZone;
+
+        ## Skip the install wizard entirely. Without this Forgejo
+        ## boots with INSTALL_LOCK=false in app.ini and serves the
+        ## "Initial Configuration" form on every fresh start. With
+        ## this set, Forgejo expects SECRET_KEY + INTERNAL_TOKEN +
+        ## a working DB config to be present at startup — all of
+        ## which we provide via the FORGEJO__security__* env vars
+        ## below and the bundled sqlite default. The first user
+        ## becomes the site admin (no separate "make me admin"
+        ## step needed). Admin user creation happens in postStart
+        ## via `forgejo admin user create`.
+        FORGEJO__security__INSTALL_LOCK = "true";
+
+        ## Both secrets generated in preStart, mounted under
+        ## ${forgejoContainerSecretsDir} via the volume above.
+        ## The `..._FILE` suffix tells Forgejo to read the value
+        ## from the file path rather than treating the env var as
+        ## the literal value — keeps secrets out of `ps`/proc env
+        ## listings.
+        FORGEJO__security__SECRET_KEY__FILE = "${forgejoContainerSecretsDir}/secret-key";
+        FORGEJO__security__INTERNAL_TOKEN__FILE = "${forgejoContainerSecretsDir}/internal-token";
 
         ## app.ini server config
         FORGEJO__server__HTTP_PORT = toString port;
@@ -161,7 +281,70 @@ in
         FORGEJO__server__ROOT_URL = "https://git.${config.homefree.system.domain}";
 
         ## app.ini service config
-        FORGEJO__service__DISABLE_REGISTRATION = if config.homefree.service-options.forgejo.disable-registration == true then "true" else "false";
+        ##
+        ## When OIDC is the intended login path, registration must
+        ## be enabled at the service level (DISABLE_REGISTRATION=
+        ## false) so the OAuth flow can auto-create accounts —
+        ## otherwise Forgejo serves the /user/link_account page
+        ## with no submit button and the user is stuck. The
+        ## ALLOW_ONLY_EXTERNAL_REGISTRATION + SHOW_REGISTRATION_BUTTON
+        ## flags below close off the local signup form so the
+        ## "registration enabled" status doesn't leak through to
+        ## the UI. Net effect matches the user-visible
+        ## `disable-registration` intent: no public sign-ups, just
+        ## SSO-driven account creation.
+        FORGEJO__service__DISABLE_REGISTRATION = "false";
+        FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION = "true";
+        FORGEJO__service__SHOW_REGISTRATION_BUTTON =
+          if config.homefree.service-options.forgejo.disable-registration == true then "false" else "true";
+        FORGEJO__service__REGISTER_EMAIL_CONFIRM = "false";
+
+        ## OIDC-driven account creation + auto-link.
+        ##  - ENABLE_AUTO_REGISTRATION: skips the link_account page
+        ##    and creates a local account on first OAuth login.
+        ##    Requires DISABLE_REGISTRATION=false above.
+        ##  - USERNAME=nickname: Forgejo's goth client populates the
+        ##    `nickname` field from the OIDC `preferred_username`
+        ##    claim (which Zitadel sends by default). Using this as
+        ##    the local username keeps the OS/Zitadel/Forgejo
+        ##    usernames in sync.
+        ##  - ACCOUNT_LINKING=auto: when a local account already
+        ##    exists with the same username (the admin we bootstrap
+        ##    in postStart), silently link the OAuth identity to
+        ##    it instead of prompting. Resolution order: username
+        ##    first, then email.
+        ##  - OPENID_CONNECT_SCOPES: matches what we ask for in
+        ##    `add-oauth --scopes "openid email profile"` so the ID
+        ##    token has the claims we need to populate the local
+        ##    user record (preferred_username, email, name).
+        FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION = "true";
+        FORGEJO__oauth2_client__USERNAME = "nickname";
+        FORGEJO__oauth2_client__ACCOUNT_LINKING = "auto";
+        FORGEJO__oauth2_client__REGISTER_EMAIL_CONFIRM = "false";
+        FORGEJO__oauth2_client__OPENID_CONNECT_SCOPES = "openid profile email";
+        FORGEJO__oauth2_client__UPDATE_AVATAR = "true";
+
+        ## Hide the local password form on the sign-in page. Combined
+        ## with the /user/login → /user/oauth2/Zitadel rewrite in
+        ## Caddy (extraCaddyConfig below), this delivers a true
+        ## zero-click SSO experience: visit git.<domain> → bounce to
+        ## Zitadel → done.
+        ##
+        ## Trade-offs:
+        ##  - ENABLE_INTERNAL_SIGNIN=false (Forgejo ≥10.0): hides
+        ##    the username/password form. The local admin account
+        ##    still exists (we create it in postStart) and can be
+        ##    used via `forgejo admin user change-password` from
+        ##    inside the container as an emergency recovery path.
+        ##  - ENABLE_BASIC_AUTHENTICATION=false: blocks `git push`
+        ##    over HTTPS with raw passwords. Users must mint a
+        ##    personal access token (Settings → Applications →
+        ##    Generate New Token) and use that as the password in
+        ##    git's credential prompt. Tokens still work as Basic
+        ##    auth credentials, so existing tooling that knows how
+        ##    to use a PAT keeps working.
+        FORGEJO__service__ENABLE_INTERNAL_SIGNIN = "false";
+        FORGEJO__service__ENABLE_BASIC_AUTHENTICATION = "false";
 
         ## app.ini migrations config
         FORGEJO__migrations__ALLOWED_DOMAINS = "*";
@@ -211,6 +394,42 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.forgejo.public;
+        ## Force every visit to /user/login to bounce straight to
+        ## the Zitadel OAuth flow. Combined with the
+        ## ENABLE_INTERNAL_SIGNIN=false / ENABLE_BASIC_AUTHENTICATION=
+        ## false env vars set on the container, this gives a true
+        ## zero-click SSO experience: visit git.<domain> →
+        ## redirect to /user/login → redirect to Zitadel → done.
+        ##
+        ## The OAuth source name "Zitadel" must match the --name
+        ## argument in `forgejo admin auth add-oauth` (see the
+        ## postStart hook). Forgejo's OAuth callback path
+        ## /user/oauth2/<name>/callback is also Zitadel-aware, so
+        ## we don't need to rewrite anything else.
+        ##
+        ## Emergency escape: if Zitadel breaks, comment out this
+        ## extraCaddyConfig and re-run scripts/build.sh. The local
+        ## form will reappear once ENABLE_INTERNAL_SIGNIN is also
+        ## flipped back to true (default).
+        extraCaddyConfig = ''
+          ## Top-level `redir` (NOT wrapped in handle/route). The
+          ## shared caddy.nix template emits a catch-all
+          ## `handle { reverse_proxy ... }` for this site; if the
+          ## redir lived inside its own `handle` block, Caddy's
+          ## first-match semantics would let the catch-all eat the
+          ## request before our matcher fired. As a top-level
+          ## directive `redir` is sorted by Caddy's directive
+          ## ordering — which places it *before* `handle` — so it
+          ## takes effect first.
+          ##
+          ## {query} is Caddy's full original query string ("a=1&b=2"
+          ## without the leading ?). Forgejo's standard deep-link
+          ## flow sets `?redirect_to=<path>` on /user/login so it
+          ## can return the user to the page they tried to reach.
+          ## Forwarding the entire query string preserves that.
+          @forgejo_login path /user/login
+          redir @forgejo_login /user/oauth2/Zitadel?{query} 302
+        '';
       };
       firewall = {
         open-ports = {
