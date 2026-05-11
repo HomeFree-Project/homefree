@@ -119,7 +119,17 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
                         user, expected,
                     )
                     return JSONResponse(
-                        {"error": "forbidden", "detail": "not the admin user"},
+                        {
+                            "error": "forbidden",
+                            "code": "not_admin_user",
+                            "detail": (
+                                f"You are signed in as '{user}', but the "
+                                f"HomeFree admin UI is restricted to "
+                                f"'{expected}'."
+                            ),
+                            "current_user": user,
+                            "admin_user": expected,
+                        },
                         status_code=403,
                     )
         except Exception as e:

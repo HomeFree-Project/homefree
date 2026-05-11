@@ -19,8 +19,14 @@ async function fetchAPI(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(error.detail || `HTTP ${response.status}: ${response.statusText}`);
+      const body = await response.json().catch(() => ({ detail: response.statusText }));
+      // Attach the HTTP status and full body to the Error so callers
+      // can branch on auth errors (401/403) and surface tailored
+      // messages instead of a generic "Failed to connect".
+      const err = new Error(body.detail || `HTTP ${response.status}: ${response.statusText}`);
+      err.status = response.status;
+      err.body = body;
+      throw err;
     }
 
     return await response.json();

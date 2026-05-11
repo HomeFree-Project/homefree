@@ -7,7 +7,12 @@ class HomeFreeApp extends LitElement {
   static properties = {
     mode: { type: String },
     loading: { type: Boolean },
-    error: { type: String }
+    error: { type: String },
+    // Set when the backend returns 401/403 — distinct from a generic
+    // "can't reach backend" failure so the UI can show a tailored
+    // page (signed in as X, but admin UI requires Y) instead of the
+    // misleading "Connection Error".
+    accessDenied: { type: Object },
   };
 
   static styles = css`
@@ -86,6 +91,7 @@ class HomeFreeApp extends LitElement {
     this.mode = null;
     this.loading = true;
     this.error = null;
+    this.accessDenied = null;
   }
 
   async connectedCallback() {
@@ -95,7 +101,10 @@ class HomeFreeApp extends LitElement {
 
   async detectMode() {
     // Retry logic to handle transient NetworkErrors during page refresh
-    // when old page's cleanup races with new page's first request
+    // when old page's cleanup races with new page's first request.
+    // Auth failures (401/403) are NOT transient — short-circuit those
+    // immediately so the user doesn't sit through 3x retries before
+    // seeing the access-denied page.
     let retries = 3;
     let lastError = null;
 
@@ -107,8 +116,17 @@ class HomeFreeApp extends LitElement {
         return;
       } catch (error) {
         lastError = error;
-        retries--;
 
+        if (error.status === 401 || error.status === 403) {
+          this.accessDenied = {
+            status: error.status,
+            ...(error.body || {}),
+          };
+          this.loading = false;
+          return;
+        }
+
+        retries--;
         if (retries > 0) {
           // Wait 500ms before retry to allow old page cleanup to complete
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -133,6 +151,10 @@ class HomeFreeApp extends LitElement {
           </div>
         </div>
       `;
+    }
+
+    if (this.accessDenied) {
+      return this._renderAccessDenied();
     }
 
     if (this.error) {
@@ -163,6 +185,53 @@ class HomeFreeApp extends LitElement {
           <div class="error-icon">⚠️</div>
           <h2>Unknown Mode</h2>
           <p>Detected mode: ${this.mode}</p>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderAccessDenied() {
+    const d = this.accessDenied;
+    const isUnauth = d.status === 401;
+    const currentUser = d.current_user;
+    const adminUser = d.admin_user;
+
+    // Differentiate the two cases:
+    //   401 = no auth header at all (oauth2-proxy didn't gate this
+    //         request, or you're hitting the backend directly).
+    //   403 = signed in but not the configured HomeFree admin.
+    const title = isUnauth ? 'Sign-in required' : 'Access denied';
+    const icon = isUnauth ? '🔒' : '🚫';
+
+    return html`
+      <div class="error">
+        <div class="error-content">
+          <div class="error-icon">${icon}</div>
+          <h2>${title}</h2>
+          ${isUnauth ? html`
+            <p>You're not signed in. Try refreshing the page.</p>
+          ` : html`
+            ${currentUser && adminUser ? html`
+              <p>
+                You're signed in as <strong>${currentUser}</strong>,
+                but the HomeFree admin UI is only accessible to
+                <strong>${adminUser}</strong>.
+              </p>
+              <p style="margin-top: 16px; opacity: 0.8;">
+                <small>
+                  Sign out and back in as the admin user, or ask
+                  ${adminUser} to grant you access.
+                </small>
+              </p>
+            ` : html`
+              <p>${d.detail || 'You do not have permission to view this page.'}</p>
+            `}
+          `}
+          <p style="margin-top: 24px;">
+            <a href="/oauth2/sign_out" style="color: white;">
+              Sign out
+            </a>
+          </p>
         </div>
       </div>
     `;
