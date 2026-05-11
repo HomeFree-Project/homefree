@@ -162,6 +162,23 @@ let
       needs_pat = false;
       post_restart_units = [ "podman-forgejo.service" ];
     }
+    {
+      svc = "home-assistant";
+      internal_name = "homefree-home-assistant";
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## auth_oidc HA component callback path (see source:
+      ## custom_components/auth_oidc/endpoints/callback.py → PATH).
+      redirect_uris = [
+        "https://ha.${domain}/auth/oidc/callback"
+        "https://homeassistant.${domain}/auth/oidc/callback"
+      ];
+      post_logout_uris = [ "https://ha.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-homeassistant.service" ];
+    }
   ];
 
   ## Render the services table as newline-delimited records. Each
