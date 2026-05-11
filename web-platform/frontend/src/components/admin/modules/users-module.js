@@ -485,6 +485,38 @@ class UsersModule extends LitElement {
     }
   }
 
+  /** Should the Save Changes button be enabled? When change_password
+   *  is checked, the new password must validate AND match the confirm
+   *  field, AND if it's a self password change, the current-password
+   *  field must be populated. Without change_password the button is
+   *  always enabled (profile-only edits — name/email/admin — don't
+   *  have separate validation here). */
+  _canSaveEdit() {
+    const f = this.editForm;
+    if (!f) return false;
+    if (this.saving) return false;
+    if (!f.change_password) return true;
+
+    const v = validatePassword(f.new_password, this.policy);
+    if (!v.ok) return false;
+    if (f.new_password !== f.confirm_password) return false;
+    if (this._isMe({ username: f.username }) && !f.current_password) {
+      return false;
+    }
+    return true;
+  }
+
+  /** Same gate, for the Create button. */
+  _canCreate() {
+    const f = this.form;
+    if (this.creating) return false;
+    if (!f.username || !f.email) return false;
+    const v = validatePassword(f.password, this.policy);
+    if (!v.ok) return false;
+    if (f.password !== f.confirm_password) return false;
+    return true;
+  }
+
   /** Inline confirm-match indicator. Shows nothing if the confirm
    *  field is empty (no nag while still typing), green check + text
    *  when the two match, red × + text when they don't. */
@@ -672,7 +704,12 @@ class UsersModule extends LitElement {
               this.form = this._blankCreateForm();
             }}
           >Cancel</button>
-          <button type="submit" class="btn primary" ?disabled=${this.creating}>
+          <button type="submit" class="btn primary"
+            ?disabled=${!this._canCreate()}
+            title=${!this._canCreate()
+              ? 'Fill in username, email, and a matching password that meets requirements'
+              : ''}
+          >
             ${this.creating ? 'Creating…' : 'Create user'}
           </button>
         </div>
@@ -766,7 +803,12 @@ class UsersModule extends LitElement {
           <button type="button" class="btn" @click=${this._cancelEdit}>
             Cancel
           </button>
-          <button type="submit" class="btn primary" ?disabled=${this.saving}>
+          <button type="submit" class="btn primary"
+            ?disabled=${!this._canSaveEdit()}
+            title=${!this._canSaveEdit() && this.editForm?.change_password
+              ? 'Password must meet requirements and match confirm field'
+              : ''}
+          >
             ${this.saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
