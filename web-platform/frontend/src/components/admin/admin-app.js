@@ -4,6 +4,8 @@ import { handleSignOut } from '../../shared/auth.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
+import './modules/mounts-module.js';
+import './modules/extra-proxies-module.js';
 import './modules/services-module.js';
 import './modules/backups-module.js';
 import './modules/sso-module.js';
@@ -824,6 +826,18 @@ class AdminApp extends LitElement {
         id: 'dns',
         title: 'DNS',
         icon: '🔍',
+        section: 'System'
+      },
+      {
+        id: 'mounts',
+        title: 'Mounts',
+        icon: '🗂️',
+        section: 'System'
+      },
+      {
+        id: 'extra-proxies',
+        title: 'External Proxies',
+        icon: '🔌',
         section: 'System'
       },
       {
@@ -2090,6 +2104,22 @@ class AdminApp extends LitElement {
             .config=${this.config}
             @config-change=${this.handleConfigChange}
           ></dns-module>
+        `;
+
+      case 'mounts':
+        return html`
+          <mounts-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></mounts-module>
+        `;
+
+      case 'extra-proxies':
+        return html`
+          <extra-proxies-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></extra-proxies-module>
         `;
 
       case 'services':

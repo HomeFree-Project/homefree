@@ -99,8 +99,16 @@ class InstallationService:
     "static_ips": []
   },
   "dns": {
-    "overrides": []
+    "overrides": [],
+    "dynamic_dns": {
+      "interval": "10m",
+      "usev4": "webv4, webv4=ipinfo.io/ip",
+      "usev6": "webv6, webv6=v6.ipinfo.io/ip",
+      "zones": []
+    },
+    "cert_management": null
   },
+  "mounts": [],
   "sso": {
     "allowUserRegistration": false,
     "per-service": {}
@@ -225,11 +233,29 @@ class InstallationService:
     "baikal": {
       "enable": false,
       "public": false
+    },
+    "trilium": {
+      "enable": false,
+      "public": false
+    },
+    "azuracast": {
+      "enable": false,
+      "public": false
+    },
+    "odoo": {
+      "enable": false,
+      "public": false
+    },
+    "unifi-os": {
+      "enable": false,
+      "public": false
     }
   },
+  "service_config": [],
   "backups": {
     "enable": false,
     "to_path": "",
+    "extra_from_paths": [],
     "backblaze_enable": false,
     "backblaze_bucket": ""
   }
@@ -302,7 +328,57 @@ in
           ip = override.ip;
         }) jsonData.dns.overrides;
       };
+
+      ## Remote DNS / dynamic-dns / wildcard cert acquisition. The
+      ## JSON carries non-secret metadata (zone names, protocol,
+      ## username, etc.) plus a *secret key* per zone — never the
+      ## password itself. The actual secret file lives at
+      ## /var/lib/homefree-secrets/ddclient/<key> (zone passwords)
+      ## and /var/lib/homefree-secrets/dns/api-token (DNS-01 API
+      ## token). Users either copy these in from the existing
+      ## SOPS-managed source on the previous host or populate them
+      ## via the secrets UI.
+      remote = {
+        cert-management.dns-01 = {
+          provider = jsonData.dns.cert_management.provider or null;
+          resolvers = jsonData.dns.cert_management.resolvers or [ "1.1.1.1" ];
+          secrets.api-token =
+            if (jsonData.dns.cert_management.provider or null) == null
+            then null
+            else /var/lib/homefree-secrets/dns/api-token;
+        };
+        dynamic-dns = {
+          interval = jsonData.dns.dynamic_dns.interval or "10m";
+          usev4    = jsonData.dns.dynamic_dns.usev4 or "webv4, webv4=ipinfo.io/ip";
+          usev6    = jsonData.dns.dynamic_dns.usev6 or "webv6, webv6=v6.ipinfo.io/ip";
+          zones = map (z: {
+            disable  = z.disable or false;
+            zone     = z.zone;
+            protocol = z.protocol or "hetzner";
+            username = z.username;
+            domains  = z.domains or [ "@" "*" ];
+            passwordFile =
+              ## Allow callers to skip the path-existence check on
+              ## the schema side by emitting a /run/keys-style
+              ## non-existent stub when the secret hasn't been
+              ## dropped yet. Once the file is in place at
+              ## /var/lib/homefree-secrets/ddclient/<key>, ddclient
+              ## will pick it up.
+              /var/lib/homefree-secrets/ddclient + ("/" + (z.password_secret_key or "password"));
+          }) (jsonData.dns.dynamic_dns.zones or []);
+        };
+      };
     };
+
+    mounts = map (m: {
+      mount-point   = m.mount_point;
+      device        = m.device;
+      fs-type       = m.fs_type or "nfs";
+      nfs-version   = m.nfs_version or "3";
+      automount     = m.automount or true;
+      idle-timeout  = m.idle_timeout or "600";
+      extra-options = m.extra_options or [];
+    }) (jsonData.mounts or []);
 
     ## Per-service SSO opt-out toggles. The JSON stores
     ##   { "per-service": { "adguard": { "enable": false }, ... } }
@@ -438,16 +514,58 @@ in
 
       baikal.enable = jsonData.services.baikal.enable or false;
       baikal.public = jsonData.services.baikal.public or false;
+
+      trilium.enable = jsonData.services.trilium.enable or false;
+      trilium.public = jsonData.services.trilium.public or false;
+
+      azuracast.enable = jsonData.services.azuracast.enable or false;
+      azuracast.public = jsonData.services.azuracast.public or false;
+
+      odoo.enable = jsonData.services.odoo.enable or false;
+      odoo.public = jsonData.services.odoo.public or false;
+
+      unifi-os.enable = jsonData.services."unifi-os".enable or false;
+      unifi-os.public = jsonData.services."unifi-os".public or false;
     };
 
     backups = {
       enable = jsonData.backups.enable;
       to-path = if jsonData.backups.to_path == "" then null else jsonData.backups.to_path;
+      extra-from-paths = jsonData.backups.extra_from_paths or [];
       backblaze = {
         enable = jsonData.backups.backblaze_enable;
         bucket = if jsonData.backups.backblaze_bucket == "" then null else jsonData.backups.backblaze_bucket;
       };
     };
+
+    ## Extra reverse-proxy entries for non-HomeFree hardware (NAS UI,
+    ## solar inverter admin, smart-plug PSU, router admin, etc.).
+    ## Each entry contributes one item to homefree.service-config; the
+    ## existing Caddy generator iterates that list and adds a route.
+    ## In-tree HomeFree services have their own service-config entries
+    ## emitted by their respective .nix files — those entries are
+    ## merged with these via NixOS list-merge semantics.
+    service-config = map (e: {
+      label = e.label;
+      name = e.name or e.label;
+      reverse-proxy = {
+        enable    = e.enable or true;
+        subdomains = e.subdomains or [ e.label ];
+        ## https-domains is the user's public domains. When empty,
+        ## services/caddy.nix falls back to system.domain +
+        ## additionalDomains. Same default behavior in-tree services
+        ## use, so external entries get the same coverage automatically.
+        https-domains = e.https_domains or [];
+        host      = e.host;
+        port      = e.port or 80;
+        ssl       = e.ssl or false;
+        ssl-no-verify = e.ssl_no_verify or false;
+        public    = e.public or false;
+        oauth2    = e.oauth2 or false;
+        basic-auth = e.basic_auth or false;
+        require-admin-role = e.require_admin_role or false;
+      };
+    }) (jsonData.service_config or []);
   };
 
   # Set admin user password

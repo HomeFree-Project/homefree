@@ -143,11 +143,21 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
             'static_ips': []
         },
         'dns': {
-            'overrides': []
+            'overrides': [],
+            'dynamic_dns': {
+                'interval': '10m',
+                'usev4': 'webv4, webv4=ipinfo.io/ip',
+                'usev6': 'webv6, webv6=v6.ipinfo.io/ip',
+                'zones': []
+            },
+            'cert_management': None
         },
+        'mounts': [],
+        'service_config': [],
         'backups': {
             'enable': False,
             'to_path': '',
+            'extra_from_paths': [],
             'backblaze_enable': False,
             'backblaze_bucket': ''
         }
@@ -158,8 +168,8 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         if section not in synced_config:
             synced_config[section] = defaults
             changes.append(f"+ Added missing section: {section}")
-        else:
-            # Add any missing keys in existing section
+        elif isinstance(defaults, dict):
+            # Add any missing keys in existing section (dict-shaped sections only)
             for key, default_value in defaults.items():
                 if key not in synced_config[section]:
                     synced_config[section][key] = default_value

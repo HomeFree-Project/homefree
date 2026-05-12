@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
+import '../../shared/list-input.js';
 import '../../shared/progress-modal.js';
 import '../secrets-input.js';
 
@@ -246,6 +247,7 @@ class BackupsModule extends LitElement {
       backups: {
         enable: false,
         to_path: '',
+        extra_from_paths: [],
         backblaze_enable: false,
         backblaze_bucket: ''
       }
@@ -957,9 +959,18 @@ class BackupsModule extends LitElement {
           type="text"
           .value=${backups.to_path}
           placeholder="/var/lib/backups"
-          help="Path to local backup storage (shown for restore even if backups disabled)"
+          help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
           @field-change=${(e) => this.handleFieldChange('backups.to_path', e.detail.value)}
         ></form-field>
+
+        <list-input
+          label="Extra Backup Paths"
+          itemType="path"
+          .value=${backups.extra_from_paths || []}
+          description="Additional directories to include in backups (one per line). HomeFree service data is backed up automatically; use this for user files (Documents, Photos, etc.) — often paths under a mounted NAS share."
+          placeholder="/mnt/ellis/Documents"
+          @list-changed=${(e) => this.handleFieldChange('backups.extra_from_paths', e.detail.value)}
+        ></list-input>
 
         ${backups.enable ? html`
           <div class="info-box">

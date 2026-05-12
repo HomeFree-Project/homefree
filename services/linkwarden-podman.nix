@@ -173,7 +173,7 @@ in
         ## NextAuth needs its absolute base URL to construct the
         ## redirect_uri it registers with Zitadel. /api/v1/auth is
         ## Linkwarden's NextAuth mount point — same for all providers.
-        NEXTAUTH_URL = "https://links.${domain}/api/v1/auth";
+        NEXTAUTH_URL = "https://linkwarden.${domain}/api/v1/auth";
         ## Caddy terminates TLS upstream of Linkwarden — the actual
         ## request to the container is plain HTTP. Without
         ## AUTH_TRUST_HOST=true, NextAuth ignores the

@@ -302,7 +302,10 @@ let
       ## accepts the request; Caddy then rewrites the inbound callback
       ## from /api/auth/... to /api/v1/auth/... so it reaches the real
       ## NextAuth handler (the no-v1 path is a hard 404).
-      redirect_uris = [ "https://links.${domain}/api/auth/callback/zitadel" ];
+      redirect_uris = [
+        "https://linkwarden.${domain}/api/auth/callback/zitadel"
+        "https://links.${domain}/api/auth/callback/zitadel"
+      ];
       post_logout_uris = [ "https://links.${domain}/" ];
       needs_pat = false;
       post_restart_units = [ "podman-linkwarden.service" ];

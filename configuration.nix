@@ -16,6 +16,9 @@ in
     ./profiles/traffic-control.nix
     ./profiles/virtualisation.nix
 
+    ## Host modules
+    ./modules/mounts.nix
+
     ## Admin interface
     ./services/admin-web.nix
 

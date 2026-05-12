@@ -21,7 +21,7 @@ in
       username = zone.username;
       zone = zone.zone;
       domains = zone.domains;
-      passwordFile = zone.passwordFile;
+      passwordFile = toString zone.passwordFile;
     }) cfg.zones;
   };
 }

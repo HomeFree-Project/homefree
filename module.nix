@@ -435,6 +435,76 @@
       };
     };
 
+    mounts = lib.mkOption {
+      description = ''
+        Network filesystems to mount on the host. Each entry produces a
+        `fileSystems."<mount-point>"` declaration. NFS entries also
+        enable `services.rpcbind`. Used for backup destinations and
+        media stores that live on a NAS.
+      '';
+      default = [];
+      example = [
+        {
+          mount-point = "/mnt/ellis";
+          device = "10.0.0.42:/volume1/ellis";
+          fs-type = "nfs";
+          nfs-version = "3";
+          automount = true;
+          idle-timeout = "600";
+        }
+      ];
+      type = with lib.types; listOf (submodule {
+        options = {
+          mount-point = lib.mkOption {
+            type = str;
+            description = "Absolute path where the filesystem is mounted (e.g. /mnt/ellis).";
+          };
+
+          device = lib.mkOption {
+            type = str;
+            description = ''
+              Source device. For NFS this is `<host>:<export>`
+              (e.g. `10.0.0.42:/volume1/ellis`).
+            '';
+          };
+
+          fs-type = lib.mkOption {
+            type = str;
+            default = "nfs";
+            description = "Filesystem type passed to mount (e.g. nfs, cifs).";
+          };
+
+          nfs-version = lib.mkOption {
+            type = enum [ "3" "4" "4.1" "4.2" ];
+            default = "3";
+            description = "NFS protocol version. Ignored for non-NFS filesystems.";
+          };
+
+          automount = lib.mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              When true, the mount is realised on first access via
+              x-systemd.automount + noauto, and unmounted after
+              idle-timeout seconds of inactivity.
+            '';
+          };
+
+          idle-timeout = lib.mkOption {
+            type = str;
+            default = "600";
+            description = "Seconds of inactivity before an automount entry is unmounted.";
+          };
+
+          extra-options = lib.mkOption {
+            type = listOf str;
+            default = [];
+            description = "Additional mount options appended after the computed defaults.";
+          };
+        };
+      });
+    };
+
     proxied-domains = lib.mkOption {
       description = "Domain proxy mappings for transparently forwarding entire domains to other servers";
       default = [];

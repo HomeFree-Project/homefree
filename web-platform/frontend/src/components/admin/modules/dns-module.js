@@ -1,10 +1,12 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
+import '../../shared/form-field.js';
 import '../../shared/table-editor.js';
 
 /**
  * DNS configuration module
- * Handles: Local DNS overrides, dynamic DNS zones
+ * Handles: Local DNS overrides, dynamic DNS zones, and DNS-01 wildcard
+ * certificate provider configuration.
  */
 class DnsModule extends LitElement {
   static properties = {
@@ -20,25 +22,70 @@ class DnsModule extends LitElement {
     .module-container {
       width: 100%;
     }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .field-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .help-box {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-accent);
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      max-width: 1200px;
+      line-height: 1.5;
+    }
+
+    .help-box strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--hf-text);
+      font-size: 14px;
+    }
+
+    .help-box code {
+      background: var(--hf-surface-2);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: var(--hf-font-mono, monospace);
+      font-size: 12px;
+    }
   `;
 
   constructor() {
     super();
     this.config = {
       dns: {
-        overrides: []
+        overrides: [],
+        dynamic_dns: { interval: '10m', usev4: '', usev6: '', zones: [] },
+        cert_management: null
       }
     };
     this.modified = false;
   }
 
   handleFieldChange(field, value) {
-    // Update config
     const newConfig = { ...this.config };
     const path = field.split('.');
 
+    // Ensure intermediate objects exist so the user can fill in
+    // dns.cert_management.provider when cert_management was null.
     let current = newConfig;
     for (let i = 0; i < path.length - 1; i++) {
+      if (current[path[i]] == null || typeof current[path[i]] !== 'object') {
+        current[path[i]] = {};
+      }
       current = current[path[i]];
     }
     current[path[path.length - 1]] = value;
@@ -46,7 +93,6 @@ class DnsModule extends LitElement {
     this.config = newConfig;
     this.modified = true;
 
-    // Emit change event to parent
     this.dispatchEvent(new CustomEvent('config-change', {
       detail: { config: newConfig },
       bubbles: true,
@@ -58,27 +104,57 @@ class DnsModule extends LitElement {
     this.handleFieldChange('dns.overrides', e.detail.data);
   }
 
-  render() {
-    const { dns } = this.config;
+  handleZonesChange(e) {
+    // table-editor returns rows with snake_case keys matching the
+    // schema. Coerce `domains` from comma-separated text to an array
+    // and back so users can edit it as a string in the modal.
+    const data = (e.detail.data || []).map(row => ({
+      ...row,
+      domains: Array.isArray(row.domains)
+        ? row.domains
+        : (typeof row.domains === 'string'
+            ? row.domains.split(',').map(s => s.trim()).filter(Boolean)
+            : [])
+    }));
+    this.handleFieldChange('dns.dynamic_dns.zones', data);
+  }
 
-    // DNS overrides table columns
+  render() {
+    const dns = this.config.dns || {};
+    const dynamicDns = dns.dynamic_dns || { zones: [] };
+    const certMgmt = dns.cert_management || {};
+
     const dnsOverrideColumns = [
       { key: 'hostname', label: 'Hostname', type: 'text', placeholder: 'myserver' },
       { key: 'domain', label: 'Domain', type: 'text', placeholder: 'local' },
       { key: 'ip', label: 'IP Address', type: 'text', placeholder: '10.0.0.50' }
     ];
 
+    // For zones we model `domains` as text inside the table-editor
+    // (it doesn't support array fields) and split/join on write/read.
+    const zoneRows = (dynamicDns.zones || []).map(z => ({
+      ...z,
+      domains: Array.isArray(z.domains) ? z.domains.join(', ') : (z.domains || '')
+    }));
+    const zoneColumns = [
+      { key: 'zone', label: 'Zone', type: 'text', placeholder: 'example.com' },
+      { key: 'protocol', label: 'Protocol', type: 'text', placeholder: 'hetzner' },
+      { key: 'username', label: 'Username', type: 'text', placeholder: 'erahhal' },
+      { key: 'domains', label: 'Domains (comma-sep)', type: 'text', placeholder: '@, *, www' },
+      { key: 'password_secret_key', label: 'Password File Key', type: 'text', placeholder: 'password' },
+      { key: 'disable', label: 'Disabled', type: 'boolean' }
+    ];
+
     return html`
       <div class="module-container">
-        <!-- Local DNS Overrides -->
         <config-section
           title="Local DNS Overrides"
           description="Map custom hostnames to IP addresses on your local network"
         >
           <p style="color: var(--hf-text-muted); font-size: 14px; margin-bottom: 16px;">
-            DNS overrides allow you to resolve custom hostnames like "myserver.local" to specific IP addresses on your network.
+            DNS overrides allow you to resolve custom hostnames like
+            "myserver.local" to specific IP addresses on your network.
           </p>
-
           <table-editor
             .columns=${dnsOverrideColumns}
             .data=${dns.overrides || []}
@@ -87,14 +163,83 @@ class DnsModule extends LitElement {
           ></table-editor>
         </config-section>
 
-        <!-- Future: Dynamic DNS -->
         <config-section
-          title="Dynamic DNS"
-          description="Automatically update your public DNS records (Coming Soon)"
+          title="Dynamic DNS Zones"
+          description="Keep public DNS records pointed at this box's current WAN IP"
         >
-          <p style="color: var(--hf-text-muted); font-size: 14px;">
-            Dynamic DNS configuration will be available in a future update. This will allow you to automatically update DNS records when your public IP address changes.
-          </p>
+          <div class="help-box">
+            <strong>How DDNS zone passwords work</strong>
+            Each zone needs an API password or token. Don't paste it
+            into this form. Instead, give the secret a short key
+            (e.g. <code>password</code>) and drop the secret file at
+            <code>/var/lib/homefree-secrets/ddclient/&lt;key&gt;</code>
+            (mode 0600, owned by root). The system reloads ddclient
+            automatically after a rebuild. Zones can share a single
+            key if they share a credential.
+          </div>
+
+          <div class="field-row">
+            <form-field
+              label="Refresh Interval"
+              type="text"
+              .value=${dynamicDns.interval || '10m'}
+              placeholder="10m"
+              help="How often ddclient re-checks the WAN IP (systemd time spec)."
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.interval', e.detail.value)}
+            ></form-field>
+          </div>
+
+          <div class="field-row">
+            <form-field
+              label="IPv4 use= directive"
+              type="text"
+              .value=${dynamicDns.usev4 || ''}
+              placeholder="webv4, webv4=ipinfo.io/ip"
+              help="ddclient's 'use=' directive for IPv4."
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.usev4', e.detail.value)}
+            ></form-field>
+
+            <form-field
+              label="IPv6 use= directive"
+              type="text"
+              .value=${dynamicDns.usev6 || ''}
+              placeholder="webv6, webv6=v6.ipinfo.io/ip"
+              help="ddclient's 'use=' directive for IPv6."
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.usev6', e.detail.value)}
+            ></form-field>
+          </div>
+
+          <table-editor
+            .columns=${zoneColumns}
+            .data=${zoneRows}
+            addLabel="Add Zone"
+            @data-change=${this.handleZonesChange}
+          ></table-editor>
+        </config-section>
+
+        <config-section
+          title="Wildcard Certificates (DNS-01)"
+          description="ACME DNS-01 provider for *.<domain> certificates"
+        >
+          <div class="help-box">
+            <strong>API token location</strong>
+            Drop the provider's API token at
+            <code>/var/lib/homefree-secrets/dns/api-token</code>
+            (mode 0600, owned by root). Wildcard cert renewal happens
+            via Caddy and is wired up automatically when a provider is
+            selected.
+          </div>
+
+          <div class="field-row">
+            <form-field
+              label="DNS Provider"
+              type="text"
+              .value=${certMgmt.provider || ''}
+              placeholder="hetzner"
+              help="Currently supported: hetzner. Leave blank to disable wildcard certs."
+              @field-change=${(e) => this.handleFieldChange('dns.cert_management.provider', e.detail.value || null)}
+            ></form-field>
+          </div>
         </config-section>
       </div>
     `;
