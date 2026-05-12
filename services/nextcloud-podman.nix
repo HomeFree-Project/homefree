@@ -620,6 +620,10 @@ in
         "podman-nextcloud-cron"
         "postgresql"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "user_oidc provider; homefree-admin role maps to Nextcloud admin group. Emergency escape hatch: /login?direct=1 for local password fallback.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.nextcloud.enable;
         subdomains = [ "nextcloud" ];

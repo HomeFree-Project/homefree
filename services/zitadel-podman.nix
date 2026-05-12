@@ -665,6 +665,10 @@ in
           "podman-oauth2-proxy"
         ];
         admin.show = true;
+        sso = {
+          kind = "infra";
+          notes = "Zitadel itself — this IS the SSO IdP.";
+        };
         reverse-proxy = {
           enable = zitadelEnabled;
           ## Drop the legacy "zitadel" subdomain — Zitadel v4 rejects
@@ -723,6 +727,10 @@ in
         project-name = "OAuth2 Proxy";
         systemd-service-names = [ "podman-oauth2-proxy" ];
         admin.show = false;
+        sso = {
+          kind = "infra";
+          notes = "OAuth2 Proxy — SSO gate sidecar, not a consumer.";
+        };
         reverse-proxy = {
           enable = true;
           subdomains = [ "auth" ];

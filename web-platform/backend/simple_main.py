@@ -896,87 +896,52 @@ async def geocode_address(q: str):
 SSO_SECRETS_DIR = "/var/lib/homefree-secrets"
 SSO_GLOBAL_SENTINEL = f"{SSO_SECRETS_DIR}/.sso-provisioned"
 
-# SSO catalog. The single source of truth for what the admin SSO page
-# displays. Each entry has:
-#   - label: the homefree-config.json key (matches services/install.py
-#     and homefree.services.<name>.enable)
-#   - display: human-readable name for the UI
-#   - sso_kind: how SSO is wired up (see SSO_KIND_* constants below)
-#
-# When you add native-OIDC or Caddy-gated SSO to a service, flip its
-# sso_kind here. Services with sso_kind="none" render as "Not yet
-# implemented" — they still exist in HomeFree but currently require
-# their own local login.
-#
-# Infrastructure services (zitadel itself, postgres, landing-page,
-# DNS, etc.) are intentionally absent — they have no user-facing
-# login.
+# Path to the Nix-rendered service catalog. Written at activation by
+# services/service-config-json.nix from the active homefree.service-
+# config tree, so it's always in sync with the live system.
+SERVICE_CONFIG_JSON_PATH = "/etc/homefree/service-config.json"
+
+# SSO kind constants — these are the values service-config-json.nix
+# emits under `entry.sso.kind`. Kept as Python constants here so
+# downstream code that branches on kind stays readable.
 SSO_KIND_NATIVE = "native_oidc"   # service has its own OIDC client
 SSO_KIND_CADDY = "caddy_gated"    # Caddy oauth2-proxy gate in front
 SSO_KIND_BRIDGE = "basic_auth"    # Caddy gate + Basic-Auth bridge
+SSO_KIND_INFRA = "infra"          # the SSO infra itself (Zitadel,
+                                  # oauth2-proxy) — hidden from the
+                                  # SSO inventory
 SSO_KIND_NONE = "none"            # not yet wired up
 
-SSO_CATALOG = [
-    # Already implemented. `secrets_dir` defaults to `label`; override
-    # it when the on-disk dir name diverges (home-assistant vs
-    # homeassistant — the config key, secrets dir, and Zitadel app
-    # name don't all agree historically).
-    {"label": "admin",          "display": "HomeFree Admin",  "sso_kind": SSO_KIND_CADDY},
-    {"label": "adguard",        "display": "AdGuard Home",    "sso_kind": SSO_KIND_BRIDGE},
-    {"label": "headscale",      "display": "Headscale",       "sso_kind": SSO_KIND_NATIVE},
-    {"label": "netbird",        "display": "NetBird",         "sso_kind": SSO_KIND_NATIVE},
-    {"label": "immich",         "display": "Immich",          "sso_kind": SSO_KIND_NATIVE},
-    {"label": "nextcloud",      "display": "Nextcloud",       "sso_kind": SSO_KIND_NATIVE},
-    {"label": "forgejo",        "display": "Forgejo",         "sso_kind": SSO_KIND_NATIVE},
-    {"label": "homeassistant",  "display": "Home Assistant",
-     "sso_kind": SSO_KIND_NATIVE, "secrets_dir": "home-assistant"},
-    {"label": "webdav",         "display": "WebDAV",          "sso_kind": SSO_KIND_BRIDGE},
 
-    # Phase B: Caddy outer-gate only (admin-only via oauth2-proxy +
-    # admin-role check). Users still see the app's own login form
-    # after passing the gate, except for Screeenly which is API-only.
-    # Inner SSO bridge is per-app Phase-A work.
-    {"label": "frigate",        "display": "Frigate NVR",     "sso_kind": SSO_KIND_CADDY,
-     "notes": "Outer gate admin-only. Frigate's own login still appears inside; native OIDC bridge pending."},
-    {"label": "screeenly",      "display": "Screeenly",       "sso_kind": SSO_KIND_CADDY,
-     "notes": "Outer gate admin-only. Screeenly is API-only — no inner login."},
+def _load_service_catalog():
+    """Read the Nix-rendered service catalog from /etc/homefree.
 
-    # Native OIDC, role-mapped: HomeFree-admin role grants in-app admin;
-    # all other Zitadel users land as regular users.
-    {"label": "ollama",         "display": "Ollama (Open WebUI)", "sso_kind": SSO_KIND_NATIVE,
-     "notes": "Open WebUI native OIDC; homefree-admin role grants WebUI admin."},
-    {"label": "homebox",        "display": "Homebox",         "sso_kind": SSO_KIND_NATIVE,
-     "notes": "Native OIDC. Homebox has no admin/user distinction — all SSO users are equal members."},
+    Returns a list of service-config entries (the same shape as the
+    Nix submodule produces). Each entry has at minimum:
+      - label, name, project-name
+      - sso: {kind, notes, secrets-dir}
+      - reverse-proxy, backup, systemd-service-names, etc.
 
-    # Not yet implemented — present so the admin sees the full
-    # surface area and knows what's still pending. Reasons each one
-    # isn't gated yet are documented in the per-service .nix file.
-    {"label": "baikal",         "display": "Baikal (CalDAV/CardDAV)", "sso_kind": SSO_KIND_NONE},
-    {"label": "cryptpad",       "display": "CryptPad",        "sso_kind": SSO_KIND_NATIVE},
-    {"label": "freshrss",       "display": "FreshRSS",        "sso_kind": SSO_KIND_NATIVE},
-    {"label": "grocy",          "display": "Grocy",           "sso_kind": SSO_KIND_NONE},
-    {"label": "jellyfin",       "display": "Jellyfin",        "sso_kind": SSO_KIND_NONE},
-    {"label": "joplin",         "display": "Joplin Server",   "sso_kind": SSO_KIND_NONE},
-    {"label": "lidarr",         "display": "Lidarr",          "sso_kind": SSO_KIND_NONE},
-    {"label": "linkwarden",     "display": "Linkwarden",      "sso_kind": SSO_KIND_NATIVE},
-    {"label": "mediawiki",      "display": "MediaWiki",       "sso_kind": SSO_KIND_NONE},
-    {"label": "minecraft",      "display": "Minecraft",       "sso_kind": SSO_KIND_NONE},
-    {"label": "nzbget",         "display": "NZBGet",          "sso_kind": SSO_KIND_NONE},
-    {"label": "radicale",       "display": "Radicale",        "sso_kind": SSO_KIND_NONE},
-    {"label": "snipe-it",       "display": "Snipe-IT",        "sso_kind": SSO_KIND_NONE},
-    {"label": "unifi",          "display": "UniFi Controller", "sso_kind": SSO_KIND_NONE},
-    {"label": "vaultwarden",    "display": "Vaultwarden",     "sso_kind": SSO_KIND_NATIVE},
-]
+    Falls back to an empty list if the file is missing or unreadable;
+    callers should treat that as "no services configured."
+    """
+    import json
+    try:
+        with open(SERVICE_CONFIG_JSON_PATH) as f:
+            return json.load(f) or []
+    except Exception:
+        return []
 
 @app.get("/api/sso/state")
 async def sso_state():
     """Return SSO bootstrap state for the admin SSO page.
 
-    For each service in SSO_CATALOG, reports:
+    For each service in the catalog (rendered by the Nix module
+    services/service-config-json.nix), reports:
       - sso_kind: how SSO is wired (or "none" if pending)
       - enabled: whether the service is enabled in the current config
       - provisioned: whether zitadel-provision has minted its OIDC app
-        (only meaningful for native_oidc/basic_auth kinds)
+        (only meaningful for native_oidc kinds)
       - has_client_id: convenience flag for native-OIDC services
     """
     import json
@@ -992,11 +957,39 @@ async def sso_state():
     except Exception:
         svc_cfg = {}
 
+    # Catalog comes from /etc/homefree/service-config.json, written by
+    # services/service-config-json.nix at activation. Single source of
+    # truth — no per-service registries in this file anymore.
+    catalog = _load_service_catalog()
+
+    # Some service-config entries are internal/non-user-facing (e.g.
+    # admin-api, an internal HTTP target with no login surface). They
+    # set sso.kind = "none" implicitly because no .sso block is
+    # declared. We surface ALL entries to the SSO admin page so
+    # admins can see the full inventory and what's still pending.
+    # Suppress only entries that have no reverse-proxy at all (pure
+    # internal sidecars never reach the SSO page).
+
     services = []
-    for entry in SSO_CATALOG:
-        label = entry["label"]
-        kind = entry["sso_kind"]
-        secrets_dir = f"{SSO_SECRETS_DIR}/{entry.get('secrets_dir', label)}"
+    for entry in catalog:
+        sso = entry.get("sso") or {}
+        kind = sso.get("kind", SSO_KIND_NONE)
+
+        # SSO infrastructure (Zitadel, oauth2-proxy) is not a consumer
+        # of SSO — hide it from the inventory page.
+        if kind == SSO_KIND_INFRA:
+            continue
+
+        rp = entry.get("reverse-proxy") or {}
+        if not rp.get("enable", False) and not rp.get("subdomains"):
+            # Sidecar with no user-visible URL — skip entirely.
+            continue
+
+        label = entry.get("label", "")
+        # secrets-dir override; defaults to the label when absent.
+        secrets_dir_name = sso.get("secrets-dir") or label
+        secrets_dir = f"{SSO_SECRETS_DIR}/{secrets_dir_name}"
+
         # Provisioning state semantics differ by kind:
         #   - native_oidc: needs a per-service Zitadel OIDC app +
         #     .provisioned sentinel. "Provisioned" iff sentinel exists.
@@ -1011,11 +1004,14 @@ async def sso_state():
             is_provisioned = provisioned
         else:
             is_provisioned = False
+
         services.append({
             "label": label,
-            "display": entry["display"],
+            # `name` from service-config is the human-readable display
+            # name (e.g. "Password Manager"); fall back to label.
+            "display": entry.get("name") or label,
             "sso_kind": kind,
-            "notes": entry.get("notes", ""),
+            "notes": sso.get("notes", ""),
             "enabled": bool((svc_cfg.get(label) or {}).get("enable", False)),
             # Back-compat fields the existing frontend reads. Will be
             # phased out once the UI migrates to sso_kind exclusively.

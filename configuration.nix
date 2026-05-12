@@ -69,6 +69,7 @@ in
     ./services/unifi-os-podman.nix
     ./services/vaultwarden-podman.nix
     ./services/webdav-podman.nix
+    ./services/service-config-json.nix
     ./services/sso.nix
     ./services/zitadel-podman.nix
     ./services/zitadel-provision.nix

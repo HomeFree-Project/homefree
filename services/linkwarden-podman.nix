@@ -246,6 +246,10 @@ in
         "podman-meilisearch"
         "postgresql"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Native OIDC via NextAuth. No OIDC->admin role mapping: first user in DB is admin, subsequent SSO users are regular.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.linkwarden.enable;
         subdomains = [ "links" "linkwarden" ];

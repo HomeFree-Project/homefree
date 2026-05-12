@@ -491,6 +491,10 @@ in
         "podman-immich-redis"
         "podman-postgres-vectorchord"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Native OIDC; homefree-admin role maps to Immich admin via OAUTH_ADMIN_GROUP.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.immich.enable;
         subdomains = [ "photos" "immich" ];

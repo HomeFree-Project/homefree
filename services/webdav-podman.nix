@@ -198,6 +198,10 @@ in
       systemd-service-names = [
         "podman-webdav"
       ];
+      sso = {
+        kind = "basic_auth";
+        notes = "Caddy SSO gate + per-request HTTP Basic Auth bridge for WebDAV clients.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.webdav.enable;
         subdomains = [ "webdav" ];

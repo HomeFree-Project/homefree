@@ -128,6 +128,10 @@ in
       systemd-service-names = [
         "podman-screeenly"
       ];
+      sso = {
+        kind = "caddy_gated";
+        notes = "Outer gate admin-only. Screeenly is API-only — no inner login.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.screeenly.enable;
         subdomains = [ "screeenly" ];

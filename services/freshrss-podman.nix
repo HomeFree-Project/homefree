@@ -325,6 +325,10 @@ in
       systemd-service-names = [
         "podman-freshrss"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Apache mod_auth_openidc + http_auth mode. Admin is whichever user matches FreshRSS's default_user (must equal Zitadel preferred_username).";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.freshrss.enable;
         subdomains = [ "freshrss" ];

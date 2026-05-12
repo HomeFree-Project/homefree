@@ -173,6 +173,10 @@ in
       systemd-service-names = [
         "podman-vaultwarden"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Vaultwarden 1.36+ native OIDC. Master password still required after SSO for vault decryption (E2E encryption — can't be bypassed).";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.vaultwarden.enable;
         subdomains = [ "vaultwarden" ];

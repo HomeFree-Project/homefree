@@ -170,6 +170,10 @@ in
         "ollama"
         "podman-ollama-webui"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Open WebUI native OIDC; homefree-admin Zitadel role maps to WebUI admin via OAUTH_ADMIN_ROLES.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.ollama.enable;
         subdomains = [ "ollama" ];

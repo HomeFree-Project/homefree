@@ -418,6 +418,10 @@ in
       systemd-service-names = [
         "podman-frigate"
       ];
+      sso = {
+        kind = "caddy_gated";
+        notes = "Outer gate admin-only. Frigate's own login still appears inside; native OIDC bridge pending.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.frigate.enable;
         subdomains = [ "nvr" "frigate" ];

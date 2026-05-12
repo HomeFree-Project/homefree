@@ -1623,6 +1623,57 @@
             };
           };
 
+          ## SSO catalog metadata. Drives the SSO admin page and any
+          ## other tooling that needs to know how a service authenticates.
+          ## Lives here (alongside reverse-proxy, backup, etc.) so each
+          ## service declares its own SSO posture in its own .nix file
+          ## — single source of truth. The activation-time renderer
+          ## (services/service-config-json.nix) emits this whole tree
+          ## to /etc/homefree/service-config.json for the admin
+          ## backend to consume.
+          sso = {
+            kind = lib.mkOption {
+              type = lib.types.enum [ "native_oidc" "caddy_gated" "basic_auth" "infra" "none" ];
+              default = "none";
+              description = ''
+                How the service authenticates:
+                  native_oidc  — service has its own OIDC client (Forgejo,
+                                 Nextcloud, Vaultwarden, etc.)
+                  caddy_gated  — outer SSO gate via oauth2-proxy in Caddy;
+                                 user still sees the app's local login or
+                                 lands directly on the app (no inner SSO)
+                  basic_auth   — Caddy SSO gate + per-request HTTP Basic
+                                 Auth injection (AdGuard, WebDAV)
+                  infra        — this IS the SSO infrastructure (Zitadel
+                                 itself, oauth2-proxy). Hidden from the
+                                 SSO admin page since it's not a consumer.
+                  none         — no SSO yet; local login only
+              '';
+            };
+
+            notes = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Optional caveat / status note for the admin UI. Use this
+                for things like "Master password still required after SSO"
+                or "Outer gate admin-only; inner login still appears".
+              '';
+            };
+
+            secrets-dir = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Override the on-disk secrets dir name when it diverges
+                from the service label. Defaults to the label
+                (/var/lib/homefree-secrets/<label>/). Example: Home
+                Assistant uses label `homeassistant` but its secrets
+                live in `home-assistant/`.
+              '';
+            };
+          };
+
           reverse-proxy = {
             enable = lib.mkOption {
               type = lib.types.bool;

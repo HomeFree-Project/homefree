@@ -561,6 +561,10 @@ in
       admin = {
         urlPathOverride = "/admin";
       };
+      sso = {
+        kind = "native_oidc";
+        notes = "Headscale native OIDC + Headplane admin UI. Admin via homefree-admin role.";
+      };
       reverse-proxy = {
         enable = true;
         ## @TODO: Use "vpn" as default

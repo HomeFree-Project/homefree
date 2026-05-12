@@ -404,6 +404,10 @@ in
       systemd-service-names = [
         "podman-adguardhome"
       ];
+      sso = {
+        kind = "basic_auth";
+        notes = "AdGuard has no native OIDC. Caddy SSO gate validates the user, then injects an HTTP Basic Auth header with the AdGuard admin credential so the user never sees AdGuard's local login.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.adguard.enable;
         subdomains = [ "adguard" ];

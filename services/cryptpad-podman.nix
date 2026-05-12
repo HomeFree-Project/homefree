@@ -273,6 +273,10 @@ in
       systemd-service-names = [
         "podman-cryptpad"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Native OIDC via cryptpad/sso plugin. Admin status is determined by adminKeys (public keys in config.js), NOT by OIDC claim — SSO users are equal until promoted manually.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.cryptpad.enable;
         subdomains = [ "docs" "docs-sandbox" ];

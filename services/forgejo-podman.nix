@@ -405,6 +405,10 @@ in
       systemd-service-names = [
         "podman-forgejo"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Native OIDC; homefree-admin role maps to Forgejo admin via oauth_admins_role.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.forgejo.enable;
         subdomains = [ "git" "forgejo" ];

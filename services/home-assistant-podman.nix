@@ -474,6 +474,11 @@ in
       systemd-service-names = [
         "podman-homeassistant"
       ];
+      sso = {
+        kind = "native_oidc";
+        notes = "Native OIDC via auth_oidc custom component.";
+        secrets-dir = "home-assistant";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.home-assistant.enable;
         subdomains = [ "homeassistant" "ha" ];

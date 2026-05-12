@@ -458,6 +458,11 @@ in
           show = true;
         };
 
+        sso = {
+          kind = "caddy_gated";
+          notes = "HomeFree admin UI itself — Caddy SSO gate enforces oauth2-proxy + homefree-admin role.";
+        };
+
         reverse-proxy = {
           enable = true;
           description = "HomeFree Administration Interface";

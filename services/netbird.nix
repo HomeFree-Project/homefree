@@ -495,6 +495,10 @@ in
         admin = {
           urlPathOverride = "/";
         };
+        sso = {
+          kind = "native_oidc";
+          notes = "Native OIDC; uses a Zitadel machine-user PAT for backchannel user enumeration.";
+        };
         reverse-proxy = {
           enable = enabled;
           subdomains = [ "netbird" ];
