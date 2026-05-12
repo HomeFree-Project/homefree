@@ -222,6 +222,20 @@ let
       ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml
     chmod 600 ${containerDataPath}/conf/AdGuardHome.yaml
 
+    ## After (re)generating the AdGuard admin password, refresh
+    ## Caddy's Basic-Auth bridge so the reverse-proxy header reflects
+    ## the current credential. Two-step:
+    ##   1. Restart the bridge (rewrites the env file).
+    ##   2. Reload Caddy so it re-reads EnvironmentFile.
+    ##
+    ## `--no-block` everywhere so we never deadlock on Caddy's own
+    ## activation. If Caddy isn't running yet (initial boot), both
+    ## commands silently no-op and Caddy will pick up the file when
+    ## systemd starts it next.
+    systemctl restart --no-block caddy-adguard-basic-auth.service \
+      2>/dev/null || true
+    systemctl reload --no-block caddy.service 2>/dev/null || true
+
     ## There is no DNS running yet at port 53, so start a temporary
     ## proxy service (managed by systemd) so that podman pull works
 
@@ -408,6 +422,21 @@ in
         ## Zitadel cookie. Per-service opt-out via
         ## homefree.sso.per-service.adguard.enable=false.
         oauth2 = config.homefree.sso.per-service.adguard.enable or true;
+        ## After SSO succeeds, inject AdGuard's own admin creds as
+        ## HTTP Basic Auth so the user never sees AdGuard's local
+        ## login form. The env var is populated by
+        ## caddy-adguard-basic-auth.service (services/caddy.nix)
+        ## from /var/lib/homefree-secrets/adguard/admin-password.
+        inject-basic-auth-env = "ADGUARD_BASIC_AUTH";
+        ## AdGuard's UI "Sign out" button POSTs to /control/logout.
+        ## Without this intercept it's a no-op: AdGuard clears its
+        ## session, Caddy's Basic-Auth injection re-auths the next
+        ## request, and the user lands right back where they were.
+        ## Caddy catches the path and redirects into the full SSO
+        ## sign-out chain. See services/caddy.nix for the redir.
+        upstream-logout-paths = [
+          "/control/logout"
+        ];
       };
       backup = {
         paths = [

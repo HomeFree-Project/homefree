@@ -1748,6 +1748,44 @@
               default = null;
               description = "custom caddy config";
             };
+
+            inject-basic-auth-env = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Name of an environment variable (loaded into Caddy via
+                EnvironmentFile) whose value is the base64-encoded
+                `username:password` string. When set, Caddy injects an
+                `Authorization: Basic {env.NAME}` header on every
+                request it forwards to the upstream. Used to bridge
+                services that have no OIDC support (e.g. AdGuard) but
+                accept HTTP Basic Auth — the SSO gate authenticates the
+                user, Caddy then logs them into the upstream with the
+                service's own admin credentials, and the user never
+                sees the second login form.
+              '';
+            };
+
+            upstream-logout-paths = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = [ "/control/logout" ];
+              description = ''
+                URL paths on the upstream that represent a sign-out
+                action. When the user hits one of these, Caddy
+                short-circuits the request and redirects to the full
+                SSO sign-out chain instead of forwarding to the
+                upstream.
+
+                Only meaningful when `inject-basic-auth-env` is set:
+                without the redirect, the upstream's own logout
+                endpoint clears its session, but Caddy immediately
+                re-authenticates the next request with the injected
+                Basic Auth header — so the user can never actually
+                sign out. Intercepting the path turns the upstream's
+                "Sign out" button into a real sign-out.
+              '';
+            };
           };
 
           backup = {

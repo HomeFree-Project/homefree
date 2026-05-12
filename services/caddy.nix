@@ -107,9 +107,92 @@ in
     '';
   });
 
+  ## ── Caddy runtime secrets bridge ─────────────────────────────────
+  ## Builds /run/caddy-secrets/runtime.env with whatever values Caddy
+  ## needs to interpolate via {env.NAME} at request time:
+  ##
+  ##   - ADGUARD_BASIC_AUTH=<base64(user:pass)>: injected as an
+  ##     `Authorization: Basic ...` header on every request forwarded
+  ##     to AdGuard. Without it, users who passed the oauth2-proxy
+  ##     gate still see AdGuard's local login form because AdGuard
+  ##     has no native OIDC support.
+  ##
+  ##   - OAUTH2_PROXY_CLIENT_ID=<id>: the OIDC client_id of the
+  ##     oauth2-proxy app on Zitadel. Used in upstream-logout-paths
+  ##     redirects so Zitadel honors post_logout_redirect_uri (which
+  ##     it ignores when no client_id/id_token_hint is supplied —
+  ##     stranding the user on Zitadel's "Logout successful" page).
+  ##     Not a secret: it's already visible in every authenticated
+  ##     user's browser during the SSO flow.
+  ##
+  ## Gated on the corresponding secret files existing — if AdGuard
+  ## or Zitadel haven't provisioned yet, the relevant var is written
+  ## empty so Caddy starts cleanly.
+  systemd.services.caddy-adguard-basic-auth = lib.mkIf
+    (config.homefree.services.adguard.enable or false) {
+    description = "Build Caddy runtime env (Basic-Auth bridge + OIDC client_id)";
+    wantedBy = [ "caddy.service" ];
+    before = [ "caddy.service" ];
+    after = [ "podman-adguardhome.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ coreutils ];
+    script = ''
+      mkdir -p /run/caddy-secrets
+      ADGUARD_SECRETS=/var/lib/homefree-secrets/adguard
+      ADMIN_FILE=/var/lib/homefree-admin/admin-username
+      ZITADEL_CLIENT_ID_FILE=/var/lib/homefree-secrets/zitadel/oidc-client-id
+      ENV_FILE=/run/caddy-secrets/adguard-basic-auth.env
+
+      # Truncate first; we'll append each line as it becomes
+      # available so a missing dependency only blanks that one var.
+      : > "$ENV_FILE"
+
+      if [ -s "$ADGUARD_SECRETS/admin-password" ] && [ -s "$ADMIN_FILE" ]; then
+        USERNAME=$(cat "$ADMIN_FILE")
+        PASS=$(cat "$ADGUARD_SECRETS/admin-password")
+        AUTH=$(printf '%s:%s' "$USERNAME" "$PASS" | base64 -w0)
+        printf 'ADGUARD_BASIC_AUTH=%s\n' "$AUTH" >> "$ENV_FILE"
+      else
+        # Not yet provisioned — write an empty value so Caddy's
+        # {env.ADGUARD_BASIC_AUTH} interpolation doesn't fail.
+        printf 'ADGUARD_BASIC_AUTH=\n' >> "$ENV_FILE"
+      fi
+
+      if [ -s "$ZITADEL_CLIENT_ID_FILE" ]; then
+        printf 'OAUTH2_PROXY_CLIENT_ID=%s\n' \
+          "$(cat "$ZITADEL_CLIENT_ID_FILE")" >> "$ENV_FILE"
+      else
+        printf 'OAUTH2_PROXY_CLIENT_ID=\n' >> "$ENV_FILE"
+      fi
+
+      chown root:caddy "$ENV_FILE"
+      chmod 640 "$ENV_FILE"
+      ## NOTE: do NOT run `systemctl reload caddy.service` here.
+      ## This unit declares `wantedBy = caddy.service` + `before =
+      ## caddy.service`, so systemd treats a reload-during-start as a
+      ## dependency cycle and kills *this* unit with SIGTERM. Caddy
+      ## reads EnvironmentFile fresh on every (re)start, so on first
+      ## boot it'll just pick up the value we wrote above when systemd
+      ## starts it next in the dependency chain.
+      ##
+      ## Credential ROTATION (when AdGuard's preStart regenerates the
+      ## password) is handled by the AdGuard side: that script
+      ## restarts THIS unit, which rewrites the env file, then the
+      ## AdGuard preStart issues a separate reload of caddy.service.
+      ## See services/adguardhome-podman.nix.
+    '';
+  };
+
   systemd.services.caddy = {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
+    after = [ "dns-ready.service" ]
+      ++ lib.optional (config.homefree.services.adguard.enable or false)
+           "caddy-adguard-basic-auth.service";
+    wants = [ "dns-ready.service" ]
+      ++ lib.optional (config.homefree.services.adguard.enable or false)
+           "caddy-adguard-basic-auth.service";
     requires = [ "dns-ready.service" ];
     ## Restart Caddy with Unbound DNS changes
     ## NOTE: Commented out - creates circular dependency with unbound's partOf below.
@@ -118,10 +201,17 @@ in
     ## Was added for a reason - watch for issues after disabling.
     # partOf = [ "unbound.service" ];
 
-    # Grant capability to bind to privileged ports when using wrapper
-    serviceConfig = lib.mkIf (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) {
-      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
-    };
+    serviceConfig = lib.mkMerge [
+      ## Grant capability to bind to privileged ports when using wrapper
+      (lib.mkIf
+        (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null)
+        { AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ]; })
+      ## Load AdGuard Basic-Auth credential when AdGuard is enabled.
+      ## The leading `-` makes the env file optional — if the bridge
+      ## service hasn't run yet, Caddy still starts.
+      (lib.mkIf (config.homefree.services.adguard.enable or false)
+        { EnvironmentFile = "-/run/caddy-secrets/adguard-basic-auth.env"; })
+    ];
   };
 
   ## Restart Unbound DNS with caddy changes
@@ -360,6 +450,43 @@ in
             }
           '' else "")
           +
+          (let
+            logoutPaths = reverse-proxy-config.upstream-logout-paths or [];
+          in if logoutPaths != [] then ''
+            ## Upstream sign-out interception. Without this, hitting
+            ## the upstream's own logout endpoint clears its session
+            ## — but Caddy's inject-basic-auth-env header reauths on
+            ## the next request, so the user can never actually
+            ## leave. Intercept the path and bounce into the SSO
+            ## sign-out chain:
+            ##
+            ##   1. /oauth2/sign_out on auth.<domain>: oauth2-proxy
+            ##      clears its cookie, then redirects to `rd` (URL-
+            ##      encoded Zitadel end_session URL).
+            ##   2. /oidc/v1/end_session on sso.<domain>: Zitadel
+            ##      ends the SSO session and redirects to
+            ##      post_logout_redirect_uri (THIS site's root).
+            ##
+            ## The `client_id` query param on end_session is critical:
+            ## without it, Zitadel ignores post_logout_redirect_uri
+            ## and parks the user on its own "Logout successful" page
+            ## with no way back. We get the client_id from the env
+            ## var OAUTH2_PROXY_CLIENT_ID, populated by
+            ## caddy-adguard-basic-auth.service from
+            ## /var/lib/homefree-secrets/zitadel/oidc-client-id.
+            ##
+            ## The triple-encoded post_logout_redirect_uri (https
+            ## → https%3A → https%253A) is because the URL is nested
+            ## three deep: Caddy's redir value, then oauth2-proxy's
+            ## `rd` param, then end_session's
+            ## `post_logout_redirect_uri` param. Each layer adds a
+            ## round of encoding to the next.
+            @upstream_logout {
+              path ${lib.concatMapStringsSep " " (p: ''"${p}"'') logoutPaths}
+            }
+            redir @upstream_logout https://auth.${config.homefree.system.domain}/oauth2/sign_out?rd=https%3A%2F%2Fsso.${config.homefree.system.domain}%2Foidc%2Fv1%2Fend_session%3Fclient_id%3D{env.OAUTH2_PROXY_CLIENT_ID}%26post_logout_redirect_uri%3Dhttps%253A%252F%252F{host}%252F 302
+          '' else "")
+          +
           (if reverse-proxy-config.basic-auth == true then ''
             # Route WebDAV+Basic Auth requests to Python proxy
             @webdav_with_basic {
@@ -405,6 +532,23 @@ in
                 header_up X-Real-IP {remote}
                 # header_up X-Forwarded-For {remote}
                 # header_up X-Forwarded-Proto {scheme}
+          '' else "")
+          + (if reverse-proxy-config.inject-basic-auth-env != null then ''
+                ## Inject HTTP Basic Auth on every upstream request.
+                ## The env var holds the base64-encoded credential
+                ## (see module.nix:inject-basic-auth-env). Used for
+                ## services with no OIDC support, where the upstream
+                ## still wants a credential but the user already
+                ## passed the SSO gate.
+                ##
+                ## Use `header_up >Authorization` (replace, with the
+                ## `>` prefix) so an inbound Authorization header from
+                ## the client is overwritten rather than appended to.
+                ## Plain `header_up Authorization` *adds* a second
+                ## Authorization header alongside any existing one,
+                ## which most servers handle by reading the first
+                ## (inbound) value and ignoring ours.
+                header_up >Authorization "Basic {env.${reverse-proxy-config.inject-basic-auth-env}}"
           '' else "")
           +
           ''
