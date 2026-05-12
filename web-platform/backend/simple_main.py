@@ -958,14 +958,14 @@ SSO_CATALOG = [
     {"label": "jellyfin",       "display": "Jellyfin",        "sso_kind": SSO_KIND_NONE},
     {"label": "joplin",         "display": "Joplin Server",   "sso_kind": SSO_KIND_NONE},
     {"label": "lidarr",         "display": "Lidarr",          "sso_kind": SSO_KIND_NONE},
-    {"label": "linkwarden",     "display": "Linkwarden",      "sso_kind": SSO_KIND_NONE},
+    {"label": "linkwarden",     "display": "Linkwarden",      "sso_kind": SSO_KIND_NATIVE},
     {"label": "mediawiki",      "display": "MediaWiki",       "sso_kind": SSO_KIND_NONE},
     {"label": "minecraft",      "display": "Minecraft",       "sso_kind": SSO_KIND_NONE},
     {"label": "nzbget",         "display": "NZBGet",          "sso_kind": SSO_KIND_NONE},
     {"label": "radicale",       "display": "Radicale",        "sso_kind": SSO_KIND_NONE},
     {"label": "snipe-it",       "display": "Snipe-IT",        "sso_kind": SSO_KIND_NONE},
     {"label": "unifi",          "display": "UniFi Controller", "sso_kind": SSO_KIND_NONE},
-    {"label": "vaultwarden",    "display": "Vaultwarden",     "sso_kind": SSO_KIND_NONE},
+    {"label": "vaultwarden",    "display": "Vaultwarden",     "sso_kind": SSO_KIND_NATIVE},
 ]
 
 @app.get("/api/sso/state")
