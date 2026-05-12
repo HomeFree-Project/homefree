@@ -181,7 +181,6 @@ in
   systemd.services.podman-unifi-db = lib.optionalAttrs config.homefree.service-options.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "unifi-db-prestart" mongo-preStart}" ];
     };
@@ -190,7 +189,6 @@ in
   systemd.services.podman-unifi = lib.optionalAttrs config.homefree.service-options.unifi.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "unifi-prestart" preStart}" ];
     };
@@ -201,6 +199,10 @@ in
       systemd-service-names = [
         "podman-unifi"
       ];
+      sso = {
+        kind = "caddy_gated";
+        notes = "Outer gate admin-only via oauth2-proxy + homefree-admin role. UniFi's own login still appears inside (no native OIDC). Device traffic uses port 8080 direct and bypasses Caddy entirely.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.unifi.enable;
         subdomains = [ "unifi" ];
@@ -211,6 +213,13 @@ in
         ssl = true;
         ssl-no-verify = true;
         public = config.homefree.service-options.unifi.public;
+        ## Admin-only Caddy outer gate. Same pattern as Frigate:
+        ## non-admin SSO users get 403 from Caddy; admins land on
+        ## UniFi's own login. UniFi devices (APs etc.) connect on
+        ## port 8080 direct to the host, not via Caddy, so they're
+        ## unaffected by this gate.
+        oauth2 = true;
+        require-admin-role = true;
       };
       backup = {
         paths = [

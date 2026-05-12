@@ -309,94 +309,9 @@ class SsoModule extends LitElement {
           </div>
         </config-section>
 
-        <config-section
-          title="Per-service status"
-          description="Which integrated services have completed OIDC bootstrap, and whether SSO is enabled for each."
-        >
-          <table class="services">
-            <thead>
-              <tr>
-                <th>Service</th>
-                <th>Enabled</th>
-                <th>Type</th>
-                <th>Status</th>
-                <!--
-                  The "SSO enabled" toggle column is intentionally
-                  hidden for now. Most integrated services have no
-                  local-registration path (no UI to create an account)
-                  so disabling SSO for one of them just makes the app
-                  impossible to log into without command-line hacks.
-                  The toggle plumbing (_isEnabled, _toggleService,
-                  homefree.sso.per-service.*) is still in place — if
-                  you decide to expose this again, restoring the
-                  <th> + <td> below is the only change needed here.
-                <th>SSO enabled</th>
-                -->
-              </tr>
-            </thead>
-            <tbody>
-              ${s.services.map(svc => {
-                // Toggle hidden; `_isEnabled` retained for future use.
-                const kind = svc.sso_kind || (
-                  svc.native_oidc ? 'native_oidc'
-                    : svc.caddy_gated ? 'caddy_gated'
-                    : 'none'
-                );
-                const typeLabel = ({
-                  native_oidc: 'Native OIDC',
-                  caddy_gated: 'Caddy oauth2-proxy',
-                  basic_auth: 'Caddy + Basic-Auth bridge',
-                  none: '—',
-                })[kind] || kind;
-                let statusPill;
-                if (kind === 'none') {
-                  statusPill = html`<span class="pill disabled">Not yet implemented</span>`;
-                } else {
-                  // svc.provisioned already encodes the right
-                  // readiness signal per kind: backend sets it from
-                  // the per-service sentinel for native OIDC and
-                  // from the global sentinel for caddy-gated /
-                  // basic-auth services.
-                  statusPill = svc.provisioned
-                    ? html`<span class="pill ok">Active</span>`
-                    : html`<span class="pill warn">Pending</span>`;
-                }
-                return html`
-                  <tr>
-                    <td class="svc-label">
-                      ${svc.display || svc.label}
-                      ${svc.notes ? html`
-                        <div class="muted" style="font-size: 11px; margin-top: 4px; line-height: 1.4;">
-                          ${svc.notes}
-                        </div>
-                      ` : ''}
-                    </td>
-                    <td>
-                      ${svc.enabled
-                        ? html`<span class="pill ok">Yes</span>`
-                        : html`<span class="pill disabled">No</span>`}
-                    </td>
-                    <td>
-                      <span class="muted">${typeLabel}</span>
-                    </td>
-                    <td>${statusPill}</td>
-                    <!--
-                    <td>
-                      <div
-                        class="toggle ${'' /*this._isEnabled(svc.label) ? 'on' : ''*/}"
-                        @click=${() => this._toggleService(svc.label, this._isEnabled(svc.label))}
-                      ></div>
-                    </td>
-                    -->
-                  </tr>
-                `;
-              })}
-            </tbody>
-          </table>
-          ${s.services.length === 0 ? html`
-            <p class="muted">No integrated services reported.</p>
-          ` : ''}
-        </config-section>
+        <div class="muted" style="font-size: 12px; margin-top: 8px;">
+          Per-service SSO status is shown inline on the Services page.
+        </div>
       </div>
     `;
   }

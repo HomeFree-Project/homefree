@@ -262,7 +262,6 @@ in
   systemd.services.podman-cryptpad = lib.optionalAttrs config.homefree.service-options.cryptpad.enable {
     after = [ "dns-ready.service" ];
     requires =[ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "cryptpad-prestart" preStart}" ];
     };

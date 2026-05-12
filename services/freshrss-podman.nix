@@ -313,7 +313,6 @@ in
     systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
       after = [ "dns-ready.service" ];
       requires = [ "dns-ready.service" ];
-      partOf =  [ "nftables.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "freshrss-prestart" preStart}" ];
         ExecStartPost = [ "!${pkgs.writeShellScript "freshrss-poststart" postStart}" ];

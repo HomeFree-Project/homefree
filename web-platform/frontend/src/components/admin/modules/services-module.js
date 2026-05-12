@@ -260,6 +260,34 @@ class ServicesModule extends LitElement {
       color: var(--hf-text-muted);
     }
 
+    /* SSO surfacing — inline pill + reason. Mirrors the styling
+       formerly on the dedicated SSO page; centralizing all
+       per-service info in one place is the goal. */
+    .service-sso {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .service-sso .pill {
+      display: inline-block;
+      width: fit-content;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .service-sso .pill.ok       { background: rgba(74,222,128,0.12); color: #4ade80; }
+    .service-sso .pill.warn     { background: rgba(250,204,21,0.12); color: #facc15; }
+    .service-sso .pill.disabled { background: var(--hf-surface-2);   color: var(--hf-text-muted); }
+    .service-sso .notes {
+      font-size: 11px;
+      color: var(--hf-text-muted);
+      line-height: 1.4;
+      max-width: 560px;
+    }
+
     .service-controls {
       display: flex;
       flex-direction: column;
@@ -917,6 +945,7 @@ class ServicesModule extends LitElement {
                 })()}
               </div>
             ` : ''}
+            ${this.renderSsoBadge(service)}
           </div>
 
           <div class="service-controls">
@@ -969,6 +998,44 @@ class ServicesModule extends LitElement {
         </div>
 
         ${this.renderConfigSection(service, hasConfig, isExpanded, expandId)}
+      </div>
+    `;
+  }
+
+  /* Render the SSO pill + notes for a service row.
+     This used to live on a separate /admin/sso page; folding it into
+     the services list keeps everything about a service in one place.
+     Backend (resolvers/services.py) supplies sso_kind, sso_notes,
+     sso_provisioned alongside the runtime status. */
+  renderSsoBadge(service) {
+    const kind = service.sso_kind || 'none';
+    // 'infra' services (Zitadel, oauth2-proxy) don't show on the SSO
+    // surfacing path — they're the bridge itself, not a consumer.
+    if (kind === 'infra') return '';
+
+    const typeLabel = ({
+      native_oidc: 'Native OIDC',
+      caddy_gated: 'Caddy oauth2-proxy',
+      basic_auth: 'Caddy + Basic-Auth bridge',
+    })[kind];
+
+    let statusPill;
+    if (kind === 'none') {
+      // Same convention as the old SSO page: a note explains *why*
+      // a service won't be SSO'd, vs. an unstarted integration.
+      statusPill = service.sso_notes
+        ? html`<span class="pill disabled">SSO: not applicable</span>`
+        : html`<span class="pill disabled">SSO: not yet implemented</span>`;
+    } else {
+      statusPill = service.sso_provisioned
+        ? html`<span class="pill ok">SSO: ${typeLabel}</span>`
+        : html`<span class="pill warn">SSO: ${typeLabel} (pending)</span>`;
+    }
+
+    return html`
+      <div class="service-sso">
+        ${statusPill}
+        ${service.sso_notes ? html`<div class="notes">${service.sso_notes}</div>` : ''}
       </div>
     `;
   }

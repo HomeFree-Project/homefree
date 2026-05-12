@@ -802,25 +802,41 @@ class AdminApp extends LitElement {
     this.updateAvailable = false;
     this.closureIdPollInterval = null;
 
-    // Navigation modules
+    // Navigation modules.
+    // Three sections: System (the host + its OS), Applications
+    // (services + their backups), Identity (users + SSO). The item
+    // formerly titled "System" is renamed "Host" to avoid colliding
+    // with the section name.
     this.modules = [
       {
         id: 'system',
-        title: 'System',
+        title: 'Host',
         icon: '⚙️',
-        section: 'General'
+        section: 'System'
       },
       {
         id: 'network',
         title: 'Network',
         icon: '🌐',
-        section: 'General'
+        section: 'System'
       },
       {
         id: 'dns',
         title: 'DNS',
         icon: '🔍',
-        section: 'General'
+        section: 'System'
+      },
+      {
+        id: 'status',
+        title: 'Status',
+        icon: '📊',
+        section: 'System'
+      },
+      {
+        id: 'advanced',
+        title: 'Advanced',
+        icon: '🔧',
+        section: 'System'
       },
       {
         id: 'services',
@@ -832,31 +848,19 @@ class AdminApp extends LitElement {
         id: 'backups',
         title: 'Backups',
         icon: '💾',
-        section: 'Data'
-      },
-      {
-        id: 'sso',
-        title: 'SSO',
-        icon: '🔐',
         section: 'Applications'
       },
       {
         id: 'users',
         title: 'Users',
         icon: '👥',
-        section: 'Applications'
+        section: 'Identity'
       },
       {
-        id: 'advanced',
-        title: 'Advanced',
-        icon: '🔧',
-        section: 'System'
-      },
-      {
-        id: 'status',
-        title: 'Status',
-        icon: '📊',
-        section: 'System'
+        id: 'sso',
+        title: 'SSO',
+        icon: '🔐',
+        section: 'Identity'
       }
     ];
   }

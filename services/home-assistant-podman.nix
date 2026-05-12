@@ -461,7 +461,6 @@ in
   systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.homeassistant.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "homeassistant-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];

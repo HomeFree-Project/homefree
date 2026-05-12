@@ -114,6 +114,9 @@ class ServiceStatus:
     sub_state: ServiceSubState
     systemd_services: List[str]
     url: Optional[str] = None
+    sso_kind: str = "none"
+    sso_notes: str = ""
+    sso_provisioned: bool = False
 
 
 # Query Type

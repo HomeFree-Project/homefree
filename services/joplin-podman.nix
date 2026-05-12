@@ -88,11 +88,14 @@ in
   systemd.services.podman-joplin = lib.optionalAttrs config.homefree.service-options.joplin.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
   };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.joplin) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "Joplin Server supports SAML only — no native OIDC. Joplin's desktop and mobile clients sync via the server's own credentials API, so a Caddy SSO gate would break sync. OIDC support is requested upstream (laurent22/joplin#14252); revisit when shipped.";
+      };
       systemd-service-names = [
         "podman-joplin"
       ];

@@ -94,7 +94,6 @@ in
   systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nzbget-prestart" preStart}" ];
     };
@@ -102,6 +101,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.nzbget) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "NZBGet exposes its JSON-RPC API on the same host:port as the UI, authenticated with HTTP Basic only. *arr-stack services and external scripts talk to that API directly — a site-wide SSO gate would break every integration. Use NZBGet's built-in auth.";
+      };
       systemd-service-names = [
         "podman-nzbget"
       ];

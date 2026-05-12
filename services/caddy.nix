@@ -5,6 +5,105 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
+  ## Friendly access-denied page served by Caddy when admin-api's
+  ## /api/auth/admin-check returns 403. Used in place of admin-api's
+  ## raw JSON body so a non-admin user lands on a real page (with a
+  ## sign-out link to switch users) instead of `{"detail":"..."}`.
+  ##
+  ## Caddy's `respond` directive expects the body inline; we render
+  ## the HTML to a Nix string here so it's reused by every gated
+  ## site without duplicating markup.
+  ##
+  ## Sign-out link follows the same chain used elsewhere in this file
+  ## (oauth2-proxy /oauth2/sign_out -> Zitadel /oidc/v1/end_session).
+  ## The post-logout URI lands them at https://<domain>/ so they can
+  ## sign in as a different user. {env.OAUTH2_PROXY_CLIENT_ID} is
+  ## populated by caddy-adguard-basic-auth.service.
+  accessDeniedHtml = ''
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Access denied</title>
+      <style>
+        body { font-family: system-ui, -apple-system, sans-serif;
+               background: #f8f9fa; color: #212529; margin: 0;
+               min-height: 100vh; display: flex; align-items: center;
+               justify-content: center; padding: 1rem; }
+        .card { background: white; border-radius: 12px;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+                padding: 3rem 2.5rem; max-width: 500px; width: 100%;
+                text-align: center; }
+        .icon { font-size: 3rem; margin-bottom: 1rem; }
+        h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #dc3545; }
+        p  { margin: 0.5rem 0; line-height: 1.5; color: #495057; }
+        .actions { margin-top: 2rem; display: flex; gap: 0.75rem;
+                   justify-content: center; flex-wrap: wrap; }
+        a  { display: inline-block; padding: 0.6rem 1.2rem;
+             border-radius: 6px; text-decoration: none; font-weight: 500;
+             transition: background 120ms ease; }
+        .primary   { background: #0d6efd; color: white; }
+        .primary:hover   { background: #0b5ed7; }
+        .secondary { background: #e9ecef; color: #212529; }
+        .secondary:hover { background: #dee2e6; }
+        .small { color: #6c757d; font-size: 0.875rem; margin-top: 1.5rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="icon">🚫</div>
+        <h1>Access denied</h1>
+        <p>You are signed in, but this service requires the
+           <code>homefree-admin</code> role.</p>
+        <p class="small">Ask your HomeFree administrator to grant
+           you the role, or sign out to switch users.</p>
+        <div class="actions">
+          <!--
+            Sign out clears the oauth2-proxy session cookie and
+            bounces back to the homefree landing page. We don't
+            chain through Zitadel's end_session here — the
+            respond directive's body isn't guaranteed to expand
+            {env.OAUTH2_PROXY_CLIENT_ID} placeholders, and
+            without that param Zitadel ignores
+            post_logout_redirect_uri. The shorter sign-out is
+            enough: re-visiting any gated service triggers a
+            fresh SSO prompt.
+          -->
+          <a class="primary"
+             href="https://auth.${config.homefree.system.domain}/oauth2/sign_out?rd=https%3A%2F%2F${config.homefree.system.domain}%2F">
+            Sign out
+          </a>
+          <a class="secondary" href="https://${config.homefree.system.domain}/">
+            Home
+          </a>
+        </div>
+      </div>
+    </body>
+    </html>
+  '';
+
+  ## Caddy snippet emitted after every admin-check forward_auth so
+  ## a 403 from admin-api becomes the friendly HTML page above
+  ## instead of the raw JSON body Caddy would otherwise short-circuit.
+  ## Quoted heredoc-style for inline use inside the larger Caddy
+  ## config string.
+  ##
+  ## Note: Caddy's `respond` body interpolates {placeholders}; we've
+  ## pre-substituted {env.OAUTH2_PROXY_CLIENT_ID} above in the Nix
+  ## string. The literal Caddy placeholders that remain (e.g. nothing
+  ## inside the HTML) are inert.
+  adminCheckDenyHandler = ''
+    @admin_denied status 403
+    handle_response @admin_denied {
+      header Content-Type "text/html; charset=utf-8"
+      header Cache-Control "no-store"
+      respond <<HTML
+    ${accessDeniedHtml}
+    HTML 403
+    }
+  '';
+
   # Process proxied domains for standard reverse proxy (proxy handles TLS)
   processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
     let
@@ -366,6 +465,7 @@ in
                   header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
                   header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
                   header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
+                  ${adminCheckDenyHandler}
                 }
               '' else ""}
             '' else ""}
@@ -458,6 +558,20 @@ in
                 root /
                 try_files /var/lib/homefree-secrets/.sso-provisioned
               }
+              ${if reverse-proxy-config.dav-bypass or false then ''
+                ## DAV bypass: skip the SSO gate for traffic that
+                ## clearly comes from a CalDAV/CardDAV client. Two
+                ## fingerprints:
+                ##   1. Authorization: Basic ... header — every DAV
+                ##      client sends credentials on every request.
+                ##   2. DAV-only HTTP methods — even an OPTIONS or
+                ##      PROPFIND without auth (initial discovery) is
+                ##      from a client, not a browser.
+                ## Browsers without Basic auth on the admin UI still
+                ## fall through the SSO gate normally.
+                not header Authorization "Basic *"
+                not method PROPFIND PROPPATCH REPORT MKCALENDAR MKCOL COPY MOVE LOCK UNLOCK
+              '' else ""}
             }
             forward_auth @sso_gate http://${lan-address}:4180 {
               uri /oauth2/auth
@@ -477,6 +591,7 @@ in
                 header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
                 header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
                 header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
+                ${adminCheckDenyHandler}
               }
             '' else ""}
           '' else "")

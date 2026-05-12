@@ -3,10 +3,11 @@ Services information resolvers
 """
 
 import json
+import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 
 from models import ServiceStatus
 
@@ -18,6 +19,45 @@ ALL_SERVICES_JSON_PATH = "/run/homefree/admin/all-services.json"
 SERVICE_METADATA_JSON_PATH = "/run/homefree/admin/service-metadata.json"
 SERVICE_OPTIONS_SCHEMA_PATH = "/run/homefree/admin/service-options-schema.json"
 
+## SSO sentinels — kept in sync with simple_main.py. When zitadel-
+## provision finishes its first successful run it touches the global
+## sentinel; per-service .provisioned files mark which apps have a
+## minted OIDC client (only meaningful for native_oidc services —
+## caddy_gated / basic_auth piggyback on the global one).
+SSO_SECRETS_DIR = "/var/lib/homefree-secrets"
+SSO_GLOBAL_SENTINEL = f"{SSO_SECRETS_DIR}/.sso-provisioned"
+SSO_KIND_NATIVE = "native_oidc"
+SSO_KIND_CADDY = "caddy_gated"
+SSO_KIND_BRIDGE = "basic_auth"
+
+
+def _resolve_sso(
+    service_config: Dict[str, Any],
+    global_provisioned: bool,
+) -> Tuple[str, str, bool]:
+    """Pull (kind, notes, provisioned) out of a service-config entry.
+
+    kind / notes come directly from the Nix-emitted `sso` block.
+    `provisioned` mirrors the same readiness logic the SSO endpoint uses:
+      - native_oidc → per-service .provisioned sentinel in its secrets dir
+      - caddy_gated / basic_auth → global sentinel (oauth2-proxy is up)
+      - anything else → False (n/a)
+    """
+    sso = service_config.get("sso") or {}
+    kind = sso.get("kind") or "none"
+    notes = sso.get("notes") or ""
+    if kind == SSO_KIND_NATIVE:
+        label = service_config.get("label", "")
+        secrets_dir_name = sso.get("secrets-dir") or label
+        provisioned = os.path.exists(
+            f"{SSO_SECRETS_DIR}/{secrets_dir_name}/.provisioned"
+        )
+    elif kind in (SSO_KIND_CADDY, SSO_KIND_BRIDGE):
+        provisioned = global_provisioned
+    else:
+        provisioned = False
+    return kind, notes, provisioned
+
 
 class ServicesResolver:
     @staticmethod
@@ -28,6 +68,10 @@ class ServicesResolver:
         all_services = ServicesResolver._read_all_services()
         homefree_config = ServicesResolver._read_homefree_config()
         services_config_map = ServicesResolver._read_service_config_map()
+
+        # Global SSO bootstrap sentinel — checked once per request and
+        # shared across every caddy_gated / basic_auth service.
+        global_sso_provisioned = os.path.exists(SSO_GLOBAL_SENTINEL)
 
         services_status = []
         processed_labels = set()
@@ -55,6 +99,10 @@ class ServicesResolver:
             else:
                 active_state, sub_state, unit_states = "inactive", "dead", []
 
+            sso_kind, sso_notes, sso_provisioned = _resolve_sso(
+                service_config, global_sso_provisioned
+            )
+
             service_status = ServiceStatus(
                 label=service_label,
                 name=name,
@@ -67,6 +115,9 @@ class ServicesResolver:
                 url=url,
                 parent=parent,
                 unit_states=unit_states,
+                sso_kind=sso_kind,
+                sso_notes=sso_notes,
+                sso_provisioned=sso_provisioned,
             )
 
             services_status.append(service_status)
@@ -116,6 +167,10 @@ class ServicesResolver:
             else:
                 active_state, sub_state, unit_states = "unknown", "unknown", []
 
+            sso_kind, sso_notes, sso_provisioned = _resolve_sso(
+                service_config, global_sso_provisioned
+            )
+
             service_status = ServiceStatus(
                 label=service_label,
                 name=name,
@@ -128,6 +183,9 @@ class ServicesResolver:
                 url=url,
                 parent=parent,
                 unit_states=unit_states,
+                sso_kind=sso_kind,
+                sso_notes=sso_notes,
+                sso_provisioned=sso_provisioned,
             )
 
             services_status.append(service_status)

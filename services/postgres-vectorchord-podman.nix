@@ -156,7 +156,6 @@ in
   systemd.services.podman-postgres-vectorchord = {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "postgres-vectorchord-prestart" preStart}" ];
       # Add restart delay to prevent rapid restart loops
@@ -169,6 +168,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.postgres-vectorchord) label name project-name;
+      sso = {
+        kind = "infra";
+        notes = "PostgreSQL with VectorChord extension — internal database backing Open WebUI's RAG store. No user-facing surface; auth is by Postgres role only.";
+      };
       systemd-service-names = [
         "podman-postgres-vectorchord"
       ];

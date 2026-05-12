@@ -79,7 +79,6 @@ in
   systemd.services.podman-grocy = lib.optionalAttrs config.homefree.service-options.grocy.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "grocy-prestart" preStart}" ];
     };
@@ -87,6 +86,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.grocy) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "Grocy serves its REST API on the same host as the web UI (no API/UI split). Adding an outer SSO gate would break mobile and barcode-scanner clients that authenticate with Grocy's native API keys. Use Grocy's built-in user system.";
+      };
       systemd-service-names = [
         "podman-grocy"
       ];

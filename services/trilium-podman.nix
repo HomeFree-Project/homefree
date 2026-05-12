@@ -38,7 +38,6 @@ in
   systemd.services.podman-trilium = {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "trilium-prestart" preStart}" ];
     };

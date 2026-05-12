@@ -1772,6 +1772,32 @@
               description = "custom caddy config";
             };
 
+            dav-bypass = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When set together with `oauth2 = true`, the SSO gate
+                does NOT run for requests that look like CalDAV /
+                CardDAV traffic:
+                  - any request carrying `Authorization: Basic ...`
+                    (every DAV client sends credentials on every
+                    request, so this fingerprints them)
+                  - any request using a DAV-only HTTP method
+                    (PROPFIND, PROPPATCH, REPORT, MKCALENDAR, MKCOL,
+                    COPY, MOVE, LOCK, UNLOCK)
+
+                Browser traffic without Basic auth (the admin UI) is
+                still gated by SSO; DAV clients reach the upstream
+                directly and authenticate to it with their own
+                per-user app password. Lets one host serve both an
+                SSO-gated admin UI and a working DAV endpoint for
+                Thunderbird / iOS Calendar / etc.
+
+                Only meaningful for services that speak DAV: Baikal,
+                Radicale, the Nextcloud /remote.php/dav split.
+              '';
+            };
+
             require-admin-role = lib.mkOption {
               type = lib.types.bool;
               default = false;

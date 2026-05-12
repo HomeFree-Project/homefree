@@ -116,7 +116,6 @@ in
   systemd.services.podman-screeenly = lib.optionalAttrs enabled {
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "screeenly-prestart" preStart}" ];
     };

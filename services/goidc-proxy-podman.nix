@@ -67,7 +67,6 @@ in
   systemd.services.podman-goidc-proxy = lib.optionalAttrs config.homefree.services.zitadel.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
   };
 
   homefree.service-config = lib.optionals config.homefree.services.zitadel.enable [

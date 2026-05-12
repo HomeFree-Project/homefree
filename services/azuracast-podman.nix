@@ -82,7 +82,6 @@ in
   systemd.services.podman-azuracast = {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [
         "!${pkgs.writeShellScript "azuracast-prestart" preStart}"

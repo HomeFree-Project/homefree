@@ -170,7 +170,6 @@ in
   systemd.services.podman-homebox = lib.optionalAttrs config.homefree.service-options.homebox.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "homebox-prestart" preStart}" ];
     };

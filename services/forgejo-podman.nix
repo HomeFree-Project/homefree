@@ -393,7 +393,6 @@ in
     systemd.services.podman-forgejo = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "forgejo-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];

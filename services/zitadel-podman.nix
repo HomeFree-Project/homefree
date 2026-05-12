@@ -597,7 +597,6 @@ in
     systemd.services.podman-zitadel = lib.optionalAttrs zitadelEnabled {
       after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
       requires = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      partOf = [ "nftables.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "zitadel-prestart" zitadelPreStart}" ];
       };
@@ -615,7 +614,6 @@ in
       after = [ "dns-ready.service" "podman-zitadel.service" ];
       requires = [ "dns-ready.service" ];
       wants = [ "podman-zitadel.service" ];
-      partOf = [ "nftables.service" ];
     };
 
     ## oauth2-proxy unit is always rendered when Zitadel is enabled,
@@ -625,7 +623,6 @@ in
     systemd.services.podman-oauth2-proxy = lib.optionalAttrs zitadelEnabled {
       after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
       requires = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      partOf = [ "nftables.service" ];
       serviceConfig = {
         ## Refuse to start if the OIDC client_id/client_secret aren't
         ## on disk yet — oauth2-proxy crash-loops without them, and

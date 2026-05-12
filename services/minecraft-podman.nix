@@ -405,7 +405,6 @@ in
       value = {
         after = [ "dns-ready.service" ];
         requires = [ "dns-ready.service" ];
-        partOf =  [ "nftables.service" ];
         # Don't kick the running game server on every nixos-rebuild just
         # because some transitive dependency (glibc, podman, coreutils)
         # rotated. The container itself doesn't change unless the image
@@ -427,6 +426,10 @@ in
       label = "minecraft";
       name = "Minecraft";
       project-name = "Minecraft";
+      sso = {
+        kind = "none";
+        notes = "Minecraft uses the Minecraft protocol on raw TCP (default 25565), not HTTP. Player auth is handled by Mojang/Microsoft on the game client; the server has no web UI. SSO is not applicable.";
+      };
       systemd-service-names = [];
       reverse-proxy.enable = false;
     }]
@@ -443,6 +446,10 @@ in
       name = "Minecraft - ${instance.name}";
       project-name = "Minecraft";
       parent = "minecraft";  # Mark this as a child of the parent service
+      sso = {
+        kind = "none";
+        notes = "Minecraft protocol on raw TCP; no HTTP/OIDC surface. Player auth is Mojang/Microsoft-side.";
+      };
       systemd-service-names = [
         "podman-${instance-id}"
       ];

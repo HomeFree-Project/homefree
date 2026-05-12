@@ -642,7 +642,6 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
       value = {
         after = [ "dns-ready.service" ];
         requires = [ "dns-ready.service" ];
-        partOf =  [ "nftables.service" ];
         serviceConfig = {
           ExecStartPre = [ "!${pkgs.writeShellScript "${site-id}-prestart" preStart}" ];
           ExecStartPost = [ "!${pkgs.writeShellScript "${site-id}-poststart" postStart}" ];

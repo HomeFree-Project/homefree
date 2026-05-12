@@ -162,7 +162,6 @@ in
   systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "vaultwarden-prestart" preStart}" ];
     };

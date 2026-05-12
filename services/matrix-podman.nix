@@ -239,7 +239,6 @@ in
   systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [
         "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}"
@@ -389,6 +388,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.matrix) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "Matrix clients (Element, FluffyChat, etc.) authenticate to Synapse over the Matrix CS API with their own access tokens — they don't speak OIDC at the HTTP gateway. Synapse supports OIDC natively for new account creation, but wiring that is a separate effort; users on existing accounts wouldn't see any change. Use Synapse's built-in auth for now.";
+      };
       systemd-service-names = [
         "matrix-synapse"
         "matrix-synapse-discord"

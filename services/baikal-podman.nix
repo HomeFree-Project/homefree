@@ -78,7 +78,6 @@ in
   systemd.services.podman-baikal = lib.optionalAttrs config.homefree.service-options.baikal.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "baikal-prestart" preStart}" ];
     };
@@ -89,6 +88,10 @@ in
       systemd-service-names = [
         "podman-baikal"
       ];
+      sso = {
+        kind = "caddy_gated";
+        notes = "SSO gates the admin UI only. DAV clients (Thunderbird, iOS Calendar, etc.) authenticate to Baikal directly via HTTP Basic Auth with their per-user app password.";
+      };
       reverse-proxy = {
         enable = config.homefree.service-options.baikal.enable;
         subdomains = [ "baikal" ];
@@ -97,17 +100,17 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.baikal.public;
-        ## NOTE: Baikal is intentionally NOT SSO-gated yet. It's a
-        ## CalDAV/CardDAV server, and DAV clients (mobile, Thunder-
-        ## bird, etc.) can't traverse an OIDC handshake. Gating the
-        ## whole site at Caddy would break sync; we'd need a path-
-        ## scoped gate that protects /admin/* only while leaving
-        ## /dav/* open with per-user HTTP-Basic auth bridged in.
-        ## That's a Phase-A treatment, not the simple oauth2-flag.
-        ##
-        ## Until then, anyone on the LAN/WAN can reach Baikal's UI;
-        ## Baikal's own admin password is the only gate. Document
-        ## this gap in the SSO admin page (sso_kind=none).
+        ## SSO-gate the admin UI but leave DAV traffic alone. The
+        ## dav-bypass flag tells Caddy to skip the @sso_gate matcher
+        ## for any request that (a) carries `Authorization: Basic ...`
+        ## or (b) uses a DAV-only HTTP method. Result:
+        ##   - Browser to /admin/ without cookie  -> SSO challenge
+        ##   - Thunderbird / iOS Calendar / KOrganizer on /dav.php
+        ##     with their app password           -> straight through
+        ##     to Baikal, which authenticates them with their own
+        ##     credentials.
+        oauth2 = true;
+        dav-bypass = true;
       };
       backup = {
         paths = [

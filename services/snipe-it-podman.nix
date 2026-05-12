@@ -330,7 +330,6 @@ in
   systemd.services.podman-snipe-it = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "snipe-it-prestart" preStart}" ];
     };
@@ -338,6 +337,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.snipe-it) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "Snipe-IT supports SAML only — OIDC requires a third-party Laravel package not in the official image. SAML integration is a separate multi-day effort. Use Snipe-IT's built-in user system for now.";
+      };
       systemd-service-names = [
         "podman-snipe-it"
         "mysql"

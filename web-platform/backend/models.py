@@ -159,3 +159,9 @@ class ServiceStatus:
     # Per-unit breakdown so the UI can flag specific units that aren't
     # running when the aggregate is "degraded".
     unit_states: Optional[List[UnitState]] = None
+    # SSO surfacing — folds the old /api/sso/state per-service table
+    # into the main services list. sso_kind is one of
+    # native_oidc | caddy_gated | basic_auth | infra | none.
+    sso_kind: str = "none"
+    sso_notes: str = ""
+    sso_provisioned: bool = False

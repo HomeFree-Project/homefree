@@ -48,6 +48,7 @@ let
     ssl-no-verify = rp.ssl-no-verify;
     basic-auth = rp.basic-auth;
     oauth2 = rp.oauth2;
+    dav-bypass = rp.dav-bypass;
     require-admin-role = rp.require-admin-role;
     inject-basic-auth-env = rp.inject-basic-auth-env;
     upstream-logout-paths = rp.upstream-logout-paths;

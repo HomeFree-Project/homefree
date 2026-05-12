@@ -124,7 +124,6 @@ in
   systemd.services.podman-jellyfin = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "jellyfin-prestart" preStart}" ];
     };
@@ -132,6 +131,10 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.jellyfin) label name project-name;
+      sso = {
+        kind = "none";
+        notes = "Jellyfin's mobile, TV, and desktop clients authenticate with Jellyfin's native username/password — they do not speak OIDC. A site-wide SSO gate would lock every client out. Native OIDC is plugin-based (Jellyfin.Plugin.SSO) and brittle to wire declaratively. Use Jellyfin's built-in users.";
+      };
       systemd-service-names = [
         "podman-jellyfin"
       ];

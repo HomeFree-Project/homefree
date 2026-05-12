@@ -372,7 +372,6 @@ in
   systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf =  [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
     };
@@ -429,15 +428,35 @@ in
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = container-external-port;
-        ssl = true;
-        ssl-no-verify = true;
+        ## Frigate exposes two ports: 5000 (plain HTTP, unauth) and
+        ## 8971 (TLS, Frigate's own auth). We forward only port 5000
+        ## in the container spec above, and the Caddy SSO+admin-role
+        ## gate is the only auth layer — so the upstream is plain
+        ## HTTP. Setting ssl=true here caused Caddy to try a TLS
+        ## handshake against an HTTP listener: 502 "tls: first
+        ## record does not look like a TLS handshake".
+        ssl = false;
         public = config.homefree.service-options.frigate.public;
-        ## Frigate has no native OIDC. Gate at Caddy: any signed-in
-        ## user is challenged, then admin-api enforces the
-        ## homefree-admin role. Camera streams + clip storage are
-        ## admin operations.
+        ## Intercept Frigate's own logout endpoint and bounce
+        ## through the full SSO sign-out chain. Without this,
+        ## clicking "Sign out" inside Frigate clears Frigate's
+        ## session cookie but the user is still SSO-authenticated
+        ## at the Caddy perimeter, so the next page load just
+        ## drops them back at Frigate's local login form.
+        ##
+        ## Frigate exposes both /logout (GET, per upstream docs)
+        ## and /api/logout (the configurable default). Cover both
+        ## so it works regardless of which one the UI calls.
+        upstream-logout-paths = [ "/logout" "/api/logout" ];
+        ## Frigate has no native OIDC. SSO-gated at Caddy: any
+        ## signed-in homefree user can view cameras. We do NOT
+        ## require the homefree-admin role — household members
+        ## should be able to use the NVR UI without admin privileges.
+        ## Frigate's own per-user roles (viewer/admin) still apply
+        ## once the user passes the SSO gate and lands at Frigate's
+        ## local login.
         oauth2 = config.homefree.sso.per-service.frigate.enable or true;
-        require-admin-role = config.homefree.sso.per-service.frigate.enable or true;
+        require-admin-role = false;
       };
       backup = if config.homefree.service-options.frigate.enable-backup-media then {
         paths = [

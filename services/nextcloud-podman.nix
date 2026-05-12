@@ -577,7 +577,6 @@ in
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
     wants = [ "postgresql.service" ];
-    partOf = [ "nftables.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nextcloud-prestart" preStart}" ];
       ExecStartPost = [ "!${pkgs.writeShellScript "nextcloud-poststart" postStart}" ];
@@ -592,7 +591,6 @@ in
   systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
-    partOf = [ "nftables.service" ];
   };
 
   systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
@@ -604,7 +602,6 @@ in
   systemd.services.podman-nextcloud-cron = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
-    partOf = [ "nftables.service" ];
   };
 
     homefree.service-config = [{
