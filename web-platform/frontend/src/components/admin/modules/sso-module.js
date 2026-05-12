@@ -218,6 +218,22 @@ class SsoModule extends LitElement {
     return true;   // matches the Nix default
   }
 
+  _allowRegistration() {
+    return this.config?.sso?.allowUserRegistration === true;
+  }
+
+  _toggleAllowRegistration() {
+    const next = JSON.parse(JSON.stringify(this.config || {}));
+    if (!next.sso) next.sso = {};
+    next.sso.allowUserRegistration = !this._allowRegistration();
+    this.config = next;
+    this.dispatchEvent(new CustomEvent('config-change', {
+      detail: { module: 'sso', config: next },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   render() {
     if (this.loading && !this.state) {
       return html`<div class="muted">Loading SSO state…</div>`;
@@ -240,6 +256,31 @@ class SsoModule extends LitElement {
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
+
+        <config-section
+          title="Sign-in options"
+          description="Knobs that change what appears on the Zitadel sign-in page."
+        >
+          <div class="status-row" style="justify-content: space-between;">
+            <div>
+              <div style="font-weight: 500; color: var(--hf-text);">
+                Allow user self-registration
+              </div>
+              <div class="muted" style="margin-top: 4px; max-width: 560px;">
+                When off, the sign-in page hides the "Register" link
+                so only admins can create accounts. New users still
+                need to be granted access to individual services
+                after registration — turning this on does not, by
+                itself, give registrants access to anything.
+              </div>
+            </div>
+            <div
+              class="toggle ${this._allowRegistration() ? 'on' : ''}"
+              @click=${this._toggleAllowRegistration}
+              title="Toggle sign-up link visibility"
+            ></div>
+          </div>
+        </config-section>
 
         <config-section title="Bootstrap status">
           <div class="status-row">

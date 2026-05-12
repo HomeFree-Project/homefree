@@ -64,6 +64,37 @@ let
   pamSecretsDir = "${secretsRoot}/zitadel-pam";
   globalSentinel = "${secretsRoot}/.sso-provisioned";
 
+  ## Derive post-logout URIs from the Caddy-gated service config.
+  ## When a user clicks "Sign out" on (say) admin.<domain>, we want
+  ## them to land back on admin.<domain>/ — which then bounces them
+  ## through forward_auth into the SSO login form (correct UX). For
+  ## Zitadel to honor post_logout_redirect_uri, the exact URI must
+  ## be registered on the oauth2-proxy OIDC app's post-logout list.
+  ##
+  ## We enumerate every reverse-proxy entry whose oauth2 gate is on
+  ## and emit `https://<subdomain>.<https-domain>/` for each. Also
+  ## include the root domain and auth.<domain>/ as stable fallbacks
+  ## for callers that build the chain without knowing the caller
+  ## host (e.g. cron tooling).
+  oauth2GatedSiteUris =
+    let
+      gated = lib.filter
+        (sc: sc.reverse-proxy.enable == true
+             && (sc.reverse-proxy.oauth2 or false) == true)
+        cfg.service-config;
+      uriOfSubdomainDomain = subdomain: d: "https://${subdomain}.${d}/";
+      siteUris = sc: lib.flatten (lib.map (subdomain:
+        lib.map (d: uriOfSubdomainDomain subdomain d)
+          sc.reverse-proxy.https-domains)
+        sc.reverse-proxy.subdomains);
+    in
+      lib.unique (lib.flatten (lib.map siteUris gated));
+
+  oauth2ProxyPostLogoutUris = lib.unique ([
+    "https://${domain}/"
+    "https://auth.${domain}/"
+  ] ++ oauth2GatedSiteUris);
+
   ## Service catalog — each entry produces one OIDC application in
   ## Zitadel and writes client_id/client_secret to that service's
   ## secrets dir. Entries with needs_pat=true also get a machine user
@@ -85,7 +116,20 @@ let
       response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
       grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
       redirect_uris = [ "https://auth.${domain}/oauth2/callback" ];
-      post_logout_uris = [ "https://auth.${domain}/" ];
+      ## Post-logout landings the oauth2-proxy app will honor.
+      ## Includes:
+      ##   - https://<domain>/ (root landing page, no auth gate)
+      ##   - https://auth.<domain>/ (oauth2-proxy itself)
+      ##   - https://<subdomain>.<domain>/ for every Caddy-gated
+      ##     service (admin, etc.) so the sign-out link on each can
+      ##     redirect back to the originating site. After landing
+      ##     there with no cookie, Caddy's forward_auth bounces the
+      ##     user into the SSO login form (correct UX).
+      ## Zitadel matches the post_logout_redirect_uri query param
+      ## EXACTLY against this list; an unregistered URI causes
+      ## Zitadel to ignore the param and park the user on its own
+      ## "Logout successful" page.
+      post_logout_uris = oauth2ProxyPostLogoutUris;
       needs_pat = false;
       post_restart_units = [ "podman-oauth2-proxy.service" ];
     }
@@ -496,6 +540,132 @@ let
         fi
       fi
 
+      ## ── 3d. Login policy + sign-in text customization ─────────────
+      ## Two declarative knobs sourced from homefree.sso.*:
+      ##
+      ##   - allowRegister (boolean, default false): controls whether
+      ##     the "Register" link shows up on Zitadel's sign-in page.
+      ##     A default HomeFree deployment is a household server, not
+      ##     a public site; random visitors creating accounts is the
+      ##     wrong default. Even when they tried, the registration
+      ##     form previously failed because the new user couldn't be
+      ##     granted access to anything, so the UI was misleading.
+      ##
+      ##   - loginNameLabel: relabels the username field. Zitadel
+      ##     calls the identifier a "loginname" by default, which
+      ##     leaks an implementation detail; we render it as
+      ##     "Username" so the form reads naturally.
+      ##
+      ## Both are PUT-with-no-op-tolerance. The login policy endpoint
+      ## returns 400 + "not changed" when the body matches existing
+      ## state; the text endpoint silently accepts duplicates. The
+      ## login text body is large (one field per translatable string)
+      ## so we GET-merge-PUT to preserve any fields we don't manage.
+
+      ALLOW_REGISTER="${if cfg.sso.allowUserRegistration then "true" else "false"}"
+
+      log "Setting login policy: allowRegister=$ALLOW_REGISTER"
+      ## GET the current login policy so we can preserve all the other
+      ## fields (allowUsernamePassword, forceMFA, passwordlessType, ...)
+      ## that we don't manage. Zitadel's PUT replaces the whole record,
+      ## so omitting fields resets them to API defaults — bad.
+      ##
+      ## The management API returns the *instance-default* policy with
+      ## `isDefault: true` when no org-level policy exists yet. In that
+      ## case we have to POST (create) rather than PUT (update), because
+      ## PUT on a non-existent org policy 404s.
+      lp_get=$(zit_api GET "management/v1/policies/login" "" 2>/dev/null) || lp_get=""
+      lp_is_default=$(printf '%s' "$lp_get" | jq -r '.policy.isDefault // .isDefault // false')
+      lp_current=$(printf '%s' "$lp_get" | jq -c '.policy // {}' 2>/dev/null || echo '{}')
+      ## Strip metadata fields the API rejects on write (details,
+      ## isDefault, defaultRedirectUri-server-set fields, ...).
+      lp_body=$(printf '%s' "$lp_current" | jq -c \
+        --argjson r "$ALLOW_REGISTER" \
+        'del(.details, .isDefault) + {allowRegister: $r}')
+      lp_method="PUT"
+      if [ "$lp_is_default" = "true" ]; then
+        log "No org-level login policy yet — creating via POST"
+        lp_method="POST"
+      fi
+      lp_tmp=$(mktemp)
+      lp_code=$(curl -sS -o "$lp_tmp" -w '%{http_code}' \
+        -X "$lp_method" \
+        -H "Host: $SSO_HOST" \
+        -H "Authorization: Bearer $PAT" \
+        -H "Content-Type: application/json" \
+        --data-raw "$lp_body" \
+        "$SSO_URL/management/v1/policies/login" || echo "000")
+      case "$lp_code" in
+        2*) log "Login policy $lp_method'd (allowRegister=$ALLOW_REGISTER)" ;;
+        400)
+          if grep -qiE "not (been )?changed|already" "$lp_tmp"; then
+            log "Login policy already in desired state (no-op)"
+          else
+            warn "Login policy $lp_method returned 400: $(cat "$lp_tmp")"
+          fi
+          ;;
+        409)
+          ## Race: another caller created the policy between our GET
+          ## and POST. Retry as PUT.
+          log "Login policy already exists — retrying as PUT"
+          lp_retry_code=$(curl -sS -o "$lp_tmp" -w '%{http_code}' \
+            -X PUT \
+            -H "Host: $SSO_HOST" \
+            -H "Authorization: Bearer $PAT" \
+            -H "Content-Type: application/json" \
+            --data-raw "$lp_body" \
+            "$SSO_URL/management/v1/policies/login" || echo "000")
+          case "$lp_retry_code" in
+            2*) log "Login policy updated on retry" ;;
+            *) warn "Login policy retry returned $lp_retry_code: $(cat "$lp_tmp")" ;;
+          esac
+          ;;
+        *) warn "Login policy $lp_method returned $lp_code: $(cat "$lp_tmp")" ;;
+      esac
+      rm -f "$lp_tmp"
+
+      ## Login-screen text overrides. Zitadel ships a "loginname"
+      ## label by default — relabel to "Username" so the form reads
+      ## naturally. PUT replaces the WHOLE block, so we GET first to
+      ## preserve every other translatable string.
+      ##
+      ## Language is hardcoded to "en" for now; once we plumb
+      ## homefree.system.language end-to-end into Zitadel we can drive
+      ## this off that.
+      log "Setting login text: loginNameLabel='Username'"
+      lt_get=$(zit_api GET "management/v1/text/login/en" "" 2>/dev/null) || lt_get=""
+      ## Existing customText (if any). API returns the FULL default
+      ## customText with `isDefault: true` when nothing is overridden,
+      ## or the org's overrides with `isDefault: false` otherwise.
+      ## Strip metadata before re-submitting.
+      lt_current=$(printf '%s' "$lt_get" \
+        | jq -c '(.customText // {}) | del(.details, .isDefault)' \
+          2>/dev/null || echo '{}')
+      ## Merge: keep everything Zitadel already has, override
+      ## loginText.loginNameLabel. jq's "* " is recursive merge.
+      lt_body=$(printf '%s' "$lt_current" | jq -c \
+        '. * {loginText:{loginNameLabel:"Username"}}')
+      lt_tmp=$(mktemp)
+      lt_code=$(curl -sS -o "$lt_tmp" -w '%{http_code}' \
+        -X PUT \
+        -H "Host: $SSO_HOST" \
+        -H "Authorization: Bearer $PAT" \
+        -H "Content-Type: application/json" \
+        --data-raw "$lt_body" \
+        "$SSO_URL/management/v1/text/login/en" || echo "000")
+      case "$lt_code" in
+        2*) log "Login text updated" ;;
+        400)
+          if grep -qiE "not (been )?changed|already" "$lt_tmp"; then
+            log "Login text already in desired state (no-op)"
+          else
+            warn "Login text update returned 400: $(cat "$lt_tmp")"
+          fi
+          ;;
+        *) warn "Login text update returned $lt_code: $(cat "$lt_tmp")" ;;
+      esac
+      rm -f "$lt_tmp"
+
       ## ── 4. Ensure "homefree" project exists ───────────────────────
       log "Ensuring 'homefree' project exists"
       project_search=$(zit_api POST management/v1/projects/_search '{
@@ -603,6 +773,64 @@ EOF
           log "$svc: created app $app_id (client_id=$client_id)"
         else
           log "$svc: app $app_id exists (client_id=$client_id)"
+          ## Update the OIDC config on the existing app. The redirect /
+          ## post-logout URIs and grant/response-type lists evolve as
+          ## we add features (new domains, new redirect paths, new
+          ## post-logout landings). Without this PUT, those changes
+          ## only land on fresh installs — every upgraded box stays
+          ## stuck on whatever URIs were registered at first
+          ## provisioning.
+          ##
+          ## Idempotent: Zitadel returns 400 + "not changed" when the
+          ## body matches existing state, same pattern as the domain/
+          ## login-policy updates above.
+          resp_types=$(to_json_array "$resp_types_raw")
+          grant_types=$(to_json_array "$grant_types_raw")
+          redirect_uris=$(to_json_array "$redirect_uris_raw")
+          post_logout=$(to_json_array "$post_logout_raw")
+          update_body=$(jq -nc \
+            --argjson redirectUris "$redirect_uris" \
+            --argjson postLogoutUris "$post_logout" \
+            --argjson responseTypes "$resp_types" \
+            --argjson grantTypes "$grant_types" \
+            --arg appType "$app_type" \
+            --arg authMethod "$auth_method" \
+            '{
+              redirectUris: $redirectUris,
+              postLogoutRedirectUris: $postLogoutUris,
+              responseTypes: $responseTypes,
+              grantTypes: $grantTypes,
+              appType: $appType,
+              authMethodType: $authMethod,
+              version: "OIDC_VERSION_1_0",
+              devMode: false,
+              accessTokenType: "OIDC_TOKEN_TYPE_BEARER",
+              accessTokenRoleAssertion: true,
+              idTokenRoleAssertion: true,
+              idTokenUserinfoAssertion: true
+            }')
+          upd_tmp=$(mktemp)
+          upd_code=$(curl -sS -o "$upd_tmp" -w '%{http_code}' \
+            -X PUT \
+            -H "Host: $SSO_HOST" \
+            -H "Authorization: Bearer $PAT" \
+            -H "Content-Type: application/json" \
+            --data-raw "$update_body" \
+            "$SSO_URL/management/v1/projects/$project_id/apps/$app_id/oidc_config" \
+            || echo "000")
+          case "$upd_code" in
+            2*) log "$svc: OIDC config updated (redirects + post-logout)" ;;
+            400)
+              if grep -qiE "not (been )?changed|already" "$upd_tmp"; then
+                log "$svc: OIDC config already in desired state (no-op)"
+              else
+                warn "$svc: OIDC config update returned 400: $(cat "$upd_tmp")"
+              fi
+              ;;
+            *) warn "$svc: OIDC config update returned $upd_code: $(cat "$upd_tmp")" ;;
+          esac
+          rm -f "$upd_tmp"
+
           ## Need a client_secret? Only if our on-disk copy is missing
           ## AND the app uses a confidential auth method. PKCE/native
           ## apps (NONE auth method) have no secret — that's expected.
@@ -680,6 +908,14 @@ EOF
         fi
 
         ## (e) Mark provisioned + (re)start consumers.
+        ## `--no-block` fires the restart and returns immediately
+        ## instead of waiting for the unit's `start-post` phase to
+        ## finish. Critical for Home Assistant in particular: HA's
+        ## postStart script polls /api/onboarding for up to 120s
+        ## before exiting, and a blocking `systemctl restart` would
+        ## make zitadel-provision itself hang for those two minutes
+        ## on every rebuild that touches HA's secrets.
+        ##
         ## We use `restart` (not `try-restart`) so units that were
         ## NEVER started (e.g. oauth2-proxy, which is rendered with
         ## autoStart=false and an ExecStartPre secrets check) come
@@ -695,8 +931,8 @@ EOF
         if [ -n "$post_restart_raw" ]; then
           while IFS= read -r unit; do
             [ -n "$unit" ] || continue
-            log "$svc: restart $unit"
-            systemctl restart "$unit" || \
+            log "$svc: restart $unit (no-block)"
+            systemctl restart --no-block "$unit" || \
               warn "$svc: restart $unit failed (unit may be disabled or not yet rendered)"
           done < <(printf '%s\n' "$post_restart_raw" | sed 's/;;/\n/g')
         fi

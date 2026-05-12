@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser } from '../../api/client.js';
-import { ssoSignOutUrl } from '../../shared/auth.js';
+import { handleSignOut } from '../../shared/auth.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -284,6 +284,14 @@ class AdminApp extends LitElement {
     }
     .sidebar.collapsed .sidebar-footer .apply-btn-text {
       display: none;
+    }
+    /* When collapsed, the "Applying…" text next to the spinner is
+       display:none, but .btn-spinner carries a margin-right: 8px
+       (intended to space it from the trailing text). With the text
+       hidden, that margin pushes the spinner left of center inside
+       the icon-only button. Drop the margin in the collapsed case. */
+    .sidebar.collapsed .sidebar-footer .apply-btn .btn-spinner {
+      margin-right: 0;
     }
 
     /* User menu in the top bar */
@@ -2180,7 +2188,7 @@ class AdminApp extends LitElement {
               <div class="user-name">${username || 'Account'}</div>
               <div class="user-role">${role}</div>
             </div>
-            <a class="user-menu-item" href=${ssoSignOutUrl()}>
+            <a class="user-menu-item" href="#" @click=${handleSignOut}>
               Sign out
             </a>
           </div>

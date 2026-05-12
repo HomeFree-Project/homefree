@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getMode } from './api/client.js';
-import { ssoSignOutUrl } from './shared/auth.js';
+import { handleSignOut } from './shared/auth.js';
 import './components/installer-app.js';
 import './components/admin/admin-app.js';
 
@@ -229,7 +229,7 @@ class HomeFreeApp extends LitElement {
             `}
           `}
           <p style="margin-top: 24px;">
-            <a href=${ssoSignOutUrl()} style="color: white;">
+            <a href="#" @click=${handleSignOut} style="color: white;">
               Sign out
             </a>
           </p>

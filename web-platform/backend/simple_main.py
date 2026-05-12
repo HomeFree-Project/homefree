@@ -66,6 +66,12 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         "/health",
         "/api/service-state",
         "/api/closure-id",
+        # The oauth2-proxy OIDC client_id is needed by the sign-out
+        # link rendered on the access-denied page (the user is
+        # authenticated but not the admin — they should still be
+        # able to sign out). Not a secret: it's already visible on
+        # every /authorize URL during the normal SSO flow.
+        "/api/sso/oauth2-client-id",
     }
     ## oauth2-proxy v7's behavior:
     ##   - X-Auth-Request-Preferred-Username always carries the OIDC
@@ -871,6 +877,32 @@ async def sso_state():
         "services": services,
     })
 
+@app.get("/api/sso/oauth2-client-id")
+async def sso_oauth2_client_id():
+    """Return the OIDC client_id of the oauth2-proxy app.
+
+    Not a secret — it's already visible in every authenticated user's
+    browser during the SSO flow (it's the `client_id` query param on
+    /authorize). We expose it through a small endpoint so the frontend
+    can build a fully-formed RP-Initiated Logout URL: Zitadel's
+    end_session endpoint requires either an `id_token_hint` (which
+    oauth2-proxy clears before it forwards the user) or a `client_id`
+    matching a registered post_logout_redirect_uri. Without one,
+    Zitadel ignores `post_logout_redirect_uri` and parks the user on
+    its own "Logout successful" page with no way back.
+    """
+    path = f"{SSO_SECRETS_DIR}/zitadel/oidc-client-id"
+    try:
+        with open(path) as f:
+            cid = f.read().strip()
+        return {"client_id": cid}
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=503,
+            detail=("oauth2-proxy OIDC client_id not on disk. Has "
+                    "zitadel-provision run? Expected: " + path),
+        )
+
 ## ─── Zitadel user management ───────────────────────────────────────────
 ## All routes here are admin-only — they're already gated by the
 ## oauth2-proxy header check at the FastAPI middleware level, so we
@@ -1263,10 +1295,19 @@ async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):
         session_token = (r.json() or {}).get("sessionToken")
 
         # 3. Admin-set the new password in Zitadel.
+        #    noChangeRequired=true is REQUIRED — Zitadel's default
+        #    for this endpoint flips passwordChangeRequired to true,
+        #    which makes the user see a "change your password" prompt
+        #    on their next sign-in. We just verified the current
+        #    password and the user explicitly entered a new one, so
+        #    that's strictly worse UX.
         r = await cx.post(
             f"{base}/management/v1/users/{user_id}/password",
             headers=_zitadel_headers(),
-            json={"password": req.new_password},
+            json={
+                "password": req.new_password,
+                "noChangeRequired": True,
+            },
         )
         if r.status_code >= 400:
             raise HTTPException(
@@ -1372,7 +1413,14 @@ async def set_password(user_id: str, req: SetPasswordRequest):
         r = await cx.post(
             f"{base}/management/v1/users/{user_id}/password",
             headers=_zitadel_headers(),
-            json={"password": req.new_password},
+            json={
+                "password": req.new_password,
+                # Admin-set passwords are usually for resets. Default
+                # to NOT requiring a forced change on next login —
+                # if the admin wants that they can re-set with the
+                # flag explicitly via the Zitadel UI.
+                "noChangeRequired": True,
+            },
         )
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code,

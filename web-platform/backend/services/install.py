@@ -102,6 +102,7 @@ class InstallationService:
     "overrides": []
   },
   "sso": {
+    "allowUserRegistration": false,
     "per-service": {}
   },
   "services": {
@@ -318,6 +319,7 @@ in
     ## services/sso.nix, so a missing key means "SSO on" rather than
     ## a build error.
     sso = {
+      allowUserRegistration = jsonData.sso.allowUserRegistration or false;
       per-service = lib.mapAttrs (_: v: {
         enable = v.enable or true;
       }) (jsonData.sso.per-service or {});

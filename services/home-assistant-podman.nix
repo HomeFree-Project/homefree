@@ -210,11 +210,35 @@ let
 
     API="http://127.0.0.1:${toString port}/api"
     ONBOARD="http://127.0.0.1:${toString port}/api/onboarding"
+    STORAGE_ONBOARDING="${containerDataPath}/config/.storage/onboarding"
+
+    ## ── 0. Fast path: skip if onboarding already complete on disk ─
+    ## HA persists onboarding state in .storage/onboarding as
+    ##   {"data":{"done":["user","core_config","analytics","integration"]}}
+    ## once each step finishes. If all four are present we have
+    ## nothing to do — and crucially, no reason to do an HTTP
+    ## handshake at all. Avoiding the HTTP path here is a 30-90s
+    ## speedup on every rebuild after first install.
+    if [ -s "$STORAGE_ONBOARDING" ] \
+       && ${pkgs.jq}/bin/jq -e '
+            .data.done as $d
+            | ["user","core_config","analytics","integration"]
+            | all(. as $s | $d | index($s))
+          ' "$STORAGE_ONBOARDING" >/dev/null 2>&1; then
+      echo "ha postStart: onboarding already complete on disk; skipping" >&2
+      exit 0
+    fi
 
     ## ── 1. Wait for HA to come up ──────────────────────────────────
+    ## Only probe /api/onboarding (unauthenticated, returns 200 with a
+    ## JSON list as soon as the HTTP server is up). The previous loop
+    ## also probed /api/, which returns 401 unauthenticated — and HA's
+    ## ban-on-failed-auth counter treats every 401 as a malicious
+    ## attempt. After ~5 401s in quick succession HA banned 127.0.0.1
+    ## and stopped responding to ANY endpoint, including this loop's
+    ## onboarding probe, leading to a 120s timeout.
     for i in $(seq 1 60); do
-      if ${pkgs.curl}/bin/curl -sf "$API/" >/dev/null 2>&1 \
-         || ${pkgs.curl}/bin/curl -sf "$ONBOARD" >/dev/null 2>&1; then
+      if ${pkgs.curl}/bin/curl -sf "$ONBOARD" >/dev/null 2>&1; then
         break
       fi
       [ "$i" = 60 ] && {

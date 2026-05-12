@@ -79,6 +79,66 @@
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="/src/app.js"></script>
+  <script>
+    // Auth preflight before loading the SPA.
+    //
+    // Symptom we're guarding against: the HTML somehow loads in an
+    // unauthenticated state (bfcache restore, browser-cached HTML
+    // outliving the oauth2-proxy cookie, an old still-open tab the
+    // user came back to after sign-out, etc.) — and then the very
+    // next thing the browser does is fetch /src/app.js as a module.
+    // That fetch hits Caddy's forward_auth, gets 302'd cross-origin
+    // to auth.<domain>/oauth2/start, and the module loader refuses
+    // (cross-origin redirect + MIME mismatch). The page is now
+    // permanently stuck on the loading spinner with CORS errors in
+    // the console.
+    //
+    // The fix: before importing the SPA, probe /api/mode with
+    // redirect: 'manual'. If we're authed, it returns a normal 200
+    // (or a same-origin error we can surface). If we're not, the
+    // response.type will be 'opaqueredirect' — and we do a full
+    // window.location reload to '/', which sends the browser
+    // through Caddy's forward_auth as a NAVIGATION (not a module
+    // fetch), which Caddy responds to with a top-level 302 that the
+    // browser follows normally into the SSO flow.
+    //
+    // Also catches the bfcache-restore case (pageshow.persisted)
+    // for older browsers where Cache-Control:no-store alone isn't
+    // enough to disable bfcache.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) window.location.reload();
+    });
+
+    (async () => {
+      try {
+        const r = await fetch('/api/mode', {
+          redirect: 'manual',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (r.type === 'opaqueredirect' || r.status === 0) {
+          // Unauthed — force a top-level navigation through Caddy.
+          window.location.replace('/?_=' + Date.now());
+          return;
+        }
+        if (r.status === 401 || r.status === 403) {
+          // Authed but not allowed (e.g. signed in as wrong user).
+          // Let the SPA boot — it will render the access-denied
+          // page using the error body.
+        }
+      } catch (err) {
+        // Network or CORS error in the probe means the same thing
+        // an opaqueredirect does: we're not authed. Force a real
+        // navigation.
+        window.location.href = '/';
+        return;
+      }
+      // Auth OK — load the SPA.
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/src/app.js';
+      document.body.appendChild(s);
+    })();
+  </script>
 </body>
 </html>

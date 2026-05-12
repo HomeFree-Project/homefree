@@ -68,6 +68,27 @@ in
     ## (the module that consumes it). Listed here in the comments so
     ## anyone grepping for sso.* finds the cross-reference.
 
+    allowUserRegistration = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to expose the "Register new user" link on Zitadel's
+        sign-in page.
+
+        Default false because a default HomeFree deployment is a
+        family / single-household server, not a public service —
+        random visitors should not be able to self-create accounts
+        (and even when they tried, registration failed in practice
+        because the registration form had no path to grant the new
+        user access to anything).
+
+        Set true to allow self-service registration. Account creation
+        will succeed but the new user will not have access to any
+        HomeFree services until an admin grants them roles through
+        the admin UI (or through Zitadel directly).
+      '';
+    };
+
     per-service = lib.mkOption {
       type = lib.types.attrsOf perServiceSubmodule;
       default = { };
