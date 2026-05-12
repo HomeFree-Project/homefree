@@ -192,6 +192,16 @@
     powertop.enable = true;
   };
 
+  # Disable USB autosuspend for HID devices (keyboards, mice, etc.).
+  # Why: powertop's autotuning enables USB autosuspend globally, which causes
+  # the first few keystrokes after an idle period to be dropped while the
+  # device wakes up. HID devices barely save any power from suspending, so
+  # exempt them entirely.
+  services.udev.extraRules = ''
+    ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", TEST=="power/control", ATTR{power/control}="on"
+    ACTION=="add", SUBSYSTEM=="usb", DRIVERS=="usbhid", TEST=="power/control", ATTR{power/control}="on"
+  '';
+
   # Eternal Terminal
   services.eternal-terminal.enable = true;
   # et port

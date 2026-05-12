@@ -9,10 +9,17 @@ let
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
 
-  ## preStart: synthesize Open WebUI's OIDC env file from the OIDC
-  ## secrets zitadel-provision wrote to disk. Gated on the secrets
-  ## existing so pre-provisioning (fresh install) the container still
-  ## starts in local-login mode.
+  ## preStart synthesizes:
+  ##   * ca-bundle.crt — system roots + Caddy local CA, pointed at by
+  ##     SSL_CERT_FILE so Open WebUI's httpx client (authlib OIDC
+  ##     discovery) trusts the sso.<domain> cert Caddy issues from its
+  ##     local CA. httpx 0.28 reads SSL_CERT_FILE via its default ssl
+  ##     context; it does NOT honor REQUESTS_CA_BUNDLE.
+  ##   * sso.env — OIDC + form-suppression vars from Zitadel secrets.
+  ##     Gated on the secrets existing so pre-provisioning the
+  ##     container still starts (with the local login form visible) —
+  ##     ENABLE_LOGIN_FORM=False only lands once OIDC is ready, so we
+  ##     don't lock the admin out before provisioning completes.
   ##
   ## Open WebUI reads OAUTH_CLIENT_ID/SECRET, OPENID_PROVIDER_URL +
   ## ENABLE_OAUTH_SIGNUP/ROLE_MANAGEMENT to bootstrap an OIDC button
@@ -25,6 +32,16 @@ let
   ##     the new user to admin; absence makes them a regular user.
   preStart = ''
     mkdir -p ${containerDataPath}
+
+    {
+      cat /etc/ssl/certs/ca-certificates.crt
+      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+        echo
+        cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+      fi
+    } > ${containerDataPath}/ca-bundle.crt
+    chmod 644 ${containerDataPath}/ca-bundle.crt
+
     install -m 600 /dev/null ${ssoEnvFile}
     if [ -s ${secretsDir}/oidc-client-id ] \
        && [ -s ${secretsDir}/oidc-client-secret ]; then
@@ -51,6 +68,14 @@ let
         ## them in as regular users (not pending).
         echo "OAUTH_ALLOWED_ROLES=homefree-admin,user"
         echo "DEFAULT_USER_ROLE=user"
+        ## SSO-only: hide the local username/password form and the
+        ## "Create account" path. Frontend gates the form on
+        ## features.enable_login_form (config.py:1248); server signup
+        ## endpoint refuses when both are false (routers/auths.py).
+        ## Only emitted once OIDC is provisioned — otherwise the
+        ## admin has no way in on first boot.
+        echo "ENABLE_LOGIN_FORM=False"
+        echo "ENABLE_SIGNUP=False"
       } > ${ssoEnvFile}
     else
       ## Pre-provisioning: write the env file empty so the container's
@@ -114,7 +139,7 @@ in
 
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     ollama-webui = {
-      image = "ghcr.io/open-webui/open-webui:main";
+      image = "ghcr.io/open-webui/open-webui:v0.9.5";
 
       autoStart = true;
 
@@ -130,6 +155,12 @@ in
       volumes = [
       "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:/app/backend/data"
+        ## Combined CA bundle (system roots + Caddy local CA) so the
+        ## OIDC discovery fetch against sso.<domain> validates.
+        ## httpx's default ssl context honors SSL_CERT_FILE (below);
+        ## the bundle replaces certifi's default — must include system
+        ## roots, not just the Caddy CA.
+        "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
       ];
 
       environment = {
@@ -137,6 +168,11 @@ in
         PORT = toString port-internal;
         WEBUI_URL = "https://ollama.${config.homefree.system.domain}";
         OLLAMA_BASE_URL = "http://${config.homefree.network.lan-address}:${toString config.services.ollama.port}";
+        ## Point Python's ssl module (and therefore httpx, which
+        ## authlib uses for OIDC discovery) at our combined bundle.
+        ## httpx does NOT honor REQUESTS_CA_BUNDLE — only SSL_CERT_FILE
+        ## via ssl.create_default_context().
+        SSL_CERT_FILE = "/etc/ssl/homefree-ca-bundle.crt";
         ## @TODOS
         # WEBUI_SECRET_KEY
         # DEFAULT_LOCALE
