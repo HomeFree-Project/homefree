@@ -952,7 +952,7 @@ SSO_CATALOG = [
     # surface area and knows what's still pending. Reasons each one
     # isn't gated yet are documented in the per-service .nix file.
     {"label": "baikal",         "display": "Baikal (CalDAV/CardDAV)", "sso_kind": SSO_KIND_NONE},
-    {"label": "cryptpad",       "display": "CryptPad",        "sso_kind": SSO_KIND_NONE},
+    {"label": "cryptpad",       "display": "CryptPad",        "sso_kind": SSO_KIND_NATIVE},
     {"label": "freshrss",       "display": "FreshRSS",        "sso_kind": SSO_KIND_NONE},
     {"label": "grocy",          "display": "Grocy",           "sso_kind": SSO_KIND_NONE},
     {"label": "jellyfin",       "display": "Jellyfin",        "sso_kind": SSO_KIND_NONE},
