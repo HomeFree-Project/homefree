@@ -829,47 +829,120 @@ async def geocode_address(q: str):
 SSO_SECRETS_DIR = "/var/lib/homefree-secrets"
 SSO_GLOBAL_SENTINEL = f"{SSO_SECRETS_DIR}/.sso-provisioned"
 
-# Services with native OIDC apps (each has its own .provisioned sentinel
-# under SSO_SECRETS_DIR/<svc>/). Order matches the priority list in
-# the original SSO plan so the UI presents them consistently.
-SSO_NATIVE_OIDC_SERVICES = [
-    "headscale",     # bundled VPN admin
-    "netbird",
-    "immich",
-    "nextcloud",
-    "forgejo",
-    "home-assistant",
-]
+# SSO catalog. The single source of truth for what the admin SSO page
+# displays. Each entry has:
+#   - label: the homefree-config.json key (matches services/install.py
+#     and homefree.services.<name>.enable)
+#   - display: human-readable name for the UI
+#   - sso_kind: how SSO is wired up (see SSO_KIND_* constants below)
+#
+# When you add native-OIDC or Caddy-gated SSO to a service, flip its
+# sso_kind here. Services with sso_kind="none" render as "Not yet
+# implemented" — they still exist in HomeFree but currently require
+# their own local login.
+#
+# Infrastructure services (zitadel itself, postgres, landing-page,
+# DNS, etc.) are intentionally absent — they have no user-facing
+# login.
+SSO_KIND_NATIVE = "native_oidc"   # service has its own OIDC client
+SSO_KIND_CADDY = "caddy_gated"    # Caddy oauth2-proxy gate in front
+SSO_KIND_BRIDGE = "basic_auth"    # Caddy gate + Basic-Auth bridge
+SSO_KIND_NONE = "none"            # not yet wired up
 
-# Services that gate via the Caddy oauth2-proxy redirect block rather
-# than their own OIDC client. These have a per-service toggle but no
-# .provisioned sentinel (they piggyback on .sso-provisioned).
-SSO_CADDY_GATED_SERVICES = [
-    "admin",
-    "adguard",
-    "forgejo",   # also gated for some endpoints
+SSO_CATALOG = [
+    # Already implemented. `secrets_dir` defaults to `label`; override
+    # it when the on-disk dir name diverges (home-assistant vs
+    # homeassistant — the config key, secrets dir, and Zitadel app
+    # name don't all agree historically).
+    {"label": "admin",          "display": "HomeFree Admin",  "sso_kind": SSO_KIND_CADDY},
+    {"label": "adguard",        "display": "AdGuard Home",    "sso_kind": SSO_KIND_BRIDGE},
+    {"label": "headscale",      "display": "Headscale",       "sso_kind": SSO_KIND_NATIVE},
+    {"label": "netbird",        "display": "NetBird",         "sso_kind": SSO_KIND_NATIVE},
+    {"label": "immich",         "display": "Immich",          "sso_kind": SSO_KIND_NATIVE},
+    {"label": "nextcloud",      "display": "Nextcloud",       "sso_kind": SSO_KIND_NATIVE},
+    {"label": "forgejo",        "display": "Forgejo",         "sso_kind": SSO_KIND_NATIVE},
+    {"label": "homeassistant",  "display": "Home Assistant",
+     "sso_kind": SSO_KIND_NATIVE, "secrets_dir": "home-assistant"},
+    {"label": "webdav",         "display": "WebDAV",          "sso_kind": SSO_KIND_BRIDGE},
+
+    # Not yet implemented — present so the admin sees the full
+    # surface area and knows what's still pending.
+    {"label": "baikal",         "display": "Baikal (CalDAV/CardDAV)", "sso_kind": SSO_KIND_NONE},
+    {"label": "cryptpad",       "display": "CryptPad",        "sso_kind": SSO_KIND_NONE},
+    {"label": "freshrss",       "display": "FreshRSS",        "sso_kind": SSO_KIND_NONE},
+    {"label": "frigate",        "display": "Frigate NVR",     "sso_kind": SSO_KIND_NONE},
+    {"label": "grocy",          "display": "Grocy",           "sso_kind": SSO_KIND_NONE},
+    {"label": "homebox",        "display": "Homebox",         "sso_kind": SSO_KIND_NONE},
+    {"label": "jellyfin",       "display": "Jellyfin",        "sso_kind": SSO_KIND_NONE},
+    {"label": "joplin",         "display": "Joplin Server",   "sso_kind": SSO_KIND_NONE},
+    {"label": "lidarr",         "display": "Lidarr",          "sso_kind": SSO_KIND_NONE},
+    {"label": "linkwarden",     "display": "Linkwarden",      "sso_kind": SSO_KIND_NONE},
+    {"label": "logseq",         "display": "Logseq",          "sso_kind": SSO_KIND_NONE},
+    {"label": "mediawiki",      "display": "MediaWiki",       "sso_kind": SSO_KIND_NONE},
+    {"label": "minecraft",      "display": "Minecraft",       "sso_kind": SSO_KIND_NONE},
+    {"label": "nzbget",         "display": "NZBGet",          "sso_kind": SSO_KIND_NONE},
+    {"label": "ollama",         "display": "Ollama",          "sso_kind": SSO_KIND_NONE},
+    {"label": "radicale",       "display": "Radicale",        "sso_kind": SSO_KIND_NONE},
+    {"label": "screeenly",      "display": "Screeenly",       "sso_kind": SSO_KIND_NONE},
+    {"label": "snipe-it",       "display": "Snipe-IT",        "sso_kind": SSO_KIND_NONE},
+    {"label": "unifi",          "display": "UniFi Controller", "sso_kind": SSO_KIND_NONE},
+    {"label": "vaultwarden",    "display": "Vaultwarden",     "sso_kind": SSO_KIND_NONE},
 ]
 
 @app.get("/api/sso/state")
 async def sso_state():
-    """Return SSO bootstrap state for the admin SSO page."""
+    """Return SSO bootstrap state for the admin SSO page.
+
+    For each service in SSO_CATALOG, reports:
+      - sso_kind: how SSO is wired (or "none" if pending)
+      - enabled: whether the service is enabled in the current config
+      - provisioned: whether zitadel-provision has minted its OIDC app
+        (only meaningful for native_oidc/basic_auth kinds)
+      - has_client_id: convenience flag for native-OIDC services
+    """
+    import json
     import os
+
     provisioned = os.path.exists(SSO_GLOBAL_SENTINEL)
 
+    # Read the live config to find which services are enabled.
+    try:
+        with open("/etc/nixos/homefree-config.json") as f:
+            cfg = json.load(f)
+        svc_cfg = cfg.get("services", {}) or {}
+    except Exception:
+        svc_cfg = {}
+
     services = []
-    seen = set()
-    for label in SSO_NATIVE_OIDC_SERVICES + SSO_CADDY_GATED_SERVICES:
-        if label in seen:
-            continue
-        seen.add(label)
-        svc_sentinel = f"{SSO_SECRETS_DIR}/{label}/.provisioned"
-        svc_client_id = f"{SSO_SECRETS_DIR}/{label}/oidc-client-id"
+    for entry in SSO_CATALOG:
+        label = entry["label"]
+        kind = entry["sso_kind"]
+        secrets_dir = f"{SSO_SECRETS_DIR}/{entry.get('secrets_dir', label)}"
+        # Provisioning state semantics differ by kind:
+        #   - native_oidc: needs a per-service Zitadel OIDC app +
+        #     .provisioned sentinel. "Provisioned" iff sentinel exists.
+        #   - caddy_gated / basic_auth: no per-service Zitadel app to
+        #     mint — they piggyback on the GLOBAL sentinel (oauth2-
+        #     proxy is provisioned). Report `provisioned` as the
+        #     global value so the UI shows green once SSO is up.
+        #   - none: not implemented; always False.
+        if kind == SSO_KIND_NATIVE:
+            is_provisioned = os.path.exists(f"{secrets_dir}/.provisioned")
+        elif kind in (SSO_KIND_CADDY, SSO_KIND_BRIDGE):
+            is_provisioned = provisioned
+        else:
+            is_provisioned = False
         services.append({
             "label": label,
-            "native_oidc": label in SSO_NATIVE_OIDC_SERVICES,
-            "caddy_gated": label in SSO_CADDY_GATED_SERVICES,
-            "provisioned": os.path.exists(svc_sentinel),
-            "has_client_id": os.path.exists(svc_client_id),
+            "display": entry["display"],
+            "sso_kind": kind,
+            "enabled": bool((svc_cfg.get(label) or {}).get("enable", False)),
+            # Back-compat fields the existing frontend reads. Will be
+            # phased out once the UI migrates to sso_kind exclusively.
+            "native_oidc": kind == SSO_KIND_NATIVE,
+            "caddy_gated": kind in (SSO_KIND_CADDY, SSO_KIND_BRIDGE),
+            "provisioned": is_provisioned,
+            "has_client_id": os.path.exists(f"{secrets_dir}/oidc-client-id"),
         })
 
     return JSONResponse(content={

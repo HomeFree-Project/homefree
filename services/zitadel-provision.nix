@@ -160,7 +160,15 @@ let
       ];
       post_logout_uris = [ "https://netbird.${domain}/" ];
       needs_pat = true;        # mgmt machine user for org/group reads
-      post_restart_units = [ "podman-netbird-management.service" ];
+      ## Both containers consume the client_id: management.json on
+      ## the management side, and dashboard.env on the dashboard SPA
+      ## side. Restart both when the secret rotates — otherwise the
+      ## dashboard keeps a stale client_id and login fails with
+      ## "Errors.App.NotFound".
+      post_restart_units = [
+        "podman-netbird-management.service"
+        "podman-netbird-dashboard.service"
+      ];
     }
     {
       svc = "immich";
@@ -862,8 +870,38 @@ EOF
 
         ## (c) Machine user + PAT for services that need to read users/
         ## groups out of Zitadel (e.g. NetBird). Idempotent: skip if a
-        ## token file already exists.
-        if [ "$needs_pat" = "true" ] && [ ! -s "$secrets_dir/mgmt-machine-token" ]; then
+        ## token file exists AND validates against Zitadel. Validates
+        ## by hitting a no-op management endpoint with the existing
+        ## token — if it returns 401, the token is from a previous
+        ## Zitadel instance (state wiped + new masterkey) and needs
+        ## to be regenerated. Otherwise NetBird's auth middleware
+        ## keeps rejecting user JWTs with "token invalid" because
+        ## NetBird uses this PAT for backchannel user lookups.
+        if [ "$needs_pat" = "true" ]; then
+          existing_token_valid="no"
+          if [ -s "$secrets_dir/mgmt-machine-token" ]; then
+            existing_token=$(cat "$secrets_dir/mgmt-machine-token")
+            tok_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Host: $SSO_HOST" \
+              -H "Authorization: Bearer $existing_token" \
+              -H "Content-Type: application/json" \
+              -X POST \
+              --data-raw '{}' \
+              "$SSO_URL/management/v1/users/_search" \
+              || echo "000")
+            case "$tok_code" in
+              2*) existing_token_valid="yes"; log "$svc: existing PAT valid" ;;
+              401|403)
+                warn "$svc: existing PAT invalid (HTTP $tok_code) — regenerating"
+                ;;
+              *)
+                warn "$svc: PAT validity check returned $tok_code; treating as invalid"
+                ;;
+            esac
+          fi
+        fi
+
+        if [ "$needs_pat" = "true" ] && [ "''${existing_token_valid:-no}" != "yes" ]; then
           mu_name="$svc-mgmt"
           log "$svc: creating machine user '$mu_name' + PAT"
 
