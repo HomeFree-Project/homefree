@@ -108,6 +108,25 @@ let
         ## name, and `email` is standard.
         username: preferred_username
         display_name: name
+        ## Zitadel emits project roles under the namespaced claim
+        ## `urn:zitadel:iam:org:project:roles`. auth_oidc reads this
+        ## claim and looks up each role key against the `roles`
+        ## block below to assign HA group membership.
+        groups: "urn:zitadel:iam:org:project:roles"
+      roles:
+        ## Map HomeFree project roles → HA group membership.
+        ## `system-admin` is HA's built-in admin group; anyone in
+        ## it can change config and add devices. Users without
+        ## the role land in `system-users` (regular users, can
+        ## see dashboards but not modify the install).
+        admin: system-admin
+        groups:
+          homefree-admin: admin
+      ## Request the Zitadel roles scope so the claim above is
+      ## actually populated in tokens. Without this scope, the
+      ## claim is absent and every user lands as a regular user.
+      additional_scopes:
+        - "urn:zitadel:iam:org:project:roles"
       network:
         ## auth_oidc has its own httpx client and doesn't use the
         ## Python `ssl.create_default_context()` system trust. Point

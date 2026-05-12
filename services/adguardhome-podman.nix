@@ -422,6 +422,12 @@ in
         ## Zitadel cookie. Per-service opt-out via
         ## homefree.sso.per-service.adguard.enable=false.
         oauth2 = config.homefree.sso.per-service.adguard.enable or true;
+        ## AdGuard manages DNS filtering, blocklists, and client
+        ## rules — strictly admin operations. Restrict access to
+        ## users carrying the homefree-admin project role. Non-
+        ## admin authenticated users hit a 403 at the Caddy gate
+        ## without ever reaching AdGuard.
+        require-admin-role = true;
         ## After SSO succeeds, inject AdGuard's own admin creds as
         ## HTTP Basic Auth so the user never sees AdGuard's local
         ## login form. The env var is populated by

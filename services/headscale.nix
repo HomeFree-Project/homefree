@@ -154,6 +154,25 @@ let
       headscale_api_key_path = "${headplaneCredsDir}/headscale-api-key";
       disable_api_key_login = false;
       token_endpoint_auth_method = "client_secret_post";
+      ## NOTE — Headplane admin-only gate (LIMITATION):
+      ## Headplane has no internal admin/user concept, and the
+      ## NixOS module wrapper currently doesn't expose Headplane's
+      ## `oidc.user_groups` / `oidc.groups_claim` options that would
+      ## let us restrict by role at the OIDC layer. As a result, ANY
+      ## authenticated Zitadel user can currently reach Headplane's
+      ## admin UI.
+      ##
+      ## Workaround options when this matters:
+      ##   1. Put oauth2-proxy in front of Headplane at the Caddy
+      ##      layer (with OAUTH2_PROXY_ALLOWED_GROUPS=homefree-admin),
+      ##      double-gating but enforcing the role.
+      ##   2. Bump the headplane flake input to a version whose
+      ##      NixOS module exposes the role-filter options, then
+      ##      restore the `user_groups`/`groups_claim` lines.
+      ##   3. Patch the local NixOS module to surface those options
+      ##      (small change — see
+      ##      ../overlays/headplane-module-extra.nix as a starting
+      ##      point if you go this route).
     };
   };
 in

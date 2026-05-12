@@ -136,6 +136,15 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.screeenly.public;
+        ## Screeenly is the screenshot API used by Nextcloud's
+        ## preview-generator (if manually configured). Server-to-
+        ## server callers (Nextcloud) should talk to it via the
+        ## LAN address — http://<lan>:<port>/ — NOT through the
+        ## public Caddy host, so gating the public URL admin-only
+        ## doesn't break the integration. Mark the public host
+        ## admin-only so only admins reach the UI / docs.
+        oauth2 = config.homefree.sso.per-service.screeenly.enable or true;
+        require-admin-role = config.homefree.sso.per-service.screeenly.enable or true;
       };
       backup = {
         paths = [

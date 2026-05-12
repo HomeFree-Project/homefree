@@ -343,12 +343,31 @@ in
               }
               forward_auth @sso_gate http://${lan-address}:4180 {
                 uri /oauth2/auth
-                copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token
+                copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups
                 @bad_status status 401
                 handle_response @bad_status {
                   redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
                 }
               }
+              ${if reverse-proxy-config.require-admin-role or false then ''
+                ## Second forward_auth: enforce homefree-admin role.
+                ## oauth2-proxy already validated the session above;
+                ## now ask admin-api whether this user has the
+                ## homefree-admin project role. admin-api's middle-
+                ## ware parses Zitadel's namespaced role-claim JSON
+                ## (oauth2-proxy can't) and 403s non-admins.
+                ##
+                ## We forward the X-Auth-Request-* headers that the
+                ## first forward_auth populated so admin-api sees
+                ## the same identity oauth2-proxy validated.
+                forward_auth @sso_gate http://${lan-address}:8000 {
+                  uri /api/auth/admin-check
+                  header_up X-Auth-Request-User {http.request.header.X-Auth-Request-User}
+                  header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
+                  header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
+                  header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
+                }
+              '' else ""}
             '' else ""}
             root * ${reverse-proxy-config.static-path}
             file_server
@@ -442,12 +461,24 @@ in
             }
             forward_auth @sso_gate http://${lan-address}:4180 {
               uri /oauth2/auth
-              copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token
+              copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups
               @bad_status status 401
               handle_response @bad_status {
                 redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
               }
             }
+            ${if reverse-proxy-config.require-admin-role or false then ''
+              ## Second forward_auth: enforce homefree-admin role
+              ## via admin-api. See the static-path branch above
+              ## for the design rationale.
+              forward_auth @sso_gate http://${lan-address}:8000 {
+                uri /api/auth/admin-check
+                header_up X-Auth-Request-User {http.request.header.X-Auth-Request-User}
+                header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
+                header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
+                header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
+              }
+            '' else ""}
           '' else "")
           +
           (let

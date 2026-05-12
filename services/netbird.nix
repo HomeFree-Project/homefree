@@ -342,7 +342,13 @@ in
             AUTH_CLIENT_SECRET = "";  # Native PKCE app — no secret in browser
             AUTH_AUTHORITY = "https://${zitadelDomain}";
             USE_AUTH0 = "false";
-            AUTH_SUPPORTED_SCOPES = "openid profile email offline_access api";
+            ## Include Zitadel's project-role scope so the dashboard's
+            ## access token carries the user's homefree-* roles. The
+            ## management server's IdP integration queries Zitadel
+            ## directly by PAT to determine user roles, but having
+            ## roles in the token is needed for any future client-
+            ## side admin/user distinction.
+            AUTH_SUPPORTED_SCOPES = "openid profile email offline_access api urn:zitadel:iam:org:project:roles";
             AUTH_REDIRECT_URI = "/auth";
             AUTH_SILENT_REDIRECT_URI = "/silent-auth";
             NETBIRD_TOKEN_SOURCE = "idToken";
@@ -434,9 +440,26 @@ in
       unitConfig.ConditionPathExists = [
         "${secretsDir}/oidc-client-id"
       ];
-      serviceConfig.ExecStartPre = [
-        "!${pkgs.writeShellScript "netbird-dashboard-prestart" dashboardEnvPreStart}"
-      ];
+      serviceConfig = {
+        ExecStartPre = [
+          "!${pkgs.writeShellScript "netbird-dashboard-prestart" dashboardEnvPreStart}"
+        ];
+        ## The netbirdio/dashboard container ignores SIGTERM cleanly:
+        ## its entrypoint loops a "substitute env vars + exec nginx"
+        ## script that absorbs the signal but never propagates a
+        ## graceful shutdown. The default 2-minute TimeoutStopSec
+        ## means every `systemctl restart` of the dashboard takes 2
+        ## minutes — painful during rebuilds, even with `--no-block`
+        ## from zitadel-provision, because other units (caddy, the
+        ## dashboard itself's auto-restart) end up waiting on it.
+        ##
+        ## Shorten the grace window to 5s and follow with SIGKILL.
+        ## Nothing in the dashboard does writeable I/O on shutdown
+        ## (it's a static nginx serving the SPA bundle), so an
+        ## abrupt kill is safe.
+        TimeoutStopSec = lib.mkForce "5s";
+        KillMode = lib.mkForce "mixed";
+      };
     };
 
     systemd.services.podman-netbird-coturn = lib.mkIf enabled {

@@ -870,20 +870,6 @@
         };
       };
 
-      kanidm = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Kanidm";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-      };
-
       lidarr = {
         enable = lib.mkOption {
           type = lib.types.bool;
@@ -935,20 +921,6 @@
             default = null;
             description = "Location of Linkwarden environment variables file. Should not be a file included in your source repo.";
           };
-        };
-      };
-
-      logseq = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Logseq knowledge management service";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
         };
       };
 
@@ -1749,6 +1721,33 @@
               description = "custom caddy config";
             };
 
+            require-admin-role = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Whether this service requires the homefree-admin
+                project role on top of basic authentication. Only
+                meaningful when `oauth2` is also true (admin-only
+                services that gate via the Caddy oauth2-proxy
+                forward_auth flow).
+
+                When set, Caddy adds a second forward_auth call to
+                the admin-api's /api/auth/admin-check endpoint after
+                the oauth2-proxy session is validated. admin-api's
+                middleware decides 200-vs-403 based on whether the
+                user's Zitadel token carries homefree-admin in the
+                project-roles claim. Non-admin authenticated users
+                see a 403 from Caddy without ever reaching the
+                upstream.
+
+                We can't put this check on oauth2-proxy itself —
+                Zitadel's namespaced role claim comes through as a
+                JSON-object whose keys ARE the role names, and
+                oauth2-proxy's group parser doesn't extract keys
+                from that shape. admin-api's middleware does.
+              '';
+            };
+
             inject-basic-auth-env = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
@@ -2213,9 +2212,6 @@
     homefree.service-options.joplin.enable = config.homefree.services.joplin.enable;
     homefree.service-options.joplin.public = config.homefree.services.joplin.public;
 
-    homefree.service-options.kanidm.enable = config.homefree.services.kanidm.enable;
-    homefree.service-options.kanidm.public = config.homefree.services.kanidm.public;
-
     homefree.service-options.lidarr.enable = config.homefree.services.lidarr.enable;
     homefree.service-options.lidarr.public = config.homefree.services.lidarr.public;
     homefree.service-options.lidarr.media-path = config.homefree.services.lidarr.media-path;
@@ -2225,9 +2221,6 @@
     homefree.service-options.linkwarden.enable = config.homefree.services.linkwarden.enable;
     homefree.service-options.linkwarden.public = config.homefree.services.linkwarden.public;
     homefree.service-options.linkwarden.secrets = config.homefree.services.linkwarden.secrets;
-
-    homefree.service-options.logseq.enable = config.homefree.services.logseq.enable;
-    homefree.service-options.logseq.public = config.homefree.services.logseq.public;
 
     # homefree.service-options.matrix.enable = config.homefree.services.matrix.enable;
     # homefree.service-options.matrix.public = config.homefree.services.matrix.public;

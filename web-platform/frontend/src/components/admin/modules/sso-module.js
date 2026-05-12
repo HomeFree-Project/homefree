@@ -363,7 +363,14 @@ class SsoModule extends LitElement {
                 }
                 return html`
                   <tr>
-                    <td class="svc-label">${svc.display || svc.label}</td>
+                    <td class="svc-label">
+                      ${svc.display || svc.label}
+                      ${svc.notes ? html`
+                        <div class="muted" style="font-size: 11px; margin-top: 4px; line-height: 1.4;">
+                          ${svc.notes}
+                        </div>
+                      ` : ''}
+                    </td>
                     <td>
                       ${svc.enabled
                         ? html`<span class="pill ok">Yes</span>`

@@ -486,6 +486,18 @@ in
           ## environments that don't want SSO on the admin UI even
           ## once provisioned.
           oauth2 = cfg.sso.per-service.admin.enable or true;
+          ## Admin UI is the central control panel — strictly
+          ## restricted to users with the homefree-admin project
+          ## role. Caddy chains oauth2-proxy then admin-api's
+          ## /api/auth/admin-check; non-admin authenticated users
+          ## get a 403 at the gate.
+          ##
+          ## NOTE: the admin-api ALSO performs the same role check
+          ## in its middleware as a defense-in-depth layer, but the
+          ## Caddy gate is what catches the failure cleanly — so
+          ## the user lands on a clear 403 page rather than seeing
+          ## the SPA boot and then bailing in-app.
+          require-admin-role = cfg.sso.per-service.admin.enable or true;
 
           extraCaddyConfig = ''
             # Service state endpoint - always available (served directly by Caddy)

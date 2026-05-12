@@ -199,15 +199,19 @@ let
       jsonb_set(
       jsonb_set(
       jsonb_set(
+      jsonb_set(
+      jsonb_set(
         COALESCE(value, '{}'::jsonb),
         '{oauth,enabled}',         to_jsonb(true)),
         '{oauth,issuerUrl}',       to_jsonb('$ISSUER'::text)),
         '{oauth,clientId}',        to_jsonb('$CID'::text)),
         '{oauth,clientSecret}',    to_jsonb('$CSEC'::text)),
-        '{oauth,scope}',           to_jsonb('openid email profile'::text)),
+        '{oauth,scope}',           to_jsonb('openid email profile urn:zitadel:iam:org:project:roles'::text)),
         '{oauth,autoRegister}',    to_jsonb(true)),
         '{oauth,autoLaunch}',      to_jsonb(true)),
         '{oauth,buttonText}',      to_jsonb('Sign in with HomeFree SSO'::text)),
+        '{oauth,roleClaim}',       to_jsonb('urn:zitadel:iam:org:project:roles'::text)),
+        '{oauth,adminRole}',       to_jsonb('homefree-admin'::text)),
         '{passwordLogin,enabled}', to_jsonb(false))
     WHERE key = 'system-config';
 SQL

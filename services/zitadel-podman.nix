@@ -462,7 +462,44 @@ in
             OAUTH2_PROXY_REVERSE_PROXY = "true";
             OAUTH2_PROXY_COOKIE_SECURE = "true";
             OAUTH2_PROXY_COOKIE_HTTPONLY = "true";
-            OAUTH2_PROXY_SCOPE = "openid email profile";
+            ## `urn:zitadel:iam:org:project:roles` asks Zitadel to
+            ## embed the user's homefree-project roles in the id
+            ## token under `urn:zitadel:iam:org:project:roles`. We
+            ## then surface those to downstream services as the
+            ## `groups` claim (OAUTH2_PROXY_OIDC_GROUPS_CLAIM below),
+            ## which is what most services natively understand for
+            ## admin-vs-user mapping.
+            OAUTH2_PROXY_SCOPE = "openid email profile urn:zitadel:iam:org:project:roles";
+
+            ## Pull the role list out of Zitadel's namespaced claim
+            ## and re-emit it under the standard `groups` claim. The
+            ## namespaced claim is an *object* keyed by role name (each
+            ## value is a per-org map), not a flat array; oauth2-proxy
+            ## handles both, taking the keys when it sees the object
+            ## form.
+            OAUTH2_PROXY_OIDC_GROUPS_CLAIM =
+              "urn:zitadel:iam:org:project:roles";
+
+            ## Admin-only gate at the oauth2-proxy layer is DISABLED
+            ## for now. We tried `OAUTH2_PROXY_ALLOWED_GROUPS =
+            ## "homefree-admin"`, but Zitadel's role claim
+            ## (urn:zitadel:iam:org:project:roles) is an OBJECT whose
+            ## keys are role names — not a string array — and
+            ## oauth2-proxy v7's group parser doesn't extract keys
+            ## from that shape. The result: oauth2-proxy sees no
+            ## groups and 403s everyone.
+            ##
+            ## Workaround in flight: a Zitadel Action that flattens
+            ## the role-keys list into a standard `groups` claim
+            ## array. Once that lands, set ALLOWED_GROUPS back on.
+            ##
+            ## In the meantime, admin gating happens in the FastAPI
+            ## middleware (TrustedHeaderAuthMiddleware in
+            ## simple_main.py) which CAN parse the namespaced
+            ## claim. The admin UI is therefore still admin-only.
+            ## AdGuard / WebDAV are open to any authenticated user
+            ## until the flattening action is deployed — known gap.
+            # OAUTH2_PROXY_ALLOWED_GROUPS = "homefree-admin";
 
             ## Caddy serves https://sso.<domain> with a cert from its
             ## built-in "Caddy Local Authority" CA, which isn't in the

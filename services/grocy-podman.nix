@@ -98,6 +98,12 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.grocy.public;
+        ## NOTE: Grocy is intentionally NOT SSO-gated yet. Its
+        ## official mobile app talks to Grocy's REST API on the
+        ## same host as the web UI, using a server-issued API key
+        ## (no browser cookies, no SSO traversal). Gating would
+        ## break the app. Same Phase-A treatment as Lidarr: split
+        ## API onto its own subdomain or use a path-scoped gate.
       };
       backup = {
         paths = [

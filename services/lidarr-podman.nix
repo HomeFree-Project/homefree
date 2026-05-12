@@ -122,6 +122,15 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.lidarr.public;
+        ## NOTE: Lidarr is intentionally NOT SSO-gated yet. Its
+        ## browser UI and its REST API live on the same hostname,
+        ## and API consumers (Sonarr/Readarr/custom scripts) pass
+        ## an API key — not browser cookies. Gating with oauth2-
+        ## proxy would 302 every API call into the SSO flow and
+        ## break ingest pipelines. Pre-condition for SSO-gating:
+        ## split API path off into a separate subdomain (e.g.
+        ## lidarr-api.<domain>) that stays open behind the API
+        ## key, then gate the UI.
       };
       backup = lib.optionalAttrs config.homefree.service-options.lidarr.enable-backup-media {
         paths = [

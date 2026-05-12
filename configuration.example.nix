@@ -480,11 +480,6 @@ in
           #   ip = "10.0.0.61";
           # }
           # {
-          #   hostname = "logseq";
-          #   domain = "lan";
-          #   ip = "10.0.0.62";
-          # }
-          # {
           #   hostname = "minio";
           #   domain = "lan";
           #   ip = "10.0.0.63";
@@ -795,19 +790,11 @@ in
         enable = true;
       };
 
-      kanidm = {
-        enable = true;
-      };
-
       lidarr = {
         enable = true;
         media-path = "/mnt/ellis/Media/Music";
         downloads-path = "/mnt/ellis/Media/Downloads/Music";
         enable-backup-media = false;
-      };
-
-      logseq = {
-        enable = true;
       };
 
       linkwarden = {
@@ -1172,12 +1159,6 @@ in
     #     hostname = "librephotos.${config.homefree.system.localDomain}";
     #     port = 80;
     #     description = "librephotos";
-    #   }
-    #   {
-    #     label = "logseq_server";
-    #     hostname = "logseq.${config.homefree.system.localDomain}";
-    #     port = 80;
-    #     description = "logseq";
     #   }
     #   {
     #     label = "minio_server";

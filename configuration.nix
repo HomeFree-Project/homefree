@@ -49,10 +49,8 @@ in
     ./services/homebox-podman.nix
     ./services/jellyfin-podman.nix
     ./services/joplin-podman.nix
-    ./services/kanidm-podman.nix
     ./services/immich-podman.nix
     ./services/linkwarden-podman.nix
-    ./services/logseq-podman.nix
     ./services/lidarr-podman.nix
     # ./services/matrix-podman.nix
     ./services/mediawiki-podman.nix

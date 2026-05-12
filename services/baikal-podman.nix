@@ -97,6 +97,17 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.baikal.public;
+        ## NOTE: Baikal is intentionally NOT SSO-gated yet. It's a
+        ## CalDAV/CardDAV server, and DAV clients (mobile, Thunder-
+        ## bird, etc.) can't traverse an OIDC handshake. Gating the
+        ## whole site at Caddy would break sync; we'd need a path-
+        ## scoped gate that protects /admin/* only while leaving
+        ## /dav/* open with per-user HTTP-Basic auth bridged in.
+        ## That's a Phase-A treatment, not the simple oauth2-flag.
+        ##
+        ## Until then, anyone on the LAN/WAN can reach Baikal's UI;
+        ## Baikal's own admin password is the only gate. Document
+        ## this gap in the SSO admin page (sso_kind=none).
       };
       backup = {
         paths = [

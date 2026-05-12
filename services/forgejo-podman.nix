@@ -142,30 +142,49 @@ let
       exit 0
     fi
 
-    ## Skip if the Zitadel auth source already exists.
-    if ${pkgs.podman}/bin/podman exec --user git forgejo \
-         forgejo admin auth list 2>/dev/null \
-         | ${pkgs.gnugrep}/bin/grep -qE '^[0-9]+[[:space:]]+Zitadel\b'; then
-      echo "forgejo postStart: Zitadel auth source already registered, skipping" >&2
-      exit 0
-    fi
-
     CID=$(cat ${forgejoSecretsDir}/oidc-client-id)
     CSEC=$(cat ${forgejoSecretsDir}/oidc-client-secret)
 
-    echo "forgejo postStart: registering Zitadel as OAuth source" >&2
-    if ${pkgs.podman}/bin/podman exec --user git forgejo \
-         forgejo admin auth add-oauth \
-           --provider openidConnect \
-           --name Zitadel \
-           --key "$CID" \
-           --secret "$CSEC" \
-           --auto-discover-url "https://sso.${domain}/.well-known/openid-configuration" \
-           --scopes "openid email profile" \
-           --group-claim-name groups; then
-      echo "forgejo postStart: Zitadel auth source registered" >&2
+    ## Detect whether the Zitadel auth source already exists. If yes,
+    ## update it (so config evolutions — new scopes, role-group
+    ## mapping — land on upgraded instances). If no, create it.
+    EXISTING_ID=$(${pkgs.podman}/bin/podman exec --user git forgejo \
+      forgejo admin auth list 2>/dev/null \
+      | ${pkgs.gnugrep}/bin/grep -E '^[0-9]+[[:space:]]+Zitadel\b' \
+      | ${pkgs.gawk}/bin/awk '{print $1}' \
+      | ${pkgs.coreutils}/bin/head -n1)
+
+    if [ -n "$EXISTING_ID" ]; then
+      echo "forgejo postStart: updating existing Zitadel auth source (id=$EXISTING_ID)" >&2
+      if ${pkgs.podman}/bin/podman exec --user git forgejo \
+           forgejo admin auth update-oauth \
+             --id "$EXISTING_ID" \
+             --key "$CID" \
+             --secret "$CSEC" \
+             --auto-discover-url "https://sso.${domain}/.well-known/openid-configuration" \
+             --scopes "openid email profile urn:zitadel:iam:org:project:roles" \
+             --group-claim-name "urn:zitadel:iam:org:project:roles" \
+             --admin-group "homefree-admin"; then
+        echo "forgejo postStart: Zitadel auth source updated" >&2
+      else
+        echo "forgejo postStart: update failed (non-fatal)" >&2
+      fi
     else
-      echo "forgejo postStart: registration failed (non-fatal)" >&2
+      echo "forgejo postStart: registering Zitadel as OAuth source" >&2
+      if ${pkgs.podman}/bin/podman exec --user git forgejo \
+           forgejo admin auth add-oauth \
+             --provider openidConnect \
+             --name Zitadel \
+             --key "$CID" \
+             --secret "$CSEC" \
+             --auto-discover-url "https://sso.${domain}/.well-known/openid-configuration" \
+             --scopes "openid email profile urn:zitadel:iam:org:project:roles" \
+             --group-claim-name "urn:zitadel:iam:org:project:roles" \
+             --admin-group "homefree-admin"; then
+        echo "forgejo postStart: Zitadel auth source registered" >&2
+      else
+        echo "forgejo postStart: registration failed (non-fatal)" >&2
+      fi
     fi
   '';
 in

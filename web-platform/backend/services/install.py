@@ -182,10 +182,6 @@ class InstallationService:
       "enable": false,
       "public": false
     },
-    "kanidm": {
-      "enable": false,
-      "public": false
-    },
     "radicale": {
       "enable": false,
       "public": false
@@ -195,10 +191,6 @@ class InstallationService:
       "public": false
     },
     "minecraft": {
-      "enable": false,
-      "public": false
-    },
-    "logseq": {
       "enable": false,
       "public": false
     },
@@ -383,9 +375,6 @@ in
       nzbget.enable = jsonData.services.nzbget.enable or false;
       nzbget.public = jsonData.services.nzbget.public or false;
 
-      kanidm.enable = jsonData.services.kanidm.enable or false;
-      kanidm.public = jsonData.services.kanidm.public or false;
-
       radicale.enable = jsonData.services.radicale.enable or false;
       radicale.public = jsonData.services.radicale.public or false;
 
@@ -413,9 +402,6 @@ in
           project-slug = instance."mod-pack"."project-slug";
         };
       })) (jsonData.services.minecraft.instances or []);
-
-      logseq.enable = jsonData.services.logseq.enable or false;
-      logseq.public = jsonData.services.logseq.public or false;
 
       homebox.enable = jsonData.services.homebox.enable or false;
       homebox.public = jsonData.services.homebox.public or false;

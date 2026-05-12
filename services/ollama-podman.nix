@@ -1,13 +1,65 @@
 { config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/ollama-webui";
-
-  preStart = ''
-    mkdir -p ${containerDataPath}
-  '';
+  secretsDir = "/var/lib/homefree-secrets/ollama";
 
   port-internal = 8254;
   port = 3014;
+
+  domain = config.homefree.system.domain;
+  ssoEnvFile = "${containerDataPath}/sso.env";
+
+  ## preStart: synthesize Open WebUI's OIDC env file from the OIDC
+  ## secrets zitadel-provision wrote to disk. Gated on the secrets
+  ## existing so pre-provisioning (fresh install) the container still
+  ## starts in local-login mode.
+  ##
+  ## Open WebUI reads OAUTH_CLIENT_ID/SECRET, OPENID_PROVIDER_URL +
+  ## ENABLE_OAUTH_SIGNUP/ROLE_MANAGEMENT to bootstrap an OIDC button
+  ## on its login page. The role-management vars map a JSON-path
+  ## claim onto Open WebUI's role enum:
+  ##   OAUTH_ROLES_CLAIM -> the JSON key (Zitadel's namespaced
+  ##     project-roles claim — which Open WebUI handles as an object
+  ##     whose keys ARE the role names, unlike oauth2-proxy).
+  ##   OAUTH_ADMIN_ROLES=homefree-admin -> presence of that key flips
+  ##     the new user to admin; absence makes them a regular user.
+  preStart = ''
+    mkdir -p ${containerDataPath}
+    install -m 600 /dev/null ${ssoEnvFile}
+    if [ -s ${secretsDir}/oidc-client-id ] \
+       && [ -s ${secretsDir}/oidc-client-secret ]; then
+      CID=$(cat ${secretsDir}/oidc-client-id)
+      CSEC=$(cat ${secretsDir}/oidc-client-secret)
+      {
+        echo "ENABLE_OAUTH_SIGNUP=true"
+        echo "OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true"
+        echo "OAUTH_PROVIDER_NAME=HomeFree SSO"
+        echo "OAUTH_CLIENT_ID=$CID"
+        echo "OAUTH_CLIENT_SECRET=$CSEC"
+        echo "OPENID_PROVIDER_URL=https://sso.${domain}/.well-known/openid-configuration"
+        echo "OPENID_REDIRECT_URI=https://ollama.${domain}/oauth/oidc/callback"
+        echo "OAUTH_SCOPES=openid email profile urn:zitadel:iam:org:project:roles"
+        echo "OAUTH_USERNAME_CLAIM=preferred_username"
+        echo "OAUTH_EMAIL_CLAIM=email"
+        echo "OAUTH_PICTURE_CLAIM=picture"
+        echo "ENABLE_OAUTH_ROLE_MANAGEMENT=true"
+        echo "OAUTH_ROLES_CLAIM=urn:zitadel:iam:org:project:roles"
+        echo "OAUTH_ADMIN_ROLES=homefree-admin"
+        ## Open WebUI by default assigns first-user as admin and
+        ## subsequent users as pending. With role management on we
+        ## want a sane default for users WITHOUT homefree-admin: let
+        ## them in as regular users (not pending).
+        echo "OAUTH_ALLOWED_ROLES=homefree-admin,user"
+        echo "DEFAULT_USER_ROLE=user"
+      } > ${ssoEnvFile}
+    else
+      ## Pre-provisioning: write the env file empty so the container's
+      ## EnvironmentFile directive doesn't fail. Open WebUI falls back
+      ## to its built-in local login until secrets land.
+      : > ${ssoEnvFile}
+    fi
+    chmod 600 ${ssoEnvFile}
+  '';
 in
 {
   options.homefree.service-options.ollama = {
@@ -94,6 +146,11 @@ in
         ## Single user mode (can't change after first run)
         # WEBUI_AUTH=False
       };
+
+      ## OIDC env synthesized by preStart from Zitadel secrets.
+      ## Empty file pre-provisioning; populated once
+      ## zitadel-provision.service writes the OIDC client.
+      environmentFiles = [ ssoEnvFile ];
     };
   };
 
@@ -121,6 +178,22 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.ollama.public;
+        ## ollama.<domain> serves Open WebUI (the chat UI), NOT the
+        ## raw Ollama API. Open WebUI talks to Ollama directly over
+        ## the LAN address (see OLLAMA_BASE_URL above).
+        ##
+        ## Open WebUI has native OIDC support — see the preStart
+        ## block that writes ${ssoEnvFile} from Zitadel secrets.
+        ## So we do NOT gate at Caddy: any visitor sees Open WebUI's
+        ## own login page with a "Sign in with HomeFree SSO" button.
+        ## Open WebUI maps the homefree-admin role onto its own
+        ## admin/user enum (OAUTH_ROLES_CLAIM + OAUTH_ADMIN_ROLES in
+        ## the env file). Non-admin users come through as regular
+        ## users via DEFAULT_USER_ROLE=user.
+        ##
+        ## Pre-provisioning (no OIDC secrets yet) Open WebUI falls
+        ## back to its first-user-as-admin local-login flow — same
+        ## behavior as a fresh install of Open WebUI standalone.
       };
       backup = {
         paths = [

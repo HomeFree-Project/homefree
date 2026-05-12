@@ -428,6 +428,12 @@ in
         ssl = true;
         ssl-no-verify = true;
         public = config.homefree.service-options.frigate.public;
+        ## Frigate has no native OIDC. Gate at Caddy: any signed-in
+        ## user is challenged, then admin-api enforces the
+        ## homefree-admin role. Camera streams + clip storage are
+        ## admin operations.
+        oauth2 = config.homefree.sso.per-service.frigate.enable or true;
+        require-admin-role = config.homefree.sso.per-service.frigate.enable or true;
       };
       backup = if config.homefree.service-options.frigate.enable-backup-media then {
         paths = [

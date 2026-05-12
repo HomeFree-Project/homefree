@@ -208,6 +208,10 @@ in
         public = config.homefree.service-options.webdav.public;
         oauth2 = true;
         # basic-auth = true;
+        ## Admin-only — WebDAV currently serves a single shared
+        ## backing user; restricting to admins is the safe default
+        ## until per-user provisioning is implemented.
+        require-admin-role = true;
       };
       backup = {
         paths = [

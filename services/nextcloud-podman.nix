@@ -296,22 +296,39 @@ let
         ${pkgs.podman}/bin/podman exec nextcloud rm -f /tmp/caddy-local-root.crt 2>/dev/null || true
       fi
 
-      EXISTS=$(${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider 2>/dev/null \
-                 | ${pkgs.gnugrep}/bin/grep -c "Zitadel" || true)
-      if [ "$EXISTS" -eq 0 ]; then
-        CID=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-id)
-        CSEC=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-secret)
-        ${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider Zitadel \
-          --clientid="$CID" \
-          --clientsecret="$CSEC" \
-          --discoveryuri="https://sso.${config.homefree.system.domain}/.well-known/openid-configuration" \
-          --scope="openid email profile" \
-          --mapping-display-name=name \
-          --mapping-email=email \
-          --mapping-uid=preferred_username \
-          --unique-uid=0 \
-          || echo "nextcloud postStart: user_oidc:provider registration failed (non-fatal)" >&2
-      fi
+      ## Register or update the Zitadel provider. The `user_oidc:provider`
+      ## subcommand creates if absent and updates if present (same
+      ## invocation), so we run it every postStart to keep the
+      ## scope / mapping fields in sync with whatever this Nix
+      ## module declares.
+      CID=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-id)
+      CSEC=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-secret)
+      ## Zitadel emits project roles under the namespaced claim
+      ## `urn:zitadel:iam:org:project:roles`. user_oidc supports a
+      ## --mapping-groups flag pointing at the claim that lists the
+      ## user's groups. Combined with the `admin_group` config below,
+      ## Nextcloud grants the `admin` system group to any user whose
+      ## token includes `homefree-admin` in that claim.
+      ${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider Zitadel \
+        --clientid="$CID" \
+        --clientsecret="$CSEC" \
+        --discoveryuri="https://sso.${config.homefree.system.domain}/.well-known/openid-configuration" \
+        --scope="openid email profile urn:zitadel:iam:org:project:roles" \
+        --mapping-display-name=name \
+        --mapping-email=email \
+        --mapping-uid=preferred_username \
+        --mapping-groups=urn:zitadel:iam:org:project:roles \
+        --group-provisioning=1 \
+        --unique-uid=0 \
+        || echo "nextcloud postStart: user_oidc:provider registration failed (non-fatal)" >&2
+
+      ## Map `homefree-admin` (the only project role we mint) to
+      ## Nextcloud's built-in `admin` group. user_oidc reads this
+      ## list to decide which OIDC groups grant admin powers.
+      ${pkgs.podman}/bin/podman exec nextcloud php occ \
+        config:app:set --type=string --value='["homefree-admin"]' \
+        user_oidc admin_groups \
+        || echo "nextcloud postStart: admin_groups set failed (non-fatal)" >&2
 
       ## Force auto-redirect to Zitadel on every unauthenticated visit
       ## by disabling Nextcloud's other login backends. The README

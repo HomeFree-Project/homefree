@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     SENTINEL = Path("/var/lib/homefree-secrets/.sso-provisioned")
     ADMIN_USERNAME_FILE = Path("/var/lib/homefree-admin/admin-username")
+    ADMIN_ROLE = "homefree-admin"
     PUBLIC_PATHS = {
         "/health",
         "/api/service-state",
@@ -81,13 +82,54 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     ##     at, but in practice we've seen it stick to the OIDC `sub`
     ##     (Zitadel's numeric internal ID, e.g. "372429767272238115")
     ##     even after setting USER_ID_CLAIM=preferred_username.
+    ##   - X-Auth-Request-Groups is set when OAUTH2_PROXY_OIDC_GROUPS_CLAIM
+    ##     is configured (we point it at Zitadel's namespaced project-
+    ##     role claim, so the header carries the role keys).
     ##
     ## Read the username header first; fall back to X-Auth-Request-User
-    ## only if the preferred_username header is absent. This makes the
-    ## comparison against /var/lib/homefree-admin/admin-username
-    ## (which is the bare username) work in either case.
+    ## only if the preferred_username header is absent.
     USER_HEADER = "x-auth-request-preferred-username"
     USER_HEADER_FALLBACK = "x-auth-request-user"
+    GROUPS_HEADER = "x-auth-request-groups"
+
+    @staticmethod
+    def _parse_groups(raw: str) -> set[str]:
+        """Extract a flat set of role/group names from the
+        X-Auth-Request-Groups header.
+
+        oauth2-proxy's behavior when OIDC_GROUPS_CLAIM points at
+        Zitadel's namespaced project-roles claim is unfortunate: it
+        passes the raw JSON-stringified OBJECT through (not the keys
+        of that object). For our setup the header looks like:
+
+            X-Auth-Request-Groups: {"homefree-admin":{"<org_id>":"<domain>"}}
+
+        We try three formats in order:
+          1. JSON object — take its top-level keys (role names).
+          2. JSON array of strings — pass through.
+          3. Comma-separated string — split on commas (the
+             oauth2-proxy default when the claim was a flat list).
+
+        Falls open on parse failure (returns empty set) so a
+        misformed header just means "no roles," not "fail loudly."
+        """
+        if not raw:
+            return set()
+        import json
+        # oauth2-proxy may comma-join multiple values if the header
+        # is set more than once. Try a JSON parse on the WHOLE
+        # string first (the namespaced-claim case usually passes
+        # through as a single JSON blob, no commas added).
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return {str(k) for k in parsed.keys()}
+            if isinstance(parsed, list):
+                return {str(x) for x in parsed if isinstance(x, str)}
+        except (ValueError, TypeError):
+            pass
+        # Fallback: comma-split.
+        return {g.strip() for g in raw.split(",") if g.strip()}
 
     async def dispatch(self, request: Request, call_next):
         # Bootstrap mode: SSO not yet provisioned → backend is open.
@@ -112,39 +154,64 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
             )
 
-        # Optional per-user gate: if we know the configured admin
-        # username, require an exact match. Avoids "any Zitadel
-        # account" being able to drive the admin UI just because
-        # they happen to have an org account.
-        try:
-            if self.ADMIN_USERNAME_FILE.is_file():
-                expected = self.ADMIN_USERNAME_FILE.read_text().strip()
-                if expected and user != expected:
-                    logger.warning(
-                        "Admin UI access denied for user '%s' (expected '%s')",
-                        user, expected,
-                    )
-                    return JSONResponse(
-                        {
-                            "error": "forbidden",
-                            "code": "not_admin_user",
-                            "detail": (
-                                f"You are signed in as '{user}', but the "
-                                f"HomeFree admin UI is restricted to "
-                                f"'{expected}'."
-                            ),
-                            "current_user": user,
-                            "admin_user": expected,
-                        },
-                        status_code=403,
-                    )
-        except Exception as e:
-            # Don't block on a transient FS error; log and continue.
-            logger.warning("Admin username check failed (allowing request): %s", e)
+        # Role-based admin gate. Presence of the `homefree-admin`
+        # project role in the user's token is the canonical signal.
+        # Fall back to the old username-equality check ONLY if the
+        # groups header is entirely absent (which would mean the
+        # oauth2-proxy / Zitadel role plumbing hasn't been deployed
+        # yet — common on a partially-upgraded install). The
+        # fallback ensures the admin user can still get in to
+        # finish the upgrade.
+        groups_raw = request.headers.get(self.GROUPS_HEADER, "")
+        groups = self._parse_groups(groups_raw)
+        is_admin = self.ADMIN_ROLE in groups
+        admin_check_via = "groups" if groups_raw else "fallback-username"
 
-        # Stash the authenticated user for downstream handlers that
-        # want to log it.
+        if not is_admin and admin_check_via == "fallback-username":
+            try:
+                if self.ADMIN_USERNAME_FILE.is_file():
+                    expected = self.ADMIN_USERNAME_FILE.read_text().strip()
+                    if expected and user == expected:
+                        is_admin = True
+                        logger.warning(
+                            "Admitting '%s' via legacy username check "
+                            "(no groups header). Re-run zitadel-provision "
+                            "to enable role-based gating.",
+                            user,
+                        )
+            except Exception as e:
+                logger.warning("Admin username check failed: %s", e)
+
+        if not is_admin:
+            expected = None
+            try:
+                if self.ADMIN_USERNAME_FILE.is_file():
+                    expected = self.ADMIN_USERNAME_FILE.read_text().strip() or None
+            except Exception:
+                pass
+            logger.warning(
+                "Admin UI access denied for user '%s' (groups: %s)",
+                user, sorted(groups) or "none",
+            )
+            return JSONResponse(
+                {
+                    "error": "forbidden",
+                    "code": "not_admin_user",
+                    "detail": (
+                        f"You are signed in as '{user}', but the "
+                        f"HomeFree admin UI requires the "
+                        f"'{self.ADMIN_ROLE}' role."
+                    ),
+                    "current_user": user,
+                    "admin_user": expected,
+                },
+                status_code=403,
+            )
+
+        # Stash the authenticated user + groups for downstream
+        # handlers that want them.
         request.state.auth_user = user
+        request.state.auth_groups = groups
         return await call_next(request)
 
 
@@ -865,25 +932,37 @@ SSO_CATALOG = [
      "sso_kind": SSO_KIND_NATIVE, "secrets_dir": "home-assistant"},
     {"label": "webdav",         "display": "WebDAV",          "sso_kind": SSO_KIND_BRIDGE},
 
+    # Phase B: Caddy outer-gate only (admin-only via oauth2-proxy +
+    # admin-role check). Users still see the app's own login form
+    # after passing the gate, except for Screeenly which is API-only.
+    # Inner SSO bridge is per-app Phase-A work.
+    {"label": "frigate",        "display": "Frigate NVR",     "sso_kind": SSO_KIND_CADDY,
+     "notes": "Outer gate admin-only. Frigate's own login still appears inside; native OIDC bridge pending."},
+    {"label": "screeenly",      "display": "Screeenly",       "sso_kind": SSO_KIND_CADDY,
+     "notes": "Outer gate admin-only. Screeenly is API-only — no inner login."},
+
+    # Native OIDC, role-mapped: HomeFree-admin role grants in-app admin;
+    # all other Zitadel users land as regular users.
+    {"label": "ollama",         "display": "Ollama (Open WebUI)", "sso_kind": SSO_KIND_NATIVE,
+     "notes": "Open WebUI native OIDC; homefree-admin role grants WebUI admin."},
+    {"label": "homebox",        "display": "Homebox",         "sso_kind": SSO_KIND_NATIVE,
+     "notes": "Native OIDC. Homebox has no admin/user distinction — all SSO users are equal members."},
+
     # Not yet implemented — present so the admin sees the full
-    # surface area and knows what's still pending.
+    # surface area and knows what's still pending. Reasons each one
+    # isn't gated yet are documented in the per-service .nix file.
     {"label": "baikal",         "display": "Baikal (CalDAV/CardDAV)", "sso_kind": SSO_KIND_NONE},
     {"label": "cryptpad",       "display": "CryptPad",        "sso_kind": SSO_KIND_NONE},
     {"label": "freshrss",       "display": "FreshRSS",        "sso_kind": SSO_KIND_NONE},
-    {"label": "frigate",        "display": "Frigate NVR",     "sso_kind": SSO_KIND_NONE},
     {"label": "grocy",          "display": "Grocy",           "sso_kind": SSO_KIND_NONE},
-    {"label": "homebox",        "display": "Homebox",         "sso_kind": SSO_KIND_NONE},
     {"label": "jellyfin",       "display": "Jellyfin",        "sso_kind": SSO_KIND_NONE},
     {"label": "joplin",         "display": "Joplin Server",   "sso_kind": SSO_KIND_NONE},
     {"label": "lidarr",         "display": "Lidarr",          "sso_kind": SSO_KIND_NONE},
     {"label": "linkwarden",     "display": "Linkwarden",      "sso_kind": SSO_KIND_NONE},
-    {"label": "logseq",         "display": "Logseq",          "sso_kind": SSO_KIND_NONE},
     {"label": "mediawiki",      "display": "MediaWiki",       "sso_kind": SSO_KIND_NONE},
     {"label": "minecraft",      "display": "Minecraft",       "sso_kind": SSO_KIND_NONE},
     {"label": "nzbget",         "display": "NZBGet",          "sso_kind": SSO_KIND_NONE},
-    {"label": "ollama",         "display": "Ollama",          "sso_kind": SSO_KIND_NONE},
     {"label": "radicale",       "display": "Radicale",        "sso_kind": SSO_KIND_NONE},
-    {"label": "screeenly",      "display": "Screeenly",       "sso_kind": SSO_KIND_NONE},
     {"label": "snipe-it",       "display": "Snipe-IT",        "sso_kind": SSO_KIND_NONE},
     {"label": "unifi",          "display": "UniFi Controller", "sso_kind": SSO_KIND_NONE},
     {"label": "vaultwarden",    "display": "Vaultwarden",     "sso_kind": SSO_KIND_NONE},
@@ -936,6 +1015,7 @@ async def sso_state():
             "label": label,
             "display": entry["display"],
             "sso_kind": kind,
+            "notes": entry.get("notes", ""),
             "enabled": bool((svc_cfg.get(label) or {}).get("enable", False)),
             # Back-compat fields the existing frontend reads. Will be
             # phased out once the UI migrates to sso_kind exclusively.
@@ -949,6 +1029,29 @@ async def sso_state():
         "provisioned": provisioned,
         "services": services,
     })
+
+@app.get("/api/auth/admin-check")
+async def auth_admin_check(request: Request):
+    """Caddy forward_auth target for admin-only services.
+
+    Caddy is the SSO gate in front of services that have no native
+    OIDC support (AdGuard, WebDAV). oauth2-proxy already validated
+    the session and set X-Auth-Request-* headers — but oauth2-proxy
+    can't enforce role-based access for us, because Zitadel's
+    namespaced project-roles claim comes through as a JSON-stringified
+    object that oauth2-proxy's group parser doesn't extract keys
+    from.
+
+    So Caddy chains a SECOND forward_auth call here. Our middleware
+    already does the role check (see TrustedHeaderAuthMiddleware
+    above): if the user has the homefree-admin role we get here and
+    return 200; if not, the middleware short-circuits with 403
+    before we run.
+
+    The body is intentionally minimal — Caddy's forward_auth only
+    cares about the status code.
+    """
+    return JSONResponse(content={"ok": True})
 
 @app.get("/api/sso/oauth2-client-id")
 async def sso_oauth2_client_id():
@@ -1023,7 +1126,7 @@ HOMEFREE_ADMIN_ROLE = "homefree-admin"
 async def list_users():
     """List human users in the default org. Excludes machine users
     (the provisioner, the PAM bridge) by filtering to TYPE_HUMAN.
-    Includes is_admin per-user, computed from a single member-search
+    Includes is_admin per-user, computed from a single grant-search
     call so the page renders without N+1 round-trips."""
     import httpx
     base = _zitadel_base_url()
@@ -1043,17 +1146,24 @@ async def list_users():
                                 detail=f"Zitadel returned: {r.text}")
         users_data = r.json()
 
-        # IAM admins — one call, then we intersect by user id.
-        r = await cx.post(
-            f"{base}/admin/v1/members/_search",
-            headers=_zitadel_headers(),
-            json={},
-        )
+        # Admins = users with the homefree-admin role on the homefree
+        # project. One grant-search call, intersect by user_id.
         admin_ids = set()
-        if r.status_code < 400:
-            for m in (r.json().get("result") or []):
-                if "IAM_OWNER" in (m.get("roles") or []):
-                    admin_ids.add(m.get("userId"))
+        try:
+            project_id = await _get_homefree_project_id(cx, base)
+            r = await cx.post(
+                f"{base}/management/v1/users/grants/_search",
+                headers=_zitadel_headers(),
+                json={"queries": [{"projectIdQuery": {"projectId": project_id}}]},
+            )
+            if r.status_code < 400:
+                for g in (r.json().get("result") or []):
+                    if HOMEFREE_ADMIN_ROLE in (g.get("roleKeys") or []):
+                        admin_ids.add(g.get("userId"))
+        except HTTPException:
+            # Project not provisioned yet — every user defaults to
+            # non-admin until the project + role exist.
+            pass
 
     users = []
     for u in users_data.get("result", []) or []:
@@ -1523,40 +1633,108 @@ async def set_password(user_id: str, req: SetPasswordRequest):
 ## evaluation happens at module load, so a forward reference in a
 ## type annotation here would NameError on startup.)
 
-async def _set_admin_role(cx, base, user_id, is_admin):
-    """Grant or revoke the IAM_OWNER role for the user at the
-    instance level. We use IAM_OWNER (rather than a project-scoped
-    role) because that's what gives "manage everything in the
-    HomeFree stack" semantics — same role the bootstrap user has."""
-    # List existing IAM memberships for this user.
+async def _get_homefree_project_id(cx, base):
+    """Look up the 'homefree' project's ID. The project is created
+    by zitadel-provision.service on first boot; this fails fast if
+    it isn't there yet (the admin UI shouldn't be reachable in that
+    state anyway because the global sentinel won't exist)."""
     r = await cx.post(
-        f"{base}/admin/v1/members/_search",
+        f"{base}/management/v1/projects/_search",
         headers=_zitadel_headers(),
-        json={"queries": [{"userIdQuery": {"userId": user_id}}]},
+        json={"queries": [{"nameQuery": {
+            "name": "homefree",
+            "method": "TEXT_QUERY_METHOD_EQUALS",
+        }}]},
     )
     if r.status_code >= 400:
         raise HTTPException(status_code=r.status_code,
-                            detail=f"Zitadel member lookup: {r.text}")
-    existing = r.json().get("result") or []
-    has_owner = any("IAM_OWNER" in (m.get("roles") or []) for m in existing)
+                            detail=f"Zitadel project lookup: {r.text}")
+    result = r.json().get("result") or []
+    if not result:
+        raise HTTPException(
+            status_code=503,
+            detail=("'homefree' project not found in Zitadel. Has "
+                    "zitadel-provision.service run yet?"),
+        )
+    return result[0]["id"]
 
-    if is_admin and not has_owner:
-        r = await cx.post(
-            f"{base}/admin/v1/members",
-            headers=_zitadel_headers(),
-            json={"userId": user_id, "roles": ["IAM_OWNER"]},
-        )
+async def _set_admin_role(cx, base, user_id, is_admin):
+    """Grant or revoke the homefree-admin PROJECT role for the user.
+
+    We use a project-scoped role rather than IAM_OWNER (Zitadel
+    instance-wide) so that:
+      - the role flows into OIDC tokens for downstream services
+        (Zitadel asserts project roles in the id_token; instance
+        memberships are NOT asserted in the OIDC payload).
+      - admins of the HomeFree stack are *not* implicitly admins
+        of Zitadel itself (an admin can manage HomeFree services
+        without being able to break the SSO server).
+    """
+    project_id = await _get_homefree_project_id(cx, base)
+
+    # Look up the user's existing grant on this project.
+    r = await cx.post(
+        f"{base}/management/v1/users/grants/_search",
+        headers=_zitadel_headers(),
+        json={"queries": [
+            {"userIdQuery": {"userId": user_id}},
+            {"projectIdQuery": {"projectId": project_id}},
+        ]},
+    )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code,
+                            detail=f"Zitadel grant lookup: {r.text}")
+    grants = r.json().get("result") or []
+    existing_grant = grants[0] if grants else None
+    has_role = bool(
+        existing_grant
+        and HOMEFREE_ADMIN_ROLE in (existing_grant.get("roleKeys") or [])
+    )
+
+    if is_admin and not has_role:
+        if existing_grant:
+            # Add the role to the existing grant (preserving any
+            # other roles already on it).
+            new_roles = sorted(
+                set(existing_grant.get("roleKeys") or [])
+                | {HOMEFREE_ADMIN_ROLE}
+            )
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/grants/{existing_grant['id']}",
+                headers=_zitadel_headers(),
+                json={"roleKeys": new_roles},
+            )
+        else:
+            r = await cx.post(
+                f"{base}/management/v1/users/{user_id}/grants",
+                headers=_zitadel_headers(),
+                json={"projectId": project_id,
+                      "roleKeys": [HOMEFREE_ADMIN_ROLE]},
+            )
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code,
-                                detail=f"Zitadel add member: {r.text}")
-    elif not is_admin and has_owner:
-        r = await cx.delete(
-            f"{base}/admin/v1/members/{user_id}",
-            headers=_zitadel_headers(),
+                                detail=f"Zitadel grant set: {r.text}")
+    elif not is_admin and has_role:
+        remaining_roles = sorted(
+            set(existing_grant.get("roleKeys") or [])
+            - {HOMEFREE_ADMIN_ROLE}
         )
+        if remaining_roles:
+            # Keep the grant alive but remove just our role.
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/grants/{existing_grant['id']}",
+                headers=_zitadel_headers(),
+                json={"roleKeys": remaining_roles},
+            )
+        else:
+            # No other roles → delete the grant entirely.
+            r = await cx.delete(
+                f"{base}/management/v1/users/{user_id}/grants/{existing_grant['id']}",
+                headers=_zitadel_headers(),
+            )
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code,
-                                detail=f"Zitadel remove member: {r.text}")
+                                detail=f"Zitadel grant unset: {r.text}")
 
 @app.post("/api/users/{user_id}/admin")
 async def set_user_admin(user_id: str, req: SetAdminRequest):
@@ -1569,20 +1747,26 @@ async def set_user_admin(user_id: str, req: SetAdminRequest):
 
 @app.get("/api/users/{user_id}/admin")
 async def get_user_admin(user_id: str):
-    """Check whether the user has the admin (IAM_OWNER) role."""
+    """Check whether the user has the homefree-admin project role."""
     import httpx
     base = _zitadel_base_url()
     async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        project_id = await _get_homefree_project_id(cx, base)
         r = await cx.post(
-            f"{base}/admin/v1/members/_search",
+            f"{base}/management/v1/users/grants/_search",
             headers=_zitadel_headers(),
-            json={"queries": [{"userIdQuery": {"userId": user_id}}]},
+            json={"queries": [
+                {"userIdQuery": {"userId": user_id}},
+                {"projectIdQuery": {"projectId": project_id}},
+            ]},
         )
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code,
                                 detail=f"Zitadel: {r.text}")
-        result = r.json().get("result") or []
-    is_admin = any("IAM_OWNER" in (m.get("roles") or []) for m in result)
+        grants = r.json().get("result") or []
+    is_admin = any(
+        HOMEFREE_ADMIN_ROLE in (g.get("roleKeys") or []) for g in grants
+    )
     return JSONResponse(content={"is_admin": is_admin})
 
 ## Password complexity policy lives in Zitadel and the admin can edit

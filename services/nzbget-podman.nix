@@ -113,6 +113,10 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.nzbget.public;
+        ## NOTE: NZBGet is intentionally NOT SSO-gated yet. UI and
+        ## API share a host; gating would 302 API calls (used by
+        ## Sonarr/Radarr) into the SSO flow. Same Phase-A treatment
+        ## needed as Lidarr: split API onto its own subdomain.
       };
       backup = lib.optionalAttrs config.homefree.service-options.nzbget.enable-backup-media {
         paths = [

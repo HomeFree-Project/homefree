@@ -231,6 +231,59 @@ let
       needs_pat = false;
       post_restart_units = [ "podman-homeassistant.service" ];
     }
+    {
+      svc = "homebox";
+      internal_name = "homefree-homebox";
+      ## Homebox v0.25+ confidential OIDC client (server-side Go app).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Homebox hardcodes its OIDC callback path. Confirmed
+      ## empirically: clicking "Sign in" produces a redirect_uri of
+      ## /api/v1/users/login/oidc/callback (not the
+      ## /api/v1/users/oidc-callback I initially guessed from a
+      ## `homebox api --help` that doesn't expose a --redirect-url
+      ## option).
+      redirect_uris = [ "https://homebox.${domain}/api/v1/users/login/oidc/callback" ];
+      post_logout_uris = [ "https://homebox.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-homebox.service" ];
+    }
+    {
+      svc = "vaultwarden";
+      internal_name = "homefree-vaultwarden";
+      ## Vaultwarden 1.36+ confidential OIDC client (Rust server,
+      ## kept server-side).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Vaultwarden auto-derives its callback from DOMAIN. Per
+      ## https://github.com/dani-garcia/vaultwarden/wiki/Enabling-SSO-support-using-OpenId-Connect
+      ## the path is /identity/connect/oidc-signin.
+      redirect_uris = [ "https://vaultwarden.${domain}/identity/connect/oidc-signin" ];
+      post_logout_uris = [ "https://vaultwarden.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-vaultwarden.service" ];
+    }
+    {
+      svc = "ollama";
+      internal_name = "homefree-ollama";
+      ## Open WebUI is a Node.js server-side app using a confidential
+      ## OIDC client (authcode + secret). Not a SPA — secrets are
+      ## kept server-side in the container.
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Open WebUI's OIDC callback path is /oauth/oidc/callback
+      ## (see OPENID_REDIRECT_URI in services/ollama-podman.nix).
+      redirect_uris = [ "https://ollama.${domain}/oauth/oidc/callback" ];
+      post_logout_uris = [ "https://ollama.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-ollama-webui.service" ];
+    }
   ];
 
   ## Render the services table as newline-delimited records. Each
@@ -359,11 +412,19 @@ let
 
       ## Helper: idempotent file write with mode 0400. The provision
       ## script runs as root, so written files are owned by root.
+      ## Writes secret if content differs. Sets `did_work=true` in the
+       ## caller's scope when the on-disk value is missing or different,
+       ## so the per-service restart loop only restarts the consumer
+       ## unit when something actually changed.
       write_secret() {
         local path="$1" value="$2"
+        if [ -f "$path" ] && [ "$(cat "$path" 2>/dev/null)" = "$value" ]; then
+          return 0
+        fi
         install -m 600 -D /dev/null "$path"
         printf '%s' "$value" > "$path"
         chmod 400 "$path"
+        did_work=true
       }
 
       ## ── 3. Disable userLoginMustBeDomain ──────────────────────────
@@ -675,6 +736,21 @@ let
       rm -f "$lt_tmp"
 
       ## ── 4. Ensure "homefree" project exists ───────────────────────
+      ##
+      ## projectRoleAssertion=true tells Zitadel to embed the user's
+      ## project-level roles in id_token and userinfo as the claim
+      ##   "urn:zitadel:iam:org:project:roles": { "homefree-admin": {...} }
+      ## We *must* have it on; otherwise the role claim never reaches
+      ## downstream services and admin gating can't work.
+      ##
+      ## projectRoleCheck=false: users WITHOUT any project role can
+      ## still complete an /authorize handshake. We want this so
+      ## non-admin users can use Forgejo/Nextcloud/etc as regular
+      ## users. The per-service admin check then keys off the
+      ## presence of the homefree-admin role specifically.
+      ##
+      ## hasProjectCheck=false: matches the prior default; orgs/users
+      ## without a grant on this project don't trip a check.
       log "Ensuring 'homefree' project exists"
       project_search=$(zit_api POST management/v1/projects/_search '{
         "queries": [
@@ -687,14 +763,125 @@ let
         log "Creating 'homefree' project"
         create_resp=$(zit_api POST management/v1/projects '{
           "name": "homefree",
-          "projectRoleAssertion": false,
+          "projectRoleAssertion": true,
           "projectRoleCheck": false,
           "hasProjectCheck": false
         }') || die "Failed to create project"
         project_id=$(printf '%s' "$create_resp" | jq -r '.id')
+      else
+        ## Ensure projectRoleAssertion is enabled on an existing
+        ## project (older instances were created with assertion off).
+        ## 400 + "not changed" means "already in desired state" — same
+        ## no-op-as-400 pattern as elsewhere in this script.
+        log "Ensuring projectRoleAssertion=true on existing project"
+        pra_tmp=$(mktemp)
+        pra_code=$(curl -sS -o "$pra_tmp" -w '%{http_code}' \
+          -X PUT \
+          -H "Host: $SSO_HOST" \
+          -H "Authorization: Bearer $PAT" \
+          -H "Content-Type: application/json" \
+          --data-raw '{"name":"homefree","projectRoleAssertion":true,"projectRoleCheck":false,"hasProjectCheck":false}' \
+          "$SSO_URL/management/v1/projects/$project_id" || echo "000")
+        case "$pra_code" in
+          2*) log "Project assertion enabled" ;;
+          400)
+            if grep -qiE "not (been )?changed|already" "$pra_tmp"; then
+              log "Project already has assertion enabled (no-op)"
+            else
+              warn "Project update returned 400: $(cat "$pra_tmp")"
+            fi
+            ;;
+          *) warn "Project update returned $pra_code: $(cat "$pra_tmp")" ;;
+        esac
+        rm -f "$pra_tmp"
       fi
       [ -n "$project_id" ] || die "Could not resolve project ID"
       log "Project ID: $project_id"
+
+      ## ── 4b. Provision 'homefree-admin' project role ───────────────
+      ## The single role we propagate to downstream services. Presence
+      ## of this role in the user's token means "this user is an
+      ## admin." We grant it to the configured HomeFree admin (and
+      ## the admin UI's Users page exposes a toggle for adding/
+      ## removing it from other users).
+      log "Ensuring 'homefree-admin' role exists on project"
+      role_resp_tmp=$(mktemp)
+      role_resp_code=$(curl -sS -o "$role_resp_tmp" -w '%{http_code}' \
+        -X POST \
+        -H "Host: $SSO_HOST" \
+        -H "Authorization: Bearer $PAT" \
+        -H "Content-Type: application/json" \
+        --data-raw '{"roleKey":"homefree-admin","displayName":"HomeFree Administrator","group":"homefree"}' \
+        "$SSO_URL/management/v1/projects/$project_id/roles" || echo "000")
+      case "$role_resp_code" in
+        2*) log "Created 'homefree-admin' role" ;;
+        409) log "Role 'homefree-admin' already exists (no-op)" ;;
+        400)
+          if grep -qiE "already|exists|duplicate" "$role_resp_tmp"; then
+            log "Role 'homefree-admin' already exists (no-op)"
+          else
+            warn "Role create returned 400: $(cat "$role_resp_tmp")"
+          fi
+          ;;
+        *) warn "Role create returned $role_resp_code: $(cat "$role_resp_tmp")" ;;
+      esac
+      rm -f "$role_resp_tmp"
+
+      ## ── 4c. Grant 'homefree-admin' to the configured admin user ───
+      ## Project-grant the role to the user we identified earlier
+      ## (admin_id). Idempotent: search-then-create. Without this,
+      ## no user has the role and every admin-only service rejects
+      ## every login.
+      if [ -n "''${admin_id:-}" ]; then
+        log "Granting 'homefree-admin' to user $admin_id"
+
+        ## Look for an existing user-grant on this project for this user.
+        ug_search=$(zit_api POST management/v1/users/grants/_search "$(jq -nc \
+          --arg uid "$admin_id" \
+          --arg pid "$project_id" \
+          '{
+            queries:[
+              {userIdQuery:{userId:$uid}},
+              {projectIdQuery:{projectId:$pid}}
+            ]
+          }')") || { warn "user-grant search failed"; ug_search='{}'; }
+        ug_id=$(printf '%s' "$ug_search" | jq -r '.result[0].id // empty')
+
+        if [ -z "$ug_id" ]; then
+          ug_create=$(zit_api POST "management/v1/users/$admin_id/grants" "$(jq -nc \
+            --arg pid "$project_id" \
+            '{projectId:$pid, roleKeys:["homefree-admin"]}')") \
+            || warn "user-grant create failed"
+          if [ -n "''${ug_create:-}" ]; then
+            log "Granted homefree-admin to admin user"
+          fi
+        else
+          ## Ensure the existing grant includes homefree-admin.
+          ug_update_tmp=$(mktemp)
+          ug_update_code=$(curl -sS -o "$ug_update_tmp" -w '%{http_code}' \
+            -X PUT \
+            -H "Host: $SSO_HOST" \
+            -H "Authorization: Bearer $PAT" \
+            -H "Content-Type: application/json" \
+            --data-raw '{"roleKeys":["homefree-admin"]}' \
+            "$SSO_URL/management/v1/users/$admin_id/grants/$ug_id" \
+            || echo "000")
+          case "$ug_update_code" in
+            2*) log "Admin grant updated to include homefree-admin" ;;
+            400)
+              if grep -qiE "not (been )?changed|already" "$ug_update_tmp"; then
+                log "Admin grant already has homefree-admin (no-op)"
+              else
+                warn "Grant update returned 400: $(cat "$ug_update_tmp")"
+              fi
+              ;;
+            *) warn "Grant update returned $ug_update_code: $(cat "$ug_update_tmp")" ;;
+          esac
+          rm -f "$ug_update_tmp"
+        fi
+      else
+        warn "No admin_id resolved earlier — cannot grant homefree-admin"
+      fi
 
       ## ── 5. Provision per-service OIDC apps ────────────────────────
       ## The services table is hardcoded below as one record per line.
@@ -729,6 +916,13 @@ EOF
         secrets_dir="$SECRETS_ROOT/$svc"
         mkdir -p "$secrets_dir"
         chmod 700 "$secrets_dir"
+
+        ## Per-iteration change tracking. Flipped to true by any branch
+        ## that actually mutates remote Zitadel state or writes a new
+        ## secret value. Gates the consumer-unit restart at the bottom
+        ## of the loop so steady-state rebuilds (no app changes, no
+        ## secret rotation) leave running containers alone.
+        did_work=false
 
         ## (a) List existing apps in the project; reuse if present.
         app_search=$(zit_api POST "management/v1/projects/$project_id/apps/_search" '{
@@ -779,6 +973,7 @@ EOF
           client_id=$(printf '%s' "$create_resp" | jq -r '.clientId // empty')
           client_secret=$(printf '%s' "$create_resp" | jq -r '.clientSecret // empty')
           log "$svc: created app $app_id (client_id=$client_id)"
+          did_work=true
         else
           log "$svc: app $app_id exists (client_id=$client_id)"
           ## Update the OIDC config on the existing app. The redirect /
@@ -827,7 +1022,7 @@ EOF
             "$SSO_URL/management/v1/projects/$project_id/apps/$app_id/oidc_config" \
             || echo "000")
           case "$upd_code" in
-            2*) log "$svc: OIDC config updated (redirects + post-logout)" ;;
+            2*) log "$svc: OIDC config updated (redirects + post-logout)"; did_work=true ;;
             400)
               if grep -qiE "not (been )?changed|already" "$upd_tmp"; then
                 log "$svc: OIDC config already in desired state (no-op)"
@@ -966,13 +1161,21 @@ EOF
         ## single-element list silently drops the only entry without
         ## the trailing newline.
         touch "$secrets_dir/.provisioned"
-        if [ -n "$post_restart_raw" ]; then
+        ## Only restart consumer units when this iteration actually
+        ## did something (created an app, mutated OIDC config with a
+        ## 2xx, wrote new secret content, or minted a fresh PAT). On
+        ## a no-op rebuild the consumer container stays running — no
+        ## more spurious nextcloud / forgejo / HA / etc churn on every
+        ## `nixos-rebuild switch`.
+        if [ "$did_work" = "true" ] && [ -n "$post_restart_raw" ]; then
           while IFS= read -r unit; do
             [ -n "$unit" ] || continue
             log "$svc: restart $unit (no-block)"
             systemctl restart --no-block "$unit" || \
               warn "$svc: restart $unit failed (unit may be disabled or not yet rendered)"
           done < <(printf '%s\n' "$post_restart_raw" | sed 's/;;/\n/g')
+        elif [ -n "$post_restart_raw" ]; then
+          log "$svc: no changes — skipping restart"
         fi
 
       done <<< "$services_table"
