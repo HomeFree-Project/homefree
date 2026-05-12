@@ -1,11 +1,53 @@
 { config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/snipeit";
+  secretsDir = "/var/lib/homefree-secrets/snipe-it";
+
+  ## Auto-generate the MySQL password on first boot when the user
+  ## hasn't supplied one. Same pattern as nextcloud / mediawiki.
+  ## When secrets.mysql-password IS set, prefer that file. Either
+  ## way, preStart reads the resolved path at runtime (no Nix-level
+  ## null interpolation).
+  userSuppliedMysqlPassword = config.homefree.service-options.snipe-it.secrets.mysql-password or null;
+  mysqlPasswordFile =
+    if userSuppliedMysqlPassword != null
+    then userSuppliedMysqlPassword
+    else "${secretsDir}/mysql-password";
 
   preStart = ''
     mkdir -p ${containerDataPath}
+    mkdir -p ${secretsDir}
 
-    MYSQL_PASSWORD=$(cat ${config.homefree.service-options.snipe-it.secrets.mysql-password})
+    ${lib.optionalString (userSuppliedMysqlPassword == null) ''
+      if [ ! -s ${mysqlPasswordFile} ]; then
+        ${pkgs.openssl}/bin/openssl rand -base64 32 \
+          | tr -d '/+=' | head -c 32 > ${mysqlPasswordFile}
+        chmod 600 ${mysqlPasswordFile}
+      fi
+    ''}
+
+    ## Laravel APP_KEY — required by Snipe-IT's bootstrapping or the
+    ## container exits with "Please re-run with $APP_KEY". Persisted
+    ## (regenerating would invalidate encrypted columns and signed
+    ## cookies). Format: literal "base64:" prefix + 32 raw bytes of
+    ## openssl-emitted base64, matching `php artisan key:generate`.
+    if [ ! -s ${secretsDir}/app-key ]; then
+      printf 'base64:%s' "$(${pkgs.openssl}/bin/openssl rand -base64 32)" \
+        > ${secretsDir}/app-key
+      chmod 600 ${secretsDir}/app-key
+    fi
+
+    ## Synthesize the env file the container reads. Carries the two
+    ## secrets that the container's Laravel bootstrap requires every
+    ## boot. The user-provided secrets.env is still mounted (below)
+    ## and overrides on top — last one wins.
+    install -m 600 /dev/null ${containerDataPath}/runtime.env
+    {
+      echo "APP_KEY=$(cat ${secretsDir}/app-key)"
+      echo "DB_PASSWORD=$(cat ${mysqlPasswordFile})"
+    } > ${containerDataPath}/runtime.env
+
+    MYSQL_PASSWORD=$(cat ${mysqlPasswordFile})
 
     ## @TODO: reduce privileges here. snipeit shouldn't be admin
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
@@ -98,10 +140,13 @@ in
         "${containerDataPath}:/var/lib/snipeit"
       ];
 
-      ## @TODO: this shouldn't need to be exposed to user config
-      environmentFiles = lib.optional
-        (config.homefree.service-options.snipe-it.secrets.env != null)
-        config.homefree.service-options.snipe-it.secrets.env;
+      ## runtime.env carries auto-generated APP_KEY + DB_PASSWORD. The
+      ## user-supplied secrets.env (if set) is loaded after and can
+      ## override either value.
+      environmentFiles = [ "${containerDataPath}/runtime.env" ]
+        ++ lib.optional
+          (config.homefree.service-options.snipe-it.secrets.env or null != null)
+          config.homefree.service-options.snipe-it.secrets.env;
 
       environment = {
         TZ = config.homefree.system.timeZone;

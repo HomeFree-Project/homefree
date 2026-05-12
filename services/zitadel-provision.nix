@@ -326,6 +326,23 @@ let
       needs_pat = false;
       post_restart_units = [ "podman-cryptpad.service" ];
     }
+    {
+      svc = "freshrss";
+      internal_name = "homefree-freshrss";
+      ## FreshRSS uses Apache mod_auth_openidc — server-side
+      ## confidential client (authcode + secret).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Callback path hardcoded by the FreshRSS image's Apache
+      ## config: OIDCRedirectURI /i/oidc/. Trailing slash is part of
+      ## the path mod_auth_openidc serves, so register it as-is.
+      redirect_uris = [ "https://freshrss.${domain}/i/oidc/" ];
+      post_logout_uris = [ "https://freshrss.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-freshrss.service" ];
+    }
   ];
 
   ## Render the services table as newline-delimited records. Each
