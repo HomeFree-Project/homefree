@@ -266,14 +266,26 @@ in
             # Enable Gzip compression
             encode gzip
 
-            # HTML files - No caching to ensure fresh content
+            # HTML files - No caching to ensure fresh content, AND
+            # opt out of bfcache so signing out can't leave the user
+            # on a restored in-memory page snapshot. bfcache is
+            # blocked by no-store specifically (no-cache alone is not
+            # enough — Firefox will still bfcache no-cache responses).
+            # See:
+            # https://developer.mozilla.org/docs/Web/API/Window/pageshow_event#firefox_bfcache
             @html {
             file
               path *.html
             }
             header @html {
-              # Disable caching for HTML
-              Cache-Control "no-cache, must-revalidate"
+              # no-store prevents disk cache AND bfcache. The latter
+              # matters because after a sign-out, the browser would
+              # otherwise restore the cached admin page DOM and then
+              # try to bootstrap its JS — which 302s to auth/, and
+              # module-script CORS rejects that, leaving the user on
+              # a permanent loading spinner.
+              Cache-Control "no-store, no-cache, must-revalidate"
+              Pragma "no-cache"
               # Add ETag for conditional requests
               ETag
               # Add Last-Modified header
