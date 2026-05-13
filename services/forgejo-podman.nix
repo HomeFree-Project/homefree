@@ -8,6 +8,15 @@ let
   forgejoSecretsDir = "/var/lib/homefree-secrets/forgejo";
   domain = config.homefree.system.domain;
 
+  ## SQL template to clear the GroupClaimName / AdminGroup fields
+  ## on the existing Zitadel auth source row. Defined as a regular
+  ## `"..."` Nix string so we don't have to escape apostrophes
+  ## through the postStart `''..''` heredoc (each SQL empty-string
+  ## `''` would become 6 apostrophes in `''..''`, unreadable).
+  ## Contains a literal `__ID__` placeholder that postStart
+  ## substitutes with the shell's $EXISTING_ID at runtime.
+  clearAdminSyncSqlTemplate = "update login_source set cfg = json_set(json_set(cfg, '$.GroupClaimName', ''), '$.AdminGroup', '') where id=__ID__;";
+
   ## Where Forgejo's container expects to read secret values from.
   ## We mount the host-side secrets dir read-only at this path so the
   ## `..._FILE` env vars below resolve to readable paths inside the
@@ -154,6 +163,17 @@ let
       | ${pkgs.gawk}/bin/awk '{print $1}' \
       | ${pkgs.coreutils}/bin/head -n1)
 
+    ## Identity-only OIDC: no group-claim / admin-group sync. The
+    ## admin user is bootstrapped via `forgejo admin user create
+    ## --admin` above, and that admin flag in the Forgejo DB is the
+    ## source of truth. Without --group-claim-name, Forgejo's OAuth
+    ## handler skips the admin-sync step entirely, so a login with
+    ## no group claim doesn't trigger the "demote to non-admin"
+    ## path that fails with "can not delete the last admin user".
+    ##
+    ## Trade-off: role membership in Zitadel doesn't propagate to
+    ## Forgejo admin status. See TODO.md "Zitadel→Forgejo role
+    ## sync" for the path to re-enable this via Zitadel Actions.
     if [ -n "$EXISTING_ID" ]; then
       echo "forgejo postStart: updating existing Zitadel auth source (id=$EXISTING_ID)" >&2
       if ${pkgs.podman}/bin/podman exec --user git forgejo \
@@ -162,13 +182,27 @@ let
              --key "$CID" \
              --secret "$CSEC" \
              --auto-discover-url "https://sso.${domain}/.well-known/openid-configuration" \
-             --scopes "openid email profile urn:zitadel:iam:org:project:roles" \
-             --group-claim-name "urn:zitadel:iam:org:project:roles" \
-             --admin-group "homefree-admin"; then
+             --scopes "openid email profile"; then
         echo "forgejo postStart: Zitadel auth source updated" >&2
       else
         echo "forgejo postStart: update failed (non-fatal)" >&2
       fi
+      ## update-oauth treats empty --group-claim-name / --admin-group
+      ## as "don't change" rather than "clear", so boxes upgraded from
+      ## the previous role-sync config keep the old fields and
+      ## continue triggering the admin-demote path. Clear them via
+      ## direct SQL — JSON in the cfg column. Idempotent: a fresh
+      ## install has empty strings already.
+      ## SQL template defined in the let block (apostrophe escaping
+      ## is awful inside the postStart double-single-quote heredoc).
+      ## We substitute the shell's $EXISTING_ID into the __ID__ slot
+      ## using a bash parameter-expansion replacement, which keeps
+      ## the apostrophes intact.
+      SQL_TEMPLATE=${lib.escapeShellArg clearAdminSyncSqlTemplate}
+      SQL="''${SQL_TEMPLATE//__ID__/$EXISTING_ID}"
+      ${pkgs.podman}/bin/podman exec --user git forgejo \
+        sqlite3 /data/gitea/gitea.db "$SQL" \
+        2>/dev/null || echo "forgejo postStart: SQL clear of admin-sync fields failed (non-fatal)" >&2
     else
       echo "forgejo postStart: registering Zitadel as OAuth source" >&2
       if ${pkgs.podman}/bin/podman exec --user git forgejo \
@@ -178,9 +212,7 @@ let
              --key "$CID" \
              --secret "$CSEC" \
              --auto-discover-url "https://sso.${domain}/.well-known/openid-configuration" \
-             --scopes "openid email profile urn:zitadel:iam:org:project:roles" \
-             --group-claim-name "urn:zitadel:iam:org:project:roles" \
-             --admin-group "homefree-admin"; then
+             --scopes "openid email profile"; then
         echo "forgejo postStart: Zitadel auth source registered" >&2
       else
         echo "forgejo postStart: registration failed (non-fatal)" >&2

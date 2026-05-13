@@ -37,7 +37,6 @@ let
   '';
 
   headscaleEnabled = config.homefree.service-options.headscale.enable;
-  headscaleSecrets = config.homefree.service-options.headscale.secrets;
 
   headplane-port = 3009;
 
@@ -129,27 +128,16 @@ let
     ## up with SSO. No second rebuild required.
     ##
     ## Headplane's option schema only supports `client_secret_path`
-    ## (file-backed) but requires `client_id` inline. Read it from
-    ## disk at Nix-eval time when the file exists; fall back to a
-    ## placeholder that won't match anything when it doesn't (the
-    ## ConditionPathExists gate above keeps headplane down in that
-    ## case anyway, so the placeholder never gets used at runtime).
-    ## On the next rebuild after zitadel-provision lands the file,
-    ## the real client_id gets baked in.
-    ##
-    ## NOTE: this is the single remaining double-rebuild trap on a
-    ## fresh install for headplane SSO specifically. Acceptable for
-    ## now — the user-facing impact is "Headplane shows up after
-    ## the second rebuild" rather than "broken." If we ever bump
-    ## headplane to a version that supports `client_id_path`,
-    ## switch back to that and the trap goes away.
+    ## (file-backed) but requires `client_id` inline. To avoid a
+    ## fresh-install double-rebuild trap (eval-time `readFile` only
+    ## sees a value on the second build), the YAML gets a placeholder
+    ## and the real value is injected at runtime via the
+    ## `HEADPLANE_OIDC__CLIENT_ID` env var written by
+    ## headplane-prepare-secrets.service into headplane.env (see
+    ## below). Headplane's env-override layer wins over YAML.
     oidc = {
       issuer = "https://sso.${cfg.system.domain}";
-      client_id =
-        if builtins.pathExists "${headplaneSecretsDir}/oidc-client-id"
-        then lib.removeSuffix "\n"
-               (builtins.readFile "${headplaneSecretsDir}/oidc-client-id")
-        else "PLACEHOLDER_REPLACED_AFTER_PROVISION";
+      client_id = "PLACEHOLDER_OVERRIDDEN_BY_ENV";
       client_secret_path = "${headplaneCredsDir}/oidc-client-secret";
       headscale_api_key_path = "${headplaneCredsDir}/headscale-api-key";
       disable_api_key_login = false;
@@ -246,51 +234,15 @@ in
       '';
     };
 
-    secrets = {
-      tailscale-key = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
-      };
-
-      ## Deprecated. Headplane 0.6 (the previous version) consumed an env
-      ## file with COOKIE_SECRET, ROOT_API_KEY, OIDC_CLIENT_SECRET. From
-      ## 0.7 onward those secrets come from per-secret files via
-      ## LoadCredential — see the four fields below. Kept here so existing
-      ## configurations evaluate during the migration cycle.
-      headplane-env = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "(Deprecated) Location of Headplane env file. No longer used; see headplane-cookie-secret/oidc-* below.";
-      };
-
-      ## SOPS-managed secrets used by the headplane native module.
-      ## The actual secret values live as files under
-      ## /var/lib/homefree-secrets/headscale/<name>, written out of band
-      ## by the admin UI's secret manager. The string options below are
-      ## just markers so the admin UI knows the secret exists; they are
-      ## not read directly. Compare services/zitadel-podman.nix.
-      headplane-cookie-secret = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "32-byte session secret used by Headplane to sign cookies. Generate with: openssl rand -base64 32 | head -c 32";
-      };
-      oidc-client-id = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "OIDC Client ID for the Headplane application in Zitadel.";
-      };
-      oidc-client-secret = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "OIDC client secret paired with the client ID above.";
-      };
-      headscale-api-key = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Headscale API key. Create with: headscale apikeys create --expiration 999d";
-      };
-    };
+    ## Headscale's secrets (tailscale-key, headplane-cookie-secret,
+    ## oidc-client-{id,secret}, headscale-api-key) are filled in
+    ## automatically by HomeFree — zitadel-provision.service writes
+    ## the OIDC pair; headplane-prepare-secrets, headscale-mint-api-
+    ## key, and headscale-mint-tailscale-key services mint the
+    ## others. preStart scripts and systemd LoadCredential read the
+    ## files directly from /var/lib/homefree-secrets/headscale/,
+    ## bypassing the Nix-config layer entirely. No option declarations
+    ## here.
   };
 
   config = {
@@ -379,9 +331,15 @@ in
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
+  ##
+  ## authKeyFile is pinned to a stable path that headscale-mint-tailscale-key.service
+  ## populates on every start (mint-if-missing or mint-if-not-in-DB). The
+  ## SOPS-managed tailscale-key option is left for advanced overrides but is
+  ## NOT required for first-boot — the mint service makes onboarding fully
+  ## declarative.
   services.tailscale = lib.optionalAttrs headscaleEnabled {
     enable = true;
-    authKeyFile = headscaleSecrets.tailscale-key;
+    authKeyFile = "${headplaneSecretsDir}/tailscale-key";
     useRoutingFeatures = "server";
     extraUpFlags = [
       ## Connect directly to local headscale (bypasses Caddy proxy issues)
@@ -408,28 +366,48 @@ in
   ## We find the node by hostname (the router advertises homefree.lan via
   ## tailscale up) and approve our LAN subnet on that node.
   systemd.services.headscale-enable-routes = lib.optionalAttrs headscaleEnabled {
-    after = [ "network.target" "network-online.target" "tailscale.service" ];
-    requires = [ "network-online.target" "tailscaled.service" "tailscaled-set.service" "tailscaled-autoconnect.service" ];
+    description = "Approve the LAN subnet route advertised by the local tailscale client";
+    ## Run after tailscaled-autoconnect has finished registering the
+    ## host node (it advertises the LAN subnet via --advertise-routes).
+    ## headscale.service is needed for the CLI to talk to the daemon.
+    after = [ "headscale.service" "tailscaled-autoconnect.service" ];
+    requires = [ "headscale.service" "tailscaled-autoconnect.service" ];
+    ## wantedBy makes this actually run on boot. Without it the unit
+    ## sits inactive forever and node routes never get approved.
+    wantedBy = [ "multi-user.target" ];
     enable = true;
     serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
       User = "headscale";
     };
     script = ''
       HEADSCALE=${pkgs.headscale}/bin/headscale
       JQ=${pkgs.jq}/bin/jq
+      TAILSCALE=${pkgs.tailscale}/bin/tailscale
 
-      ## Look up the router node ID by hostname. Match `homefree` and an
-      ## advertised route inside our LAN subnet prefix to be safe even if
-      ## additional nodes happen to share the hostname.
+      ## Match the headscale node entry to the LOCAL tailscaled by
+      ## node_key — robust against multiple `homefree`-named nodes
+      ## (e.g. an old offline registration lingering after a re-
+      ## onboard). Self-healing: looks up the current local node
+      ## key on every run.
+      LOCAL_NODE_KEY=$($TAILSCALE status --json 2>/dev/null \
+        | $JQ -r '.Self.PublicKey // empty')
+
+      if [ -z "$LOCAL_NODE_KEY" ]; then
+        echo "headscale-enable-routes: local tailscaled has no node key yet"
+        exit 0
+      fi
+
+      ## Headscale stores node_key as `nodekey:<hex>` — same format as
+      ## tailscale's .Self.PublicKey, so exact-match works.
       NODE_ID=$($HEADSCALE nodes list-routes -o json \
-        | $JQ -r --arg prefix "${lan-subnet-prefix}" \
-            '.[] | select(.given_name | test("homefree"))
-                 | select((.advertised_routes // []) | map(startswith($prefix)) | any)
-                 | .id' \
-        | head -n1)
+        | $JQ -r --arg k "$LOCAL_NODE_KEY" \
+            '.[] | select(.node_key == $k) | .id' \
+        | ${pkgs.coreutils}/bin/head -n1)
 
       if [ -z "$NODE_ID" ]; then
-        echo "headscale-enable-routes: no node advertising ${lan-subnet} found yet"
+        echo "headscale-enable-routes: no headscale node matches local node_key $LOCAL_NODE_KEY"
         exit 0
       fi
 
@@ -453,27 +431,57 @@ in
   ## *before* ExecStartPre runs, so we can't generate the file from
   ## within headplane.service itself — by the time ExecStartPre would
   ## run, LoadCredential has already failed with status 243.
-  ## RemainAfterExit deliberately omitted: headplane.service's `requires=`
-  ## re-triggers this oneshot on every (re)start, which is what we want
-  ## — if `/var/lib/homefree-secrets/headscale/` is wiped between
-  ## activations (e.g., the SSO bootstrap script's reset), the cookie
-  ## file gets regenerated before LoadCredential runs. The script is
-  ## idempotent: it only writes if the file is missing.
+  ## RemainAfterExit so that headplane.service's `requires=` doesn't
+  ## treat us as failed after we finish. Idempotent: only writes
+  ## missing files.
   systemd.services.headplane-prepare-secrets = lib.mkIf deployHeadplane {
-    description = "Prepare Headplane runtime secrets (cookie secret)";
+    description = "Prepare Headplane runtime secrets and rendered config";
     wantedBy = [ "headplane.service" ];
     before = [ "headplane.service" ];
     serviceConfig = {
       Type = "oneshot";
+      RemainAfterExit = true;
     };
     script = ''
       set -eu
       mkdir -p ${headplaneSecretsDir}
+      ## Headplane runs as the `headscale` group and needs to read the
+      ## rendered config.yaml below. Make the dir group-traversable
+      ## (still root-only by default since other files are mode 600).
+      chown root:${config.services.headscale.group} ${headplaneSecretsDir}
+      chmod 750 ${headplaneSecretsDir}
       if [ ! -s "${headplaneSecretsDir}/headplane-cookie-secret" ]; then
         ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
           > "${headplaneSecretsDir}/headplane-cookie-secret"
       fi
       chmod 600 "${headplaneSecretsDir}/headplane-cookie-secret"
+
+      ## Render a runtime copy of /etc/headplane/config.yaml with
+      ## the real OIDC client_id substituted in. Avoids the eval-time
+      ## `readFile` double-rebuild trap. Cannot use the env-var
+      ## override (HEADPLANE_OIDC__CLIENT_ID) because Headplane's
+      ## env parser type-infers all-digit values as numbers, and
+      ## Zitadel client_ids are 18-digit snowflakes — they parse as
+      ## numbers and fail the `string` validator at startup.
+      ##
+      ## ConditionPathExists on headplane.service prevents start
+      ## until oidc-client-id is on disk, so this branch always has
+      ## a value to substitute.
+      RUNTIME_CONFIG=${headplaneSecretsDir}/config.yaml
+      install -m 600 /dev/null "$RUNTIME_CONFIG"
+      CID=$(tr -d '\n' < "${headplaneSecretsDir}/oidc-client-id")
+      ## Substitute the placeholder with a quoted string. The
+      ## YAML emitter for our Nix config writes the placeholder as
+      ## `client_id: PLACEHOLDER_OVERRIDDEN_BY_ENV` (unquoted, parsed
+      ## as string only because the value contains underscores).
+      ## After substitution the value is 18 digits and YAML would
+      ## otherwise parse it as a Number, failing Headplane's
+      ## `string` validator. Force-quote in the replacement.
+      ${pkgs.gnused}/bin/sed \
+        "s|PLACEHOLDER_OVERRIDDEN_BY_ENV|\"$CID\"|g" \
+        /etc/headplane/config.yaml > "$RUNTIME_CONFIG"
+      chmod 640 "$RUNTIME_CONFIG"
+      chown root:${config.services.headscale.group} "$RUNTIME_CONFIG"
     '';
   };
 
@@ -484,8 +492,13 @@ in
   ## to start headplane until this file exists.
   ##
   ## Runs after headscale.service so the CLI can talk to the live
-  ## daemon. Idempotent: only creates a new key if the file is
-  ## absent, so restarts and rebuilds are no-ops.
+  ## daemon. Self-healing: re-mints if the on-disk key is missing OR
+  ## isn't present in headscale's DB (e.g. after a headscale DB
+  ## reset). Without the DB-presence check, a stale file persists
+  ## forever and headplane responds to every OIDC callback with
+  ## "Failed to link Headscale user" + "Logging out due to expired
+  ## API key" — looks like SSO is broken when it's really an auth
+  ## bootstrap problem.
   ##
   ## 999d expiry matches the headscale CLI documentation example;
   ## headscale doesn't support truly non-expiring keys.
@@ -497,17 +510,123 @@ in
     before = [ "headplane.service" ];
     serviceConfig = {
       Type = "oneshot";
+      RemainAfterExit = true;
     };
     script = ''
       set -eu
       mkdir -p ${headplaneSecretsDir}
-      if [ ! -s "${headplaneSecretsDir}/headscale-api-key" ]; then
+      KEY_FILE=${headplaneSecretsDir}/headscale-api-key
+
+      NEEDS_MINT=0
+      if [ ! -s "$KEY_FILE" ]; then
+        NEEDS_MINT=1
+      else
+        ## Extract the public prefix (everything before the last `-`
+        ## of the `hskey-api-<prefix>-<secret>` format) and confirm
+        ## headscale's DB still recognises it. `apikeys list` exits 0
+        ## but emits no row when the key is gone.
+        EXISTING=$(${pkgs.coreutils}/bin/tr -d '\n' < "$KEY_FILE")
+        PREFIX=$(printf '%s' "$EXISTING" | ${pkgs.coreutils}/bin/cut -c1-23)
+        if ! ${pkgs.headscale}/bin/headscale apikeys list 2>/dev/null \
+             | ${pkgs.gnugrep}/bin/grep -qF "$PREFIX"; then
+          echo "headscale-mint-api-key: stored key not in DB, re-minting" >&2
+          NEEDS_MINT=1
+        fi
+      fi
+
+      if [ "$NEEDS_MINT" = "1" ]; then
         ## headscale apikeys create prints a single line: the new key.
         ${pkgs.headscale}/bin/headscale apikeys create --expiration 999d \
-          | tail -n1 \
-          > "${headplaneSecretsDir}/headscale-api-key"
+          | ${pkgs.coreutils}/bin/tail -n1 \
+          > "$KEY_FILE"
       fi
-      chmod 600 "${headplaneSecretsDir}/headscale-api-key"
+      chmod 600 "$KEY_FILE"
+    '';
+  };
+
+  ## Mint a reusable headscale pre-auth key so the local tailscale client
+  ## can self-onboard into the tailnet under user `server`. Same self-
+  ## healing pattern as the API key: re-mint if the on-disk file is
+  ## missing OR its key isn't recognised by headscale (e.g. after a
+  ## headscale DB reset). Without this, the host's tailscaled stays
+  ## "Logged out", no LAN subnet route is advertised, and clients on
+  ## the tailnet (phones, laptops) can't reach 10.0.0.0/24 services.
+  ##
+  ## Pre-auth keys are single-use-by-design at registration time, but
+  ## `--reusable` lets the same key onboard the host again if its node
+  ## record is ever wiped without rebuilding. 999d expiry mirrors the
+  ## API-key choice.
+  ##
+  ## The `server` headscale user is created by zitadel-provision /
+  ## headscale-init flows; the CLI here errors if it's missing, which
+  ## is the correct failure mode (mint must not silently mint into a
+  ## new accidentally-created user).
+  systemd.services.headscale-mint-tailscale-key = lib.mkIf deployHeadplane {
+    description = "Mint a headscale pre-auth key for the local tailscale client";
+    after = [ "headscale.service" ];
+    requires = [ "headscale.service" ];
+    wantedBy = [ "tailscaled-autoconnect.service" ];
+    before = [ "tailscaled-autoconnect.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -eu
+      mkdir -p ${headplaneSecretsDir}
+      KEY_FILE=${headplaneSecretsDir}/tailscale-key
+      USERNAME=server
+      JQ=${pkgs.jq}/bin/jq
+
+      ## Ensure the `server` user exists; create on first boot so the
+      ## mint below has somewhere to land. Idempotent. JSON output to
+      ## avoid ANSI-color parsing.
+      USER_ID=$(${pkgs.headscale}/bin/headscale users list -o json 2>/dev/null \
+        | $JQ -r --arg n "$USERNAME" '.[] | select(.name == $n) | .id' \
+        | ${pkgs.coreutils}/bin/head -n1)
+      if [ -z "$USER_ID" ]; then
+        ${pkgs.headscale}/bin/headscale users create "$USERNAME" >&2
+        USER_ID=$(${pkgs.headscale}/bin/headscale users list -o json 2>/dev/null \
+          | $JQ -r --arg n "$USERNAME" '.[] | select(.name == $n) | .id' \
+          | ${pkgs.coreutils}/bin/head -n1)
+      fi
+      if [ -z "$USER_ID" ]; then
+        echo "headscale-mint-tailscale-key: failed to resolve user $USERNAME id" >&2
+        exit 1
+      fi
+
+      NEEDS_MINT=0
+      if [ ! -s "$KEY_FILE" ]; then
+        NEEDS_MINT=1
+      else
+        EXISTING=$(${pkgs.coreutils}/bin/tr -d '\n' < "$KEY_FILE")
+        ## preauthkeys list is global; filter by user via jq and check
+        ## that our stored key still appears (not expired/used-and-
+        ## consumed for non-reusable, etc.). Reusable keys persist
+        ## across registrations, so the in-DB check protects against
+        ## headscale-DB-reset cases.
+        IN_DB=$(${pkgs.headscale}/bin/headscale preauthkeys list -o json 2>/dev/null \
+          | $JQ -r --arg k "$EXISTING" --argjson uid "$USER_ID" \
+              '.[] | select(.user.id == $uid and .key == $k) | .key' \
+          | ${pkgs.coreutils}/bin/head -n1)
+        if [ -z "$IN_DB" ]; then
+          echo "headscale-mint-tailscale-key: stored key not in DB, re-minting" >&2
+          NEEDS_MINT=1
+        fi
+      fi
+
+      if [ "$NEEDS_MINT" = "1" ]; then
+        ## preauthkeys create -o json emits {"key": "..."} so we can
+        ## pull the value cleanly without ANSI noise.
+        ${pkgs.headscale}/bin/headscale preauthkeys create \
+            --user "$USER_ID" \
+            --reusable \
+            --expiration 999d \
+            -o json \
+          | $JQ -r '.key' \
+          > "$KEY_FILE"
+      fi
+      chmod 600 "$KEY_FILE"
     '';
   };
 
@@ -538,13 +657,23 @@ in
       "${headplaneSecretsDir}/oidc-client-secret"
       "${headplaneSecretsDir}/headscale-api-key"
     ];
+    ## Headplane sits behind Caddy at https://vpn.<domain>/admin.
+    ## Without server.base_url set, headplane defaults to
+    ## http://localhost:3000 and emits broken OIDC redirect_uris and
+    ## absolute-URL form actions. HEADPLANE_SERVER__BASE_URL is a
+    ## plain string so the env-parser doesn't type-coerce it.
+    ##
+    ## HEADPLANE_CONFIG_PATH points at the runtime-rendered config
+    ## written by headplane-prepare-secrets.service (which substitutes
+    ## the real OIDC client_id for the placeholder).
+    environment = {
+      HEADPLANE_SERVER__BASE_URL = "https://vpn.${cfg.system.domain}";
+      HEADPLANE_CONFIG_PATH = "${headplaneSecretsDir}/config.yaml";
+    };
     serviceConfig = {
       ## Always load credentials — the ConditionPathExists gate
       ## above means we never reach LoadCredential without the
-      ## files present. oidc-client-id is NOT loaded as a
-      ## credential because Headplane's schema requires the value
-      ## inline; it's read at Nix-eval time and embedded into the
-      ## YAML above.
+      ## files present.
       LoadCredential = [
         "headplane-cookie-secret:${headplaneSecretsDir}/headplane-cookie-secret"
         "oidc-client-secret:${headplaneSecretsDir}/oidc-client-secret"

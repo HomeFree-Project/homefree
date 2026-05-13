@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
 import '../../shared/lat-lng-picker.js';
+import '../../shared/table-editor.js';
 import {
   getTimezones, getLocales, getCountries, getCurrencies, getLanguages,
   lookupElevation,
@@ -262,6 +263,18 @@ class SystemModule extends LitElement {
     }));
   }
 
+  // table-editor passes back the full row-object array; the JSON
+  // schema stores additionalDomains as a flat string array, so we
+  // unpack the `domain` field on the way out. Empty/whitespace
+  // entries are dropped so a stray "Add Domain" click with no input
+  // doesn't pollute the config.
+  handleAdditionalDomainsChange(e) {
+    const domains = (e.detail.data || [])
+      .map(r => (r.domain || '').trim())
+      .filter(d => d.length > 0);
+    this.handleFieldChange('system.additionalDomains', domains);
+  }
+
   render() {
     const { system } = this.config;
 
@@ -274,6 +287,12 @@ class SystemModule extends LitElement {
       { value: 'de', label: 'German' },
       { value: 'fr', label: 'French' },
       { value: 'es', label: 'Spanish' }
+    ];
+
+    // Single-column table-editor for additional domains (flat string
+    // array in JSON, modeled as { domain } rows for the table).
+    const additionalDomainsColumns = [
+      { key: 'domain', label: 'Domain', type: 'text', placeholder: 'example.com' }
     ];
 
     const unitSystemOptions = [
@@ -317,6 +336,21 @@ class SystemModule extends LitElement {
               @field-change=${(e) => this.handleFieldChange('system.localDomain', e.detail.value)}
             ></form-field>
           </div>
+
+          <!--
+            Additional domains. The JSON shape is a flat array of strings
+            (e.g. ["rahh.al", "slacktopia.org"]). table-editor works in
+            terms of row objects, so we translate on the way in and out
+            via handleAdditionalDomainsChange below.
+          -->
+          <table-editor
+            label="Additional Domains"
+            .columns=${additionalDomainsColumns}
+            .data=${(system.additionalDomains || []).map(d => ({ domain: d }))}
+            addLabel="Add Domain"
+            help="Extra public domains served alongside the primary domain. Caddy will issue certificates and Unbound will resolve them. Each service's reverse-proxy gets ${'${subdomain}.${domain}'} for every domain listed (primary + additional)."
+            @data-change=${this.handleAdditionalDomainsChange}
+          ></table-editor>
         </config-section>
 
         <!-- Location & Language -->

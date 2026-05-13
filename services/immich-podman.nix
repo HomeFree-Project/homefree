@@ -162,7 +162,15 @@ let
     fi
 
     CID=$(cat ${immichSecretsDir}/oidc-client-id)
-    CSEC=$(cat ${immichSecretsDir}/oidc-client-secret)
+    ## clientSecret is intentionally empty: the Zitadel-side OIDC app
+    ## is OIDC_APP_TYPE_NATIVE with AUTH_METHOD_NONE (PKCE-only), so
+    ## the Android Immich app's custom-scheme redirect
+    ## `app.immich:///oauth-callback` is accepted. NATIVE+NONE apps
+    ## reject any client_secret on token exchange — Immich must do
+    ## PKCE-only. Provisioning still mints a client-secret file (so
+    ## the secret schema stays uniform across services) but we
+    ## drop it on the floor here.
+    CSEC=""
     ISSUER="https://sso.${domain}/.well-known/openid-configuration"
 
     ## Wait briefly for Immich's first-boot migrations to land

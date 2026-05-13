@@ -1,6 +1,8 @@
 {
     "author": "Ellis Rahhal",
     "authorUri": "https://homefree.host",
+    "siteUrl": "https://homefree.host",
+    "manualUrl": "https://manual.homefree.host",
     "languages": [ "en" ],
     "languageLabels": {
         "en": "English"

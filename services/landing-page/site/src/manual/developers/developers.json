@@ -1,0 +1,4 @@
+{
+  "permalink": "/manual/developers/{{ page.fileSlug }}/index.html",
+  "section": "developers"
+}

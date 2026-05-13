@@ -97,9 +97,32 @@ let
           secretsOption = if service-opts-def ? secrets then service-opts-def.secrets else null;
           secretsInternal = if secretsOption != null then (secretsOption.internal or false) else false;
 
-          secrets = if hasSecrets && !secretsInternal then service-opts.secrets else null;
+          # Per-field UI-visibility filter: drop secrets whose
+          # mkOption declaration sets `visible = false` or
+          # `internal = true`. Used to hide auto-provisioned
+          # secrets while leaving the option intact for the service
+          # module to consume. Most auto-provisioned secrets don't
+          # need an option declaration at all — the service writes
+          # them directly to /var/lib/homefree-secrets/<svc>/<key>
+          # and reads them via preStart. This filter is a safety
+          # net for cases where the option must exist (e.g. to feed
+          # a Nix-config-consuming downstream).
+          #
+          # `secretsOption` here is a plain attrset of children
+          # (`secrets = { foo = mkOption {...}; }` — NOT wrapped in
+          # mkOption itself), so we read child attrs directly. Each
+          # child is an option declaration with `.visible` /
+          # `.internal` / `.type` / `.description` / etc.
+          isFieldHidden = key:
+            let opt = (secretsOption.${key} or {}); in
+            (opt.visible or true) == false || (opt.internal or false);
+
+          secrets =
+            if hasSecrets && !secretsInternal
+            then lib.filterAttrs (k: _: !(isFieldHidden k)) service-opts.secrets
+            else null;
         in
-        if secrets != null then
+        if secrets != null && secrets != {} then
           {
             name = service-opts.label or service-name;
             value = builtins.mapAttrs (secret-key: secret-opt: {

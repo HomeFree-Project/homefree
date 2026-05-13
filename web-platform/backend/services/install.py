@@ -261,6 +261,7 @@ class InstallationService:
     }
   },
   "service_config": [],
+  "proxied_domains": [],
   "backups": {
     "enable": false,
     "to_path": "",
@@ -414,6 +415,12 @@ in
 
       headscale.enable = jsonData.services.headscale.enable or false;
       headscale.public = jsonData.services.headscale.public or false;
+
+      ## netbird: server (mgmt/signal/relay/dashboard) gates on
+      ## .enable; the optional client.enable adds a local peer.
+      netbird.enable = jsonData.services.netbird.enable or false;
+      netbird.public = jsonData.services.netbird.public or false;
+      netbird.client.enable = jsonData.services.netbird.client.enable or false;
 
       postgres-vectorchord.enable = jsonData.services.postgres-vectorchord.enable or false;
       postgres-vectorchord.public = jsonData.services.postgres-vectorchord.public or false;
@@ -607,12 +614,30 @@ in
         port      = e.port or 80;
         ssl       = e.ssl or false;
         ssl-no-verify = e.ssl_no_verify or false;
+        disable-keepalive = e.disable_keepalive or false;
         public    = e.public or false;
         oauth2    = e.oauth2 or false;
         basic-auth = e.basic_auth or false;
         require-admin-role = e.require_admin_role or false;
       };
     }) (jsonData.service_config or []);
+
+    ## Whole-domain transparent proxies (e.g. slacktopia.org →
+    ## internal dev box). Each entry forwards all matching domains
+    ## to one backend host. http_port / https_port = null (or
+    ## absent) disables that protocol leg.
+    proxied-domains = map (e: {
+      domains = e.domains or [];
+      target = {
+        host = e.host;
+        http  = if (e.http_port  or null) == null then null else { port = e.http_port; };
+        https = if (e.https_port or null) == null then null else {
+          port = e.https_port;
+          ignore-self-signed-cert = e.ignore_self_signed or false;
+        };
+      };
+      public = e.public or false;
+    }) (jsonData.proxied_domains or []);
   };
 
   # Set admin user password

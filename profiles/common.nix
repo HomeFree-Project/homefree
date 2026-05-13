@@ -193,13 +193,21 @@
   };
 
   # Disable USB autosuspend for HID devices (keyboards, mice, etc.).
-  # Why: powertop's autotuning enables USB autosuspend globally, which causes
-  # the first few keystrokes after an idle period to be dropped while the
-  # device wakes up. HID devices barely save any power from suspending, so
-  # exempt them entirely.
+  # Why: powertop's autotuning enables USB autosuspend system-wide, which
+  # causes the first few keystrokes after an idle period to be dropped while
+  # the device negotiates resume. HID devices save no meaningful power from
+  # suspending. Two layers, both class-level (no per-device hardware IDs):
+  #   1. Kernel param sets the default control=on for all USB devices.
+  #   2. udev rule pins HID devices to control=on, defending against any
+  #      later runtime tool (powertop CLI, tlp, etc.) flipping the default.
+  # The previous udev rule used `ATTR{bInterfaceClass}` (single S) — that
+  # only matches when bInterfaceClass and power/control live on the same
+  # sysfs node, but bInterfaceClass is on the interface child and
+  # power/control is on the parent USB device, so the match never fired.
+  # `ATTRS{...}` walks parents and matches correctly.
+  boot.kernelParams = [ "usbcore.autosuspend=-1" ];
   services.udev.extraRules = ''
-    ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", TEST=="power/control", ATTR{power/control}="on"
-    ACTION=="add", SUBSYSTEM=="usb", DRIVERS=="usbhid", TEST=="power/control", ATTR{power/control}="on"
+    ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
   '';
 
   # Eternal Terminal

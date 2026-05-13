@@ -164,7 +164,9 @@
       "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh --help)",
       "Bash(/home/erahhal/Code/homefree/scripts/run-vm.sh run *)",
       "WebFetch(domain:headplane.net)",
-      "WebFetch(domain:headscale.net)"
+      "WebFetch(domain:headscale.net)",
+      "Bash(hostnamectl)",
+      "Bash(domainname)"
     ]
   }
 }

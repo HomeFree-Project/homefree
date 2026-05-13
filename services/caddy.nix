@@ -666,12 +666,29 @@ in
             handle {
               reverse_proxy ${if reverse-proxy-config.ssl == true then "https" else "http"}://${reverse-proxy-config.host}:${toString reverse-proxy-config.port} {
           ''
-          + (if reverse-proxy-config.ssl == true && reverse-proxy-config.ssl-no-verify then ''
-                transport http {
+          + (
+            ## Emit ONE transport block combining TLS-skip-verify
+            ## and/or keepalive-off, depending on what's enabled.
+            ## Caddy parses `transport http` as a single directive
+            ## per reverse_proxy — repeating it would be a parse
+            ## error, so we combine here.
+            let
+              tlsSkip = reverse-proxy-config.ssl == true && reverse-proxy-config.ssl-no-verify;
+              koOff = reverse-proxy-config.disable-keepalive or false;
+              body =
+                (if tlsSkip then ''
                   tls
                   tls_insecure_skip_verify
-                }
-          '' else "")
+                '' else "")
+                + (if koOff then ''
+                  keepalive off
+                  versions 1.1
+                '' else "");
+            in
+              if tlsSkip || koOff
+              then "                transport http {\n${body}                }\n"
+              else ""
+          )
           + (if reverse-proxy-config.oauth2 == true then ''
                 header_up Host {host}
                 header_up X-Real-IP {remote}

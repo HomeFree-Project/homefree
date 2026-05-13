@@ -102,10 +102,15 @@ in
         "0.0.0.0:${toString port}:8096"
         ## HTTPS
         # "0.0.0.0:8920:8920" #optional
-        ## Local network discovery
-        "0.0.0.0:7359:7359/udp" #optional
-        ## DLNA service discovery
-        "0.0.0.0:1900:1900/udp" #optional
+        ## Jellyfin client auto-discovery (7359/udp) and DLNA SSDP
+        ## (1900/udp) are deliberately omitted. 1900/udp conflicts
+        ## with Home Assistant's SSDP integration, which binds 1900
+        ## by default for device discovery. Modern Jellyfin clients
+        ## connect via HTTPS to the reverse-proxied subdomain rather
+        ## than discovering over UDP, so these mappings are dead
+        ## weight on a HomeFree box. Re-enable in a downstream
+        ## override only if you explicitly need DLNA broadcasting
+        ## to legacy smart-TV menus.
       ];
 
       volumes = [

@@ -21,7 +21,7 @@
         "TimeBasedCredentials": false
     },
     "Relay": {
-        "Addresses": ["rels://@@NETBIRD_DOMAIN@@:@@NETBIRD_RELAY_PORT@@"],
+        "Addresses": ["rel://@@NETBIRD_DOMAIN@@:@@NETBIRD_RELAY_PORT@@"],
         "CredentialsTTL": "24h",
         "Secret": "@@RELAY_SECRET@@"
     },
@@ -84,7 +84,7 @@
             "TokenEndpoint": "https://@@ZITADEL_DOMAIN@@/oauth/v2/token",
             "DeviceAuthEndpoint": "https://@@ZITADEL_DOMAIN@@/oauth/v2/device_authorization",
             "Scope": "openid profile email offline_access api urn:zitadel:iam:org:project:roles",
-            "UseIDToken": false,
+            "UseIDToken": true,
             "RedirectURLs": null
         }
     },
@@ -98,7 +98,7 @@
             "TokenEndpoint": "https://@@ZITADEL_DOMAIN@@/oauth/v2/token",
             "Scope": "openid profile email offline_access api urn:zitadel:iam:org:project:roles",
             "RedirectURLs": ["http://localhost:53000/"],
-            "UseIDToken": false,
+            "UseIDToken": true,
             "DisablePromptLogin": false,
             "LoginFlag": 0
         }

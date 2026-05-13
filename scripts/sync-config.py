@@ -154,6 +154,7 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         },
         'mounts': [],
         'service_config': [],
+        'proxied_domains': [],
         'backups': {
             'enable': False,
             'to_path': '',

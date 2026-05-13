@@ -757,14 +757,10 @@ in
       ## should prefer `homefree.service-options.headscale = { ... }`.
       headscale = {
         enable = true;
-        secrets = {
-          tailscale-key = config.sops.secrets."tailscale/key".path;
-          ## headplane-env is deprecated as of headplane 0.7. Per-secret
-          ## fields (headplane-cookie-secret, oidc-client-id,
-          ## oidc-client-secret, headscale-api-key) are managed via the
-          ## admin UI under homefree.service-options.headscale.secrets.
-          headplane-env = config.sops.secrets."headplane/env".path;
-        };
+        ## All headscale secrets (tailscale-key, headplane-cookie-
+        ## secret, oidc-client-id/secret, headscale-api-key) are
+        ## auto-provisioned by HomeFree systemd oneshots and
+        ## zitadel-provision.service. No user config needed.
       };
 
       homeassistant = {

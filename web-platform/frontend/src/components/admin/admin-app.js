@@ -6,6 +6,7 @@ import './modules/network-module.js';
 import './modules/dns-module.js';
 import './modules/mounts-module.js';
 import './modules/extra-proxies-module.js';
+import './modules/proxied-domains-module.js';
 import './modules/services-module.js';
 import './modules/backups-module.js';
 import './modules/sso-module.js';
@@ -24,6 +25,7 @@ class AdminApp extends LitElement {
     loading: { type: Boolean },
     error: { type: String },
     sidebarCollapsed: { type: Boolean },
+    isMobile: { type: Boolean, state: true },
     rebuildStatus: { type: Object },
     buildLogs: { type: Array },        // Build output logs
     systemHealth: { type: String },    // System health status for left nav icon
@@ -738,17 +740,106 @@ class AdminApp extends LitElement {
       height: calc(100% - 40px);
     }
 
+    /* Hamburger button — hidden on desktop, shown on mobile via the
+       media query below. Sits in the top bar so it's always reachable,
+       even when the sidebar is hidden off-screen. */
+    .hamburger-btn {
+      display: none;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
+      color: var(--hf-text);
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      margin-right: 12px;
+      flex-shrink: 0;
+    }
+    .hamburger-btn:hover {
+      background: var(--hf-surface-3);
+    }
+
+    /* Backdrop appears behind the slide-in sidebar on mobile, dimming
+       the main content and providing a tap target to close the nav. */
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 99;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
-      .sidebar {
-        position: absolute;
-        z-index: 100;
-        height: 100%;
+      .hamburger-btn {
+        display: inline-flex;
       }
 
+      /* On mobile the sidebar is an overlay rather than a flex sibling
+         of main-content. Hidden off-screen by default; transform brings
+         it back into view when .collapsed is removed. Full width so
+         labels remain readable on narrow phones. */
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 100;
+        height: 100%;
+        width: 280px;
+        max-width: 85vw;
+        transform: translateX(0);
+        transition: transform 0.25s ease;
+      }
       .sidebar.collapsed {
+        /* Override the desktop 70px width so the nav fully slides out
+           of view rather than leaving a narrow strip on screen. */
+        width: 280px;
+        max-width: 85vw;
         transform: translateX(-100%);
       }
+      /* On mobile the collapsed nav-item-text rule (display: none)
+         would still apply if we don't disable it. We do want full
+         labels on mobile, since the sidebar is full-width when open. */
+      .sidebar.collapsed .nav-item-text,
+      .sidebar.collapsed .sidebar-header h1,
+      .sidebar.collapsed .sidebar-footer .apply-btn-text {
+        display: initial;
+      }
+      .sidebar.collapsed .nav-section-title {
+        color: var(--hf-text-subtle);
+        padding: 20px 20px 8px 20px;
+      }
+      .sidebar.collapsed .nav-section-title::after {
+        display: none;
+      }
+      /* Backdrop only when sidebar is open (i.e. NOT collapsed). */
+      .sidebar:not(.collapsed) ~ .sidebar-backdrop {
+        display: block;
+      }
+      /* Sidebar's own internal collapse arrow becomes redundant on
+         mobile — the hamburger and backdrop tap already cover it. */
+      .sidebar .collapse-btn {
+        display: none;
+      }
+      /* Account for the with-banner offset so the sidebar starts
+         below the update banner rather than under it. */
+      .admin-container.with-banner .sidebar {
+        top: 40px;
+        height: calc(100% - 40px);
+      }
+      .top-bar {
+        padding: 0 12px;
+      }
+      .content-area {
+        padding: 12px;
+      }
+      /* Individual modules render in their own shadow DOM, so this
+         rule can't reach .module-container inside them — module-side
+         padding tweaks would need to be added to each module file
+         separately. Skipping that for this pass (nav-only). */
     }
   `;
 
@@ -761,7 +852,14 @@ class AdminApp extends LitElement {
     this.currentModule = 'system';
     this.loading = true;
     this.error = null;
-    this.sidebarCollapsed = false;
+    /* On mobile (≤768px) the sidebar is an overlay and should start
+       hidden so the user sees the content first; on desktop it stays
+       open as a permanent sibling. matchMedia keeps these in sync if
+       the viewport crosses the breakpoint (rotation, devtools resize,
+       etc.). */
+    this._mobileMQ = window.matchMedia('(max-width: 768px)');
+    this.isMobile = this._mobileMQ.matches;
+    this.sidebarCollapsed = this.isMobile;
     this.systemHealth = 'healthy';
     this.buildLogs = [];
     this.rebuildStatus = {
@@ -841,6 +939,12 @@ class AdminApp extends LitElement {
         section: 'System'
       },
       {
+        id: 'proxied-domains',
+        title: 'Proxied Domains',
+        icon: '🌐',
+        section: 'System'
+      },
+      {
         id: 'status',
         title: 'Status',
         icon: '📊',
@@ -901,6 +1005,20 @@ class AdminApp extends LitElement {
     };
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
 
+    // Track viewport crossing the mobile breakpoint so the sidebar's
+    // default state stays sensible after rotation / resize. We only
+    // auto-collapse on transitions into mobile (and auto-expand on
+    // transitions out) — within either regime the user's explicit
+    // toggle wins, so we don't fight them on every hamburger tap.
+    this._mobileMQListener = (e) => {
+      const wasMobile = this.isMobile;
+      this.isMobile = e.matches;
+      if (this.isMobile !== wasMobile) {
+        this.sidebarCollapsed = this.isMobile;
+      }
+    };
+    this._mobileMQ.addEventListener('change', this._mobileMQListener);
+
     // Read initial route from hash
     this.loadRouteFromHash();
 
@@ -947,6 +1065,12 @@ class AdminApp extends LitElement {
     // Remove beforeunload listener
     if (this.beforeUnloadHandler) {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    }
+
+    // Detach the mobile-breakpoint listener so it doesn't leak when
+    // this component is reconnected.
+    if (this._mobileMQ && this._mobileMQListener) {
+      this._mobileMQ.removeEventListener('change', this._mobileMQListener);
     }
 
     // Clean up polling intervals
@@ -1172,6 +1296,13 @@ class AdminApp extends LitElement {
     // If clicking Status nav, clear the needs attention flag
     if (moduleId === 'status') {
       this.statusNeedsAttention = false;
+    }
+
+    // On mobile the sidebar covers the content, so close it after
+    // navigation. On desktop leave the user's collapsed/expanded
+    // preference alone.
+    if (this.isMobile) {
+      this.sidebarCollapsed = true;
     }
   }
 
@@ -2122,6 +2253,14 @@ class AdminApp extends LitElement {
           ></extra-proxies-module>
         `;
 
+      case 'proxied-domains':
+        return html`
+          <proxied-domains-module
+            .config=${this.config}
+            @config-change=${this.handleConfigChange}
+          ></proxied-domains-module>
+        `;
+
       case 'services':
         return html`
           <services-module
@@ -2312,10 +2451,22 @@ class AdminApp extends LitElement {
           </div>
         </div>
 
+        <!-- Backdrop behind the slide-out sidebar on mobile. CSS only
+             shows it when .sidebar is NOT collapsed (adjacent-sibling
+             selector against .sidebar). Tap closes the nav. -->
+        <div class="sidebar-backdrop" @click=${this.toggleSidebar}></div>
+
         <!-- Main Content -->
         <div class="main-content">
           <div class="top-bar">
             <div class="top-bar-title">
+              <!-- Hamburger: hidden on desktop via CSS, shown on mobile.
+                   Always toggles the sidebar regardless of viewport. -->
+              <button
+                class="hamburger-btn"
+                @click=${this.toggleSidebar}
+                aria-label="Toggle navigation"
+              >☰</button>
               <h2>${this.getCurrentModuleTitle()}</h2>
               ${this.renderSaveIndicator()}
             </div>

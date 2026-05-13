@@ -1,16 +1,30 @@
+{# Apex-only links (logo, anchors, FAQ) need to be absolute when this
+   header is rendered inside the manual collection — the manual lives on
+   manual.<domain> and a root-relative /faq would stay on the wrong host.
+   Conversely the Manual link is absolute on apex pages so the user
+   hops over to manual.<domain>. The manual vhost rewrites / → manual
+   index, so "go to manual home" is just / on that subdomain. #}
+{% set onManual = page.url and page.url.startsWith('/manual') %}
+{% if onManual %}
+  {% set apexBase = data.siteUrl %}
+  {% set manualHomeUrl = '/' %}
+{% else %}
+  {% set apexBase = '' %}
+  {% set manualHomeUrl = data.manualUrl + '/' %}
+{% endif %}
 <div class="self-hosted-banner">
   This site is self-hosted on <strong>HomeFree</strong> — running everything you see, on the same box.
 </div>
 <header class="site-header">
   <nav class="container">
-    <a href="/" class="logo"><span class="dot"></span> HomeFree</a>
+    <a href="{{ apexBase }}/" class="logo"><span class="dot"></span> HomeFree</a>
     <ul>
-      <li><a href="/#apps">Apps</a></li>
-      <li><a href="/#compare">Why HomeFree</a></li>
-      <li><a href="/quick-start">Docs</a></li>
-      <li><a href="/faq">FAQ</a></li>
+      <li><a href="{{ apexBase }}/#apps">Apps</a></li>
+      <li><a href="{{ apexBase }}/#compare">Why HomeFree</a></li>
+      <li><a href="{{ manualHomeUrl }}">Manual</a></li>
+      <li><a href="{{ apexBase }}/faq">FAQ</a></li>
       <li><a href="https://git.homefree.host/homefree" target="_blank" rel="noopener">Git</a></li>
-      <li><a href="/quick-start" class="nav-cta">Get HomeFree →</a></li>
+      <li><a href="{{ apexBase }}/#install" class="nav-cta">Get HomeFree →</a></li>
     </ul>
   </nav>
 </header>

@@ -126,6 +126,16 @@ let
        && [ -s ${secretsDir}/oidc-client-secret ]; then
       CID=$(cat ${secretsDir}/oidc-client-id)
       CSEC=$(cat ${secretsDir}/oidc-client-secret)
+      ## enforced=true: SSO replaces classic CryptPad login. Per
+      ## HomeFree's SSO-only policy. CryptPad derives the user's
+      ## keypair from (OIDC sub → server-stored seed in
+      ## /data/data/sso_user/zitadel/<sub>.json) + preferred_username
+      ## — so the same Zitadel sub on each login always derives the
+      ## same drive. If a Zitadel DB wipe ever rotates subs, the
+      ## seed file path goes orphan and CryptPad will create a fresh
+      ## empty account; recovery in that case is to rename the
+      ## sso_user/zitadel/OLD-SUB.json to NEW-SUB.json so derivation
+      ## hits the same seed.
       cat > ${ssoConfigFile} <<EOF
 module.exports = {
     enabled: true,

@@ -1,12 +1,12 @@
 { config, lib, pkgs, ... }:
 let
   containerDataPath = "/var/lib/vaultwarden-podman";
+  domain = config.homefree.system.domain;
   secretsDir = "/var/lib/homefree-secrets/vaultwarden";
 
   port = 8222;
   version = "1.36.0";
 
-  domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
 
   ## preStart writes Vaultwarden's OIDC env file from Zitadel

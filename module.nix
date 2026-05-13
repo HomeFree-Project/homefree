@@ -854,18 +854,6 @@
           '';
         };
 
-        secrets = {
-          tailscale-key = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
-          };
-          headplane-env = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of Headplane environment var file. Contains COOKIE_SECRET, ROOT_API_KEY, OIDC_CLIENT_SECRET. Should not be a file included in your source repo.";
-          };
-        };
       };
 
       homeassistant = {
@@ -1543,13 +1531,6 @@
           description = "Open to public on WAN port";
         };
 
-        secrets = {
-          env = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
-            default = null;
-            description = "Location of Zitadel environment var file. Contains ZITADEL_MASTERKEY. Should not be a file included in your source repo.";
-          };
-        };
       };
 
       ## NetBird is a second VPN service alongside Headscale. The full
@@ -1831,6 +1812,23 @@
               type = lib.types.bool;
               default = false;
               description = "Whether to verify certificate of upstream service";
+            };
+
+            disable-keepalive = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy will not reuse HTTP connections to
+                this upstream — every request opens a fresh TCP
+                connection. Default is off (Caddy's normal pooling).
+                Set to true for upstream servers with broken or
+                non-existent keep-alive handling (typical pattern:
+                tiny embedded HTTP servers on appliances —
+                OpenSprinkler, some smart-home gear, older NAS
+                admin pages) where Caddy's pooled connection gets
+                a TCP RST after the upstream's per-request close,
+                producing intermittent 502s.
+              '';
             };
 
             basic-auth = lib.mkOption {
@@ -2430,7 +2428,6 @@
 
     homefree.service-options.zitadel.enable = config.homefree.services.zitadel.enable;
     homefree.service-options.zitadel.public = config.homefree.services.zitadel.public;
-    homefree.service-options.zitadel.secrets = config.homefree.services.zitadel.secrets;
 
     # Compat shim: bridge legacy `homefree.services.headscale.*` writes to the
     # new colocated `homefree.service-options.headscale.*` namespace declared
@@ -2440,8 +2437,6 @@
     homefree.service-options.headscale.public = config.homefree.services.headscale.public;
     homefree.service-options.headscale.stun-port = config.homefree.services.headscale.stun-port;
     homefree.service-options.headscale.enable-public-derp-fallback = config.homefree.services.headscale.enable-public-derp-fallback;
-    homefree.service-options.headscale.secrets.tailscale-key = config.homefree.services.headscale.secrets.tailscale-key;
-    homefree.service-options.headscale.secrets.headplane-env = config.homefree.services.headscale.secrets.headplane-env;
 
     # Same shim for NetBird. The admin UI's JSON config writes to
     # homefree.services.netbird.*; mirror onto the colocated namespace

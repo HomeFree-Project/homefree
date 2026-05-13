@@ -148,15 +148,38 @@ let
     {
       svc = "netbird";
       internal_name = "homefree-netbird";
-      ## NetBird dashboard is a SPA — Native/User-Agent app with PKCE,
-      ## no client secret in the browser.
-      app_type = "OIDC_APP_TYPE_USER_AGENT";
+      ## NetBird needs to authenticate THREE clients with one OIDC app:
+      ##   1. Web dashboard SPA at https://netbird.<domain>/{auth,silent-auth}
+      ##   2. NetBird CLI / native client via loopback http://localhost:53000/
+      ##   3. Mobile clients via the same loopback flow
+      ## NATIVE app type is required for (2)/(3) — USER_AGENT rejects
+      ## non-https loopback redirect_uris. NATIVE + AUTH_METHOD_NONE +
+      ## PKCE accepts both https web callbacks and http loopback URIs.
+      ##
+      ## Even the web dashboard's "Sign in" button ends up redirecting
+      ## through http://localhost:53000/ because the dashboard reads
+      ## the PKCE config from /api/users/.../authorization — and that
+      ## endpoint serves the management.json PKCEAuthorizationFlow
+      ## (CLI-targeted). Registering localhost as a valid redirect on
+      ## the same app fixes the browser flow too.
+      app_type = "OIDC_APP_TYPE_NATIVE";
       auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
       response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## DEVICE_CODE is required for the NetBird mobile/desktop app's
+      ## Device Authorization Flow — without it, Zitadel rejects the
+      ## /oauth/v2/device_authorization request and the app shows
+      ## "Authentication error — see logs for more info" before any
+      ## browser ever opens. AUTHORIZATION_CODE handles the loopback
+      ## CLI + web dashboard flows; REFRESH_TOKEN keeps sessions alive.
+      grant_types = [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE"
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+        "OIDC_GRANT_TYPE_DEVICE_CODE"
+      ];
       redirect_uris = [
         "https://netbird.${domain}/auth"
         "https://netbird.${domain}/silent-auth"
+        "http://localhost:53000/"
       ];
       post_logout_uris = [ "https://netbird.${domain}/" ];
       needs_pat = true;        # mgmt machine user for org/group reads
@@ -173,8 +196,18 @@ let
     {
       svc = "immich";
       internal_name = "homefree-immich";
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      ## NATIVE + AUTH_METHOD_NONE (PKCE-only) is required so the
+      ## Android Immich app's custom-scheme redirect
+      ## `app.immich:///oauth-callback` is accepted by Zitadel —
+      ## OIDC_APP_TYPE_WEB rejects all non-http(s) redirects
+      ## regardless of `devMode`. NATIVE apps allow BOTH http(s) and
+      ## custom-scheme redirects, so the same client_id serves both
+      ## web (photos.<domain>) and Android. Since Zitadel forbids a
+      ## client_secret on AUTH_METHOD_NONE apps, immich-podman.nix's
+      ## post-hook also clears the secret from the Immich system-
+      ## config row in the DB.
+      app_type = "OIDC_APP_TYPE_NATIVE";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
       response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
       grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
       redirect_uris = [
@@ -188,7 +221,7 @@ let
       ## OIDC app exists. Restarting the container is harmless but not
       ## strictly required. The post-hook is invoked separately by
       ## services/immich-podman.nix in Phase 5.3.
-      post_restart_units = [ ];
+      post_restart_units = [ "podman-immich-server.service" ];
     }
     {
       svc = "nextcloud";
@@ -945,6 +978,7 @@ let
         warn "No admin_id resolved earlier — cannot grant homefree-admin"
       fi
 
+
       ## ── 5. Provision per-service OIDC apps ────────────────────────
       ## The services table is hardcoded below as one record per line.
       ## Field separator: "|"; array fields are joined with ";;".
@@ -1190,6 +1224,54 @@ EOF
           [ -n "$mu_token" ] || { warn "$svc: PAT response had no token"; continue; }
           write_secret "$secrets_dir/mgmt-machine-token" "$mu_token"
           log "$svc: PAT written"
+        fi
+
+        ## (c-bis) For services that need to call THEIR OWN backend
+        ## REST API (not Zitadel's), the PAT above isn't enough —
+        ## those APIs validate the JWT's `aud` claim against their
+        ## own client_id, and PATs don't carry it. NetBird is the
+        ## current case: bootstrap (mint setup-key, create LAN
+        ## route) requires hitting netbird.<domain>/api/* with a
+        ## JWT whose `aud` includes the netbird OIDC client_id.
+        ##
+        ## Solution: also mint a Zitadel machine-key (JWT profile
+        ## private key). At runtime the consumer signs a JWT
+        ## assertion with this key and exchanges it for an access
+        ## token scoped to the target audience via the OAuth2
+        ## jwt-bearer grant. Stored next to the PAT.
+        if [ "$svc" = "netbird" ]; then
+          if [ -z "''${mu_id:-}" ]; then
+            mu_lookup=$(zit_api POST management/v1/users/_search "$(jq -nc \
+              --arg u "$svc-mgmt" \
+              '{queries:[{userNameQuery:{userName:$u,method:"TEXT_QUERY_METHOD_EQUALS"}}]}')") \
+              || mu_lookup=""
+            mu_id=$(printf '%s' "$mu_lookup" | jq -r '.result[0].id // empty')
+          fi
+          if [ -n "''${mu_id:-}" ] && [ ! -s "$secrets_dir/mgmt-machine-key.json" ]; then
+            ## key_resp.keyDetails is base64-encoded JSON containing
+            ## {type, keyId, key (PEM), userId}.  Write the decoded
+            ## blob so consumers can ingest it directly.
+            key_resp=$(zit_api POST "management/v1/users/$mu_id/keys" \
+              '{"type":"KEY_TYPE_JSON","expirationDate":"2099-12-31T23:59:59Z"}') \
+              || warn "$svc: machine-key create failed"
+            key_details=$(printf '%s' "$key_resp" | jq -r '.keyDetails // empty')
+            if [ -n "$key_details" ]; then
+              ## keyDetails is base64-encoded JSON per Zitadel API.
+              printf '%s' "$key_details" | base64 -d > "$secrets_dir/mgmt-machine-key.json"
+              chmod 600 "$secrets_dir/mgmt-machine-key.json"
+              log "$svc: machine-key written"
+            else
+              warn "$svc: machine-key response had no keyDetails"
+            fi
+          fi
+          ## Always (re)write the project_id; netbird-bootstrap needs
+          ## it to construct the `urn:zitadel:iam:org:project:id:<pid>:aud`
+          ## scope when exchanging the JWT assertion for an access
+          ## token whose audience includes the netbird app.
+          if [ -n "''${project_id:-}" ]; then
+            printf '%s' "$project_id" > "$secrets_dir/zitadel-project-id"
+            chmod 644 "$secrets_dir/zitadel-project-id"
+          fi
         fi
 
         ## (d) Service-specific extras

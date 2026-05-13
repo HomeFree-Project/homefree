@@ -14,7 +14,7 @@ layout: base.html
       your identity, and your connectivity — without giving any of it to a megacorp.
     </p>
     <div class="hero-ctas">
-      <a href="/quick-start" class="btn btn-primary">Get HomeFree →</a>
+      <a href="#install" class="btn btn-primary">Get HomeFree →</a>
       <a href="#apps" class="btn btn-secondary">See what's inside</a>
     </div>
 
@@ -73,7 +73,7 @@ layout: base.html
           <g transform="translate(180 140)" filter="url(#glow)">
             <rect x="0" y="0" width="120" height="64" rx="14" fill="url(#g1)"/>
             <text x="60" y="32" text-anchor="middle" fill="#0a0c0a" font-family="Inter,sans-serif" font-size="14" font-weight="800">HomeFree</text>
-            <text x="60" y="48" text-anchor="middle" fill="#0a0c0a" font-family="Inter,sans-serif" font-size="10" font-weight="500" opacity="0.7">router + apps + SSO</text>
+            <text x="60" y="48" text-anchor="middle" fill="#0a0c0a" font-family="Inter,sans-serif" font-size="10" font-weight="500" opacity="0.7">router + apps + sign-in</text>
           </g>
 
           {# Line homefree -> devices #}
@@ -126,9 +126,9 @@ layout: base.html
     <span class="eyebrow">Why one box</span>
     <h2 class="section-title">Sovereign by default. Boring to operate.</h2>
     <p class="section-sub">
-      You shouldn't have to glue together a router, a domain, ten certs,
-      a wall of containers, and a half-broken SSO setup. HomeFree does it
-      as a single configurable system.
+      You shouldn't have to assemble a router, a domain, your apps, and
+      half-a-dozen accounts to get a working personal cloud. HomeFree
+      gives you all of it as a single, friendly system.
     </p>
 
     <div class="pillars">
@@ -138,9 +138,9 @@ layout: base.html
         </div>
         <h3>Real router, not just apps</h3>
         <p>
-          Dynamic DNS to your registrar. Let's Encrypt + DNS-01 wildcards.
-          Per-service firewall. WAN failover. Headscale mesh VPN. The network
-          layer is a first-class citizen, not an afterthought.
+          A real home network in one box: firewall, ad-blocker, automatic
+          HTTPS, a private VPN so your phone reaches your apps from anywhere.
+          No fiddly setup. No second device to plug in.
         </p>
       </div>
 
@@ -148,11 +148,11 @@ layout: base.html
         <div class="pillar-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
-        <h3>SSO across every app</h3>
+        <h3>One sign-in, every app</h3>
         <p>
-          A Zitadel-backed identity provider, pre-provisioned. Every app —
-          Nextcloud, Immich, Matrix, Forgejo, Vaultwarden — sits behind one
-          login. Add a user once, they exist everywhere.
+          Your photos, files, chat, calendar, password vault — all behind a
+          single login. Add a family member once and they have access to
+          everything they should, nowhere they shouldn't.
         </p>
       </div>
 
@@ -160,11 +160,11 @@ layout: base.html
         <div class="pillar-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
         </div>
-        <h3>Turnkey, with an escape hatch</h3>
+        <h3>Boring to run, easy to fix</h3>
         <p>
-          A web installer for normal humans, a NixOS config for power users.
-          You don't write YAML. You don't manage certs. But everything is
-          declarative, reproducible, and version-controlled.
+          A guided installer gets you up in an afternoon. Updates are one
+          click. If something breaks, rolling back is one click too.
+          You will not be living in a terminal.
         </p>
       </div>
 
@@ -189,8 +189,8 @@ layout: base.html
     <span class="eyebrow">What's inside</span>
     <h2 class="section-title">A curated app catalog. One login. Day one.</h2>
     <p class="section-sub">
-      Every tile below is preinstalled, reverse-proxied with a real certificate,
-      and connected to HomeFree SSO. No YAML, no oauth2-proxy juggling.
+      Every tile below is ready to go on day one. Real apps, real web
+      addresses, all signed in with one password.
     </p>
 
     <div class="apps-grid" data-animate-tiles>
@@ -206,7 +206,7 @@ layout: base.html
 
     <div class="sso-badge">
       <span class="dot"></span>
-      All apps gated by HomeFree SSO — sign in once, you're in.
+      One sign-in across every app. Sign in once, you're in.
     </div>
   </div>
 </section>
@@ -218,7 +218,8 @@ layout: base.html
     <h2 class="section-title">Not just another app launcher.</h2>
     <p class="section-sub">
       Other self-hosting projects are great. HomeFree differs in shape —
-      it's the router, the apps, and the identity layer in one declarative box.
+      it's the router, the apps, and one sign-in across everything, all in
+      one box.
     </p>
 
     <div class="table-scroll">
@@ -241,8 +242,8 @@ layout: base.html
           <td class="yes">Large</td>
         </tr>
         <tr>
-          <td>SSO across all apps</td>
-          <td class="highlight yes">Yes (Zitadel)</td>
+          <td>One sign-in across all apps</td>
+          <td class="highlight yes">Yes, built in</td>
           <td class="no">No</td>
           <td class="no">No</td>
           <td class="partial">Partial</td>
@@ -262,18 +263,18 @@ layout: base.html
           <td class="partial">Per app</td>
         </tr>
         <tr>
-          <td>Mesh VPN (Tailscale-style)</td>
-          <td class="highlight yes">Headscale built in</td>
+          <td>Private VPN to your apps from anywhere</td>
+          <td class="highlight yes">Built in</td>
           <td class="no">—</td>
           <td class="partial">App</td>
           <td class="partial">App</td>
         </tr>
         <tr>
-          <td>Declarative config</td>
-          <td class="highlight yes">NixOS, reproducible</td>
+          <td>One-click updates and rollback</td>
+          <td class="highlight yes">Yes</td>
           <td class="no">No</td>
           <td class="no">No</td>
-          <td class="partial">Hooks</td>
+          <td class="partial">Partial</td>
         </tr>
       </tbody>
     </table>
@@ -291,29 +292,29 @@ layout: base.html
     <span class="eyebrow">Get started</span>
     <h2 class="section-title">From bare metal to your own cloud — in an evening.</h2>
     <p class="section-sub" style="margin-left:auto; margin-right:auto;">
-      HomeFree is a full operating system, not an app you bolt onto a Linux
-      box. Burn an ISO to USB, plug it into the machine that sits between
-      your modem and your switch, and follow the wizard.
+      Put the installer on a USB stick, plug it into the small computer
+      that sits between your modem and your switch, and follow the
+      on-screen steps.
     </p>
 
     <div class="download-row">
-      <a href="#" class="download-card" aria-label="Download HomeFree ISO for x86_64">
+      <a href="/downloads/homefree-latest.iso" class="download-card" aria-label="Download HomeFree ISO for x86_64">
         <div class="download-card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </div>
         <div>
           <p class="download-card-title">HomeFree ISO</p>
-          <p class="download-card-sub">x86_64 · ~1.2 GB · coming soon</p>
+          <p class="download-card-sub">x86_64 · technical preview</p>
         </div>
       </a>
 
-      <a href="/quick-start" class="download-card download-card--alt">
+      <a href="/manual/" class="download-card download-card--alt">
         <div class="download-card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         </div>
         <div>
-          <p class="download-card-title">Build from source</p>
-          <p class="download-card-sub">For Nix users · full quick-start</p>
+          <p class="download-card-title">Read the manual</p>
+          <p class="download-card-sub">Hardware setup, install, and per-app guides</p>
         </div>
       </a>
     </div>

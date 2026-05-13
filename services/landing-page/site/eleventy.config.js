@@ -41,6 +41,7 @@ export default async function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy("src/images");
   eleventyConfig.addPassthroughCopy("src/img");
   eleventyConfig.addPassthroughCopy("src/js");
+  eleventyConfig.addPassthroughCopy("src/manual/**/*.{png,jpg,jpeg,gif,svg,webp}");
 
   return {
     htmlTemplateEngine: 'njk',

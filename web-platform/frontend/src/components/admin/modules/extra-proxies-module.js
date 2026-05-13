@@ -87,6 +87,7 @@ class ExtraProxiesModule extends LitElement {
       { key: 'subdomains', label: 'Subdomains (comma-sep)', type: 'text', placeholder: 'envoy' },
       { key: 'ssl', label: 'Backend Uses HTTPS', type: 'boolean' },
       { key: 'ssl_no_verify', label: 'Skip Cert Verify', type: 'boolean' },
+      { key: 'disable_keepalive', label: 'No Keep-Alive', type: 'boolean' },
       { key: 'public', label: 'Public on WAN', type: 'boolean' }
     ];
 
