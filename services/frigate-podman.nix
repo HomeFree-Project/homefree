@@ -30,12 +30,8 @@ let
       enabled = true;
     };
 
-    ffmpeg = {
-      ## Intel
-      hwaccel_args = "preset-intel-qsv-h264";
-
-      ## Raspberry Pi
-      # hwaccel_args = "-c:v h264_v4l2m2m";
+    ffmpeg = lib.optionalAttrs (config.homefree.service-options.frigate.hwaccel-args != "") {
+      hwaccel_args = config.homefree.service-options.frigate.hwaccel-args;
     };
 
     mqtt = {
@@ -196,6 +192,19 @@ in
       type = lib.types.nullOr lib.types.int;
       default = null;
       description = "If specified, how long in DAYS to keep files before deleting";
+    };
+
+    hwaccel-args = lib.mkOption {
+      type = lib.types.str;
+      default = "preset-intel-qsv-h264";
+      description = ''
+        ffmpeg hwaccel preset. Per the Frigate docs:
+        - Intel iGPU (QuickSync): "preset-intel-qsv-h264" (default)
+        - AMD GPU (VAAPI):        "preset-vaapi"
+        - Raspberry Pi:           "-c:v h264_v4l2m2m"
+        - Nvidia:                 "preset-nvidia-h264"
+        - CPU-only:               "" (empty string disables hwaccel)
+      '';
     };
 
     cameras = lib.mkOption {

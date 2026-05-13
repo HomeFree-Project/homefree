@@ -420,6 +420,8 @@ in
 
       lidarr.enable = jsonData.services.lidarr.enable or false;
       lidarr.public = jsonData.services.lidarr.public or false;
+      lidarr.media-path = jsonData.services.lidarr.media_path or null;
+      lidarr.downloads-path = jsonData.services.lidarr.downloads_path or null;
 
       vaultwarden.enable = jsonData.services.vaultwarden.enable or false;
       vaultwarden.public = jsonData.services.vaultwarden.public or false;
@@ -444,6 +446,16 @@ in
 
       frigate.enable = jsonData.services.frigate.enable or false;
       frigate.public = jsonData.services.frigate.public or false;
+      frigate.media-path = jsonData.services.frigate.media_path or null;
+      frigate.hwaccel-args = jsonData.services.frigate.hwaccel_args or "preset-intel-qsv-h264";
+      frigate.cameras = map (camera: {
+        enable = camera.enable or true;
+        direct-stream = camera.direct_stream or false;
+        name = camera.name;
+        path = camera.path;
+        width = camera.width or 1920;
+        height = camera.height or 1080;
+      }) (jsonData.services.frigate.cameras or []);
 
       unifi.enable = jsonData.services.unifi.enable or false;
       unifi.public = jsonData.services.unifi.public or false;
@@ -457,9 +469,11 @@ in
 
       jellyfin.enable = jsonData.services.jellyfin.enable or false;
       jellyfin.public = jsonData.services.jellyfin.public or false;
+      jellyfin.media-path = jsonData.services.jellyfin.media_path or null;
 
       nzbget.enable = jsonData.services.nzbget.enable or false;
       nzbget.public = jsonData.services.nzbget.public or false;
+      nzbget.downloads-path = jsonData.services.nzbget.downloads_path or null;
 
       radicale.enable = jsonData.services.radicale.enable or false;
       radicale.public = jsonData.services.radicale.public or false;

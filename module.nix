@@ -745,6 +745,16 @@
           description = "If specified, how long in DAYS to keep files before deleting. This applies to ALL files: clips, recordings, exports, etc.";
         };
 
+        hwaccel-args = lib.mkOption {
+          type = lib.types.str;
+          default = "preset-intel-qsv-h264";
+          description = ''
+            ffmpeg hwaccel preset. Intel iGPU: "preset-intel-qsv-h264".
+            AMD GPU: "preset-vaapi". Raspberry Pi: "-c:v h264_v4l2m2m".
+            Nvidia: "preset-nvidia-h264". Empty string disables hwaccel.
+          '';
+        };
+
         cameras = lib.mkOption {
           description = "list of cameras";
           default = null;
@@ -2337,6 +2347,7 @@
     homefree.service-options.frigate.media-path = config.homefree.services.frigate.media-path;
     homefree.service-options.frigate.enable-backup-media = config.homefree.services.frigate.enable-backup-media;
     homefree.service-options.frigate.retain = config.homefree.services.frigate.retain;
+    homefree.service-options.frigate.hwaccel-args = config.homefree.services.frigate.hwaccel-args;
     homefree.service-options.frigate.cameras = config.homefree.services.frigate.cameras;
 
     homefree.service-options.grocy.enable = config.homefree.services.grocy.enable;
