@@ -378,6 +378,34 @@ let
   };
   config-json = (pkgs.formats.json {}).generate "admin-config.json" admin-config;
 
+  # Per-service icons for the home.<domain> app launcher (and any
+  # future admin UI that wants them). Each entry in service-config
+  # has an optional `icon = <path>` field; we collect those into a
+  # single derivation so Caddy can serve them from one mount point.
+  #
+  # Output file naming: <label>.<ext> where ext is whatever the
+  # source file used. The launcher hard-codes ".svg" in its URL
+  # template — services should ship SVG icons for crispness. We
+  # don't enforce that here (any extension goes through), but
+  # mismatched extensions just won't be found by the frontend.
+  service-icons-pkg =
+    let
+      withIcon = lib.filter
+        (sc: (sc.icon or null) != null)
+        cfg.service-config;
+      copyLines = lib.concatMapStringsSep "\n"
+        (sc: ''cp ${sc.icon} "$out/${sc.label}${
+          let n = baseNameOf (toString sc.icon);
+              dot = lib.strings.match ".*(\\.[^.]+)$" n;
+          in if dot != null then builtins.head dot else ""
+        }"'')
+        withIcon;
+    in
+    pkgs.runCommand "homefree-service-icons" {} ''
+      mkdir -p $out
+      ${copyLines}
+    '';
+
   preStart = ''
     ${pkgs.coreutils}/bin/mkdir -p /run/homefree/admin
     ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
@@ -385,6 +413,11 @@ let
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
     ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
+
+    # Icons. rm+ln keeps the live path stable across rebuilds even
+    # though the underlying derivation hash changes.
+    ${pkgs.coreutils}/bin/rm -rf /run/homefree/admin/icons
+    ${pkgs.coreutils}/bin/ln -s ${service-icons-pkg} /run/homefree/admin/icons
   '';
 
 in
@@ -535,6 +568,16 @@ in
               file_server
             }
 
+            # Per-service icons for the app launcher. Aggregated at
+            # eval time from each service-config's `icon` path (see
+            # service-icons-pkg above) and exposed at /run/homefree/
+            # admin/icons. Same handler served from admin.<domain>
+            # and home.<domain> so both can use them.
+            handle_path /icons/* {
+              root * /run/homefree/admin/icons
+              file_server
+            }
+
             # Override default behavior - proxy API first, then serve static files
             @api {
               path /api/* /health
@@ -569,6 +612,109 @@ in
               path *.js *.css *.html *.svg *.png *.woff *.woff2
             }
             header @adminstatic {
+              Cache-Control "no-store"
+              -ETag
+              -Last-Modified
+            }
+          '';
+        };
+      }
+
+      ## Per-user dashboard (home.<domain>). Same frontend tree as the
+      ## admin UI — the SPA dispatches between admin-app and user-app
+      ## by hostname (see web-platform/frontend/src/app.js). Same
+      ## admin-api backend, reached via the same /api/* proxy. The
+      ## difference is the Caddy auth gate: oauth2-proxy is required,
+      ## but the homefree-admin role is NOT — any authenticated user
+      ## can see their dashboard.
+      ##
+      ## Backend self-service endpoints (/api/users/me/*,
+      ## /api/services/visible-to-me) must be allowed through the
+      ## TrustedHeaderAuthMiddleware's admin-role gate so non-admins
+      ## can hit them. See SELF_SERVICE_PATHS in simple_main.py.
+      {
+        label = "home";
+        name = "HomeFree Dashboard";
+        project-name = "HomeFree Dashboard";
+
+        systemd-service-names = [
+          "admin-api"
+          "caddy"
+        ];
+
+        admin = {
+          show = false;
+        };
+
+        sso = {
+          kind = "caddy_gated";
+          notes = "Per-user dashboard — oauth2-proxy gate only, no admin role required.";
+        };
+
+        reverse-proxy = {
+          enable = true;
+          description = "HomeFree Per-user Dashboard";
+          subdomains = [ "home" ];
+          http-domains = [
+            "homefree.${cfg.system.localDomain}"
+            cfg.system.localDomain
+          ];
+          https-domains = [ cfg.system.domain ] ++ cfg.system.additionalDomains;
+
+          ## Same on-disk frontend bundle as admin; the SPA chooses
+          ## which app to mount based on window.location.hostname.
+          static-path = "${installerWebPath}/frontend";
+
+          public = cfg.services.admin.public;
+
+          ## oauth2-proxy gate, same sentinel-based bootstrap as admin.
+          oauth2 = cfg.sso.per-service.home.enable or true;
+          ## Critical difference vs admin: NO admin-role check. Every
+          ## authenticated Zitadel user can reach their dashboard.
+          require-admin-role = false;
+
+          extraCaddyConfig = ''
+            # Service state endpoint - always available (served directly by Caddy)
+            handle /api/service-state {
+              root * /var/lib/homefree-admin
+              try_files service-state.json
+              file_server
+            }
+
+            # Per-service icons for the app launcher. Same source
+            # directory and handler shape as admin.<domain>'s
+            # /icons block so the two surfaces agree on what an
+            # icon URL means.
+            handle_path /icons/* {
+              root * /run/homefree/admin/icons
+              file_server
+            }
+
+            # Proxy /api/* and /health to the shared admin-api backend.
+            # The backend's TrustedHeaderAuthMiddleware will enforce
+            # which paths a non-admin user can hit — admin-only routes
+            # still return 403, self-service routes pass through.
+            @api {
+              path /api/* /health
+            }
+            handle @api {
+              reverse_proxy localhost:8000 {
+                @backend_down status 502 503 504
+                handle_response @backend_down {
+                  root * /var/lib/homefree-admin
+                  rewrite * /service-state.json
+                  file_server
+                }
+              }
+            }
+
+            # Same no-store caching policy as admin: /nix/store mtimes
+            # are epoch, ETags collide across rebuilds; no-store forces
+            # a fresh fetch each time so refresh actually works.
+            @userstatic {
+              path *.js *.css *.html *.svg *.png *.woff *.woff2
+            }
+            header @userstatic {
               Cache-Control "no-store"
               -ETag
               -Last-Modified

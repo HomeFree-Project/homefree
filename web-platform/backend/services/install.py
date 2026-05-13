@@ -307,6 +307,12 @@ in
       localDomain = jsonData.system.localDomain;
       additionalDomains = jsonData.system.additionalDomains;
       authorizedKeys = jsonData.system.authorizedKeys;
+      ## Whether this box is the upstream homefree.host marketing
+      ## instance. Default false — a real personal deployment shows
+      ## the per-user dashboard at apex. Override in the JSON by
+      ## setting `system.project_mode: true` (snake_case in JSON,
+      ## kebab-case in the Nix option).
+      project-mode = jsonData.system.project_mode or false;
     };
 
     network = {

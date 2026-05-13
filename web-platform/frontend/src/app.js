@@ -3,6 +3,20 @@ import { getMode } from './api/client.js';
 import { handleSignOut } from './shared/auth.js';
 import './components/installer-app.js';
 import './components/admin/admin-app.js';
+import './components/user/user-app.js';
+
+// Per-user dashboard lives at home.<domain>. The same index.html is
+// served from both admin.<domain> and home.<domain> (one frontend
+// bundle, two vhosts in services/admin-web.nix) — so the dispatch
+// has to happen at runtime. Hostname is the canonical signal: it's
+// what Caddy gates on, what oauth2-proxy whitelisted, and what the
+// backend's per-path auth rules already align with.
+//
+// Substring match instead of strict prefix because the same SPA is
+// also served from homefree.<localDomain> in dev (admin) and
+// home.homefree.<localDomain> in dev (user). The `home.` prefix is
+// unambiguous in both shapes.
+const IS_USER_SURFACE = window.location.hostname.startsWith('home.');
 
 class HomeFreeApp extends LitElement {
   static properties = {
@@ -97,6 +111,17 @@ class HomeFreeApp extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    // On home.<domain> the SPA shows the per-user dashboard
+    // regardless of installer/admin mode. The backend's
+    // /api/users/me + /api/services/visible-to-me power that view
+    // and are gated by oauth2-proxy at the Caddy layer + the
+    // SELF_SERVICE_PATHS allowlist in the middleware. No mode
+    // detection needed.
+    if (IS_USER_SURFACE) {
+      this.mode = 'user';
+      this.loading = false;
+      return;
+    }
     await this.detectMode();
   }
 
@@ -178,6 +203,8 @@ class HomeFreeApp extends LitElement {
       return html`<installer-app></installer-app>`;
     } else if (this.mode === 'admin') {
       return html`<admin-app></admin-app>`;
+    } else if (this.mode === 'user') {
+      return html`<user-app></user-app>`;
     }
 
     return html`

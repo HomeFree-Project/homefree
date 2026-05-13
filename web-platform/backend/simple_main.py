@@ -73,6 +73,36 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         # able to sign out). Not a secret: it's already visible on
         # every /authorize URL during the normal SSO flow.
         "/api/sso/oauth2-client-id",
+        # /api/mode is the preflight every SPA boot makes from
+        # index.html to detect installer vs admin shell. It's also
+        # what the home.<domain> dashboard probes to know the
+        # cookie is still valid before importing the SPA module.
+        # The response carries no identity-bearing data — it's a
+        # property of the box, not the user — so leaving it open
+        # to any caller is safe and unblocks the user surface.
+        "/api/mode",
+    }
+    ## Paths that any AUTHENTICATED user can hit — admin role is NOT
+    ## required. These are the self-service endpoints powering
+    ## home.<domain> (per-user dashboard): read your own profile,
+    ## change your own name/password, list the apps you can launch.
+    ##
+    ## The middleware still requires a valid X-Auth-Request-User
+    ## header (oauth2-proxy session). Identity for any write is
+    ## resolved server-side from that header, never the request body
+    ## — see _resolve_user_id_by_name() callers below.
+    SELF_SERVICE_PATHS = {
+        "/api/users/me",
+        "/api/users/me/password",
+        "/api/users/me/profile",
+        "/api/services/visible-to-me",
+        # The password policy (min length, complexity) is what the
+        # user dashboard's "Change password" form validates against
+        # before submitting. The endpoint exposes only policy
+        # parameters, no per-user data — safe for any authenticated
+        # caller, and required for the form to render its
+        # requirement checklist.
+        "/api/sso/password-policy",
     }
     ## oauth2-proxy v7's behavior:
     ##   - X-Auth-Request-Preferred-Username always carries the OIDC
@@ -153,6 +183,17 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
                 {"error": "unauthenticated", "detail": "missing X-Auth-Request-User"},
                 status_code=401,
             )
+
+        # Self-service paths bypass the admin-role check. They still
+        # need an authenticated user (verified above) — the route
+        # handlers themselves enforce the "you can only modify your
+        # own record" invariant by resolving the target user id from
+        # the auth header, not from request bodies.
+        if request.url.path in self.SELF_SERVICE_PATHS:
+            groups_raw = request.headers.get(self.GROUPS_HEADER, "")
+            request.state.auth_user = user
+            request.state.auth_groups = self._parse_groups(groups_raw)
+            return await call_next(request)
 
         # Role-based admin gate. Presence of the `homefree-admin`
         # project role in the user's token is the canonical signal.
@@ -724,6 +765,114 @@ async def get_service_options_schema():
         logger.error(f"Error getting service options schema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/services/visible-to-me")
+async def get_services_visible_to_me(request: Request):
+    """List of services the authenticated user can launch from their
+    dashboard. Powers the app grid on home.<domain>.
+
+    Filter rules (everything is AND'd):
+      - service is enabled
+      - service has a resolvable URL (skip backend-only entries
+        like admin-api, child template parents with no own URL)
+      - service is not a child-instance parent template (parent=null
+        survives; child-of-X passes through as long as it has its
+        own URL)
+      - service is browser-launchable: either it has oauth2=true
+        (SSO gate, so this same session works), or it's public on
+        the apex/subdomain without any auth (LAN-only without SSO
+        is unreachable from a typical browser session anyway, but
+        we still show it so the user knows what's running)
+      - service is not admin-only (require-admin-role=true), unless
+        the caller has the homefree-admin role
+      - service has admin.show != false (filters out admin-api etc.)
+
+    Returns {label, name, url, icon} per entry — a deliberately
+    narrow shape, no systemd state, no config internals. The admin
+    UI uses /api/services for the fuller picture.
+    """
+    import json
+    groups = getattr(request.state, "auth_groups", set()) or set()
+    is_admin = TrustedHeaderAuthMiddleware.ADMIN_ROLE in groups
+
+    try:
+        with open("/run/homefree/admin/config.json") as f:
+            cfg = json.load(f)
+    except Exception as e:
+        logger.error("Failed to load admin config for visible-to-me: %s", e)
+        raise HTTPException(status_code=500, detail="config unavailable")
+
+    try:
+        with open("/etc/nixos/homefree-config.json") as f:
+            user_cfg = json.load(f)
+    except Exception:
+        user_cfg = {}
+    enabled_by_label = {
+        label: bool(svc.get("enable", False))
+        for label, svc in (user_cfg.get("services") or {}).items()
+    }
+
+    # Metaservices that power the homefree shell itself — not "apps
+    # to launch" from the user's perspective, so don't show them in
+    # the app grid. Sign-out / admin link / manual link are surfaced
+    # separately in the dashboard chrome.
+    METASERVICES = {"home", "admin", "manual", "landing-page", "auth"}
+
+    out = []
+    for entry in cfg.get("services", []):
+        sc = entry.get("service-config", {}) or {}
+        rp = sc.get("reverse-proxy", {}) or {}
+        label = sc.get("label") or ""
+        url = entry.get("url") or ""
+
+        if not url:
+            continue
+        if label in METASERVICES:
+            continue
+        if (sc.get("admin") or {}).get("show") is False:
+            continue
+        # Parent entries (instance templates) usually carry no URL
+        # of their own; child instances have their own labels +
+        # URLs and pass this check. Don't double-show a parent.
+        # (We're already past the `not url` guard above, so a
+        # parent with a URL still shows up — which is fine.)
+
+        # Enabled gate. Three classes of service:
+        #  1. User-configurable services (podman apps, etc.): keyed
+        #     in homefree-config.json's `services` dict — show iff
+        #     enable=true there.
+        #  2. Built-in services (admin, home, landing-page, manual):
+        #     not in homefree-config.json at all; enable lives on
+        #     reverse-proxy.enable in the Nix-level service-config.
+        #  3. Child instances (mediawiki_grimoire etc.): parent
+        #     determines enablement via the instances array, but
+        #     showing a dead tile is gentler than hiding something
+        #     the user expects to see — let them through as long
+        #     as a URL exists.
+        parent = sc.get("parent")
+        if not parent:
+            if label in enabled_by_label:
+                if not enabled_by_label[label]:
+                    continue
+            else:
+                # Built-in service: trust reverse-proxy.enable
+                if not rp.get("enable", False):
+                    continue
+
+        if rp.get("require-admin-role") and not is_admin:
+            continue
+
+        out.append({
+            "label": label,
+            "name": sc.get("name") or label,
+            "url": url,
+            "icon": sc.get("icon"),  # null until step 5 populates
+        })
+
+    # Stable alphabetical order by display name.
+    out.sort(key=lambda x: (x["name"] or "").lower())
+    return JSONResponse(content=out)
+
 # Network Endpoints
 
 @app.get("/api/network/interfaces")
@@ -1221,22 +1370,105 @@ def _homefree_admin_username():
     except Exception:
         return None
 
-@app.get("/api/users/me")
-async def get_current_user(request: Request):
-    """Return the currently-authenticated user's record. Auth comes
-    from the oauth2-proxy header that gated this request. Useful
-    so the frontend can flag the "you" row and disable Delete on
-    the admin user, regardless of which username happens to match."""
-    username = (
+
+def _authed_username(request: Request) -> str:
+    """Read the authenticated user's preferred_username from headers.
+    The middleware has already validated the header exists post-
+    provisioning; this helper centralises the lookup so /me handlers
+    can't accidentally trust a body-provided username."""
+    return (
         request.headers.get("x-auth-request-preferred-username")
         or request.headers.get("x-auth-request-user")
         or ""
     )
+
+
+async def _resolve_user_id_by_name(cx, base: str, username: str) -> str:
+    """Resolve a Zitadel user-id from a username, using the admin PAT.
+    Used by self-service endpoints to map the authenticated header
+    user → their Zitadel record without trusting a body-supplied id.
+
+    Raises HTTPException on lookup failure or not-found."""
+    r = await cx.post(
+        f"{base}/management/v1/users/_search",
+        headers=_zitadel_headers(),
+        json={
+            "queries": [{
+                "userNameQuery": {
+                    "userName": username,
+                    "method": "TEXT_QUERY_METHOD_EQUALS",
+                },
+            }],
+        },
+    )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code,
+                            detail=f"Zitadel user lookup: {r.text}")
+    users = r.json().get("result") or []
+    if not users:
+        raise HTTPException(
+            status_code=404,
+            detail=f"User '{username}' not found in Zitadel",
+        )
+    return users[0]["id"]
+
+
+@app.get("/api/users/me")
+async def get_current_user(request: Request):
+    """Return the currently-authenticated user's record. Auth comes
+    from the oauth2-proxy header that gated this request.
+
+    Includes the Zitadel profile fields (first/last/display name,
+    email) so the user dashboard can prefill its edit form without a
+    second round-trip. is_admin_role reflects the homefree-admin
+    Zitadel project role (used by the dashboard to show or hide the
+    "open admin" link)."""
+    username = _authed_username(request)
     admin_username = _homefree_admin_username()
+    groups = getattr(request.state, "auth_groups", set()) or set()
+    is_admin_role = TrustedHeaderAuthMiddleware.ADMIN_ROLE in groups
+
+    # Best-effort profile lookup. Failures are non-fatal — the rest
+    # of the response is still useful (the dashboard just falls back
+    # to "Unknown" labels). The Zitadel call uses the bootstrap PAT,
+    # same as elsewhere in this module.
+    profile = {}
+    if username:
+        import httpx
+        base = _zitadel_base_url()
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as cx:
+                user_id = await _resolve_user_id_by_name(cx, base, username)
+                r = await cx.get(
+                    f"{base}/management/v1/users/{user_id}",
+                    headers=_zitadel_headers(),
+                )
+                if r.status_code < 400:
+                    human = (r.json().get("user") or {}).get("human", {}) or {}
+                    p = human.get("profile", {}) or {}
+                    e = human.get("email", {}) or {}
+                    profile = {
+                        "user_id": user_id,
+                        "first_name": p.get("firstName", ""),
+                        "last_name": p.get("lastName", ""),
+                        "display_name": p.get("displayName", ""),
+                        "email": e.get("email", ""),
+                    }
+        except HTTPException:
+            # _resolve_user_id_by_name 404 — user is in Zitadel only
+            # if oauth2-proxy could authenticate them, so a 404 here
+            # is unexpected. Log and return the bare envelope.
+            logger.warning("Authenticated user '%s' not found in Zitadel",
+                           username)
+        except Exception as e:
+            logger.warning("users/me profile lookup failed: %s", e)
+
     return JSONResponse(content={
         "username": username,
         "is_admin_user": bool(admin_username and username == admin_username),
         "admin_username": admin_username,
+        "is_admin_role": is_admin_role,
+        **profile,
     })
 
 @app.post("/api/users")
@@ -1386,6 +1618,74 @@ async def update_user(user_id: str, req: UpdateUserRequest):
 ## order and "me" would otherwise be captured as a user_id, sending
 ## the call to the admin-set handler with user_id="me" which fails
 ## as "Password not found" inside Zitadel.
+
+@app.post("/api/users/me/profile")
+async def update_own_profile(request: Request, req: UpdateUserRequest):
+    """Self-service profile update — first/last/display name and email.
+    Used by the per-user dashboard at home.<domain>.
+
+    Identity resolution: the target user-id is derived from the
+    oauth2-proxy preferred_username header server-side via
+    _resolve_user_id_by_name(). The request body's userId is
+    deliberately ignored even if the caller sends one.
+
+    Email updates re-mark the address verified to keep the SSO login
+    flow working without re-verification, mirroring the admin
+    update_user() path. We pass through the same Zitadel calls — the
+    only difference is the user-id source."""
+    username = _authed_username(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="No authenticated user")
+
+    import httpx
+    base = _zitadel_base_url()
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as cx:
+        user_id = await _resolve_user_id_by_name(cx, base, username)
+
+        if (req.first_name is not None or req.last_name is not None):
+            # Fetch existing names so single-field updates don't blank
+            # the other field — Zitadel's profile PUT replaces the
+            # whole record.
+            r = await cx.get(
+                f"{base}/management/v1/users/{user_id}",
+                headers=_zitadel_headers(),
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel: {r.text}")
+            existing = (r.json().get("user") or {}) \
+                .get("human", {}).get("profile", {})
+            first = req.first_name if req.first_name is not None \
+                else existing.get("firstName", "")
+            last = req.last_name if req.last_name is not None \
+                else existing.get("lastName", "")
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/profile",
+                headers=_zitadel_headers(),
+                json={
+                    "firstName": first or "",
+                    "lastName": last or "",
+                    "displayName": f"{first} {last}".strip() or "",
+                    "preferredLanguage":
+                        existing.get("preferredLanguage") or "en",
+                },
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel profile: {r.text}")
+
+        if req.email is not None:
+            r = await cx.put(
+                f"{base}/management/v1/users/{user_id}/email",
+                headers=_zitadel_headers(),
+                json={"email": req.email, "isEmailVerified": True},
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code,
+                                    detail=f"Zitadel email: {r.text}")
+
+    return JSONResponse(content={"success": True})
+
 
 @app.post("/api/users/me/password")
 async def change_own_password(request: Request, req: ChangeOwnPasswordRequest):

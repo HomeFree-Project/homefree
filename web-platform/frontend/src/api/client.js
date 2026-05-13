@@ -179,6 +179,18 @@ export const changeOwnPassword = (currentPassword, newPassword) =>
   post('/api/users/me/password',
     { current_password: currentPassword, new_password: newPassword });
 
+// Self-service profile update (per-user dashboard at home.<domain>).
+// Backend resolves the target user-id from the auth header — body
+// fields are filtered to first/last/display name and email only.
+export const updateOwnProfile = (patch) =>
+  post('/api/users/me/profile', patch);
+
+// App launcher data for the per-user dashboard. Returns the list of
+// services the *authenticated* user can actually open in a browser:
+// drops admin-gated services for non-admins, drops admin/manual/etc.
+// metaservices, drops services with no resolvable URL.
+export const getVisibleServices = () => get('/api/services/visible-to-me');
+
 // Elevation lookup. Open-Meteo first (more reliable, 10k req/day non-
 // commercial, no key), Open-Elevation as fallback if Open-Meteo errors.
 // Both are CORS-enabled so this stays browser-side — the user's network
@@ -333,6 +345,8 @@ export default {
   updateUser,
   setUserPassword,
   changeOwnPassword,
+  updateOwnProfile,
+  getVisibleServices,
   setHostname,
   setLocation,
   setKeyboard,

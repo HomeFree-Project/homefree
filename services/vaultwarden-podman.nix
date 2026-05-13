@@ -70,6 +70,21 @@ let
         ## snowflake ID — Zitadel's audiences are all numeric resource
         ## IDs of fixed width.
         echo "SSO_AUDIENCE_TRUSTED=^[0-9]{15,20}$"
+        ## Decouple Vaultwarden's own session lifetime from Zitadel's
+        ## SSO session. With this OFF (the default), Vaultwarden
+        ## re-validates every refresh-token rotation against Zitadel,
+        ## which forces a fresh SSO prompt as soon as Zitadel's
+        ## per-app token expires — often a few hours. With it ON,
+        ## SSO authenticates the user once; thereafter Vaultwarden's
+        ## own access/refresh tokens own the session, so the
+        ## Bitwarden mobile app rotates silently in the background.
+        echo "SSO_AUTH_ONLY_NOT_SESSION=true"
+        ## Refresh token lifetime: default is 30 days. Extend to 1
+        ## year so users away from a network where sso.<domain> is
+        ## reachable don't get locked into a "sign back in" loop
+        ## on the road. Trade-off: a stolen refresh token is valid
+        ## for the full year; acceptable for a personal vault.
+        echo "REFRESH_VALIDITY_SECS=31536000"
       } > ${ssoEnvFile}
     else
       ## Pre-provisioning (fresh install): empty env file. SSO is

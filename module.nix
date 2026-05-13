@@ -149,6 +149,24 @@
         description = "Additional zones for the system";
       };
 
+      project-mode = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          When true, the apex domain serves the public HomeFree project
+          marketing site (hero, comparison, FAQ, install CTA). This is
+          only appropriate for the upstream homefree.host instance.
+
+          When false (the default for any real personal deployment), the
+          apex domain redirects to home.<domain> — the per-user
+          dashboard — so visitors flow into the SSO sign-in instead of
+          being pitched the HomeFree project.
+
+          The manual subdomain (manual.<domain>) is unaffected and stays
+          available in both modes.
+        '';
+      };
+
       adminUsername = lib.mkOption {
         type = lib.types.str;
         default = "homefree";
