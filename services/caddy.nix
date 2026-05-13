@@ -483,8 +483,7 @@ in
             # See:
             # https://developer.mozilla.org/docs/Web/API/Window/pageshow_event#firefox_bfcache
             @html {
-            file
-              path *.html
+              path *.html / */
             }
             header @html {
               # no-store prevents disk cache AND bfcache. The latter

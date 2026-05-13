@@ -1,83 +1,248 @@
 ---
-title: HomeFree Product Comparison
+title: "Comparison — HomeFree"
 layout: base.html
 ---
-<div class="container">
-  <div class="section-header">
-    <h1>Product Comparison</h1>
+<article class="prose prose--wide">
+  <h1>How HomeFree fits in the landscape</h1>
+  <p class="lede">
+    There are great projects in each adjacent space. None of them do the
+    whole stack — router, applications, identity, backups — as one
+    declarative box. Here's an honest walkthrough.
+  </p>
+
+  <p>HomeFree aims to do all of the following out of the box, without heavy lifting:</p>
+  <ul>
+    <li>Router and gateway</li>
+    <li>Firewall</li>
+    <li>Wireless access point</li>
+    <li>Ad-blocking DNS</li>
+    <li>Dynamic DNS</li>
+    <li>Reverse proxy with automatic HTTPS</li>
+    <li>Full curated application suite</li>
+    <li>Single sign-on across every app</li>
+    <li>NAS / file storage</li>
+    <li>Off-site encrypted backups</li>
+  </ul>
+
+  <h2>At a glance</h2>
+  <div class="table-scroll">
+  <table class="compare-table" style="margin: 16px 0 40px;">
+    <thead>
+      <tr>
+        <th></th>
+        <th class="highlight">HomeFree</th>
+        <th>Cosmos</th>
+        <th>YunoHost</th>
+        <th>Umbrel</th>
+        <th>Runtipi</th>
+        <th>Start9</th>
+        <th>Cloudron</th>
+        <th>TrueNAS</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Router / firewall</td>
+        <td class="highlight yes">Built in</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+      </tr>
+      <tr>
+        <td>SSO across apps</td>
+        <td class="highlight yes">Zitadel</td>
+        <td class="yes">Built in</td>
+        <td class="yes">SSOwat</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">Built in</td>
+        <td class="no">Per app</td>
+      </tr>
+      <tr>
+        <td>Auto HTTPS + DDNS</td>
+        <td class="highlight yes">Yes</td>
+        <td class="yes">Yes</td>
+        <td class="yes">Yes</td>
+        <td class="no">Cloudflared</td>
+        <td class="partial">HTTPS only</td>
+        <td class="partial">Tor / clearnet</td>
+        <td class="yes">Yes</td>
+        <td class="partial">HTTPS only</td>
+      </tr>
+      <tr>
+        <td>Curated app catalog</td>
+        <td class="highlight yes">Curated</td>
+        <td class="yes">250+</td>
+        <td class="yes">500+</td>
+        <td class="yes">~100</td>
+        <td class="yes">200+</td>
+        <td class="yes">~80</td>
+        <td class="yes">120+</td>
+        <td class="partial">Charts</td>
+      </tr>
+      <tr>
+        <td>Declarative config</td>
+        <td class="highlight yes">NixOS</td>
+        <td class="no">—</td>
+        <td class="partial">Hooks</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+      </tr>
+      <tr>
+        <td>Encrypted backups</td>
+        <td class="highlight yes">Restic + S3</td>
+        <td class="partial">Plugin</td>
+        <td class="partial">Per app</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">Built in</td>
+        <td class="yes">Built in</td>
+        <td class="yes">Snapshots</td>
+      </tr>
+      <tr>
+        <td>License / cost</td>
+        <td class="highlight yes">Open source</td>
+        <td class="yes">Open core</td>
+        <td class="yes">Open source</td>
+        <td class="yes">Open source</td>
+        <td class="yes">Open source</td>
+        <td class="yes">Open source</td>
+        <td class="partial">€15/mo+</td>
+        <td class="yes">Open source</td>
+      </tr>
+    </tbody>
+  </table>
   </div>
 
-  <div class="section">
-    There are similar systems out there but they are all missing important pieces of the puzzles to make a self-hosted
-    system simple and turnkey. A goal is to be able to provide a elegant Apple-like design experience in a small box with
-    built-in battery backup and redundant storage that you plug into your modem instead of a router, and go through a
-    short installation process and be up and running in minutes. There is currently no other product that does all of
-    the following out of the box without heavy technical lifting.
-    <ul style="margin-top: 0.5rem; margin-left: 1.5rem;">
-      <li>Router/Gateway</li>
-      <li>Firewall</li>
-      <li>Wireless Access Point</li>
-      <li>Ad Blocking</li>
-      <li>Dynamic DNS</li>
-      <li>Reverse Proxy with automatic certificate management</li>
-      <li>Full Application Suite</li>
-      <li>Single Sign-On</li>
-      <li>NAS</li>
-    </ul>
-  </div>
+  <h2>Routers (OPNsense / pfSense)</h2>
+  <p>
+    <a href="https://opnsense.org/" target="_blank" rel="noopener">OPNsense</a> (25.x on FreeBSD 14) and
+    <a href="https://www.pfsense.org/" target="_blank" rel="noopener">pfSense</a> (CE 2.7.x, with pfSense Plus
+    now locked to Netgate hardware) are the heavyweights of open-source
+    routing — firewall, IDS, ad-blocking, VPNs, the works. Decidedly
+    technical, and not built to host user-facing applications. Pair them
+    with a separate NAS and app server and you're back to gluing things
+    together.
+  </p>
 
-  <div class="section">
-    <h2>OPNSense/PFSense</h2>
-    <p>
-      <a href="https://opnsense.org/" target="_blank">OPNSense</a> and <a href="https://www.pfsense.org/" target="_blank">PFSense</a>
-      are popular Open Source router products that can replace a typical router/access point provided
-      by an ISP, with a lot of additional functionality like firewall functionality, ad blocking, intrusion detection,
-      etc. These products can be used at home, but are rather technical and complicated, requiring a lot of configuration.
-      They are also not very suitable for serving general applications.
-    </p>
-  </div>
-  <div class="section">
-    <h2>Ubiquiti Dream Machine Pro</h2>
-    <p>
-      The <a href="https://store.ui.com/us/en/products/udm-pro" target="_blank">Ubiquiti Dream Machine Pro</a> is a
-      similar product to OPNSense, but with a highly polished front-end.  It is a corporate product, and as such is
-      not free, nor is it open source. It also does not work well with other network hardware that is not part of the
-      Ubiquiti ecosystem. It is also a relatively complex product that requires a level of technical understanding.
-    </p>
-  </div>
-  <div class="section">
-    <h2>Synology</h2>
-    <p>
-      <a href="https://www.synology.com" target="_blank">Synology</a> offers a wide range of products that began with
-      NAS (Network-Attached Storage) but has extended into offering the ability to run applications in docker containers.
-      Since they are first and formost network storage devices, they often don't come with much memory and CPU power,
-      so are not well suited to heavy application usage. Thye also are expensive and not open source, and not purpose
-      built as routers for WAN facing applications.
-    </p>
-  </div>
-  <div class="section">
-    <h2>TrueNAS</h2>
-    <p>
-      <a href="https://www.truenas.com/" target="_blank">TrueNAS</a> TrueNAS covers a similar NAS space to Synology,
-      but with an open source offering. Being open source, it can be run on better hardware and can more suitably serve
-      applications, but is not purpose built as a router, and would require heavy configuration to work as one.
-    </p>
-  </div>
-  <div class="section">
-    <h2>CasaOS, Umbrel, and Yunohost</h2>
-    <p>
-      <a href="https://casaos.io/" target="_blank">CasaOS</a>, <a href="https://umbrel.com/" target="_blank">Umbrel</a>,
-      and <a href="https://yunohost.org/" target="_blank">YunoHost</a> are focused on serving applications as a first
-      class concern, but less capable in routing and gateway capability, which would need to be configured separately.
-      From a user experience perspective though, they are closer to what HomeFree is trying to achieve.
-    </p>
-  </div>
-  <div class="section">
-    <h2>NextCloud</h2>
-    <p>
-      <a href="https://nextcloud.com/" target="_blank">NextCloud</a> is a heavy multi-purpose web platforms with a built-in suite
-      of applications. It serves a more narrow niche than CasaOS and Umbrel as it cannot run arbitrary applications, but rather
-      those built specifically for the NextCloud ecosystem.
-    </p>
-  </div>
-</div>
+  <h2>Ubiquiti Dream Machine Pro Max</h2>
+  <p>
+    Ubiquiti's <a href="https://store.ui.com/us/en/category/cloud-gateways" target="_blank" rel="noopener">UniFi cloud gateways</a>
+    — UDM Pro Max ($599) for SMB, the new UDM Beast ($1,499) above it — are
+    the corporate, polished version of the same router idea. Closed source,
+    best with Ubiquiti hardware end to end, and still not an application
+    host.
+  </p>
+
+  <h2>Synology</h2>
+  <p>
+    <a href="https://www.synology.com" target="_blank" rel="noopener">Synology</a> started as NAS and now
+    runs apps via Container Manager (renamed from Docker in DSM 7.3). The
+    hardware is light on CPU and RAM, the OS is closed source, and it's not
+    built for WAN-facing app hosting. Solid file box, weak app server.
+  </p>
+
+  <h2>TrueNAS (Goldeye)</h2>
+  <p>
+    <a href="https://www.truenas.com/" target="_blank" rel="noopener">TrueNAS</a> 25.10 "Goldeye" is the
+    current open-source NAS. Apps moved from Kubernetes to Docker in 24.10,
+    making them easier to run. TrueNAS is not a router and would need heavy
+    additional configuration to act as one.
+    <a href="https://hexos.com/" target="_blank" rel="noopener">HexOS</a> sits on top of TrueNAS as a
+    managed front-end with a paid SaaS control plane — friendlier UI, same
+    fundamental shape.
+  </p>
+
+  <h2>Cosmos Cloud</h2>
+  <p>
+    <a href="https://cosmos-cloud.io/" target="_blank" rel="noopener">Cosmos</a> is the closest direct
+    overlap with HomeFree's positioning: 250+ apps, built-in reverse proxy
+    with auto-HTTPS, built-in SSO and MFA, and anti-bot/DDoS. It's a single
+    Linux host though — no router, no firewall, no LAN-level functionality
+    — and the configuration model is an imperative web UI rather than
+    declarative files. Strong choice if you already have networking
+    handled separately.
+  </p>
+
+  <h2>YunoHost</h2>
+  <p>
+    <a href="https://yunohost.org/" target="_blank" rel="noopener">YunoHost</a> (v12.x) is a Debian-based
+    self-hosting OS with 500+ packaged apps and a unified login via SSOwat.
+    Not a router. Configuration is per-app hook scripts rather than a
+    single declarative source. The closest competitor for the
+    "preconfigured-apps-behind-one-login" goal.
+  </p>
+
+  <h2>Umbrel</h2>
+  <p>
+    <a href="https://umbrel.com/" target="_blank" rel="noopener">Umbrel</a> began as a Bitcoin-node OS and
+    has pivoted to a broader "home cloud + AI agents" pitch (with Ollama,
+    OpenWebUI, and similar prominently featured). App store is well-curated
+    and the UX is excellent. No router, no built-in SSO across apps, and
+    public access is mostly handled by piping things through
+    Cloudflare Tunnels.
+  </p>
+
+  <h2>Runtipi</h2>
+  <p>
+    <a href="https://runtipi.io/" target="_blank" rel="noopener">Runtipi</a> is the cleanest active
+    Docker-app-launcher project — clear UI, 200+ vetted apps, one-click
+    installs. CasaOS (a similar project from the IceWhale / ZimaOS team) is
+    in maintenance mode; Runtipi has picked up that mantle. Single Linux
+    host, no router, no platform SSO across apps.
+  </p>
+
+  <h2>Start9 / StartOS</h2>
+  <p>
+    <a href="https://start9.com/" target="_blank" rel="noopener">Start9</a> sells a curated personal-server
+    appliance (Server One) running StartOS, originally Bitcoin-sovereignty
+    focused and broadening from there. One-click app installs with strong
+    onion-routing defaults. No router, no declarative config, and the
+    cultural framing leans heavily Bitcoin-native.
+  </p>
+
+  <h2>Cloudron</h2>
+  <p>
+    <a href="https://www.cloudron.io/" target="_blank" rel="noopener">Cloudron</a> is the closest
+    commercial analog: managed updates, automatic HTTPS, SSO, 120+ apps,
+    encrypted backups — all polished. The license is €15/month+ per server
+    and the platform doesn't include router or firewall functionality
+    (it's BYO Linux host).
+  </p>
+
+  <h2>Nextcloud</h2>
+  <p>
+    <a href="https://nextcloud.com/" target="_blank" rel="noopener">Nextcloud</a> is a heavy web platform
+    with a deep app ecosystem — HomeFree includes it as one of its
+    services, not as an alternative. Nextcloud apps are excellent at what
+    they do but bound to the Nextcloud ecosystem; HomeFree pairs Nextcloud
+    with a wider catalog of peer applications outside that ecosystem.
+  </p>
+
+  <h2>The short version</h2>
+  <p>
+    HomeFree's contribution isn't a new app — it's the wiring. Router +
+    apps + identity + backups, configured together, on hardware you own,
+    declared in a single config file. The other projects in this list do
+    great work in their slice; HomeFree's bet is that the slice should be
+    the whole pie.
+  </p>
+</article>
+
+<style>
+  .prose--wide { max-width: 960px; }
+  .compare-table th, .compare-table td { font-size: 0.85rem; padding: 10px 12px; }
+  .compare-table thead th { font-size: 0.72rem; }
+  @media (max-width: 800px) {
+    .compare-table { font-size: 0.78rem; }
+    .compare-table th, .compare-table td { padding: 8px 6px; }
+  }
+</style>

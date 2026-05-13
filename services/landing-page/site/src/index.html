@@ -1,38 +1,326 @@
 ---
-title: HomeFree
+title: "HomeFree — your own cloud, in one box"
 layout: base.html
 ---
-<section class="hero container">
-  <h1>HomeFree: Own Your Data</h1>
-  <p>Turnkey Personal Application Server and Router. Step out of Google and Apple's control.</p>
-  <div style="margin-top: 2rem;">
-    <a href="/quick-start" class="button">Get Started</a>
+
+{# ────────────────────────────── Hero ───────────────────────── #}
+<section class="hero">
+  <div class="container hero-inner">
+    <h1 class="hero-headline">
+      Your apps. Your network. <span class="accent">In one box.</span>
+    </h1>
+    <p class="hero-sub">
+      HomeFree is a personal server <em>and</em> router that hosts your cloud,
+      your identity, and your connectivity — without giving any of it to a megacorp.
+    </p>
+    <div class="hero-ctas">
+      <a href="/quick-start" class="btn btn-primary">Get HomeFree →</a>
+      <a href="#apps" class="btn btn-secondary">See what's inside</a>
+    </div>
+
+    <div class="hero-shot">
+      <img src="/img/admin-dashboard.png" alt="HomeFree admin dashboard showing service overview" loading="eager">
+    </div>
   </div>
 </section>
 
-<section class="features" id="features">
-  <a href="#features"></a>
+{# ────────────────────────── Pitch + diagram ────────────────── #}
+<section class="pitch">
   <div class="container">
-    <h2>Features</h2>
-    <div class="features-grid">
-      <div class="feature-card">
-        <h3>All-In-One</h3>
-        <p>Dynamic DNS, Ad Block, Automatic HTTPS, Firewall, VPN, and many applications, such as Photos, Calendar, Contacts, and more.</p>
+    <div class="pitch-inner">
+      <div>
+        <span class="eyebrow">The product</span>
+        <h2>
+          One box that sits between you and the internet —
+          and runs <span class="accent">everything</span> you'd otherwise rent.
+        </h2>
+        <p>
+          Most self-hosting projects are app launchers. HomeFree is also your
+          router: dynamic DNS, automatic HTTPS, firewall, ad-blocking DNS,
+          mesh VPN — built in.
+        </p>
+        <p>
+          A curated, growing catalog of apps comes pre-wired behind a single
+          sign-on, on hardware you own, on a network you control. Sign in once
+          with HomeFree SSO and every app trusts you.
+        </p>
       </div>
-      <div class="feature-card">
-        <h3>Turnkey</h3>
-        <p>Easy enough for anyone to use. Plug it in and follow a simple web-based installation.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Safe, Private, and All Yours</h3>
-        <p>Why should trillion dollar mega-corps own your data? Maintain data sovereignty. All your data encrypted and backed up privately.</p>
+
+      <div>
+        {# Network diagram — inline SVG, no external assets. #}
+        <svg class="netdiagram" viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" aria-label="HomeFree sits between the internet and your devices, hosting your apps and identity">
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#34d399"/>
+              <stop offset="1" stop-color="#10b981"/>
+            </linearGradient>
+            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="6" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+
+          {# Internet cloud — centered directly above HomeFree (x=240) #}
+          <g transform="translate(190 36)">
+            <rect x="0" y="0" width="100" height="48" rx="10" fill="none" stroke="#2d3340" stroke-width="1.5"/>
+            <text x="50" y="29" text-anchor="middle" fill="#b6bcc4" font-family="Inter,sans-serif" font-size="13" font-weight="600">Internet</text>
+          </g>
+
+          {# Vertical line internet -> homefree #}
+          <line x1="240" y1="84" x2="240" y2="140" stroke="#2d3340" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+          {# HomeFree box (centerpiece) #}
+          <g transform="translate(180 140)" filter="url(#glow)">
+            <rect x="0" y="0" width="120" height="64" rx="14" fill="url(#g1)"/>
+            <text x="60" y="32" text-anchor="middle" fill="#0a0c0a" font-family="Inter,sans-serif" font-size="14" font-weight="800">HomeFree</text>
+            <text x="60" y="48" text-anchor="middle" fill="#0a0c0a" font-family="Inter,sans-serif" font-size="10" font-weight="500" opacity="0.7">router + apps + SSO</text>
+          </g>
+
+          {# Line homefree -> devices #}
+          <line x1="240" y1="204" x2="240" y2="252" stroke="#2d3340" stroke-width="1.5"/>
+          <line x1="240" y1="252" x2="100" y2="280" stroke="#2d3340" stroke-width="1.5"/>
+          <line x1="240" y1="252" x2="240" y2="280" stroke="#2d3340" stroke-width="1.5"/>
+          <line x1="240" y1="252" x2="380" y2="280" stroke="#2d3340" stroke-width="1.5"/>
+
+          {# Devices #}
+          <g font-family="Inter,sans-serif" font-size="11" fill="#b6bcc4" font-weight="500">
+            <rect x="60"  y="278" width="80" height="32" rx="8" fill="#14181e" stroke="#232831"/>
+            <text x="100" y="298" text-anchor="middle">Phone</text>
+
+            <rect x="200" y="278" width="80" height="32" rx="8" fill="#14181e" stroke="#232831"/>
+            <text x="240" y="298" text-anchor="middle">Laptop</text>
+
+            <rect x="340" y="278" width="80" height="32" rx="8" fill="#14181e" stroke="#232831"/>
+            <text x="380" y="298" text-anchor="middle">TV / NAS</text>
+          </g>
+
+          {# Apps orbit (left + right of HomeFree) #}
+          <g font-family="Inter,sans-serif" font-size="10" fill="#34d399" font-weight="600">
+            <rect x="20"  y="140" width="78" height="22" rx="6" fill="#14181e" stroke="#232831"/>
+            <text x="59"  y="155" text-anchor="middle">Nextcloud</text>
+
+            <rect x="20"  y="172" width="78" height="22" rx="6" fill="#14181e" stroke="#232831"/>
+            <text x="59"  y="187" text-anchor="middle">Immich</text>
+
+            <rect x="382" y="140" width="78" height="22" rx="6" fill="#14181e" stroke="#232831"/>
+            <text x="421" y="155" text-anchor="middle">Matrix</text>
+
+            <rect x="382" y="172" width="78" height="22" rx="6" fill="#14181e" stroke="#232831"/>
+            <text x="421" y="187" text-anchor="middle">Jellyfin</text>
+          </g>
+
+          {# Connector lines apps -> homefree #}
+          <line x1="98"  y1="151" x2="180" y2="161" stroke="#34d399" stroke-width="1" opacity="0.4"/>
+          <line x1="98"  y1="183" x2="180" y2="180" stroke="#34d399" stroke-width="1" opacity="0.4"/>
+          <line x1="382" y1="151" x2="300" y2="161" stroke="#34d399" stroke-width="1" opacity="0.4"/>
+          <line x1="382" y1="183" x2="300" y2="180" stroke="#34d399" stroke-width="1" opacity="0.4"/>
+        </svg>
       </div>
     </div>
   </div>
 </section>
 
-<section class="cta container">
-  <h2>Ready to Get Started?</h2>
-  <p style="margin: 1rem 0 2rem;">Currently in Technical Preview.</p>
-  <a href="https://git.homefree.host/homefree" class="button">Source Code</a>
+{# ───────────────────────── Feature pillars ─────────────────── #}
+<section class="section">
+  <div class="container">
+    <span class="eyebrow">Why one box</span>
+    <h2 class="section-title">Sovereign by default. Boring to operate.</h2>
+    <p class="section-sub">
+      You shouldn't have to glue together a router, a domain, ten certs,
+      a wall of containers, and a half-broken SSO setup. HomeFree does it
+      as a single configurable system.
+    </p>
+
+    <div class="pillars">
+      <div class="pillar">
+        <div class="pillar-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3>Real router, not just apps</h3>
+        <p>
+          Dynamic DNS to your registrar. Let's Encrypt + DNS-01 wildcards.
+          Per-service firewall. WAN failover. Headscale mesh VPN. The network
+          layer is a first-class citizen, not an afterthought.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h3>SSO across every app</h3>
+        <p>
+          A Zitadel-backed identity provider, pre-provisioned. Every app —
+          Nextcloud, Immich, Matrix, Forgejo, Vaultwarden — sits behind one
+          login. Add a user once, they exist everywhere.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+        </div>
+        <h3>Turnkey, with an escape hatch</h3>
+        <p>
+          A web installer for normal humans, a NixOS config for power users.
+          You don't write YAML. You don't manage certs. But everything is
+          declarative, reproducible, and version-controlled.
+        </p>
+      </div>
+
+      <div class="pillar">
+        <div class="pillar-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
+        </div>
+        <h3>Your hardware, your data</h3>
+        <p>
+          Bring your own mini PC or buy one preloaded. Backups are encrypted
+          and yours — to a local disk, a NAS, or any S3-compatible
+          provider. Walk away with a USB drive any day.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ───────────────────────── Apps grid ──────────────────────── #}
+<section class="section apps-section" id="apps">
+  <div class="container">
+    <span class="eyebrow">What's inside</span>
+    <h2 class="section-title">A curated app catalog. One login. Day one.</h2>
+    <p class="section-sub">
+      Every tile below is preinstalled, reverse-proxied with a real certificate,
+      and connected to HomeFree SSO. No YAML, no oauth2-proxy juggling.
+    </p>
+
+    <div class="apps-grid" data-animate-tiles>
+      {% for app in data.apps %}
+      <div class="app-tile">
+        <div class="app-tile-icon">{{ app.name | truncate(2, true, '') | upper }}</div>
+        <p class="app-tile-name">{{ app.name }}</p>
+        <p class="app-tile-cat">{{ app.category }}</p>
+        <p class="app-tile-blurb">{{ app.blurb }}</p>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="sso-badge">
+      <span class="dot"></span>
+      All apps gated by HomeFree SSO — sign in once, you're in.
+    </div>
+  </div>
+</section>
+
+{# ───────────────────────── Comparison ─────────────────────── #}
+<section class="section" id="compare">
+  <div class="container">
+    <span class="eyebrow">How HomeFree compares</span>
+    <h2 class="section-title">Not just another app launcher.</h2>
+    <p class="section-sub">
+      Other self-hosting projects are great. HomeFree differs in shape —
+      it's the router, the apps, and the identity layer in one declarative box.
+    </p>
+
+    <div class="table-scroll">
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th class="highlight">HomeFree</th>
+          <th>CasaOS</th>
+          <th>Umbrel</th>
+          <th>YunoHost</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>App catalog</td>
+          <td class="highlight yes">Curated &amp; preconfigured</td>
+          <td class="yes">Large</td>
+          <td class="yes">Large</td>
+          <td class="yes">Large</td>
+        </tr>
+        <tr>
+          <td>SSO across all apps</td>
+          <td class="highlight yes">Yes (Zitadel)</td>
+          <td class="no">No</td>
+          <td class="no">No</td>
+          <td class="partial">Partial</td>
+        </tr>
+        <tr>
+          <td>Router / DDNS / firewall</td>
+          <td class="highlight yes">Built in</td>
+          <td class="no">—</td>
+          <td class="no">—</td>
+          <td class="partial">Partial</td>
+        </tr>
+        <tr>
+          <td>HTTPS wildcards (DNS-01)</td>
+          <td class="highlight yes">Automatic</td>
+          <td class="no">Manual</td>
+          <td class="no">Manual</td>
+          <td class="partial">Per app</td>
+        </tr>
+        <tr>
+          <td>Mesh VPN (Tailscale-style)</td>
+          <td class="highlight yes">Headscale built in</td>
+          <td class="no">—</td>
+          <td class="partial">App</td>
+          <td class="partial">App</td>
+        </tr>
+        <tr>
+          <td>Declarative config</td>
+          <td class="highlight yes">NixOS, reproducible</td>
+          <td class="no">No</td>
+          <td class="no">No</td>
+          <td class="partial">Hooks</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p style="text-align:center; color:var(--fg-3); font-size:0.88rem; margin-top:18px;">
+      A snapshot, not a takedown. <a href="/comparison" style="color:var(--accent);">Full breakdown →</a>
+    </p>
+  </div>
+</section>
+
+{# ───────────────────────── Install / CTA ──────────────────── #}
+<section class="section" id="install">
+  <div class="container install">
+    <span class="eyebrow">Get started</span>
+    <h2 class="section-title">From bare metal to your own cloud — in an evening.</h2>
+    <p class="section-sub" style="margin-left:auto; margin-right:auto;">
+      HomeFree is a full operating system, not an app you bolt onto a Linux
+      box. Burn an ISO to USB, plug it into the machine that sits between
+      your modem and your switch, and follow the wizard.
+    </p>
+
+    <div class="download-row">
+      <a href="#" class="download-card" aria-label="Download HomeFree ISO for x86_64">
+        <div class="download-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <div>
+          <p class="download-card-title">HomeFree ISO</p>
+          <p class="download-card-sub">x86_64 · ~1.2 GB · coming soon</p>
+        </div>
+      </a>
+
+      <a href="/quick-start" class="download-card download-card--alt">
+        <div class="download-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </div>
+        <div>
+          <p class="download-card-title">Build from source</p>
+          <p class="download-card-sub">For Nix users · full quick-start</p>
+        </div>
+      </a>
+    </div>
+
+    <span class="install-note">
+      HomeFree is a <strong style="color:var(--fg-2);">technical preview</strong>.
+      Production users welcome, but expect some sharp edges.
+    </span>
+  </div>
 </section>

@@ -10,7 +10,30 @@
     },
     "baseUrl": "http://localhost:8080",
     "keywords": {
-        "en": "homefree, self-hosting, libre, homelab, router, nixos"
-    }
+        "en": "homefree, self-hosting, libre, homelab, router, nixos, sso, zitadel, nextcloud, immich, matrix, jellyfin"
+    },
+    "tagline": "Your apps. Your network. Your home.",
+    "subtagline": "An all-in-one personal server and router that hosts your cloud, identity, and connectivity — without giving any of it to a megacorp.",
+    "apps": [
+        { "name": "Nextcloud",   "category": "Files",        "blurb": "Files, calendar, contacts" },
+        { "name": "Immich",      "category": "Photos",       "blurb": "Self-hosted photo library" },
+        { "name": "Matrix",      "category": "Chat",         "blurb": "End-to-end encrypted chat" },
+        { "name": "Jellyfin",    "category": "Media",        "blurb": "Movie + TV streaming" },
+        { "name": "Forgejo",     "category": "Code",         "blurb": "Git hosting with CI" },
+        { "name": "MediaWiki",   "category": "Knowledge",    "blurb": "Personal wikis" },
+        { "name": "CryptPad",    "category": "Docs",         "blurb": "Encrypted collaborative docs" },
+        { "name": "Lidarr",      "category": "Music",        "blurb": "Music library manager" },
+        { "name": "NZBGet",      "category": "Downloads",    "blurb": "Usenet downloader" },
+        { "name": "Frigate",     "category": "Cameras",      "blurb": "AI-powered NVR" },
+        { "name": "Radicale",    "category": "Calendar",     "blurb": "CalDAV / CardDAV server" },
+        { "name": "Joplin",      "category": "Notes",        "blurb": "Markdown notes sync" },
+        { "name": "Trilium",     "category": "Notes",        "blurb": "Hierarchical knowledge base" },
+        { "name": "Vaultwarden", "category": "Passwords",    "blurb": "Bitwarden-compatible vault" },
+        { "name": "Linkwarden",  "category": "Bookmarks",    "blurb": "Self-hosted bookmarks" },
+        { "name": "Homebox",     "category": "Inventory",    "blurb": "Home inventory tracker" },
+        { "name": "Grocy",       "category": "Household",    "blurb": "Groceries + chores" },
+        { "name": "FreshRSS",    "category": "Feeds",        "blurb": "RSS reader" },
+        { "name": "Headscale",   "category": "VPN",          "blurb": "Self-hosted Tailscale" },
+        { "name": "AdGuard",     "category": "Network",      "blurb": "Network-wide ad blocking" }
+    ]
 }
-
