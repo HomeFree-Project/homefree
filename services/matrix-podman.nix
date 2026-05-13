@@ -1,61 +1,91 @@
-{config, lib, pkgs, ...}:
+{ config, lib, pkgs, ... }:
 let
-  version = "v1.152.0";
+  ## Synapse v1.152.x — the oldest tag still on Docker Hub (Hub
+  ## reaps older minors). Live runs v1.130.0 on NixOS-native; the
+  ## live DB will auto-migrate forward on first start under v1.152.
+  version = "v1.152.1";
   image = "matrixdotorg/synapse";
-  containerDataPath = "/var/lib/matrix-synapse-podman";
 
-  version-discord = "v0.7.3";
-  image-discord = "dock.mau.dev/mautrix/discord";
+  containerDataPath = "/var/lib/matrix-synapse-podman";
+  secretsDir = "/var/lib/homefree-secrets/matrix";
 
   port = 8008;
   database-name = "matrix-synapse";
   database-user = "matrix-synapse";
 
-  SYNAPSE_CONFIG_DIR = "/data";
+  domain = config.homefree.system.domain;
+  adminUser = config.homefree.service-options.matrix.admin-account;
 
-  registration-shared-secret-path = config.homefree.service-options.matrix.secrets.registration-shared-secret;
+  ## Matrix homeserver identity. server_name is BAKED INTO every
+  ## stored event, user_id, room_id, and the signing key. Migrating
+  ## a server to a new server_name is unsupported by Synapse — the
+  ## startup check `Found users in database not native to <name>`
+  ## refuses to proceed. So for boxes inheriting an existing Matrix
+  ## DB (e.g. the homefree.host → slacktopia.org dev migration), the
+  ## option below lets the operator keep the original identity even
+  ## when homefree.system.domain has been re-pointed. Federation
+  ## resumes when whichever IP `<serverName>` resolves to is this
+  ## box.
+  serverName =
+    if config.homefree.service-options.matrix.server-name != null
+    then config.homefree.service-options.matrix.server-name
+    else domain;
 
-  settings = {
-    ## server_name is used for user logins, e.g. @user:homefree.host, rather than @user:matrix.homefree.host
-    server_name = config.homefree.system.domain;
-    public_baseurl = "https://matrix.${config.homefree.system.domain}";
+  ## Synapse config. Mirrors live's homeserver.yaml almost verbatim;
+  ## only differences are container-relative paths and the new domain.
+  homeserverSettings = {
+    server_name = serverName;
+    public_baseurl = "https://matrix.${serverName}";
     serve_server_wellknown = true;
-    ## Set empty whitelist if federation is disabled
-    federation_domain_whitelist = if config.homefree.service-options.matrix.enable-federation == false then [] else config.homefree.service-options.matrix.federation-domain-whitelist;
+
+    federation_domain_whitelist =
+      if config.homefree.service-options.matrix.enable-federation == false
+      then []
+      else config.homefree.service-options.matrix.federation-domain-whitelist;
+
     extra_well_known_server_content = {
-      m.homeserver = {
-        base_url = "https://matrix.${config.homefree.system.domain}";
-      };
+      m.homeserver.base_url = "https://matrix.${serverName}";
     };
     extra_well_known_client_content = {
-      m.homeserver = {
-        base_url = "https://matrix.${config.homefree.system.domain}";
-      };
-      # m.identity_server = {
-      #   base_url = "https://identity.${config.homefree.system.domain}";
-      # };
+      m.homeserver.base_url = "https://matrix.${serverName}";
     };
+
     listeners = [{
-      port = 8008;
+      port = port;
       bind_addresses = [ "0.0.0.0" ];
       type = "http";
       tls = false;
       x_forwarded = true;
-      resources = [ {
+      resources = [{
         names = [ "client" "federation" ];
         compress = true;
-      } ];
+      }];
     }];
-    report_stats = false;
-    trusted_key_servers = [{
-      server_name = "matrix.org";
-    }];
-    registration_shared_secret_path = "${SYNAPSE_CONFIG_DIR}/registration-shared-secret";
 
-    rc_message = {
-      per_second = 0.2;
-      burst_count = 10.0;
+    ## psycopg2 reads from a Unix socket mounted into the container
+    ## at /run/postgresql. Same pattern Linkwarden uses for the host
+    ## Postgres. Synapse runs as uid 991 inside the container; the
+    ## host postgres allows peer auth for matching uids.
+    database = {
+      name = "psycopg2";
+      args = {
+        database = database-name;
+        user = database-user;
+        host = "/run/postgresql";
+        cp_min = 5;
+        cp_max = 10;
+      };
     };
+
+    media_store_path = "/data/media_store";
+    signing_key_path = "/data/homeserver.signing.key";
+    registration_shared_secret_path = "/data/registration-shared-secret";
+
+    report_stats = false;
+    enable_registration = false;
+    trusted_key_servers = [{ server_name = "matrix.org"; }];
+
+    rc_message = { per_second = 0.2; burst_count = 10; };
     rc_federation = {
       window_size = 1000;
       sleep_limit = 10;
@@ -64,7 +94,6 @@ let
       concurrent = 3;
     };
 
-    # Compress state automatically
     compress_state_on_startup = true;
     retention = {
       enabled = true;
@@ -73,60 +102,108 @@ let
         max_lifetime = "365d";
       };
     };
+
+    url_preview_enabled = true;
+    ## Mandatory when url_preview_enabled=true. Default RFC-1918 +
+    ## special-use ranges so the preview fetcher can't be tricked
+    ## into hitting internal services.
+    url_preview_ip_range_blacklist = [
+      "127.0.0.0/8" "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16"
+      "100.64.0.0/10" "169.254.0.0/16" "192.0.0.0/24" "192.0.2.0/24"
+      "192.88.99.0/24" "198.18.0.0/15" "198.51.100.0/24" "203.0.113.0/24"
+      "224.0.0.0/4"
+      "::1/128" "fe80::/10" "fc00::/7" "fec0::/10" "ff00::/8"
+      "2001:db8::/32"
+    ];
+    max_upload_size = "50M";
+    max_image_pixels = "32M";
   };
 
-  config-yaml = (pkgs.formats.yaml {}).generate "homserver.yaml" settings;
+  homeserverYaml = (pkgs.formats.yaml {}).generate "homeserver.yaml" homeserverSettings;
 
   preStart = ''
-    mkdir -p ${containerDataPath}
+    mkdir -p ${containerDataPath}/media_store
+    mkdir -p ${secretsDir}
 
-    mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.admin-account-password}"
-    mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.registration-shared-secret}"
+    ## Auto-generate registration_shared_secret on first boot.
+    ## Synapse needs this to support `register_new_matrix_user`.
+    ## Persist it so existing tokens stay valid across restarts.
+    if [ ! -s ${secretsDir}/registration-shared-secret ]; then
+      ${pkgs.openssl}/bin/openssl rand -hex 32 \
+        > ${secretsDir}/registration-shared-secret
+      chmod 600 ${secretsDir}/registration-shared-secret
+    fi
+    install -m 600 ${secretsDir}/registration-shared-secret \
+      ${containerDataPath}/registration-shared-secret
 
-    ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
-      DO
-      \$do\$
-      BEGIN
-         IF EXISTS (
-            SELECT FROM pg_catalog.pg_roles
-            WHERE  rolname = 'matrix-synapse') THEN
+    ## Auto-generate admin account password on first boot.
+    if [ ! -s ${secretsDir}/admin-account-password ]; then
+      ${pkgs.openssl}/bin/openssl rand -base64 24 \
+        | tr -d '\n' > ${secretsDir}/admin-account-password
+      chmod 600 ${secretsDir}/admin-account-password
+    fi
 
-            RAISE NOTICE 'Role "matrix-synapse" already exists. Skipping.';
-         ELSE
-            BEGIN   -- nested block
-               CREATE ROLE "matrix-synapse" WITH LOGIN PASSWORD 'changeme';
-            EXCEPTION
-               WHEN duplicate_object THEN
-                  RAISE NOTICE 'Role "matrix-synapse" was just created by a concurrent transaction. Skipping.';
-            END;
-         END IF;
-      END
-      \$do\$;
+    ## Generate signing key on first boot. ed25519, base64-encoded,
+    ## format synapse expects: `ed25519 <key_id> <base64_data>`.
+    if [ ! -s ${containerDataPath}/homeserver.signing.key ]; then
+      KEY_ID="a_$(${pkgs.openssl}/bin/openssl rand -hex 3)"
+      KEY_B64=$(${pkgs.openssl}/bin/openssl genpkey -algorithm ed25519 -outform DER \
+        | tail -c 32 | ${pkgs.coreutils}/bin/base64 -w0 | tr -d '=')
+      echo "ed25519 $KEY_ID $KEY_B64" > ${containerDataPath}/homeserver.signing.key
+      chmod 600 ${containerDataPath}/homeserver.signing.key
+    fi
+
+    ## Ensure container's synapse user (uid 991) owns its data.
+    ## Use ID 991 to match Docker image default (UID = 991, GID = 991
+    ## per matrixdotorg/synapse Dockerfile).
+    chown -R 991:991 ${containerDataPath}
+
+    ## DB + role bootstrap. The host postgres allows peer auth for
+    ## the matrix-synapse OS user; create the role with that name so
+    ## the in-container peer-auth via the bind-mounted /run/postgresql
+    ## socket works.
+    ${pkgs.postgresql}/bin/psql -X -U postgres <<'EOF'
+      DO $do$ BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'matrix-synapse') THEN
+          CREATE ROLE "matrix-synapse" WITH LOGIN;
+        END IF;
+      END $do$;
     EOF
 
-    ${pkgs.postgresql}/bin/psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'matrix-synapse'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -U postgres -c "CREATE DATABASE \"matrix-synapse\" WITH OWNER \"matrix-synapse\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+    ${pkgs.postgresql}/bin/psql -U postgres \
+      -tc "SELECT 1 FROM pg_database WHERE datname = 'matrix-synapse'" \
+      | ${pkgs.gnugrep}/bin/grep -q 1 \
+      || ${pkgs.postgresql}/bin/psql -U postgres -c \
+        "CREATE DATABASE \"matrix-synapse\" WITH OWNER \"matrix-synapse\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
-    ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
-      DO
-      \$do\$
-      BEGIN
-        GRANT ALL PRIVILEGES ON DATABASE "matrix-synapse" to "matrix-synapse";
-      END
-      \$do\$;
-    EOF
+    ${pkgs.postgresql}/bin/psql -U postgres -c \
+      'GRANT ALL PRIVILEGES ON DATABASE "matrix-synapse" TO "matrix-synapse"'
   '';
 
-  postStart = (if config.homefree.service-options.matrix.admin-account != null then ''
-    ${pkgs.podman}/bin/podman exec \
-    -it ${image}:${version} \
-    -v "${SYNAPSE_CONFIG_DIR}/data/admin-account-password-file:${config.homefree.service-options.matrix.secrets.admin-account-password}" \
-    register_new_matrix_user http://localhost:${toString port} \
-    -c /data/homeserver.yaml \
-    --exists-ok \
-    --admin \
-    --user ${config.homefree.service-options.matrix.admin-account} \
-    --password-file /data/admin-account-password-file
-  '' else "");
+  postStart = pkgs.writeShellScript "matrix-synapse-poststart" ''
+    set -u
+    ## Register the admin account once Synapse is responsive. The
+    ## register_new_matrix_user script uses registration_shared_secret
+    ## to talk to /_synapse/admin/v1/register. `--exists-ok` makes
+    ## this idempotent across restarts.
+    ${lib.optionalString (adminUser != null) ''
+      for i in $(seq 1 60); do
+        if ${pkgs.curl}/bin/curl -sf "http://127.0.0.1:${toString port}/health" >/dev/null 2>&1; then
+          break
+        fi
+        [ "$i" = 60 ] && { echo "matrix postStart: synapse never came up"; exit 0; }
+        sleep 2
+      done
+
+      ${pkgs.podman}/bin/podman exec matrix-synapse \
+        register_new_matrix_user \
+          --user ${adminUser} \
+          --password "$(cat ${secretsDir}/admin-account-password)" \
+          --admin --exists-ok \
+          -c /data/homeserver.yaml \
+          http://127.0.0.1:${toString port} 2>&1 | tail -3 || true
+    ''}
+  '';
 in
 {
   options.homefree.service-options.matrix = {
@@ -157,18 +234,20 @@ in
     admin-account = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Admin account username";
+      description = "Admin account username (localpart only, e.g. 'erahhal')";
     };
 
-    secrets = {
-      registration-shared-secret = lib.mkOption {
-        type = lib.types.path;
-        description = "Path to registration shared secret file";
-      };
-      admin-account-password = lib.mkOption {
-        type = lib.types.path;
-        description = "Path to admin account password file";
-      };
+    server-name = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Override Matrix server_name. Defaults to homefree.system.domain
+        when null. Set explicitly when migrating an existing homeserver
+        whose user_ids/events/signing key are tied to a different
+        identity than the current box's primary domain. Changing this
+        on a non-empty DB requires the DB to already contain users for
+        the configured value — Synapse refuses to start otherwise.
+      '';
     };
 
     label = lib.mkOption {
@@ -180,7 +259,7 @@ in
 
     name = lib.mkOption {
       type = lib.types.str;
-      default = "matrix-synapse";
+      default = "Matrix";
       internal = true;
       description = "Service display name";
     };
@@ -191,213 +270,75 @@ in
       internal = true;
       description = "Project name";
     };
+
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for Matrix service";
+    };
   };
 
   config = {
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.matrix.enable {
+      matrix-synapse = {
+        image = "${image}:${version}";
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.matrix.enable {
-    matrix-synapse = {
-      image = "${image}:${version}";
+        autoStart = true;
 
-      autoStart = true;
+        ports = [
+          "0.0.0.0:${toString port}:${toString port}"
+        ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+        volumes = [
+          "/etc/localtime:/etc/localtime:ro"
+          "${containerDataPath}:/data"
+          "${homeserverYaml}:/data/homeserver.yaml:ro"
+          ## Bind-mount host's postgres socket. Synapse uses
+          ## host=/run/postgresql in homeserver.yaml; this puts the
+          ## socket at the same path inside the container so peer
+          ## auth as the `matrix-synapse` role works.
+          "/run/postgresql:/run/postgresql"
+        ];
 
-      ports = [
-        "0.0.0.0:${toString port}:${toString port}"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:${SYNAPSE_CONFIG_DIR}"
-        "${registration-shared-secret-path}:${SYNAPSE_CONFIG_DIR}/registration-shared-secret"
-        "${config-yaml}:${SYNAPSE_CONFIG_DIR}/homeserver.yaml:ro"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        SYNAPSE_SERVER_NAME = "";
-        SYNAPSE_REPORT_STATS = "no";
-        SYNAPSE_HTTP_PORT = "${toString port}";
-        SYNAPSE_CONFIG_DIR = SYNAPSE_CONFIG_DIR;
-        SYNAPSE_CONFIG_PATH = "${SYNAPSE_CONFIG_DIR}/homeserver.yaml";
-        SYNAPSE_DATA_DIR = SYNAPSE_CONFIG_DIR;
+        environment = {
+          TZ = config.homefree.system.timeZone;
+          SYNAPSE_CONFIG_DIR = "/data";
+          SYNAPSE_CONFIG_PATH = "/data/homeserver.yaml";
+          SYNAPSE_DATA_DIR = "/data";
+        };
       };
-
-      environmentFiles = [
-        config.homefree.services.linkwarden.secrets.environment
-      ];
     };
 
-    # matrix-discord = {
-    #   image = ":${}"
-    # }
-  };
-
-  systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [
-        "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}"
-      ];
-      ExecStartPost = [ "!${pkgs.writeShellScript "matrix-synapse-poststart" postStart}" ];
-    };
-  };
-
-  # services.coturn = rec {
-  #   enable = config.homefree.service-options.matrix.enable;
-  #   no-cli = true;
-  #   no-tcp-relay = true;
-  #   min-port = 49000;
-  #   max-port = 50000;
-  #   use-auth-secret = true;
-  #   static-auth-secret = "will be world readable for local users :(";
-  #   realm = "turn.${config.homefree.system.domain}";
-  #   cert = "${config.security.acme.certs.${realm}.directory}/full.pem";
-  #   pkey = "${config.security.acme.certs.${realm}.directory}/key.pem";
-  #   extraConfig = ''
-  #     # for debugging
-  #     verbose
-  #     # ban private IP ranges
-  #     no-multicast-peers
-  #     denied-peer-ip=0.0.0.0-0.255.255.255
-  #     denied-peer-ip=10.0.0.0-10.255.255.255
-  #     denied-peer-ip=100.64.0.0-100.127.255.255
-  #     denied-peer-ip=127.0.0.0-127.255.255.255
-  #     denied-peer-ip=169.254.0.0-169.254.255.255
-  #     denied-peer-ip=172.16.0.0-172.31.255.255
-  #     denied-peer-ip=192.0.0.0-192.0.0.255
-  #     denied-peer-ip=192.0.2.0-192.0.2.255
-  #     denied-peer-ip=192.88.99.0-192.88.99.255
-  #     denied-peer-ip=192.168.0.0-192.168.255.255
-  #     denied-peer-ip=198.18.0.0-198.19.255.255
-  #     denied-peer-ip=198.51.100.0-198.51.100.255
-  #     denied-peer-ip=203.0.113.0-203.0.113.255
-  #     denied-peer-ip=240.0.0.0-255.255.255.255
-  #     denied-peer-ip=::1
-  #     denied-peer-ip=64:ff9b::-64:ff9b::ffff:ffff
-  #     denied-peer-ip=::ffff:0.0.0.0-::ffff:255.255.255.255
-  #     denied-peer-ip=100::-100::ffff:ffff:ffff:ffff
-  #     denied-peer-ip=2001::-2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff
-  #     denied-peer-ip=2002::-2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-  #     denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-  #     denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-  #   '';
-  # };
-  #
-  # # get a certificate
-  # security.acme.certs.${config.services.coturn.realm} = {
-  #   /* insert here the right configuration to obtain a certificate */
-  #   postRun = "systemctl restart coturn.service";
-  #   group = "turnserver";
-  # };
-
-  ## These are blocked by adguardhome
-  services.adguardhome.settings.user_rules = lib.optionals config.homefree.service-options.matrix.enable [
-    # "@@||_matrix._tcp.bchn.foo^"
-    # "@@||_matrix-fed._tcp.bchn.foo^"
-    # "@@||_matrix._tcp.mastersh.pro^"
-    # "@@||_matrix-fed._tcp.mastersh.pro^"
-    # "@@||_matrix._tcp.dea.monster^"
-    # "@@||_matrix-fed._tcp.dea.monster^"
-    # "@@||dea.monster^"
-  ];
-
-  services.matrix-appservice-discord = lib.optionalAttrs config.homefree.service-options.matrix.enable {
-    enable = config.homefree.service-options.matrix.enable;
-    # environmentFile = /etc/keyring/matrix-appservice-discord/tokens.env;
-    # The appservice is pre-configured to use SQLite by default.
-    # It's also possible to use PostgreSQL.
-    settings = {
-      bridge = {
-        domain = config.homefree.system.domain;
-        homeserverUrl = "https://matrix.${config.homefree.system.domain}";
+    systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
+      after = [ "dns-ready.service" "postgresql.service" ];
+      requires = [ "dns-ready.service" "postgresql.service" ];
+      serviceConfig = {
+        ExecStartPre = [ "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}" ];
+        ExecStartPost = [ "!${postStart}" ];
       };
-
-      # The service uses SQLite by default, but it's also possible to use
-      # PostgreSQL instead:
-      #database = {
-      #  filename = ""; # empty value to disable sqlite
-      #  connString = "socket:/run/postgresql?db=matrix-appservice-discord";
-      #};
     };
-  };
 
-  # ## @TODO: lock down user password
-  # systemd.services.matrix-synapse =
-  # let
-  #   preStart = ''
-  #     mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.admin-account-password}"
-  #     mkdir -p "${builtins.dirOf config.homefree.service-options.matrix.secrets.registration-shared-secret}"
-  #
-  #     ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
-  #       DO
-  #       \$do\$
-  #       BEGIN
-  #          IF EXISTS (
-  #             SELECT FROM pg_catalog.pg_roles
-  #             WHERE  rolname = '${database-user}') THEN
-  #
-  #             RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
-  #          ELSE
-  #             BEGIN   -- nested block
-  #                CREATE ROLE "${database-user}" WITH LOGIN PASSWORD 'changeme';
-  #             EXCEPTION
-  #                WHEN duplicate_object THEN
-  #                   RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
-  #             END;
-  #          END IF;
-  #       END
-  #       \$do\$;
-  #     EOF
-  #
-  #     ${pkgs.postgresql}/bin/psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
-  #
-  #     ${pkgs.postgresql}/bin/psql -X -U postgres << EOF
-  #       DO
-  #       \$do\$
-  #       BEGIN
-  #         GRANT ALL PRIVILEGES ON DATABASE "${database-name}" to "${database-user}";
-  #       END
-  #       \$do\$;
-  #     EOF
-  #   '';
-  #
-  #   postStart = (if config.homefree.service-options.matrix.admin-account != null then ''
-  #     /run/current-system/sw/bin/matrix-synapse-register_new_matrix_user --exists-ok --admin --user ${config.homefree.service-options.matrix.admin-account} --password-file ${config.homefree.service-options.matrix.secrets.admin-account-password}
-  #   '' else "");
-  # in
-  # {
-  #   serviceConfig = {
-  #     ExecStartPre = [
-  #       "${pkgs.writeShellScript "matrix-synapse-prestart-make-paths" preStart}"
-  #     ];
-  #     ExecStartPost = [
-  #       "${pkgs.writeShellScript "matrix-synapse-poststart" postStart}"
-  #     ];
-  #     ## Make sure service can read the secrets, as it's heavily sandboxed.
-  #     BindReadOnlyPaths = [
-  #       config.homefree.service-options.matrix.secrets.admin-account-password
-  #       config.homefree.service-options.matrix.secrets.registration-shared-secret
-  #     ];
-  #   };
-  # };
+    services.postgresql = lib.optionalAttrs config.homefree.service-options.matrix.enable {
+      enable = true;
+    };
 
-    homefree.service-config = [{
+    homefree.service-config = lib.optionals config.homefree.service-options.matrix.enable [{
       inherit (config.homefree.service-options.matrix) label name project-name;
+      systemd-service-names = [
+        "podman-matrix-synapse"
+        "postgresql"
+      ];
       sso = {
         kind = "none";
-        notes = "Matrix clients (Element, FluffyChat, etc.) authenticate to Synapse over the Matrix CS API with their own access tokens — they don't speak OIDC at the HTTP gateway. Synapse supports OIDC natively for new account creation, but wiring that is a separate effort; users on existing accounts wouldn't see any change. Use Synapse's built-in auth for now.";
+        notes = ''
+          Matrix clients (Element, etc.) authenticate to Synapse over the
+          Matrix CS API with their own access tokens — they don't speak
+          OIDC at the HTTP gateway. Synapse supports OIDC natively for
+          new account creation; wiring that is a separate effort.
+        '';
       };
-      systemd-service-names = [
-        "matrix-synapse"
-        "matrix-synapse-discord"
-      ];
       reverse-proxy = {
-        enable = config.homefree.service-options.matrix.enable;
+        enable = true;
         subdomains = [ "matrix" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -405,33 +346,27 @@ in
         port = port;
         public = config.homefree.service-options.matrix.public;
         extraCaddyConfig = ''
-          # Matrix Synapse settings
-          respond /.well-known/matrix/server `{"m.server": "matrix.${config.homefree.system.domain}:443"}`
-          reverse_proxy /_matrix/* ${config.homefree.network.lan-address}:8008
-          reverse_proxy /_synapse/client/* ${config.homefree.network.lan-address}:8008
+          # Matrix Synapse settings: respond to .well-known/matrix/server
+          # for the homeserver's server_name so federating peers find
+          # us. NOTE: ${serverName} may differ from the box's primary
+          # domain when migrating an existing homeserver (see the
+          # serverName comment above).
+          respond /.well-known/matrix/server `{"m.server": "matrix.${serverName}:443"}`
+          reverse_proxy /_matrix/* ${config.homefree.network.lan-address}:${toString port}
+          reverse_proxy /_synapse/client/* ${config.homefree.network.lan-address}:${toString port}
+          reverse_proxy /_synapse/admin/* ${config.homefree.network.lan-address}:${toString port}
         '';
       };
-      firewall = {
-        open-ports = {
-          tcp = [
-            3478
-            5349
-          ];
-          udp = [
-            3478
-            5349
-          ]
-          ++
-          # Ports 49000-50000
-          builtins.genList (x: x + 49000) 1001;
-        };
-      };
       backup = {
-        paths = [
-          containerDataPath
-          "/var/lib/private/matrix-appservice-discord"
-        ];
+        paths = [ containerDataPath ];
+        postgres-databases = [ database-name ];
       };
+      options-metadata = [
+        { path = "enable"; type = "bool"; default = false; description = "Enable Matrix homeserver"; }
+        { path = "public"; type = "bool"; default = false; description = "Make service accessible from WAN"; }
+        { path = "enable-federation"; type = "bool"; default = false; description = "Enable federation"; }
+        { path = "admin-account"; type = "str"; nullable = true; default = null; description = "Admin account username (localpart)"; }
+      ];
     }];
   };
 }

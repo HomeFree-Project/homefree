@@ -55,7 +55,7 @@ in
     ./services/immich-podman.nix
     ./services/linkwarden-podman.nix
     ./services/lidarr-podman.nix
-    # ./services/matrix-podman.nix
+    ./services/matrix-podman.nix
     ./services/mediawiki-podman.nix
     ./services/minecraft-podman.nix
     # ./services/mongo-podman.nix

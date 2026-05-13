@@ -223,6 +223,14 @@ class InstallationService:
       "enable": false,
       "public": false
     },
+    "matrix": {
+      "enable": false,
+      "public": false,
+      "enable_federation": false,
+      "federation_domain_whitelist": [ "matrix.org", "nixos.org", "homefree.host", "rycee.net", "gnome.org" ],
+      "admin_account": null,
+      "server_name": null
+    },
     "mediawiki": {
       "enable": false,
       "public": false
@@ -495,6 +503,15 @@ in
 
       immich.enable = jsonData.services.immich.enable or false;
       immich.public = jsonData.services.immich.public or false;
+
+      matrix.enable = jsonData.services.matrix.enable or false;
+      matrix.public = jsonData.services.matrix.public or false;
+      matrix.enable-federation = jsonData.services.matrix.enable_federation or false;
+      matrix.federation-domain-whitelist =
+        jsonData.services.matrix.federation_domain_whitelist
+        or [ "matrix.org" "nixos.org" "homefree.host" "rycee.net" "gnome.org" ];
+      matrix.admin-account = jsonData.services.matrix.admin_account or null;
+      matrix.server-name = jsonData.services.matrix.server_name or null;
 
       mediawiki.enable = jsonData.services.mediawiki.enable or false;
       mediawiki.public = jsonData.services.mediawiki.public or false;
