@@ -118,7 +118,13 @@ let
     ADMIN_EMAIL="${adminEmail}"
     ADMIN_NAME="${config.homefree.system.adminDescription or adminUser}"
     ADMIN_PASS=$(cat ${immichSecretsDir}/admin-password)
-    DB_HOST="${config.homefree.network.lan-address}"
+    ## postgres-vectorchord publishes 6432 on 0.0.0.0:6432 of the host,
+    ## but its pg_hba.conf only accepts connections from the container's
+    ## internal bridge subnet, NOT from lan-address (which the host
+    ## reaches it via the published port but appears as a different
+    ## source IP to Postgres). 127.0.0.1 works because the loopback
+    ## interface bypasses the bridge IP mapping.
+    DB_HOST="127.0.0.1"
     DB_PORT="6432"
     DB_NAME="${database-name}"
     DB_USER="postgres"
@@ -176,43 +182,39 @@ let
       sleep 2
     done
 
-    ## Build the JSON-patch SQL. We use jsonb_set to splice in
-    ## just the keys we care about, preserving anything else the
-    ## user or Immich itself wrote. INSERT-then-UPDATE pattern
-    ## handles the case where system_metadata has no row for
-    ## 'system-config' yet (fresh install before any UI tweak).
+    ## Build the JSON config. Use jsonb_build_object so the nested
+    ## `oauth` and `passwordLogin` objects are constructed in one shot.
+    ## (jsonb_set won't create intermediate parent objects on a path
+    ## like `{oauth,enabled}` if `oauth` doesn't already exist —
+    ## learned the hard way: it silently leaves the row at `{}`.)
+    ##
+    ## The merge `value || ...` preserves any unrelated keys the user
+    ## or Immich itself wrote, then overwrites oauth + passwordLogin
+    ## with our values.
     PGPASSWORD="$DB_PASS" ${pkgs.postgresql}/bin/psql \
       -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-      -v ON_ERROR_STOP=1 <<SQL 2>&1 | tail -3
+      -v cid="$CID" -v csec="$CSEC" -v issuer="$ISSUER" \
+      -v ON_ERROR_STOP=1 <<'SQL' 2>&1 | tail -3
     INSERT INTO system_metadata (key, value)
     VALUES ('system-config', '{}'::jsonb)
     ON CONFLICT (key) DO NOTHING;
 
     UPDATE system_metadata
-    SET value =
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-      jsonb_set(
-        COALESCE(value, '{}'::jsonb),
-        '{oauth,enabled}',         to_jsonb(true)),
-        '{oauth,issuerUrl}',       to_jsonb('$ISSUER'::text)),
-        '{oauth,clientId}',        to_jsonb('$CID'::text)),
-        '{oauth,clientSecret}',    to_jsonb('$CSEC'::text)),
-        '{oauth,scope}',           to_jsonb('openid email profile urn:zitadel:iam:org:project:roles'::text)),
-        '{oauth,autoRegister}',    to_jsonb(true)),
-        '{oauth,autoLaunch}',      to_jsonb(true)),
-        '{oauth,buttonText}',      to_jsonb('Sign in with HomeFree SSO'::text)),
-        '{oauth,roleClaim}',       to_jsonb('urn:zitadel:iam:org:project:roles'::text)),
-        '{oauth,adminRole}',       to_jsonb('homefree-admin'::text)),
-        '{passwordLogin,enabled}', to_jsonb(false))
+    SET value = COALESCE(value, '{}'::jsonb) || jsonb_build_object(
+      'oauth', jsonb_build_object(
+        'enabled',      true,
+        'issuerUrl',    :'issuer',
+        'clientId',     :'cid',
+        'clientSecret', :'csec',
+        'scope',        'openid email profile urn:zitadel:iam:org:project:roles',
+        'autoRegister', true,
+        'autoLaunch',   true,
+        'buttonText',   'Sign in with HomeFree SSO',
+        'roleClaim',    'urn:zitadel:iam:org:project:roles',
+        'adminRole',    'homefree-admin'
+      ),
+      'passwordLogin', jsonb_build_object('enabled', false)
+    )
     WHERE key = 'system-config';
 SQL
 
