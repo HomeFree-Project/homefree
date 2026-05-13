@@ -176,7 +176,8 @@ class InstallationService:
     },
     "cryptpad": {
       "enable": false,
-      "public": false
+      "public": false,
+      "adminKeys": []
     },
     "forgejo": {
       "enable": false,
@@ -441,6 +442,7 @@ in
 
       cryptpad.enable = jsonData.services.cryptpad.enable or false;
       cryptpad.public = jsonData.services.cryptpad.public or false;
+      cryptpad.adminKeys = jsonData.services.cryptpad.adminKeys or [];
 
       forgejo.enable = jsonData.services.forgejo.enable or false;
       forgejo.public = jsonData.services.forgejo.public or false;
@@ -501,7 +503,21 @@ in
         public = instance.public or false;
         subdomain = instance.subdomain;
         name = instance.name;
-        logo-path = if (instance."logo-path" or null) == null || instance."logo-path" == "" then null else instance."logo-path";
+        logo-path =
+          let raw = instance."logo-path" or null; in
+          if raw == null || raw == "" then null
+          else
+            ## Path is interpreted relative to /etc/nixos (the flake source
+            ## root). A leading "/etc/nixos/" prefix is stripped so legacy
+            ## absolute paths still resolve. Using ./. + "/relative" makes
+            ## the result a flake-relative path literal, which pure-eval
+            ## accepts and Nix imports into the store automatically.
+            let
+              stripped =
+                if lib.strings.hasPrefix "/etc/nixos/" raw
+                then lib.strings.removePrefix "/etc/nixos/" raw
+                else raw;
+            in (./. + ("/" + stripped));
         readonly = instance.readonly or false;
         disable-anonymous-editing = instance."disable-anonymous-editing" or false;
         disable-anonymous-viewing = instance."disable-anonymous-viewing" or false;

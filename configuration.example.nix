@@ -657,7 +657,6 @@ in
       cryptpad = {
         enable = true;
         adminKeys = [
-          "[erahhal@cryptpad.rahh.al/LABCuezbNO98W0ZJO+ew-SQUi6NQ7bfXbJEKEY52GPI=]"
           "[erahhal@docs.homefree.host/P5QOi+XGnpjjH1R0ua5FWXH3CoWG-+fsG-fZFYitvN0=]"
         ];
       };
