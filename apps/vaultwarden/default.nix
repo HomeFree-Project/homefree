@@ -131,56 +131,56 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
-    vaultwarden = {
-      image = "vaultwarden/server:${version}";
+    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
+      vaultwarden = {
+        image = "vaultwarden/server:${version}";
 
-      autoStart = true;
+        autoStart = true;
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+        extraOptions = [
+          # "--pull=always"
+        ];
 
-      ports = [
-        "0.0.0.0:${toString port}:80"
-      ];
+        ports = [
+          "0.0.0.0:${toString port}:80"
+        ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:/data"
-        ## Mount the synthesized CA bundle (Caddy local CA + system
-        ## roots) so Vaultwarden's Rust HTTP client trusts
-        ## sso.<domain> when fetching OIDC discovery.
-        "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
-      ];
+        volumes = [
+          "/etc/localtime:/etc/localtime:ro"
+          "${containerDataPath}:/data"
+          ## Mount the synthesized CA bundle (Caddy local CA + system
+          ## roots) so Vaultwarden's Rust HTTP client trusts
+          ## sso.<domain> when fetching OIDC discovery.
+          "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
+        ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        ## DOMAIN drives the redirect_uri Vaultwarden registers
-        ## with Zitadel. Must be the public HTTPS URL — Caddy
-        ## fronts the container at this URL.
-        DOMAIN = "https://vaultwarden.${config.homefree.system.domain}";
-        ## Disable open registration — SSO becomes the only path
-        ## in. Existing local users created BEFORE SSO was wired
-        ## up still log in via SSO_SIGNUPS_MATCH_EMAIL once they
-        ## attempt SSO sign-in.
-        SIGNUPS_ALLOWED = "false";
-        ## Rust native-tls honors SSL_CERT_FILE.
-        SSL_CERT_FILE = "/etc/ssl/homefree-ca-bundle.crt";
+        environment = {
+          TZ = config.homefree.system.timeZone;
+          ## DOMAIN drives the redirect_uri Vaultwarden registers
+          ## with Zitadel. Must be the public HTTPS URL — Caddy
+          ## fronts the container at this URL.
+          DOMAIN = "https://vaultwarden.${config.homefree.system.domain}";
+          ## Disable open registration — SSO becomes the only path
+          ## in. Existing local users created BEFORE SSO was wired
+          ## up still log in via SSO_SIGNUPS_MATCH_EMAIL once they
+          ## attempt SSO sign-in.
+          SIGNUPS_ALLOWED = "false";
+          ## Rust native-tls honors SSL_CERT_FILE.
+          SSL_CERT_FILE = "/etc/ssl/homefree-ca-bundle.crt";
+        };
+
+        ## OIDC env synthesized by preStart from Zitadel secrets.
+        environmentFiles = [ ssoEnvFile ];
       };
-
-      ## OIDC env synthesized by preStart from Zitadel secrets.
-      environmentFiles = [ ssoEnvFile ];
     };
-  };
 
-  systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "vaultwarden-prestart" preStart}" ];
+    systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
+      after = [ "dns-ready.service" ];
+      requires = [ "dns-ready.service" ];
+      serviceConfig = {
+        ExecStartPre = [ "!${pkgs.writeShellScript "vaultwarden-prestart" preStart}" ];
+      };
     };
-  };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.vaultwarden) label name project-name;

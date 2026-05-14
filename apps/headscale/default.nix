@@ -426,6 +426,20 @@ in
     settings = headplaneSettings;
   };
 
+  ## Belt-and-suspenders: enforce the secrets directory mode and
+  ## owner on every rebuild via systemd-tmpfiles. The
+  ## `headplane-prepare-secrets` oneshot below also sets these, but
+  ## systemd doesn't re-run oneshots when their content hasn't
+  ## changed — and historically the Python backend's secret-writer
+  ## was clobbering this dir back to 0700 (it's fixed now, but the
+  ## tmpfiles rule catches any future regression). `z` (vs. `Z`)
+  ## adjusts the dir itself without recursing into files, so we
+  ## don't fight individual file modes (config.yaml is 0640,
+  ## headscale-api-key is 0600, etc.).
+  systemd.tmpfiles.rules = lib.mkIf deployHeadplane [
+    "z ${headplaneSecretsDir} 0750 root ${config.services.headscale.group} - -"
+  ];
+
   ## Standalone oneshot that auto-generates the cookie secret before
   ## headplane.service starts. LoadCredential= is processed by PID 1
   ## *before* ExecStartPre runs, so we can't generate the file from

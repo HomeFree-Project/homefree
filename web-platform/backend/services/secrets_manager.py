@@ -529,9 +529,18 @@ class SecretsManager:
             # Get target file path using instance label
             file_path = SecretsManager.get_secret_file_path(instance_label, secret_key)
 
-            # Create parent directory if needed
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            os.chmod(file_path.parent, 0o700)
+            # Create parent directory if needed. Only set the default
+            # mode (0700) on initial creation; if the directory already
+            # exists, the Nix module that owns the service has already
+            # set the right mode (e.g. headscale's prepare-secrets unit
+            # makes it 0750 root:headscale so headplane can read).
+            # Unconditionally chmod-ing here would clobber that and
+            # break the service on the next rebuild.
+            dir_path = file_path.parent
+            existed = dir_path.is_dir()
+            dir_path.mkdir(parents=True, exist_ok=True)
+            if not existed:
+                os.chmod(dir_path, 0o700)
 
             # Write secret to temporary file first (atomic write)
             with tempfile.NamedTemporaryFile(mode='w', dir=file_path.parent, delete=False) as tmp:
