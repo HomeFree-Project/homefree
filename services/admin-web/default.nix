@@ -7,7 +7,7 @@ let
 
   # Path to web-platform directory in this repository
   # This works because the whole homefree repo is in the nix store when building
-  installerWebPath = ../web-platform;
+  installerWebPath = ../../web-platform;
 
   # Python environment with required packages
   pythonEnv = pkgs.python3.withPackages (ps: with ps; [
@@ -379,44 +379,57 @@ let
   config-json = (pkgs.formats.json {}).generate "admin-config.json" admin-config;
 
   # Per-service icons for the home.<domain> app launcher (and any
-  # future admin UI that wants them). Sources:
+  # future admin UI that wants them). Sources, in priority order:
   #
-  #   1. The bundled icon set at web-platform/frontend/src/assets/
-  #      icons/ — a curated collection of Simple Icons SVGs, one
-  #      file per service label. Auto-picked up by filename match.
+  #   1. Per-service `icon = <path>` override on service-config.
+  #      Wins over (2). Useful for third-party service modules that
+  #      ship their own icon, or for child instances (mediawiki_*,
+  #      minecraft_*) that want a different icon than the parent.
   #
-  #   2. A per-service `icon = <path>` override on service-config.
-  #      Wins over (1) when set. Useful for third-party service
-  #      modules that ship their own icon.
+  #   2. Convention: apps/<service-label>/icon.svg, the bundled SVG
+  #      that ships next to each app's default.nix. Discovered at
+  #      eval time by scanning apps/*/icon.svg.
   #
-  # All icons land at /run/homefree/admin/icons/<label>.<ext> at
-  # runtime and Caddy serves them from /icons/* on home + admin
-  # vhosts. The frontend hard-codes ".svg" in its URL template,
-  # so anything other than SVG just won't be found — which is
-  # fine (initials fall back gracefully).
-  bundledIconsDir = ../web-platform/frontend/src/assets/icons;
+  # The discovery walks apps/ rather than each service-config entry
+  # so a service module's directory name effectively becomes its
+  # icon key. Service modules whose label doesn't match their
+  # directory name (rare — see apps/zitadel which declares both
+  # `zitadel` and `oauth2proxy` labels) need an explicit `icon = ./icon.svg`
+  # on the service-config to pick the icon up.
+  #
+  # All resolved icons land at /run/homefree/admin/icons/<label>.<ext>
+  # at runtime, and Caddy serves them from /icons/* on home + admin
+  # vhosts. The frontend hard-codes ".svg" in its URL template; any
+  # other extension simply 404s and the initial-letter fallback in
+  # user-app.js takes over.
+  appsDir = ../../apps;
   service-icons-pkg =
     let
-      # Map of label -> source path, with overrides winning over
-      # bundled icons. We walk every service-config entry to build
-      # this so each service gets at most one icon.
+      # (1) Explicit per-service overrides from service-config.
       explicitOverrides = builtins.listToAttrs (lib.map
         (sc: { name = sc.label; value = sc.icon; })
         (lib.filter (sc: (sc.icon or null) != null) cfg.service-config));
 
-      labelsWithBundled =
-        if builtins.pathExists bundledIconsDir
-        then lib.mapAttrs'
-          (filename: _:
-            let label = lib.removeSuffix ".svg" filename;
-            in { name = label; value = "${bundledIconsDir}/${filename}"; })
-          (lib.filterAttrs
-            (n: t: t == "regular" && lib.hasSuffix ".svg" n)
-            (builtins.readDir bundledIconsDir))
+      # (2) Convention scan: apps/<dir>/icon.svg, keyed by <dir>.
+      appDirsWithIcon =
+        if builtins.pathExists appsDir
+        then
+          let
+            entries = builtins.readDir appsDir;
+            dirs = lib.filterAttrs (n: t: t == "directory") entries;
+            withIcon = lib.filterAttrs
+              (dir: _:
+                builtins.pathExists "${appsDir}/${dir}/icon.svg")
+              dirs;
+          in
+          lib.mapAttrs' (dir: _: {
+            name = dir;
+            value = "${appsDir}/${dir}/icon.svg";
+          }) withIcon
         else { };
 
-      # Override map wins.
-      resolved = labelsWithBundled // explicitOverrides;
+      # Overrides win, then conventions, by left-precedence in //.
+      resolved = appDirsWithIcon // explicitOverrides;
 
       copyLines = lib.concatStringsSep "\n" (lib.mapAttrsToList
         (label: src:

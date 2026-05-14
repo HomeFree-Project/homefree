@@ -4,7 +4,7 @@ let
 in
 {
   nixpkgs.overlays = [
-    (import ../overlays/ddclient-hetzner-cloud.nix)
+    (import ../../overlays/ddclient-hetzner-cloud.nix)
   ];
   #-----------------------------------------------------------------------------------------------------
   # Dynamic DNS

@@ -19,73 +19,75 @@ in
     ## Host modules
     ./modules/mounts.nix
 
-    ## Admin interface
-    ./services/admin-web.nix
-
-    ## System services
-    ## @TODO: Evaluate if any can be moved to podman
-    ./services/backup.nix
-    ./services/caddy.nix
-    ./services/ddclient.nix
-    ./services/dnsmasq.nix
-    ./services/headscale.nix
-    ./services/netbird.nix
+    ## ─── Infrastructure (services/) ───
+    ## System services shared by apps; not user-facing.
+    ./services/admin-web
+    ./services/backup
+    ./services/caddy
+    ./services/ddclient
+    ./services/dnsmasq
+    ./services/goidc-proxy
     ./services/landing-page
-    ./services/unbound.nix
+    # ./services/mongo
+    ./services/mqtt
+    ./services/mysql
+    ./services/netavark-reload
+    ./services/postgres
+    ./services/postgres-vectorchord
+    ./services/service-config-json
+    ./services/sso
+    ./services/unbound
 
-    ## Shared services
-    ## @TODO: Evaluate if any can be moved to podman
-    ./services/mqtt.nix
-    ./services/mysql.nix
-    ./services/postgres.nix
+    ## ─── User-facing apps (apps/) ───
+    ## Each app is self-contained: default.nix + icon.svg + manual.md
+    ## live in apps/<name>/. Order doesn't matter — modules merge.
+    ## Inside each one's default.nix the `enable` toggle is gated on
+    ## the user's homefree-config.json so importing is cheap when
+    ## the app is disabled.
+    ./apps/adguard
+    ./apps/azuracast
+    ./apps/baikal
+    ./apps/cryptpad
+    ./apps/forgejo
+    ./apps/freshrss
+    ./apps/frigate
+    ./apps/grocy
+    ./apps/headscale
+    ./apps/home-assistant
+    ./apps/homebox
+    ./apps/immich
+    ./apps/jellyfin
+    ./apps/joplin
+    ./apps/lidarr
+    ./apps/linkwarden
+    ./apps/matrix
+    ./apps/mediawiki
+    ./apps/minecraft
+    ./apps/netbird
+    ./apps/nextcloud
+    ./apps/nzbget
+    ./apps/odoo
+    ./apps/ollama
+    ./apps/radicale
+    ./apps/screeenly
+    ./apps/snipe-it
+    ./apps/trilium
+    ./apps/unifi
+    ./apps/unifi-os
+    ./apps/vaultwarden
+    ./apps/webdav
 
-    ## Podman-based services
-    ./services/adguardhome-podman.nix
-    ./services/azuracast-podman.nix
-    ./services/baikal-podman.nix
-    ./services/cryptpad-podman.nix
-    ./services/forgejo-podman.nix
-    ./services/freshrss-podman.nix
-    ./services/frigate-podman.nix
-    ./services/grocy-podman.nix
-    ./services/home-assistant-podman.nix
-    ./services/homebox-podman.nix
-    ./services/jellyfin-podman.nix
-    ./services/joplin-podman.nix
-    ./services/immich-podman.nix
-    ./services/linkwarden-podman.nix
-    ./services/lidarr-podman.nix
-    ./services/matrix-podman.nix
-    ./services/mediawiki-podman.nix
-    ./services/minecraft-podman.nix
-    # ./services/mongo-podman.nix
-    ./services/nextcloud-podman.nix
-    ./services/nzbget-podman.nix
-    ./services/odoo-podman.nix
-    ./services/ollama-podman.nix
-    ./services/postgres-vectorchord-podman.nix
-    ./services/radicale-podman.nix
-    ./services/screeenly-podman.nix
-    ./services/snipe-it-podman.nix
-    ./services/trilium-podman.nix
-    ./services/unifi-podman.nix
-    ./services/unifi-os-podman.nix
-    ./services/vaultwarden-podman.nix
-    ./services/webdav-podman.nix
-    ./services/netavark-reload.nix
-    ./services/service-config-json.nix
-    ./services/sso.nix
-    ./services/zitadel-podman.nix
-    ./services/zitadel-provision.nix
-    ./services/zitadel-pam-bridge.nix
-    ./services/zitadel-password-shim.nix
-    # ./services/zitadel-podman-oauth.nix
+    ## Zitadel is the SSO identity provider. Its three operational
+    ## helpers (provision/pam-bridge/password-shim) live alongside
+    ## the main module so everything Zitadel ships in one folder.
+    ./apps/zitadel
+    ./apps/zitadel/provision.nix
+    ./apps/zitadel/pam-bridge.nix
+    ./apps/zitadel/password-shim.nix
 
-    ## @TODO: Move to podman
-    ## Otherwise entire system needs to be upgraded to upgrade individual app
-    # ./services/authentik.nix
-    # ./services/matrix.nix
-    # ./services/nextcloud.nix
+    ## @TODO: Move to podman so apps can be upgraded independently
+    ## of the rest of the system.
+    # ./apps/authentik
   ];
 
   nix = {

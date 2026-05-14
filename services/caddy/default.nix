@@ -196,7 +196,7 @@ in
   };
 
   nixpkgs.overlays = [
-    (import ../overlays/caddy-with-plugins.nix)
+    (import ../../overlays/caddy-with-plugins.nix)
   ] ++ lib.optional (config.homefree.dns.remote.cert-management.dns-01.secrets.api-token != null) (final: prev: {
     caddy-with-dns-token = prev.writeShellScriptBin "caddy" ''
       if [ -f /run/caddy-secrets/dns-api-token ]; then

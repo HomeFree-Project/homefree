@@ -139,7 +139,7 @@ let
       -e "s|@@NETBIRD_STUN_PORT@@|${toString netbirdStunPort}|g" \
       -e "s|@@NETBIRD_RELAY_PORT@@|${toString netbirdRelayPort}|g" \
       -e "s|@@ZITADEL_DOMAIN@@|${zitadelDomain}|g" \
-      ${./netbird/management.json.tmpl} \
+      ${./management.json.tmpl} \
       > ${netbirdDataPath}/management.json
   '';
 
