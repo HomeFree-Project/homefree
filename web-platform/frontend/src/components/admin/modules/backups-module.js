@@ -246,10 +246,10 @@ class BackupsModule extends LitElement {
     this.config = {
       backups: {
         enable: false,
-        to_path: '',
-        extra_from_paths: [],
-        backblaze_enable: false,
-        backblaze_bucket: ''
+        'to-path': '',
+        'extra-from-paths': [],
+        'backblaze-enable': false,
+        'backblaze-bucket': ''
       }
     };
     this.modified = false;
@@ -957,19 +957,19 @@ class BackupsModule extends LitElement {
         <form-field
           label="Backup Directory"
           type="text"
-          .value=${backups.to_path}
+          .value=${backups['to-path']}
           placeholder="/var/lib/backups"
           help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
-          @field-change=${(e) => this.handleFieldChange('backups.to_path', e.detail.value)}
+          @field-change=${(e) => this.handleFieldChange('backups.to-path', e.detail.value)}
         ></form-field>
 
         <list-input
           label="Extra Backup Paths"
           itemType="path"
-          .value=${backups.extra_from_paths || []}
+          .value=${backups['extra-from-paths'] || []}
           description="Additional directories to include in backups (one per line). HomeFree service data is backed up automatically; use this for user files (Documents, Photos, etc.) — often paths under a mounted NAS share."
           placeholder="/mnt/ellis/Documents"
-          @list-changed=${(e) => this.handleFieldChange('backups.extra_from_paths', e.detail.value)}
+          @list-changed=${(e) => this.handleFieldChange('backups.extra-from-paths', e.detail.value)}
         ></list-input>
 
         ${backups.enable ? html`
@@ -992,7 +992,7 @@ class BackupsModule extends LitElement {
               ` : '▶️ Run Backup Now'}
             </button>
 
-            ${backups.backblaze_enable ? html`
+            ${backups['backblaze-enable'] ? html`
               <button
                 class="btn btn-primary"
                 @click=${() => this.handleSyncBackblaze()}
@@ -1069,7 +1069,7 @@ class BackupsModule extends LitElement {
           @secret-updated=${() => this.handleSecretUpdated()}
         ></secrets-input>
 
-        ${backups.backblaze_enable ? html`
+        ${backups['backblaze-enable'] ? html`
           <secrets-input
             serviceLabel="backup"
             secretKey="backblaze-id"
@@ -1100,21 +1100,21 @@ class BackupsModule extends LitElement {
         <form-field
           label="Enable Backblaze Backups"
           type="boolean"
-          .value=${backups.backblaze_enable}
+          .value=${backups['backblaze-enable']}
           help="Send encrypted backups to Backblaze B2 cloud storage"
-          @field-change=${(e) => this.handleFieldChange('backups.backblaze_enable', e.detail.value)}
+          @field-change=${(e) => this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
         ></form-field>
 
         <form-field
           label="Backblaze Bucket Name"
           type="text"
-          .value=${backups.backblaze_bucket}
+          .value=${backups['backblaze-bucket']}
           placeholder="my-homefree-backups"
           help="B2 bucket name for storing backups (shown for restore even if Backblaze disabled)"
-          @field-change=${(e) => this.handleFieldChange('backups.backblaze_bucket', e.detail.value)}
+          @field-change=${(e) => this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
         ></form-field>
 
-        ${backups.backblaze_enable ? html`
+        ${backups['backblaze-enable'] ? html`
           <div class="info-box">
             <strong>ℹ️ Backblaze Configuration</strong>
             <div style="font-size: 14px; margin-top: 8px;">

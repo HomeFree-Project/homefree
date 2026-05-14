@@ -91,45 +91,45 @@ class ValidationService:
         errors = []
 
         # Validate interfaces
-        if 'wan_interface' in network_config:
-            if not network_config['wan_interface']:
+        if 'wan-interface' in network_config:
+            if not network_config['wan-interface']:
                 errors.append("WAN interface cannot be empty")
 
-        if 'lan_interface' in network_config:
-            if not network_config['lan_interface']:
+        if 'lan-interface' in network_config:
+            if not network_config['lan-interface']:
                 errors.append("LAN interface cannot be empty")
 
         # Check for same interface
-        if ('wan_interface' in network_config and 'lan_interface' in network_config):
-            if network_config['wan_interface'] == network_config['lan_interface']:
+        if ('wan-interface' in network_config and 'lan-interface' in network_config):
+            if network_config['wan-interface'] == network_config['lan-interface']:
                 errors.append("WAN and LAN interfaces must be different")
 
         # Validate IP addresses
-        if 'lan_address' in network_config:
+        if 'lan-address' in network_config:
             try:
-                ipaddress.ip_address(network_config['lan_address'])
+                ipaddress.ip_address(network_config['lan-address'])
             except ValueError:
-                errors.append(f"Invalid LAN address: {network_config['lan_address']}")
+                errors.append(f"Invalid LAN address: {network_config['lan-address']}")
 
         # Validate subnet
-        if 'lan_subnet' in network_config:
+        if 'lan-subnet' in network_config:
             try:
-                network = ipaddress.ip_network(network_config['lan_subnet'])
+                network = ipaddress.ip_network(network_config['lan-subnet'])
             except ValueError:
-                errors.append(f"Invalid LAN subnet: {network_config['lan_subnet']}")
+                errors.append(f"Invalid LAN subnet: {network_config['lan-subnet']}")
 
         # Validate DHCP range
-        if 'dhcp_range_start' in network_config and 'dhcp_range_end' in network_config:
+        if 'dhcp-range-start' in network_config and 'dhcp-range-end' in network_config:
             try:
-                start_ip = ipaddress.ip_address(network_config['dhcp_range_start'])
-                end_ip = ipaddress.ip_address(network_config['dhcp_range_end'])
+                start_ip = ipaddress.ip_address(network_config['dhcp-range-start'])
+                end_ip = ipaddress.ip_address(network_config['dhcp-range-end'])
 
                 if start_ip >= end_ip:
                     errors.append("DHCP range start must be less than end")
 
                 # Validate range is within subnet
-                if 'lan_subnet' in network_config:
-                    subnet = ipaddress.ip_network(network_config['lan_subnet'])
+                if 'lan-subnet' in network_config:
+                    subnet = ipaddress.ip_network(network_config['lan-subnet'])
                     if start_ip not in subnet or end_ip not in subnet:
                         errors.append("DHCP range must be within LAN subnet")
 
@@ -137,14 +137,14 @@ class ValidationService:
                 errors.append(f"Invalid DHCP range: {e}")
 
         # Validate static IPs
-        if 'static_ips' in network_config:
+        if 'static-ips' in network_config:
             errors.extend(ValidationService._validate_static_ips(
-                network_config['static_ips'],
-                network_config.get('lan_subnet')
+                network_config['static-ips'],
+                network_config.get('lan-subnet')
             ))
 
         # Validate bitrates
-        for field in ['wan_bitrate_mbps_down', 'wan_bitrate_mbps_up']:
+        for field in ['wan-bitrate-mbps-down', 'wan-bitrate-mbps-up']:
             if field in network_config and network_config[field] is not None:
                 if not isinstance(network_config[field], int) or network_config[field] <= 0:
                     errors.append(f"{field} must be a positive integer")
@@ -170,7 +170,7 @@ class ValidationService:
             prefix = f"Static IP #{idx + 1}"
 
             # Validate MAC address
-            mac = ip_config.get('mac_address', '')
+            mac = ip_config.get('mac-address', '')
             if not mac:
                 errors.append(f"{prefix}: MAC address required")
             elif not re.match(r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$', mac, re.IGNORECASE):
@@ -270,8 +270,8 @@ class ValidationService:
             return errors
 
         # Validate backup path when backups are enabled
-        if 'to_path' in backups_config:
-            path = backups_config['to_path']
+        if 'to-path' in backups_config:
+            path = backups_config['to-path']
             if not path:
                 errors.append("Backup path cannot be empty when backups are enabled")
             elif not path.startswith('/'):
@@ -280,8 +280,8 @@ class ValidationService:
             errors.append("Backup path is required when backups are enabled")
 
         # Validate Backblaze config
-        if backups_config.get('backblaze_enable'):
-            if not backups_config.get('backblaze_bucket'):
+        if backups_config.get('backblaze-enable'):
+            if not backups_config.get('backblaze-bucket'):
                 errors.append("Backblaze bucket required when Backblaze backups are enabled")
 
         return errors
@@ -297,27 +297,27 @@ class ValidationService:
         warnings = []
 
         # Check for interface changes
-        if old_config.get('wan_interface') != new_config.get('wan_interface'):
+        if old_config.get('wan-interface') != new_config.get('wan-interface'):
             warnings.append(
                 "⚠️ WARNING: Changing WAN interface may cause loss of internet connectivity. "
                 "Ensure you have console access to the system."
             )
 
-        if old_config.get('lan_interface') != new_config.get('lan_interface'):
+        if old_config.get('lan-interface') != new_config.get('lan-interface'):
             warnings.append(
                 "⚠️ WARNING: Changing LAN interface may cause loss of local network connectivity. "
                 "Ensure you have console access to the system."
             )
 
         # Check for LAN address changes
-        if old_config.get('lan_address') != new_config.get('lan_address'):
+        if old_config.get('lan-address') != new_config.get('lan-address'):
             warnings.append(
                 "⚠️ WARNING: Changing LAN address will disconnect current admin session. "
                 "You will need to reconnect at the new address."
             )
 
         # Check for subnet changes
-        if old_config.get('lan_subnet') != new_config.get('lan_subnet'):
+        if old_config.get('lan-subnet') != new_config.get('lan-subnet'):
             warnings.append(
                 "⚠️ WARNING: Changing LAN subnet will affect all connected devices. "
                 "They will need to obtain new IP addresses."

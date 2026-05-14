@@ -68,8 +68,8 @@ class DnsModule extends LitElement {
     this.config = {
       dns: {
         overrides: [],
-        dynamic_dns: { interval: '10m', usev4: '', usev6: '', zones: [] },
-        cert_management: null
+        'dynamic-dns': { interval: '10m', usev4: '', usev6: '', zones: [] },
+        'cert-management': null
       }
     };
     this.modified = false;
@@ -80,7 +80,7 @@ class DnsModule extends LitElement {
     const path = field.split('.');
 
     // Ensure intermediate objects exist so the user can fill in
-    // dns.cert_management.provider when cert_management was null.
+    // dns['cert-management'].provider when cert-management was null.
     let current = newConfig;
     for (let i = 0; i < path.length - 1; i++) {
       if (current[path[i]] == null || typeof current[path[i]] !== 'object') {
@@ -116,13 +116,13 @@ class DnsModule extends LitElement {
             ? row.domains.split(',').map(s => s.trim()).filter(Boolean)
             : [])
     }));
-    this.handleFieldChange('dns.dynamic_dns.zones', data);
+    this.handleFieldChange('dns.dynamic-dns.zones', data);
   }
 
   render() {
     const dns = this.config.dns || {};
-    const dynamicDns = dns.dynamic_dns || { zones: [] };
-    const certMgmt = dns.cert_management || {};
+    const dynamicDns = dns['dynamic-dns'] || { zones: [] };
+    const certMgmt = dns['cert-management'] || {};
 
     const dnsOverrideColumns = [
       { key: 'hostname', label: 'Hostname', type: 'text', placeholder: 'myserver' },
@@ -141,7 +141,7 @@ class DnsModule extends LitElement {
       { key: 'protocol', label: 'Protocol', type: 'text', placeholder: 'hetzner' },
       { key: 'username', label: 'Username', type: 'text', placeholder: 'erahhal' },
       { key: 'domains', label: 'Domains (comma-sep)', type: 'text', placeholder: '@, *, www' },
-      { key: 'password_secret_key', label: 'Password File Key', type: 'text', placeholder: 'password' },
+      { key: 'password-secret-key', label: 'Password File Key', type: 'text', placeholder: 'password' },
       { key: 'disable', label: 'Disabled', type: 'boolean' }
     ];
 
@@ -185,7 +185,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.interval || '10m'}
               placeholder="10m"
               help="How often ddclient re-checks the WAN IP (systemd time spec)."
-              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.interval', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.interval', e.detail.value)}
             ></form-field>
           </div>
 
@@ -196,7 +196,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.usev4 || ''}
               placeholder="webv4, webv4=ipinfo.io/ip"
               help="ddclient's 'use=' directive for IPv4."
-              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.usev4', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.usev4', e.detail.value)}
             ></form-field>
 
             <form-field
@@ -205,7 +205,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.usev6 || ''}
               placeholder="webv6, webv6=v6.ipinfo.io/ip"
               help="ddclient's 'use=' directive for IPv6."
-              @field-change=${(e) => this.handleFieldChange('dns.dynamic_dns.usev6', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.usev6', e.detail.value)}
             ></form-field>
           </div>
 
@@ -237,7 +237,7 @@ class DnsModule extends LitElement {
               .value=${certMgmt.provider || ''}
               placeholder="hetzner"
               help="Currently supported: hetzner. Leave blank to disable wildcard certs."
-              @field-change=${(e) => this.handleFieldChange('dns.cert_management.provider', e.detail.value || null)}
+              @field-change=${(e) => this.handleFieldChange('dns.cert-management.provider', e.detail.value || null)}
             ></form-field>
           </div>
         </config-section>

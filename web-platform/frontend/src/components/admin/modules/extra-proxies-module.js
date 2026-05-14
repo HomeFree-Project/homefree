@@ -46,7 +46,7 @@ class ExtraProxiesModule extends LitElement {
 
   constructor() {
     super();
-    this.config = { service_config: [] };
+    this.config = { 'service-config': [] };
     this.modified = false;
   }
 
@@ -63,7 +63,7 @@ class ExtraProxiesModule extends LitElement {
             : [])
     }));
 
-    const newConfig = { ...this.config, service_config: data };
+    const newConfig = { ...this.config, 'service-config': data };
     this.config = newConfig;
     this.modified = true;
     this.dispatchEvent(new CustomEvent('config-change', {
@@ -74,7 +74,7 @@ class ExtraProxiesModule extends LitElement {
   }
 
   render() {
-    const rows = (this.config.service_config || []).map(r => ({
+    const rows = (this.config['service-config'] || []).map(r => ({
       ...r,
       subdomains: Array.isArray(r.subdomains) ? r.subdomains.join(', ') : (r.subdomains || '')
     }));
@@ -86,8 +86,8 @@ class ExtraProxiesModule extends LitElement {
       { key: 'port', label: 'Port', type: 'text', placeholder: '80' },
       { key: 'subdomains', label: 'Subdomains (comma-sep)', type: 'text', placeholder: 'envoy' },
       { key: 'ssl', label: 'Backend Uses HTTPS', type: 'boolean' },
-      { key: 'ssl_no_verify', label: 'Skip Cert Verify', type: 'boolean' },
-      { key: 'disable_keepalive', label: 'No Keep-Alive', type: 'boolean' },
+      { key: 'ssl-no-verify', label: 'Skip Cert Verify', type: 'boolean' },
+      { key: 'disable-keepalive', label: 'No Keep-Alive', type: 'boolean' },
       { key: 'public', label: 'Public on WAN', type: 'boolean' }
     ];
 

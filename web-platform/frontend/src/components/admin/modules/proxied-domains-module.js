@@ -47,15 +47,15 @@ class ProxiedDomainsModule extends LitElement {
 
   constructor() {
     super();
-    this.config = { proxied_domains: [] };
+    this.config = { 'proxied-domains': [] };
     this.modified = false;
   }
 
   handleChange(e) {
     // Normalize: domains comma-sep string → list, blank ports → null.
     const data = (e.detail.data || []).map(row => {
-      const httpRaw = row.http_port;
-      const httpsRaw = row.https_port;
+      const httpRaw = row['http-port'];
+      const httpsRaw = row['https-port'];
       const toPort = v =>
         v === '' || v == null ? null : Number(v);
       return {
@@ -65,14 +65,14 @@ class ProxiedDomainsModule extends LitElement {
           : (typeof row.domains === 'string'
               ? row.domains.split(',').map(s => s.trim()).filter(Boolean)
               : []),
-        http_port: toPort(httpRaw),
-        https_port: toPort(httpsRaw),
-        ignore_self_signed: !!row.ignore_self_signed,
+        'http-port': toPort(httpRaw),
+        'https-port': toPort(httpsRaw),
+        'ignore-self-signed': !!row['ignore-self-signed'],
         public: !!row.public
       };
     });
 
-    const newConfig = { ...this.config, proxied_domains: data };
+    const newConfig = { ...this.config, 'proxied-domains': data };
     this.config = newConfig;
     this.modified = true;
     this.dispatchEvent(new CustomEvent('config-change', {
@@ -83,19 +83,19 @@ class ProxiedDomainsModule extends LitElement {
   }
 
   render() {
-    const rows = (this.config.proxied_domains || []).map(r => ({
+    const rows = (this.config['proxied-domains'] || []).map(r => ({
       ...r,
       domains: Array.isArray(r.domains) ? r.domains.join(', ') : (r.domains || ''),
-      http_port:  r.http_port  == null ? '' : r.http_port,
-      https_port: r.https_port == null ? '' : r.https_port
+      'http-port':  r['http-port']  == null ? '' : r['http-port'],
+      'https-port': r['https-port'] == null ? '' : r['https-port']
     }));
 
     const columns = [
       { key: 'domains', label: 'Domains (comma-sep)', type: 'text', placeholder: 'example.com, *.example.com' },
       { key: 'host', label: 'Backend Host', type: 'text', placeholder: '10.0.0.59' },
-      { key: 'http_port', label: 'HTTP Port', type: 'text', placeholder: '(blank = off)' },
-      { key: 'https_port', label: 'HTTPS Port', type: 'text', placeholder: '(blank = off)' },
-      { key: 'ignore_self_signed', label: 'Ignore Self-Signed', type: 'boolean' },
+      { key: 'http-port', label: 'HTTP Port', type: 'text', placeholder: '(blank = off)' },
+      { key: 'https-port', label: 'HTTPS Port', type: 'text', placeholder: '(blank = off)' },
+      { key: 'ignore-self-signed', label: 'Ignore Self-Signed', type: 'boolean' },
       { key: 'public', label: 'Public on WAN', type: 'boolean' }
     ];
 

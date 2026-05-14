@@ -86,27 +86,27 @@ class InstallationService:
     "authorizedKeys": []
   },
   "network": {
-    "wan_interface": "@@wan_interface@@",
-    "lan_interface": "@@lan_interface@@",
-    "router_enable": @@router_enable@@,
-    "lan_address": "@@lan_address@@",
-    "lan_subnet": "@@lan_subnet@@",
-    "dhcp_range_start": "@@dhcp_range_start@@",
-    "dhcp_range_end": "@@dhcp_range_end@@",
-    "enable_adblock": false,
-    "wan_bitrate_mbps_down": null,
-    "wan_bitrate_mbps_up": null,
-    "static_ips": []
+    "wan-interface": "@@wan_interface@@",
+    "lan-interface": "@@lan_interface@@",
+    "router-enable": @@router_enable@@,
+    "lan-address": "@@lan_address@@",
+    "lan-subnet": "@@lan_subnet@@",
+    "dhcp-range-start": "@@dhcp_range_start@@",
+    "dhcp-range-end": "@@dhcp_range_end@@",
+    "enable-adblock": false,
+    "wan-bitrate-mbps-down": null,
+    "wan-bitrate-mbps-up": null,
+    "static-ips": []
   },
   "dns": {
     "overrides": [],
-    "dynamic_dns": {
+    "dynamic-dns": {
       "interval": "10m",
       "usev4": "webv4, webv4=ipinfo.io/ip",
       "usev6": "webv6, webv6=v6.ipinfo.io/ip",
       "zones": []
     },
-    "cert_management": null
+    "cert-management": null
   },
   "mounts": [],
   "sso": {
@@ -216,7 +216,7 @@ class InstallationService:
       "public": false
     },
     "zitadel": {
-      "enable": false,
+      "enable": true,
       "public": false
     },
     "immich": {
@@ -226,10 +226,10 @@ class InstallationService:
     "matrix": {
       "enable": false,
       "public": false,
-      "enable_federation": false,
-      "federation_domain_whitelist": [ "matrix.org", "nixos.org", "homefree.host", "rycee.net", "gnome.org" ],
-      "admin_account": null,
-      "server_name": null
+      "enable-federation": false,
+      "federation-domain-whitelist": [ "matrix.org", "nixos.org", "homefree.host", "rycee.net", "gnome.org" ],
+      "admin-account": null,
+      "server-name": null
     },
     "mediawiki": {
       "enable": false,
@@ -260,14 +260,14 @@ class InstallationService:
       "public": false
     }
   },
-  "service_config": [],
-  "proxied_domains": [],
+  "service-config": [],
+  "proxied-domains": [],
   "backups": {
     "enable": false,
-    "to_path": "",
-    "extra_from_paths": [],
-    "backblaze_enable": false,
-    "backblaze_bucket": ""
+    "to-path": "",
+    "extra-from-paths": [],
+    "backblaze-enable": false,
+    "backblaze-bucket": ""
   }
 }
 """
@@ -279,10 +279,6 @@ let
   # Load configuration from JSON file in the same directory as flake.nix
   # This uses a relative path which works in pure evaluation mode
   jsonData = builtins.fromJSON (builtins.readFile ./homefree-config.json);
-
-  # Helper to convert snake_case to camelCase for Nix attribute names
-  # Note: We'll keep the JSON in snake_case for Python compatibility
-  # and convert here for Nix
 in
 {
   homefree = {
@@ -310,30 +306,29 @@ in
       ## Whether this box is the upstream homefree.host marketing
       ## instance. Default false — a real personal deployment shows
       ## the per-user dashboard at apex. Override in the JSON by
-      ## setting `system.project_mode: true` (snake_case in JSON,
-      ## kebab-case in the Nix option).
-      project-mode = jsonData.system.project_mode or false;
+      ## setting `system.project-mode: true`.
+      project-mode = jsonData.system.project-mode or false;
     };
 
     network = {
-      wan-interface = jsonData.network.wan_interface;
-      lan-interface = jsonData.network.lan_interface;
-      router.enable = jsonData.network.router_enable;
-      lan-address = jsonData.network.lan_address;
-      lan-subnet = jsonData.network.lan_subnet;
-      dhcp-range-start = jsonData.network.dhcp_range_start;
-      dhcp-range-end = jsonData.network.dhcp_range_end;
-      enable-adblock = jsonData.network.enable_adblock;
-      wan-bitrate-mbps-down = jsonData.network.wan_bitrate_mbps_down;
-      wan-bitrate-mbps-up = jsonData.network.wan_bitrate_mbps_up;
+      wan-interface = jsonData.network.wan-interface;
+      lan-interface = jsonData.network.lan-interface;
+      router.enable = jsonData.network.router-enable;
+      lan-address = jsonData.network.lan-address;
+      lan-subnet = jsonData.network.lan-subnet;
+      dhcp-range-start = jsonData.network.dhcp-range-start;
+      dhcp-range-end = jsonData.network.dhcp-range-end;
+      enable-adblock = jsonData.network.enable-adblock;
+      wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
+      wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
 
       # Static IPs conversion
       static-ips = map (ip: {
-        mac-address = ip.mac_address;
+        mac-address = ip.mac-address;
         hostname = ip.hostname;
         ip = ip.ip;
-        wan-access = ip.wan_access or true;
-      }) jsonData.network.static_ips;
+        wan-access = ip.wan-access or true;
+      }) jsonData.network.static-ips;
     };
 
     dns = {
@@ -356,17 +351,17 @@ in
       ## via the secrets UI.
       remote = {
         cert-management.dns-01 = {
-          provider = jsonData.dns.cert_management.provider or null;
-          resolvers = jsonData.dns.cert_management.resolvers or [ "1.1.1.1" ];
+          provider = jsonData.dns.cert-management.provider or null;
+          resolvers = jsonData.dns.cert-management.resolvers or [ "1.1.1.1" ];
           secrets.api-token =
-            if (jsonData.dns.cert_management.provider or null) == null
+            if (jsonData.dns.cert-management.provider or null) == null
             then null
             else /var/lib/homefree-secrets/dns/api-token;
         };
         dynamic-dns = {
-          interval = jsonData.dns.dynamic_dns.interval or "10m";
-          usev4    = jsonData.dns.dynamic_dns.usev4 or "webv4, webv4=ipinfo.io/ip";
-          usev6    = jsonData.dns.dynamic_dns.usev6 or "webv6, webv6=v6.ipinfo.io/ip";
+          interval = jsonData.dns.dynamic-dns.interval or "10m";
+          usev4    = jsonData.dns.dynamic-dns.usev4 or "webv4, webv4=ipinfo.io/ip";
+          usev6    = jsonData.dns.dynamic-dns.usev6 or "webv6, webv6=v6.ipinfo.io/ip";
           zones = map (z: {
             disable  = z.disable or false;
             zone     = z.zone;
@@ -380,20 +375,20 @@ in
               ## dropped yet. Once the file is in place at
               ## /var/lib/homefree-secrets/ddclient/<key>, ddclient
               ## will pick it up.
-              /var/lib/homefree-secrets/ddclient + ("/" + (z.password_secret_key or "password"));
-          }) (jsonData.dns.dynamic_dns.zones or []);
+              /var/lib/homefree-secrets/ddclient + ("/" + (z.password-secret-key or "password"));
+          }) (jsonData.dns.dynamic-dns.zones or []);
         };
       };
     };
 
     mounts = map (m: {
-      mount-point   = m.mount_point;
+      mount-point   = m.mount-point;
       device        = m.device;
-      fs-type       = m.fs_type or "nfs";
-      nfs-version   = m.nfs_version or "3";
+      fs-type       = m.fs-type or "nfs";
+      nfs-version   = m.nfs-version or "3";
       automount     = m.automount or true;
-      idle-timeout  = m.idle_timeout or "600";
-      extra-options = m.extra_options or [];
+      idle-timeout  = m.idle-timeout or "600";
+      extra-options = m.extra-options or [];
     }) (jsonData.mounts or []);
 
     ## Per-service SSO opt-out toggles. The JSON stores
@@ -433,8 +428,8 @@ in
 
       lidarr.enable = jsonData.services.lidarr.enable or false;
       lidarr.public = jsonData.services.lidarr.public or false;
-      lidarr.media-path = jsonData.services.lidarr.media_path or null;
-      lidarr.downloads-path = jsonData.services.lidarr.downloads_path or null;
+      lidarr.media-path = jsonData.services.lidarr.media-path or null;
+      lidarr.downloads-path = jsonData.services.lidarr.downloads-path or null;
 
       vaultwarden.enable = jsonData.services.vaultwarden.enable or false;
       vaultwarden.public = jsonData.services.vaultwarden.public or false;
@@ -459,11 +454,11 @@ in
 
       frigate.enable = jsonData.services.frigate.enable or false;
       frigate.public = jsonData.services.frigate.public or false;
-      frigate.media-path = jsonData.services.frigate.media_path or null;
-      frigate.hwaccel-args = jsonData.services.frigate.hwaccel_args or "preset-intel-qsv-h264";
+      frigate.media-path = jsonData.services.frigate.media-path or null;
+      frigate.hwaccel-args = jsonData.services.frigate.hwaccel-args or "preset-intel-qsv-h264";
       frigate.cameras = map (camera: {
         enable = camera.enable or true;
-        direct-stream = camera.direct_stream or false;
+        direct-stream = camera.direct-stream or false;
         name = camera.name;
         path = camera.path;
         width = camera.width or 1920;
@@ -482,11 +477,11 @@ in
 
       jellyfin.enable = jsonData.services.jellyfin.enable or false;
       jellyfin.public = jsonData.services.jellyfin.public or false;
-      jellyfin.media-path = jsonData.services.jellyfin.media_path or null;
+      jellyfin.media-path = jsonData.services.jellyfin.media-path or null;
 
       nzbget.enable = jsonData.services.nzbget.enable or false;
       nzbget.public = jsonData.services.nzbget.public or false;
-      nzbget.downloads-path = jsonData.services.nzbget.downloads_path or null;
+      nzbget.downloads-path = jsonData.services.nzbget.downloads-path or null;
 
       radicale.enable = jsonData.services.radicale.enable or false;
       radicale.public = jsonData.services.radicale.public or false;
@@ -533,12 +528,12 @@ in
 
       matrix.enable = jsonData.services.matrix.enable or false;
       matrix.public = jsonData.services.matrix.public or false;
-      matrix.enable-federation = jsonData.services.matrix.enable_federation or false;
+      matrix.enable-federation = jsonData.services.matrix.enable-federation or false;
       matrix.federation-domain-whitelist =
-        jsonData.services.matrix.federation_domain_whitelist
+        jsonData.services.matrix.federation-domain-whitelist
         or [ "matrix.org" "nixos.org" "homefree.host" "rycee.net" "gnome.org" ];
-      matrix.admin-account = jsonData.services.matrix.admin_account or null;
-      matrix.server-name = jsonData.services.matrix.server_name or null;
+      matrix.admin-account = jsonData.services.matrix.admin-account or null;
+      matrix.server-name = jsonData.services.matrix.server-name or null;
 
       mediawiki.enable = jsonData.services.mediawiki.enable or false;
       mediawiki.public = jsonData.services.mediawiki.public or false;
@@ -590,11 +585,11 @@ in
 
     backups = {
       enable = jsonData.backups.enable;
-      to-path = if jsonData.backups.to_path == "" then null else jsonData.backups.to_path;
-      extra-from-paths = jsonData.backups.extra_from_paths or [];
+      to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;
+      extra-from-paths = jsonData.backups.extra-from-paths or [];
       backblaze = {
-        enable = jsonData.backups.backblaze_enable;
-        bucket = if jsonData.backups.backblaze_bucket == "" then null else jsonData.backups.backblaze_bucket;
+        enable = jsonData.backups.backblaze-enable;
+        bucket = if jsonData.backups.backblaze-bucket == "" then null else jsonData.backups.backblaze-bucket;
       };
     };
 
@@ -615,18 +610,18 @@ in
         ## services/caddy.nix falls back to system.domain +
         ## additionalDomains. Same default behavior in-tree services
         ## use, so external entries get the same coverage automatically.
-        https-domains = e.https_domains or [];
+        https-domains = e.https-domains or [];
         host      = e.host;
         port      = e.port or 80;
         ssl       = e.ssl or false;
-        ssl-no-verify = e.ssl_no_verify or false;
-        disable-keepalive = e.disable_keepalive or false;
+        ssl-no-verify = e.ssl-no-verify or false;
+        disable-keepalive = e.disable-keepalive or false;
         public    = e.public or false;
         oauth2    = e.oauth2 or false;
-        basic-auth = e.basic_auth or false;
-        require-admin-role = e.require_admin_role or false;
+        basic-auth = e.basic-auth or false;
+        require-admin-role = e.require-admin-role or false;
       };
-    }) (jsonData.service_config or []);
+    }) (jsonData.service-config or []);
 
     ## Whole-domain transparent proxies (e.g. slacktopia.org →
     ## internal dev box). Each entry forwards all matching domains
@@ -636,14 +631,14 @@ in
       domains = e.domains or [];
       target = {
         host = e.host;
-        http  = if (e.http_port  or null) == null then null else { port = e.http_port; };
-        https = if (e.https_port or null) == null then null else {
-          port = e.https_port;
-          ignore-self-signed-cert = e.ignore_self_signed or false;
+        http  = if (e.http-port  or null) == null then null else { port = e.http-port; };
+        https = if (e.https-port or null) == null then null else {
+          port = e.https-port;
+          ignore-self-signed-cert = e.ignore-self-signed or false;
         };
       };
       public = e.public or false;
-    }) (jsonData.proxied_domains or []);
+    }) (jsonData.proxied-domains or []);
   };
 
   # Set admin user password

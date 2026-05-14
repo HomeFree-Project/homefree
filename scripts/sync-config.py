@@ -130,37 +130,37 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
             'authorizedKeys': []
         },
         'network': {
-            'wan_interface': 'ens3',
-            'lan_interface': 'ens5',
-            'router_enable': False,
-            'lan_address': '10.0.0.1',
-            'lan_subnet': '10.0.0.0/24',
-            'dhcp_range_start': '10.0.0.100',
-            'dhcp_range_end': '10.0.0.254',
-            'enable_adblock': False,
-            'wan_bitrate_mbps_down': None,
-            'wan_bitrate_mbps_up': None,
-            'static_ips': []
+            'wan-interface': 'ens3',
+            'lan-interface': 'ens5',
+            'router-enable': False,
+            'lan-address': '10.0.0.1',
+            'lan-subnet': '10.0.0.0/24',
+            'dhcp-range-start': '10.0.0.100',
+            'dhcp-range-end': '10.0.0.254',
+            'enable-adblock': False,
+            'wan-bitrate-mbps-down': None,
+            'wan-bitrate-mbps-up': None,
+            'static-ips': []
         },
         'dns': {
             'overrides': [],
-            'dynamic_dns': {
+            'dynamic-dns': {
                 'interval': '10m',
                 'usev4': 'webv4, webv4=ipinfo.io/ip',
                 'usev6': 'webv6, webv6=v6.ipinfo.io/ip',
                 'zones': []
             },
-            'cert_management': None
+            'cert-management': None
         },
         'mounts': [],
-        'service_config': [],
-        'proxied_domains': [],
+        'service-config': [],
+        'proxied-domains': [],
         'backups': {
             'enable': False,
-            'to_path': '',
-            'extra_from_paths': [],
-            'backblaze_enable': False,
-            'backblaze_bucket': ''
+            'to-path': '',
+            'extra-from-paths': [],
+            'backblaze-enable': False,
+            'backblaze-bucket': ''
         }
     }
 

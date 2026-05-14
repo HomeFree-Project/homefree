@@ -57,17 +57,17 @@ class NetworkModule extends LitElement {
     super();
     this.config = {
       network: {
-        wan_interface: '',
-        lan_interface: '',
-        router_enable: false,
-        lan_address: '10.0.0.1',
-        lan_subnet: '10.0.0.0/24',
-        dhcp_range_start: '10.0.0.100',
-        dhcp_range_end: '10.0.0.200',
-        enable_adblock: false,
-        wan_bitrate_mbps_down: null,
-        wan_bitrate_mbps_up: null,
-        static_ips: []
+        'wan-interface': '',
+        'lan-interface': '',
+        'router-enable': false,
+        'lan-address': '10.0.0.1',
+        'lan-subnet': '10.0.0.0/24',
+        'dhcp-range-start': '10.0.0.100',
+        'dhcp-range-end': '10.0.0.200',
+        'enable-adblock': false,
+        'wan-bitrate-mbps-down': null,
+        'wan-bitrate-mbps-up': null,
+        'static-ips': []
       }
     };
     this.interfaces = [];
@@ -127,7 +127,7 @@ class NetworkModule extends LitElement {
   }
 
   handleStaticIpsChange(e) {
-    this.handleFieldChange('network.static_ips', e.detail.data);
+    this.handleFieldChange('network.static-ips', e.detail.data);
   }
 
   render() {
@@ -135,10 +135,10 @@ class NetworkModule extends LitElement {
 
     // Static IP table columns
     const staticIpColumns = [
-      { key: 'mac_address', label: 'MAC Address', type: 'text', placeholder: '00:11:22:33:44:55' },
+      { key: 'mac-address', label: 'MAC Address', type: 'text', placeholder: '00:11:22:33:44:55' },
       { key: 'hostname', label: 'Hostname', type: 'text', placeholder: 'device-name' },
       { key: 'ip', label: 'IP Address', type: 'text', placeholder: '10.0.0.50' },
-      { key: 'wan_access', label: 'WAN Access', type: 'boolean' }
+      { key: 'wan-access', label: 'WAN Access', type: 'boolean' }
     ];
 
     return html`
@@ -157,32 +157,32 @@ class NetworkModule extends LitElement {
           <form-field
             label="Enable Router Mode"
             type="boolean"
-            .value=${network.router_enable}
+            .value=${network['router-enable']}
             help="Enable HomeFree to act as a router with NAT and firewall"
-            @field-change=${(e) => this.handleFieldChange('network.router_enable', e.detail.value)}
+            @field-change=${(e) => this.handleFieldChange('network.router-enable', e.detail.value)}
           ></form-field>
 
           <div class="field-row">
             <form-field
               label="WAN Interface"
               type="select"
-              .value=${network.wan_interface}
+              .value=${network['wan-interface']}
               .options=${this.interfaces}
               placeholder="Select WAN interface..."
               help="Interface connected to your modem/ISP"
               required
-              @field-change=${(e) => this.handleFieldChange('network.wan_interface', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.wan-interface', e.detail.value)}
             ></form-field>
 
             <form-field
               label="LAN Interface"
               type="select"
-              .value=${network.lan_interface}
+              .value=${network['lan-interface']}
               .options=${this.interfaces}
               placeholder="Select LAN interface..."
               help="Interface connected to your local network"
               required
-              @field-change=${(e) => this.handleFieldChange('network.lan_interface', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.lan-interface', e.detail.value)}
             ></form-field>
           </div>
         </config-section>
@@ -196,21 +196,21 @@ class NetworkModule extends LitElement {
             <form-field
               label="LAN Address"
               type="text"
-              .value=${network.lan_address}
+              .value=${network['lan-address']}
               placeholder="10.0.0.1"
               help="IP address of this router on the LAN"
               required
-              @field-change=${(e) => this.handleFieldChange('network.lan_address', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.lan-address', e.detail.value)}
             ></form-field>
 
             <form-field
               label="LAN Subnet"
               type="text"
-              .value=${network.lan_subnet}
+              .value=${network['lan-subnet']}
               placeholder="10.0.0.0/24"
               help="Network subnet in CIDR notation"
               required
-              @field-change=${(e) => this.handleFieldChange('network.lan_subnet', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.lan-subnet', e.detail.value)}
             ></form-field>
           </div>
 
@@ -218,21 +218,21 @@ class NetworkModule extends LitElement {
             <form-field
               label="DHCP Range Start"
               type="text"
-              .value=${network.dhcp_range_start}
+              .value=${network['dhcp-range-start']}
               placeholder="10.0.0.100"
               help="First IP in DHCP pool"
               required
-              @field-change=${(e) => this.handleFieldChange('network.dhcp_range_start', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.dhcp-range-start', e.detail.value)}
             ></form-field>
 
             <form-field
               label="DHCP Range End"
               type="text"
-              .value=${network.dhcp_range_end}
+              .value=${network['dhcp-range-end']}
               placeholder="10.0.0.200"
               help="Last IP in DHCP pool"
               required
-              @field-change=${(e) => this.handleFieldChange('network.dhcp_range_end', e.detail.value)}
+              @field-change=${(e) => this.handleFieldChange('network.dhcp-range-end', e.detail.value)}
             ></form-field>
           </div>
         </config-section>
@@ -244,7 +244,7 @@ class NetworkModule extends LitElement {
         >
           <table-editor
             .columns=${staticIpColumns}
-            .data=${network.static_ips || []}
+            .data=${network['static-ips'] || []}
             addLabel="Add Static IP"
             @data-change=${this.handleStaticIpsChange}
           ></table-editor>
@@ -259,19 +259,19 @@ class NetworkModule extends LitElement {
             <form-field
               label="WAN Download Speed (Mbps)"
               type="number"
-              .value=${network.wan_bitrate_mbps_down}
+              .value=${network['wan-bitrate-mbps-down']}
               placeholder="100"
               help="Your ISP's download speed (optional)"
-              @field-change=${(e) => this.handleFieldChange('network.wan_bitrate_mbps_down', e.detail.value ? parseInt(e.detail.value) : null)}
+              @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-down', e.detail.value ? parseInt(e.detail.value) : null)}
             ></form-field>
 
             <form-field
               label="WAN Upload Speed (Mbps)"
               type="number"
-              .value=${network.wan_bitrate_mbps_up}
+              .value=${network['wan-bitrate-mbps-up']}
               placeholder="20"
               help="Your ISP's upload speed (optional)"
-              @field-change=${(e) => this.handleFieldChange('network.wan_bitrate_mbps_up', e.detail.value ? parseInt(e.detail.value) : null)}
+              @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-up', e.detail.value ? parseInt(e.detail.value) : null)}
             ></form-field>
           </div>
         </config-section>
@@ -284,9 +284,9 @@ class NetworkModule extends LitElement {
           <form-field
             label="Enable Ad Blocking"
             type="boolean"
-            .value=${network.enable_adblock}
+            .value=${network['enable-adblock']}
             help="Block ads and trackers for all devices on the network"
-            @field-change=${(e) => this.handleFieldChange('network.enable_adblock', e.detail.value)}
+            @field-change=${(e) => this.handleFieldChange('network.enable-adblock', e.detail.value)}
           ></form-field>
         </config-section>
       </div>

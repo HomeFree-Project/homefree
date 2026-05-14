@@ -73,15 +73,15 @@ class MountsModule extends LitElement {
 
     // Column definitions for the mount table. The underlying
     // <table-editor> only supports `text` and `boolean` field types;
-    // free-form text with a clear placeholder is fine for fs_type and
-    // nfs_version (the schema validates the enum on the Nix side).
+    // free-form text with a clear placeholder is fine for fs-type and
+    // nfs-version (the schema validates the enum on the Nix side).
     const columns = [
-      { key: 'mount_point', label: 'Mount Point', type: 'text', placeholder: '/mnt/ellis' },
+      { key: 'mount-point', label: 'Mount Point', type: 'text', placeholder: '/mnt/ellis' },
       { key: 'device', label: 'Device', type: 'text', placeholder: '10.0.0.42:/volume1/ellis' },
-      { key: 'fs_type', label: 'FS Type', type: 'text', placeholder: 'nfs' },
-      { key: 'nfs_version', label: 'NFS Version', type: 'text', placeholder: '3' },
+      { key: 'fs-type', label: 'FS Type', type: 'text', placeholder: 'nfs' },
+      { key: 'nfs-version', label: 'NFS Version', type: 'text', placeholder: '3' },
       { key: 'automount', label: 'Automount', type: 'boolean' },
-      { key: 'idle_timeout', label: 'Idle Timeout (s)', type: 'text', placeholder: '600' }
+      { key: 'idle-timeout', label: 'Idle Timeout (s)', type: 'text', placeholder: '600' }
     ];
 
     return html`
@@ -93,7 +93,7 @@ class MountsModule extends LitElement {
           used as media stores for services like Jellyfin or Frigate, or
           as a destination for backups. With <strong>Automount</strong>
           on, the share is mounted on first access and unmounted after
-          <code>idle_timeout</code> seconds of inactivity. For NFS, the
+          <code>idle-timeout</code> seconds of inactivity. For NFS, the
           device is in the form <code>&lt;host&gt;:&lt;export&gt;</code>.
         </div>
 
