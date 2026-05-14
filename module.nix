@@ -312,10 +312,14 @@
         });
       };
 
-      enable-adblock = lib.mkOption {
+      enable-unbound-adblock = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "enable ad blocking";
+        description = ''
+          Enable the Steven Black hosts list inside the Unbound resolver.
+          This is a separate, lower-level ad-blocking layer than AdGuard
+          Home and is typically left off when AdGuard is enabled.
+        '';
       };
 
       blocked-domains = lib.mkOption {
@@ -848,7 +852,7 @@
 
       };
 
-      homeassistant = {
+      home-assistant = {
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -1468,20 +1472,6 @@
         };
       };
 
-      unifi-os = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable UniFi OS Server (replaces legacy UniFi Controller)";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-      };
-
       vaultwarden = {
         enable = lib.mkOption {
           type = lib.types.bool;
@@ -1513,7 +1503,13 @@
       zitadel = {
         enable = lib.mkOption {
           type = lib.types.bool;
-          default = false;
+          ## Zitadel is the SSO identity provider. Every other
+          ## HomeFree app authenticates against it (oauth2-proxy
+          ## for caddy-gated services, native OIDC for the rest),
+          ## so disabling Zitadel breaks login for the box. Default
+          ## on; fresh installs get a working SSO stack out of the
+          ## box.
+          default = true;
           description = "enable Zitadel auth service";
         };
 
@@ -2324,22 +2320,10 @@
     ## metadata). Services like `admin`, `landing-page`, `azuracast`,
     ## `odoo`, `trilium`, `unifi-os` deliberately have no service-options
     ## decl and would fail with "option does not exist" if mirrored.
-    ##
-    ## Caveat: `services.homeassistant` is mirrored as
-    ## `service-options.home-assistant` (kebab in the internal namespace,
-    ## concatenated in the user-facing one). The wider fix is to rename
-    ## `services.homeassistant` → `services.home-assistant` consistently,
-    ## but that touches user JSON and is its own task. For now we strip
-    ## `homeassistant` from the generic mirror and override explicitly.
     homefree.service-options =
-      (lib.intersectAttrs
+      lib.intersectAttrs
         options.homefree.service-options
-        (lib.filterAttrs
-          (name: _: name != "homeassistant")
-          config.homefree.services))
-      // (if options.homefree.service-options ? home-assistant
-          then { home-assistant = config.homefree.services.homeassistant; }
-          else {});
+        config.homefree.services;
 
     warnings =
       (if config.homefree.backups.enable == false then [

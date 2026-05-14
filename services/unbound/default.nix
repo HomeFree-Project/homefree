@@ -109,14 +109,14 @@ in
           53
         ;
         include = [
-          ## Leave ad-blocking to AdGuard, as it can be disabled by the client
-          # "\"${adlist.unbound-adblockStevenBlack}\""
-
           ## Include run-time config, such as WAN ip mappings
           ## @TODO: Update this with ddclient scripts
           ## @TODO: Remove WAN entries from bare hostname maps below
           "\"/run/unbound/include.conf\""
-        ];
+        ]
+        ++ lib.optional
+          config.homefree.network.enable-unbound-adblock
+          "\"${adlist.unbound-adblockStevenBlack}\"";
         ## Set in services/adguardhome.nix
         ## if adguard is disabled, this is set to 53 to make it the default DNS
         # port = 53530;
@@ -151,6 +151,29 @@ in
         # Non-public proxied base domains use redirect to handle wildcards (all subdomains -> same IP)
         # Only add if not already in zones to avoid conflicts
         (lib.map (domain: "\"${domain}\" redirect") (lib.filter (d: !(lib.elem d zones)) nonPublicBaseDomains))
+        ++
+        # Per-FQDN `static` zones for every non-public reverse-proxy name.
+        # Without this, `<zone> transparent` lets unknown record types
+        # (e.g. AAAA) fall through to upstream public DNS — which has a
+        # wildcard AAAA pointing at the WAN. IPv6-preferring clients then
+        # connect over WAN and hit a vhost that only binds the LAN
+        # interface, producing empty 200 responses. `static` makes unbound
+        # authoritative for these FQDNs: queries for any type without a
+        # matching `local-data` entry return NODATA instead of leaking.
+        (lib.flatten
+          (lib.map
+            (service-config:
+              lib.map
+                (subdomain:
+                  lib.map
+                    (domain: "\"${subdomain}.${domain}\" static")
+                    (service-config.reverse-proxy.http-domains ++ service-config.reverse-proxy.https-domains)
+                )
+                service-config.reverse-proxy.subdomains
+            )
+            (lib.filter (sc: sc.reverse-proxy.public == false) proxiedHostConfig)
+          )
+        )
         ;
         ## @TODO: Add config.homefree.network.blocked-domains as such:
         # local-zone: "example.org" always_nxdomain

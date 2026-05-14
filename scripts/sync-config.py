@@ -12,12 +12,15 @@ import re
 from typing import Any, Dict, Set, List, Tuple
 
 
-def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
+def extract_service_schema_from_module(module_file: str) -> Dict[str, Dict[str, Any]]:
     """
     Walk module.nix's `services = { ... }` block and return a mapping
-    of every declared top-level service to the set of subkeys it
-    declares (e.g. `enable`, `public`, `media-path`, `instances`,
-    `secrets`, etc.).
+    of every declared top-level service to a metadata dict:
+
+        {
+          'subkeys':        Set[str],   # declared subkeys (enable, public, ...)
+          'enable_default': bool,       # default value of `enable` option
+        }
 
     Used for:
       1. Knowing which services exist (the dict's keys) — replaces
@@ -26,16 +29,17 @@ def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
          stale ones from JSON. Without this, an orphan key in JSON
          like `mediawiki.secrets = {}` makes the build fail at Nix
          eval time with an opaque "option does not exist" error.
+      3. Seeding new services into JSON with the right enable default
+         (so e.g. zitadel comes out enabled when missing from JSON).
 
     The parser is intentionally textual and conservative — it only
     detects subkeys declared via `<name> = lib.mkOption { ... }` or
     `<name> = { ... }` (the latter for nested groupings like
-    `secrets = { ... }` in service blocks that contain multiple
-    `mkOption`s). Submodule-internal options (per-instance attrs
-    inside a `listOf submodule {...}`) are not walked because
+    `secrets = { ... }`). Submodule-internal options (per-instance
+    attrs inside a `listOf submodule {...}`) are not walked because
     Nix's submodule type enforces those at eval time on its own.
     """
-    schema: Dict[str, Set[str]] = {}
+    schema: Dict[str, Dict[str, Any]] = {}
     try:
         with open(module_file, 'r') as f:
             lines = f.readlines()
@@ -43,6 +47,18 @@ def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
         in_services = False
         brace_depth = 0
         current_svc = None  # Name of the service whose body we're inside.
+
+        def _read_enable_default(start: int) -> bool:
+            """Scan forward from `enable = lib.mkOption {` for a
+            `default = true|false;` line. Returns False if not found
+            (safe fallback — the most common default)."""
+            for j in range(start, min(start + 15, len(lines))):
+                md = re.match(r'^\s*default\s*=\s*(true|false)\s*;', lines[j])
+                if md:
+                    return md.group(1) == 'true'
+                if '};' in lines[j]:
+                    break
+            return False
 
         for i, line in enumerate(lines):
             # Start of services block
@@ -68,16 +84,18 @@ def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
                     if name in ('options', 'config', 'secrets', 'backup'):
                         current_svc = None
                         continue
-                    # Look ahead to confirm this has an `enable` mkOption —
-                    # otherwise it's some other top-level attrset that
-                    # happens to live inside `services = {`.
-                    has_enable = any(
-                        'enable' in lines[j] and 'lib.mkOption' in lines[j]
-                        for j in range(i + 1, min(i + 5, len(lines)))
-                    )
-                    if has_enable:
+                    # Look ahead to confirm this has an `enable` mkOption.
+                    enable_line = None
+                    for j in range(i + 1, min(i + 5, len(lines))):
+                        if 'enable' in lines[j] and 'lib.mkOption' in lines[j]:
+                            enable_line = j
+                            break
+                    if enable_line is not None:
                         current_svc = name
-                        schema.setdefault(current_svc, set())
+                        schema.setdefault(current_svc, {
+                            'subkeys': set(),
+                            'enable_default': _read_enable_default(enable_line + 1),
+                        })
                     else:
                         current_svc = None
                     continue
@@ -87,7 +105,7 @@ def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
             if current_svc and depth_before == 2:
                 m = re.match(r'^\s*([\w-]+)\s*=\s*(?:lib\.mkOption|\{)', line)
                 if m:
-                    schema[current_svc].add(m.group(1))
+                    schema[current_svc]['subkeys'].add(m.group(1))
 
             # Close of current service body returns to depth 1.
             if current_svc and brace_depth == 1:
@@ -148,13 +166,21 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         del synced_config['services'][service]
         changes.append(f"- Removed obsolete service: {service}")
 
-    # Add new services with defaults
+    # Add new services with defaults pulled from module.nix's mkOption
+    # `default = ...` declarations. The `enable` default in particular
+    # varies per service (e.g. zitadel defaults on, frigate defaults off);
+    # without this lookup every fresh-add would land disabled and the
+    # user would have to flip them all on by hand.
     for service in sorted(new_services):
+        enable_default = module_schema[service]['enable_default']
         synced_config['services'][service] = {
-            'enable': False,
+            'enable': enable_default,
             'public': False
         }
-        changes.append(f"+ Added new service: {service} (enable=false, public=false)")
+        changes.append(
+            f"+ Added new service: {service} "
+            f"(enable={str(enable_default).lower()}, public=false)"
+        )
 
     # Drop stale subkeys: JSON has a key under `services.<name>` that
     # isn't declared in module.nix for that service. Left unchecked
@@ -168,7 +194,7 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         svc_cfg = synced_config['services'][service]
         if not isinstance(svc_cfg, dict):
             continue
-        declared = module_schema[service]
+        declared = module_schema[service]['subkeys']
         stale = [k for k in svc_cfg.keys() if k not in declared]
         for key in sorted(stale):
             value = svc_cfg.pop(key)
@@ -176,6 +202,39 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
                 f"~ Dropped stale key: services.{service}.{key} "
                 f"(value was {json.dumps(value)})"
             )
+
+    # One-time key renames for non-services sections. Each entry maps an
+    # old key path to its new name; the value is preserved verbatim. This
+    # is necessary because the generic "ensure required keys exist" pass
+    # below would otherwise leave the old key in place AND seed a fresh
+    # default for the new key — losing the user's value AND tripping the
+    # Nix-side check for unknown options once the old key is removed
+    # from the schema.
+    section_renames: Dict[str, Dict[str, str]] = {
+        'network': {
+            # Renamed to disambiguate from AdGuard Home's blocklist. The
+            # flag only controls Unbound's bundled Steven Black hosts
+            # include, which is independent of (and usually redundant
+            # with) AdGuard.
+            'enable-adblock': 'enable-unbound-adblock',
+        },
+    }
+    for section, renames in section_renames.items():
+        if section not in synced_config or not isinstance(synced_config[section], dict):
+            continue
+        for old_key, new_key in renames.items():
+            if old_key in synced_config[section] and new_key not in synced_config[section]:
+                synced_config[section][new_key] = synced_config[section].pop(old_key)
+                changes.append(
+                    f"~ Renamed {section}.{old_key} -> {section}.{new_key}"
+                )
+            elif old_key in synced_config[section]:
+                # Both present — new_key wins, drop the legacy one.
+                value = synced_config[section].pop(old_key)
+                changes.append(
+                    f"- Dropped legacy {section}.{old_key} "
+                    f"(value was {json.dumps(value)}; {new_key} already set)"
+                )
 
     # Ensure all existing sections have required structure
     required_sections = {
@@ -200,7 +259,7 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
             'lan-subnet': '10.0.0.0/24',
             'dhcp-range-start': '10.0.0.100',
             'dhcp-range-end': '10.0.0.254',
-            'enable-adblock': False,
+            'enable-unbound-adblock': False,
             'wan-bitrate-mbps-down': None,
             'wan-bitrate-mbps-up': None,
             'static-ips': []

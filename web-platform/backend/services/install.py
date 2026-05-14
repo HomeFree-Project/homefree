@@ -93,7 +93,7 @@ class InstallationService:
     "lan-subnet": "@@lan_subnet@@",
     "dhcp-range-start": "@@dhcp_range_start@@",
     "dhcp-range-end": "@@dhcp_range_end@@",
-    "enable-adblock": false,
+    "enable-unbound-adblock": false,
     "wan-bitrate-mbps-down": null,
     "wan-bitrate-mbps-up": null,
     "static-ips": []
@@ -113,153 +113,7 @@ class InstallationService:
     "allowUserRegistration": false,
     "per-service": {}
   },
-  "services": {
-    "adguard": {
-      "enable": true,
-      "public": false
-    },
-    "admin": {
-      "enable": true,
-      "public": false
-    },
-    "landing-page": {
-      "enable": true,
-      "public": false
-    },
-    "headscale": {
-      "enable": false,
-      "public": false
-    },
-    "postgres-vectorchord": {
-      "enable": true,
-      "public": false
-    },
-    "lidarr": {
-      "enable": false,
-      "public": false
-    },
-    "vaultwarden": {
-      "enable": false,
-      "public": false
-    },
-    "webdav": {
-      "enable": false,
-      "public": false
-    },
-    "linkwarden": {
-      "enable": false,
-      "public": false
-    },
-    "joplin": {
-      "enable": false,
-      "public": false
-    },
-    "homeassistant": {
-      "enable": false,
-      "public": false
-    },
-    "nextcloud": {
-      "enable": false,
-      "public": false
-    },
-    "snipe-it": {
-      "enable": false,
-      "public": false
-    },
-    "frigate": {
-      "enable": false,
-      "public": false
-    },
-    "unifi": {
-      "enable": false,
-      "public": false
-    },
-    "cryptpad": {
-      "enable": false,
-      "public": false,
-      "adminKeys": []
-    },
-    "forgejo": {
-      "enable": false,
-      "public": false
-    },
-    "jellyfin": {
-      "enable": false,
-      "public": false
-    },
-    "nzbget": {
-      "enable": false,
-      "public": false
-    },
-    "radicale": {
-      "enable": false,
-      "public": false
-    },
-    "freshrss": {
-      "enable": false,
-      "public": false
-    },
-    "minecraft": {
-      "enable": false,
-      "public": false
-    },
-    "homebox": {
-      "enable": false,
-      "public": false
-    },
-    "ollama": {
-      "enable": false,
-      "public": false
-    },
-    "grocy": {
-      "enable": false,
-      "public": false
-    },
-    "zitadel": {
-      "enable": true,
-      "public": false
-    },
-    "immich": {
-      "enable": false,
-      "public": false
-    },
-    "matrix": {
-      "enable": false,
-      "public": false,
-      "enable-federation": false,
-      "federation-domain-whitelist": [ "matrix.org", "nixos.org", "homefree.host", "rycee.net", "gnome.org" ],
-      "admin-account": null,
-      "server-name": null
-    },
-    "mediawiki": {
-      "enable": false,
-      "public": false
-    },
-    "screeenly": {
-      "enable": false,
-      "public": false
-    },
-    "baikal": {
-      "enable": false,
-      "public": false
-    },
-    "trilium": {
-      "enable": false,
-      "public": false
-    },
-    "azuracast": {
-      "enable": false,
-      "public": false
-    },
-    "odoo": {
-      "enable": false,
-      "public": false
-    },
-    "unifi-os": {
-      "enable": false,
-      "public": false
-    }
-  },
+  "services": {},
   "service-config": [],
   "proxied-domains": [],
   "backups": {
@@ -318,7 +172,7 @@ in
       lan-subnet = jsonData.network.lan-subnet;
       dhcp-range-start = jsonData.network.dhcp-range-start;
       dhcp-range-end = jsonData.network.dhcp-range-end;
-      enable-adblock = jsonData.network.enable-adblock;
+      enable-unbound-adblock = jsonData.network.enable-unbound-adblock;
       wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
       wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
 
@@ -412,10 +266,22 @@ in
     ## only sets `public`), and the type system rejects unknown keys, so
     ## the per-service whitelist is no longer needed.
     ##
-    ## Only mediawiki's instances need a real transform: `logo-path` is a
-    ## string in JSON but needs to be a flake-relative Nix path so Nix
-    ## can import the logo file into the store at build time. Every
-    ## other service is plain pass-through.
+    ## Only mediawiki's instances need a real transform: `logo-path` is
+    ## a *string* in JSON (filesystem path like
+    ## "/etc/nixos/images/logo.png") but the option type is `nullOr path`
+    ## because favicon-generation and image-resizing run as derivations
+    ## that need to read the file at build time — that means it has to
+    ## be a Nix path literal so Nix imports it into the store.
+    ##
+    ## Why this lives in install.py's template rather than in
+    ## apps/mediawiki/default.nix: the conversion needs `./.` to resolve
+    ## to `/etc/nixos/` (the user's flake source root), because the
+    ## user's logo files live under `/etc/nixos/images/`. In the rendered
+    ## /etc/nixos/homefree-configuration.nix that's automatic — `./.` is
+    ## the directory containing the file. From inside the shared repo at
+    ## apps/mediawiki/default.nix, `./.` is a /nix/store path and the
+    ## user's logos are outside the flake source, so pure eval would
+    ## reject the path import.
     services = (jsonData.services or {}) // {
       mediawiki = (jsonData.services.mediawiki or {}) // {
         instances = map (instance: instance // {

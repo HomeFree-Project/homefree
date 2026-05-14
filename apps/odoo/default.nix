@@ -1,5 +1,5 @@
 # First run default username and password is admin/admin
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   version = "19.0";
   containerDataPath = "/var/lib/odoo-podman";
@@ -32,6 +32,49 @@ EOF
   '';
 in
 {
+  ## Admin-UI metadata namespace. The user-facing schema is declared
+  ## in module.nix as `homefree.services.odoo`; module.nix's generic
+  ## `intersectAttrs` mirror projects each user-facing service into
+  ## `homefree.service-options.<name>` so admin-web can build its UI.
+  ## That projection only includes services that have a matching
+  ## `service-options.<name>` declaration here.
+  options.homefree.service-options.odoo = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Odoo ERP service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "odoo";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Odoo ERP";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "odoo";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+
   services.postgresql = if config.homefree.services.odoo.enable then {
     enable = true;
     ensureDatabases = [ database-name ];
@@ -85,6 +128,10 @@ in
       "podman-odoo"
       "postgresql"
     ];
+    sso = {
+      kind = "none";
+      notes = "Odoo 19 CE has no usable in-tree OIDC: `auth_oauth` is hardcoded to Google/Facebook/Odoo.com with implicit-flow only (no client_secret/token_endpoint/jwks_uri fields), and Odoo has no auth-disable or trusted-header mode, so caddy_gated is also out. A clean integration requires the third-party OCA `auth_oidc` module mounted into addons_path, a SQL provisioner inserting an auth_oauth_provider row with Zitadel's endpoints, and pre-creating every Odoo user with a matching email — even then the local /web/login form stays reachable. Deferred until Odoo usage justifies the moving parts. Use Odoo's built-in users for now.";
+    };
     reverse-proxy = {
       enable = true;
       subdomains = [ "odoo" "erp" ];
@@ -99,4 +146,5 @@ in
       postgres-databases = [ database-name ];
     };
   }] else [];
+  };
 }

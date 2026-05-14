@@ -64,7 +64,7 @@ class NetworkModule extends LitElement {
         'lan-subnet': '10.0.0.0/24',
         'dhcp-range-start': '10.0.0.100',
         'dhcp-range-end': '10.0.0.200',
-        'enable-adblock': false,
+        'enable-unbound-adblock': false,
         'wan-bitrate-mbps-down': null,
         'wan-bitrate-mbps-up': null,
         'static-ips': []
@@ -138,7 +138,7 @@ class NetworkModule extends LitElement {
       { key: 'mac-address', label: 'MAC Address', type: 'text', placeholder: '00:11:22:33:44:55' },
       { key: 'hostname', label: 'Hostname', type: 'text', placeholder: 'device-name' },
       { key: 'ip', label: 'IP Address', type: 'text', placeholder: '10.0.0.50' },
-      { key: 'wan-access', label: 'WAN Access', type: 'boolean' }
+      { key: 'wan-access', label: 'Allow Internet Access', type: 'boolean', default: true }
     ];
 
     return html`
@@ -278,15 +278,15 @@ class NetworkModule extends LitElement {
 
         <!-- Ad Blocking -->
         <config-section
-          title="Ad Blocking"
-          description="Network-wide advertisement and tracker blocking via DNS"
+          title="System Ad Blocking"
+          description="Built-in ad and tracker blocking at the system level. Not necessary when AdGuard Home is running — AdGuard already provides network-wide ad blocking with a friendlier interface."
         >
           <form-field
-            label="Enable Ad Blocking"
+            label="Enable System Ad Blocking"
             type="boolean"
-            .value=${network['enable-adblock']}
-            help="Block ads and trackers for all devices on the network"
-            @field-change=${(e) => this.handleFieldChange('network.enable-adblock', e.detail.value)}
+            .value=${network['enable-unbound-adblock']}
+            help="Leave off if AdGuard Home is enabled."
+            @field-change=${(e) => this.handleFieldChange('network.enable-unbound-adblock', e.detail.value)}
           ></form-field>
         </config-section>
       </div>

@@ -54,6 +54,49 @@ let
   port-ssh = 2033;
 in
 {
+  ## Admin-UI metadata namespace. The user-facing schema is declared
+  ## in module.nix as `homefree.services.azuracast`; module.nix's
+  ## generic `intersectAttrs` mirror projects each user-facing service
+  ## into `homefree.service-options.<name>` so admin-web can build its
+  ## UI. That projection only includes services that have a matching
+  ## `service-options.<name>` declaration here.
+  options.homefree.service-options.azuracast = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable AzuraCast service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "azuracast";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "AzuraCast";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "AzuraCast";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+
   virtualisation.oci-containers.containers = if config.homefree.services.azuracast.enable == true then {
      azuracast = {
       inherit image;
@@ -114,4 +157,5 @@ in
       };
     }
   ] else [];
+  };
 }

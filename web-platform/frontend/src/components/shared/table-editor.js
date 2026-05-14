@@ -149,6 +149,24 @@ class TableEditor extends LitElement {
       margin-bottom: 6px;
     }
 
+    .modal-field.boolean {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .modal-field.boolean label {
+      margin: 0;
+      order: 2;
+    }
+
+    .modal-field.boolean input[type="checkbox"] {
+      margin: 0;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
     .modal-field input,
     .modal-field select {
       width: 100%;
@@ -215,10 +233,13 @@ class TableEditor extends LitElement {
   }
 
   openAddModal() {
-    // Create empty row based on columns
+    // Create empty row based on columns. A column can specify an
+    // explicit `default` to override the type-based fallback.
     this.editingRow = {};
     this.columns.forEach(col => {
-      if (col.type === 'boolean') {
+      if (col.default !== undefined) {
+        this.editingRow[col.key] = col.default;
+      } else if (col.type === 'boolean') {
         this.editingRow[col.key] = false;
       } else {
         this.editingRow[col.key] = '';
@@ -303,15 +324,16 @@ class TableEditor extends LitElement {
 
           <div class="modal-body">
             ${this.columns.map(col => html`
-              <div class="modal-field">
-                <label>${col.label}</label>
+              <div class="modal-field ${col.type === 'boolean' ? 'boolean' : ''}">
                 ${col.type === 'boolean' ? html`
                   <input
                     type="checkbox"
                     .checked=${this.editingRow[col.key]}
                     @change=${(e) => this.handleFieldChange(col.key, e.target.checked)}
                   />
+                  <label>${col.label}</label>
                 ` : html`
+                  <label>${col.label}</label>
                   <input
                     type="${col.type || 'text'}"
                     .value=${this.editingRow[col.key]}

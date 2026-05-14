@@ -115,7 +115,7 @@ in
       wan-bitrate-mbps-down = 1000;
       wan-bitrate-mbps-up = 1000;
       lan-interface = "enp112s0";
-      enable-adblock = false;
+      enable-unbound-adblock = false;
       static-ips = [
         {
           mac-address = "38:ea:a7:38:f2:6c";
@@ -750,7 +750,7 @@ in
         ## zitadel-provision.service. No user config needed.
       };
 
-      homeassistant = {
+      home-assistant = {
         enable = true;
       };
 

@@ -18,6 +18,49 @@ let
   '';
 in
 {
+  ## Admin-UI metadata namespace. The user-facing schema is declared
+  ## in module.nix as `homefree.services.trilium`; module.nix's
+  ## generic `intersectAttrs` mirror projects each user-facing service
+  ## into `homefree.service-options.<name>` so admin-web can build its
+  ## UI. That projection only includes services that have a matching
+  ## `service-options.<name>` declaration here.
+  options.homefree.service-options.trilium = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Trilium Notes service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "trilium";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "Trilium Notes";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "TriliumNext Notes";
+      internal = true;
+      description = "Project name";
+    };
+  };
+
+  config = {
+
   virtualisation.oci-containers.containers = if config.homefree.services.trilium.enable == true then {
     trilium = {
       image = "triliumnext/notes:v${version}";
@@ -91,4 +134,5 @@ in
       };
     }
   ] else [];
+  };
 }

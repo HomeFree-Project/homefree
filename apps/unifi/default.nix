@@ -1,53 +1,27 @@
 { config, lib, pkgs, ... }:
 let
-  # version = "10.0.162";
-  version = "10.3.58";
-  containerDataPath = "/var/lib/unifi-podman";
-  port = 8443;
-  MONGO_AUTHSOURCE = "admin";
-  MONGO_INITDB_ROOT_USERNAME = "root";
-  MONGO_INITDB_ROOT_PASSWORD = "password";
-  MONGO_USER = "unifi";
-  MONGO_PASS = "password";
-  MONGO_HOST = "unifi-db";
-  MONGO_PORT = "27017";
-  MONGO_DBNAME = "unifi";
+  version = "v1.0.0";
+  containerDataPath = "/var/lib/unifi-os-podman";
+  port = 11443;
 
   preStart = ''
-    mkdir -p ${containerDataPath}
-  '';
-
-  ## tag 8.0 changes
-  ## Use patch version for stability, e.g. "8.0.9"
-  mongo-version = "8.2";
-  mongo-containerDataPath = "/var/lib/unifi-db-podman";
-
-  mongo-preStart = ''
-    mkdir -p ${mongo-containerDataPath}
-  '';
-
-  init-unifi-db = pkgs.writeShellScriptBin "init-unifi-db" ''
-    if which mongosh > /dev/null 2>&1; then
-      mongo_init_bin='mongosh'
-    else
-      mongo_init_bin='mongo'
-    fi
-    $mongo_init_bin <<EOF
-    use ${MONGO_AUTHSOURCE}
-    db.auth("${MONGO_INITDB_ROOT_USERNAME}", "${MONGO_INITDB_ROOT_PASSWORD}")
-    db.createUser({
-      user: "${MONGO_USER}",
-      pwd: "${MONGO_PASS}",
-      roles: [
-        { db: "${MONGO_DBNAME}", role: "dbOwner" },
-        { db: "${MONGO_DBNAME}_stat", role: "dbOwner" },
-        { db: "${MONGO_DBNAME}_audit", role: "dbOwner" }
-      ]
-    })
-    EOF
+    mkdir -p ${containerDataPath}/data
+    mkdir -p ${containerDataPath}/unifi
+    mkdir -p ${containerDataPath}/mongodb
+    mkdir -p ${containerDataPath}/logs
+    mkdir -p ${containerDataPath}/persistent
+    mkdir -p ${containerDataPath}/journal
+    mkdir -p ${containerDataPath}/rabbitmq-ssl
+    mkdir -p ${containerDataPath}/unifi-tmp
   '';
 in
 {
+  ## Admin-UI metadata namespace. The user-facing schema is declared
+  ## in module.nix as `homefree.services.unifi`; module.nix's generic
+  ## `intersectAttrs` mirror projects each user-facing service into
+  ## `homefree.service-options.<name>` so admin-web can build its UI.
+  ## That projection only includes services that have a matching
+  ## `service-options.<name>` declaration here.
   options.homefree.service-options.unifi = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -84,127 +58,93 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.unifi.enable {
-    unifi-db = {
-      image = "mongo:${mongo-version}";
-      # image = "mongodb/mongodb-community-server:${version}";
+
+  virtualisation.oci-containers.containers = if config.homefree.services.unifi.enable == true then {
+    unifi-os = {
+      image = "ghcr.io/lemker/unifi-os-server:${version}";
 
       autoStart = true;
 
       extraOptions = [
         # "--pull=always"
+        "--privileged"
+        "--stop-signal=SIGRTMIN+3"
+        "--mount=type=tmpfs,target=/run,tmpfs-size=104857600"
+        "--mount=type=tmpfs,target=/run/lock,tmpfs-size=104857600"
+        "--mount=type=tmpfs,target=/tmp,tmpfs-size=104857600"
       ];
 
       ports = [
-        "0.0.0.0:27017:27017"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${mongo-containerDataPath}:/data/db"
-        "${init-unifi-db}/bin/init-unifi-db:/docker-entrypoint-initdb.d/init-mongo.sh:ro"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        MONGO_INITDB_ROOT_USERNAME = MONGO_INITDB_ROOT_USERNAME;
-        MONGO_INITDB_ROOT_PASSWORD = MONGO_INITDB_ROOT_PASSWORD;
-        MONGO_USER = MONGO_USER;
-        MONGO_PASS = MONGO_PASS;
-        MONGO_DBNAME = MONGO_DBNAME;
-        MONGO_AUTHSOURCE = MONGO_AUTHSOURCE;
-      };
-    };
-
-    unifi = {
-      image = "lscr.io/linuxserver/unifi-network-application:${version}";
-
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
-
-      ports = [
-        ## Web interface
-        "0.0.0.0:${toString port}:${toString port}"
-
-        ## STUN port - only necessary if controlling devices behind a firewall
-        ## Disabled to not conflict with Headscale DERP
-        # "0.0.0.0:3478:3478/udp"
-
-        ## Device discover during adoption
-        "0.0.0.0:10001:10001/udp"
+        ## Web interface / GUI / API (HTTPS)
+        "0.0.0.0:${toString port}:443"
 
         ## Device and application communication
         "0.0.0.0:8080:8080"
 
+        ## STUN port - disabled to not conflict with Headscale DERP
+        # "0.0.0.0:3478:3478/udp"
+
+        ## Device discovery during adoption
+        "0.0.0.0:10001:10001/udp"
+
+        ## Device discovery (UOS additional port)
+        "0.0.0.0:10003:10003/udp"
+
         ## Used with "Make application discoverable on L2 network" in the UniFi Network settings.
         ## Conflicts with Jellyfin DLNA discovery
-        # "0.0.0.0:1900:1900/udp" #optional
+        # "0.0.0.0:1900:1900/udp"
 
-        ## Used for HTTPS portal redirection. (only needed if using Guest hotspot)
-        "0.0.0.0:8843:8843"     #optional
+        ## HTTPS portal redirection (only needed if using Guest hotspot)
+        "0.0.0.0:8843:8843"
 
-        ## Hotspot portal redirection (HTTP).
-        "0.0.0.0:8880:8880"     #optional
+        ## HTTP hotspot redirection
+        "0.0.0.0:8880:8880"
 
-        ## UniFi mobile speed test.
-        "0.0.0.0:6789:6789"     #optional
+        ## UniFi mobile speed test
+        "0.0.0.0:6789:6789"
 
-        ## Used for remote syslog capture.
-        "0.0.0.0:5514:5514/udp" #optional
+        ## Remote syslog capture
+        "0.0.0.0:5514:5514/udp"
       ];
 
       volumes = [
-        "${containerDataPath}:/config"
         "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}/data:/data"
+        "${containerDataPath}/unifi:/var/lib/unifi"
+        "${containerDataPath}/mongodb:/var/lib/mongodb"
+        "${containerDataPath}/logs:/var/log"
+        "${containerDataPath}/persistent:/persistent"
+        "${containerDataPath}/journal:/var/lib/journal"
+        "${containerDataPath}/rabbitmq-ssl:/etc/rabbitmq/ssl"
+        "${containerDataPath}/unifi-tmp:/var/opt/unifi/tmp"
       ];
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        PUID = "1000";
-        PGID = "1000";
-        MONGO_USER = MONGO_USER;
-        MONGO_PASS = MONGO_PASS;
-        MONGO_HOST = MONGO_HOST;
-        MONGO_PORT = MONGO_PORT;
-        MONGO_DBNAME = MONGO_DBNAME;
-        MONGO_AUTHSOURCE = MONGO_AUTHSOURCE;
-        MEM_LIMIT = "1024"; #optional
-        MEM_STARTUP = "1024"; #optional
-        MONGO_TLS = ""; #optional
+        UOS_SYSTEM_IP = config.homefree.network.lan-address;
       };
     };
-  };
+  } else {};
 
-  systemd.services.podman-unifi-db = lib.optionalAttrs config.homefree.service-options.unifi.enable {
+  systemd.services.podman-unifi-os = {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "unifi-db-prestart" mongo-preStart}" ];
+      ExecStartPre = [ "!${pkgs.writeShellScript "unifi-os-prestart" preStart}" ];
+      TimeoutStopSec = lib.mkForce 180;
     };
   };
 
-  systemd.services.podman-unifi = lib.optionalAttrs config.homefree.service-options.unifi.enable {
-    after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "unifi-prestart" preStart}" ];
-    };
-  };
-
-    homefree.service-config = [{
-      inherit (config.homefree.service-options.unifi) label name project-name;
+  homefree.service-config = if config.homefree.services.unifi.enable == true then [
+    {
+      label = "unifi-os";
+      name = "UniFi OS";
+      project-name = "UniFi OS Server";
       systemd-service-names = [
-        "podman-unifi"
+        "podman-unifi-os"
       ];
-      sso = {
-        kind = "caddy_gated";
-        notes = "Outer gate admin-only via oauth2-proxy + homefree-admin role. UniFi's own login still appears inside (no native OIDC). Device traffic uses port 8080 direct and bypasses Caddy entirely.";
-      };
       reverse-proxy = {
-        enable = config.homefree.service-options.unifi.enable;
+        enable = true;
         subdomains = [ "unifi" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
@@ -212,35 +152,14 @@ in
         port = port;
         ssl = true;
         ssl-no-verify = true;
-        public = config.homefree.service-options.unifi.public;
-        ## Admin-only Caddy outer gate. Same pattern as Frigate:
-        ## non-admin SSO users get 403 from Caddy; admins land on
-        ## UniFi's own login. UniFi devices (APs etc.) connect on
-        ## port 8080 direct to the host, not via Caddy, so they're
-        ## unaffected by this gate.
-        oauth2 = true;
-        require-admin-role = true;
+        public = config.homefree.services.unifi.public;
       };
       backup = {
         paths = [
           containerDataPath
-          mongo-containerDataPath
         ];
       };
-      options-metadata = [
-        {
-          path = "enable";
-          type = "bool";
-          default = false;
-          description = "Enable Unifi controller";
-        }
-        {
-          path = "public";
-          type = "bool";
-          default = false;
-          description = "Make service accessible from WAN";
-        }
-      ];
-    }];
+    }
+  ] else [];
   };
 }

@@ -13,8 +13,8 @@ let
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
   blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
-    iifname ${wan-interface} saddr ${entry.ip} drop
-    iifname ${wan-interface} daddr ${entry.ip} drop
+    iifname ${wan-interface} ip saddr ${entry.ip} drop
+    iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
 
   # Firewall rules to open up ports for services

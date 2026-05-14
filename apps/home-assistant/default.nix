@@ -396,7 +396,7 @@ in
 
     label = lib.mkOption {
       type = lib.types.str;
-      default = "homeassistant";
+      default = "home-assistant";
       internal = true;
       description = "Service label";
     };
@@ -417,7 +417,7 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.homeassistant.enable {
+  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.home-assistant.enable {
     homeassistant = {
       image = "ghcr.io/home-assistant/home-assistant:${version}";
 
@@ -448,7 +448,7 @@ in
     };
   };
 
-  systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.homeassistant.enable {
+  systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.home-assistant.enable {
     after = [ "dns-ready.service" ];
     requires = [ "dns-ready.service" ];
     serviceConfig = {
@@ -457,14 +457,9 @@ in
     };
   };
 
-  homefree.service-config = lib.optionals config.homefree.services.homeassistant.enable [
+  homefree.service-config = lib.optionals config.homefree.services.home-assistant.enable [
     {
       inherit (config.homefree.service-options.home-assistant) label name project-name;
-      ## Service label is "homeassistant" (no hyphen) but the directory
-      ## is "home-assistant" (matches the upstream nixpkgs convention).
-      ## Auto-discovery keys by directory, so point at the icon file
-      ## explicitly to bridge the gap.
-      icon = ./icon.svg;
       systemd-service-names = [
         "podman-homeassistant"
       ];
@@ -480,7 +475,7 @@ in
         https-domains = [ config.homefree.system.domain ];
         host = config.homefree.network.lan-address;
         port = port;
-        public = config.homefree.services.homeassistant.public;
+        public = config.homefree.services.home-assistant.public;
         ## Zero-click SSO redirect. Visiting ha.<domain> without an HA
         ## session lands on /onboarding.html (fresh install) or on
         ## HA's frontend SPA which then renders its own login form.
