@@ -133,6 +133,15 @@ let
   ## starts it once they land.)
 in
 {
+  ## Zitadel ships as four sibling modules in this directory. The
+  ## entrypoint (`default.nix`) imports the other three so a caller
+  ## only has to import `apps/zitadel` to pull in the whole stack.
+  imports = [
+    ./provision.nix
+    ./pam-bridge.nix
+    ./password-shim.nix
+  ];
+
   options.homefree.service-options.zitadel = {
     enable = lib.mkOption {
       type = lib.types.bool;
