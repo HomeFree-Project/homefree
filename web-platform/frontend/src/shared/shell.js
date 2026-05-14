@@ -218,7 +218,12 @@ export const shellStyles = css`
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 24px;
+    /* Extra bottom padding so the last row of content clears mobile
+       browser chrome (iOS Safari's URL bar, Chrome's nav bar) — the
+       visible viewport shrinks when those bars appear and content
+       flush against the edge gets clipped. Combined with 100dvh on
+       the host, this keeps the last tile/card fully visible. */
+    padding: 24px 24px 96px;
     background: var(--hf-bg);
   }
 

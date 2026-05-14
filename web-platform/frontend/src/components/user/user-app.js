@@ -62,7 +62,13 @@ class UserApp extends LitElement {
     :host {
       display: block;
       width: 100%;
+      /* 100dvh respects mobile browser chrome (Safari/Chrome bottom
+         bars resize the viewport as you scroll). 100vh would leave
+         the last row of content hidden behind the URL bar on small
+         screens. Fallback to 100vh on browsers without dvh support
+         — they get the old behavior, no regression. */
       height: 100vh;
+      height: 100dvh;
     }
     *, *::before, *::after { box-sizing: border-box; }
 

@@ -50,7 +50,10 @@ class AdminApp extends LitElement {
     :host {
       display: block;
       width: 100%;
+      /* See user-app.js for the 100dvh rationale (mobile browser
+         chrome). 100vh fallback first for older browsers. */
       height: 100vh;
+      height: 100dvh;
     }
 
     /* Shell layout (.app-container / sidebar / top-bar / nav-item /
