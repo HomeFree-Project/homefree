@@ -12,25 +12,41 @@ import re
 from typing import Any, Dict, Set, List, Tuple
 
 
-def extract_service_names_from_module(module_file: str) -> List[str]:
+def extract_service_schema_from_module(module_file: str) -> Dict[str, Set[str]]:
     """
-    Extract service names from module.nix by parsing the services section.
-    Returns list of service names (e.g., ['adguard', 'jellyfin', ...])
+    Walk module.nix's `services = { ... }` block and return a mapping
+    of every declared top-level service to the set of subkeys it
+    declares (e.g. `enable`, `public`, `media-path`, `instances`,
+    `secrets`, etc.).
+
+    Used for:
+      1. Knowing which services exist (the dict's keys) — replaces
+         the old `extract_service_names_from_module`.
+      2. Knowing which subkeys are valid per service so we can drop
+         stale ones from JSON. Without this, an orphan key in JSON
+         like `mediawiki.secrets = {}` makes the build fail at Nix
+         eval time with an opaque "option does not exist" error.
+
+    The parser is intentionally textual and conservative — it only
+    detects subkeys declared via `<name> = lib.mkOption { ... }` or
+    `<name> = { ... }` (the latter for nested groupings like
+    `secrets = { ... }` in service blocks that contain multiple
+    `mkOption`s). Submodule-internal options (per-instance attrs
+    inside a `listOf submodule {...}`) are not walked because
+    Nix's submodule type enforces those at eval time on its own.
     """
-    services = []
+    schema: Dict[str, Set[str]] = {}
     try:
         with open(module_file, 'r') as f:
             lines = f.readlines()
 
-        # Find the services block
         in_services = False
         brace_depth = 0
+        current_svc = None  # Name of the service whose body we're inside.
 
         for i, line in enumerate(lines):
-            stripped = line.strip()
-
             # Start of services block
-            if re.match(r'^\s*services\s*=\s*\{', line):
+            if not in_services and re.match(r'^\s*services\s*=\s*\{', line):
                 in_services = True
                 brace_depth = 1
                 continue
@@ -38,42 +54,56 @@ def extract_service_names_from_module(module_file: str) -> List[str]:
             if not in_services:
                 continue
 
-            # Depth as we *enter* this line (before applying the line's braces).
-            # Top-level service entries are the ones that sit immediately inside
-            # the `services = { ... }` block — i.e. depth == 1 on entry,
-            # opening their own `{` to become depth 2.
             depth_before = brace_depth
             brace_depth += line.count('{') - line.count('}')
 
-            # Exit services block when braces balance out
             if brace_depth <= 0:
                 break
 
-            # Look for service definition: servicename = {
-            # Only count entries opened at depth 1 (immediate children of the
-            # services block). Without this gate, nested sub-options like
-            # `netbird.client = { ... }` get picked up as if they were
-            # top-level services.
-            if depth_before != 1:
-                continue
-            service_match = re.match(r'^\s*([\w-]+)\s*=\s*\{', line)
-            if service_match:
-                service_name = service_match.group(1)
-                # Skip reserved/structural names
-                if service_name in ['options', 'config', 'secrets', 'backup']:
+            # Top-level service entry: depth 1 → opens to depth 2.
+            if depth_before == 1:
+                m = re.match(r'^\s*([\w-]+)\s*=\s*\{', line)
+                if m:
+                    name = m.group(1)
+                    if name in ('options', 'config', 'secrets', 'backup'):
+                        current_svc = None
+                        continue
+                    # Look ahead to confirm this has an `enable` mkOption —
+                    # otherwise it's some other top-level attrset that
+                    # happens to live inside `services = {`.
+                    has_enable = any(
+                        'enable' in lines[j] and 'lib.mkOption' in lines[j]
+                        for j in range(i + 1, min(i + 5, len(lines)))
+                    )
+                    if has_enable:
+                        current_svc = name
+                        schema.setdefault(current_svc, set())
+                    else:
+                        current_svc = None
                     continue
-                # Look ahead to see if this has an 'enable' option
-                for j in range(i+1, min(i+5, len(lines))):
-                    if 'enable' in lines[j] and 'lib.mkOption' in lines[j]:
-                        services.append(service_name)
-                        break
 
-        return sorted(set(services))
+            # Subkey inside a service body: depth 2 → either opens a
+            # mkOption (depth 3) or a nested attrset.
+            if current_svc and depth_before == 2:
+                m = re.match(r'^\s*([\w-]+)\s*=\s*(?:lib\.mkOption|\{)', line)
+                if m:
+                    schema[current_svc].add(m.group(1))
+
+            # Close of current service body returns to depth 1.
+            if current_svc and brace_depth == 1:
+                current_svc = None
+
+        return schema
     except Exception as e:
-        print(f"Warning: Could not extract services from module.nix: {e}", file=sys.stderr)
+        print(f"Warning: Could not parse module.nix schema: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc(file=sys.stderr)
-        return []
+        return {}
+
+
+def extract_service_names_from_module(module_file: str) -> List[str]:
+    """Compatibility wrapper. Returns a sorted list of service names."""
+    return sorted(extract_service_schema_from_module(module_file).keys())
 
 
 def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]]:
@@ -89,12 +119,16 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
     changes = []
     synced_config = json.loads(json.dumps(current_config))  # Deep copy
 
-    # Extract services from module.nix
-    module_services = extract_service_names_from_module(module_file)
+    # Pull the full service schema from module.nix. Names are used for the
+    # service-level add/remove sweep; per-service subkey sets are used to
+    # drop stale option keys that no longer correspond to a declared option.
+    module_schema = extract_service_schema_from_module(module_file)
 
-    if not module_services:
+    if not module_schema:
         changes.append("! Warning: Could not extract services from module.nix, skipping service sync")
         return synced_config, changes
+
+    module_services_set = set(module_schema.keys())
 
     # Ensure services section exists
     if 'services' not in synced_config:
@@ -102,7 +136,6 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         changes.append("+ Added: services section")
 
     current_services = set(synced_config['services'].keys())
-    module_services_set = set(module_services)
 
     # Find obsolete services (in JSON but not in module.nix)
     obsolete_services = current_services - module_services_set
@@ -111,17 +144,38 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
     new_services = module_services_set - current_services
 
     # Remove obsolete services
-    for service in obsolete_services:
+    for service in sorted(obsolete_services):
         del synced_config['services'][service]
         changes.append(f"- Removed obsolete service: {service}")
 
     # Add new services with defaults
-    for service in new_services:
+    for service in sorted(new_services):
         synced_config['services'][service] = {
             'enable': False,
             'public': False
         }
         changes.append(f"+ Added new service: {service} (enable=false, public=false)")
+
+    # Drop stale subkeys: JSON has a key under `services.<name>` that
+    # isn't declared in module.nix for that service. Left unchecked
+    # these break the build at Nix eval time with an opaque "option
+    # does not exist" error. The most common cause is a service
+    # losing an option upstream (e.g. `mediawiki.secrets` removed)
+    # while an existing JSON file still carries the now-orphan key.
+    for service in sorted(synced_config['services'].keys()):
+        if service not in module_schema:
+            continue  # Already handled by the obsolete-services pass.
+        svc_cfg = synced_config['services'][service]
+        if not isinstance(svc_cfg, dict):
+            continue
+        declared = module_schema[service]
+        stale = [k for k in svc_cfg.keys() if k not in declared]
+        for key in sorted(stale):
+            value = svc_cfg.pop(key)
+            changes.append(
+                f"~ Dropped stale key: services.{service}.{key} "
+                f"(value was {json.dumps(value)})"
+            )
 
     # Ensure all existing sections have required structure
     required_sections = {

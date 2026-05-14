@@ -2313,129 +2313,33 @@
       }
     ];
 
-    # Map user-facing service options to internal service-options
-    homefree.service-options.adguard.enable = config.homefree.services.adguard.enable;
-    homefree.service-options.adguard.public = config.homefree.services.adguard.public;
-
-    homefree.service-options.baikal.enable = config.homefree.services.baikal.enable;
-    homefree.service-options.baikal.public = config.homefree.services.baikal.public;
-
-    homefree.service-options.cryptpad.enable = config.homefree.services.cryptpad.enable;
-    homefree.service-options.cryptpad.public = config.homefree.services.cryptpad.public;
-    homefree.service-options.cryptpad.adminKeys = config.homefree.services.cryptpad.adminKeys;
-
-    homefree.service-options.forgejo.enable = config.homefree.services.forgejo.enable;
-    homefree.service-options.forgejo.public = config.homefree.services.forgejo.public;
-    homefree.service-options.forgejo.disable-registration = config.homefree.services.forgejo.disable-registration;
-
-    homefree.service-options.freshrss.enable = config.homefree.services.freshrss.enable;
-    homefree.service-options.freshrss.public = config.homefree.services.freshrss.public;
-
-    homefree.service-options.frigate.enable = config.homefree.services.frigate.enable;
-    homefree.service-options.frigate.enable-coral = config.homefree.services.frigate.enable-coral;
-    homefree.service-options.frigate.public = config.homefree.services.frigate.public;
-    homefree.service-options.frigate.media-path = config.homefree.services.frigate.media-path;
-    homefree.service-options.frigate.enable-backup-media = config.homefree.services.frigate.enable-backup-media;
-    homefree.service-options.frigate.retain = config.homefree.services.frigate.retain;
-    homefree.service-options.frigate.hwaccel-args = config.homefree.services.frigate.hwaccel-args;
-    homefree.service-options.frigate.cameras = config.homefree.services.frigate.cameras;
-
-    homefree.service-options.grocy.enable = config.homefree.services.grocy.enable;
-    homefree.service-options.grocy.public = config.homefree.services.grocy.public;
-
-    homefree.service-options.home-assistant.enable = config.homefree.services.homeassistant.enable;
-    homefree.service-options.home-assistant.public = config.homefree.services.homeassistant.public;
-
-    homefree.service-options.homebox.enable = config.homefree.services.homebox.enable;
-    homefree.service-options.homebox.public = config.homefree.services.homebox.public;
-
-    homefree.service-options.immich.enable = config.homefree.services.immich.enable;
-    homefree.service-options.immich.public = config.homefree.services.immich.public;
-
-    homefree.service-options.jellyfin.enable = config.homefree.services.jellyfin.enable;
-    homefree.service-options.jellyfin.public = config.homefree.services.jellyfin.public;
-    homefree.service-options.jellyfin.media-path = config.homefree.services.jellyfin.media-path;
-
-    homefree.service-options.joplin.enable = config.homefree.services.joplin.enable;
-    homefree.service-options.joplin.public = config.homefree.services.joplin.public;
-
-    homefree.service-options.lidarr.enable = config.homefree.services.lidarr.enable;
-    homefree.service-options.lidarr.public = config.homefree.services.lidarr.public;
-    homefree.service-options.lidarr.media-path = config.homefree.services.lidarr.media-path;
-    homefree.service-options.lidarr.downloads-path = config.homefree.services.lidarr.downloads-path;
-    homefree.service-options.lidarr.enable-backup-media = config.homefree.services.lidarr.enable-backup-media;
-
-    homefree.service-options.linkwarden.enable = config.homefree.services.linkwarden.enable;
-    homefree.service-options.linkwarden.public = config.homefree.services.linkwarden.public;
-    homefree.service-options.linkwarden.secrets = config.homefree.services.linkwarden.secrets;
-
-    homefree.service-options.matrix.enable = config.homefree.services.matrix.enable;
-    homefree.service-options.matrix.public = config.homefree.services.matrix.public;
-    homefree.service-options.matrix.enable-federation = config.homefree.services.matrix.enable-federation;
-    homefree.service-options.matrix.federation-domain-whitelist = config.homefree.services.matrix.federation-domain-whitelist;
-    homefree.service-options.matrix.admin-account = config.homefree.services.matrix.admin-account;
-    homefree.service-options.matrix.server-name = config.homefree.services.matrix.server-name;
-    homefree.service-options.matrix.secrets = config.homefree.services.matrix.secrets;
-
-    homefree.service-options.mediawiki.enable = config.homefree.services.mediawiki.enable;
-    homefree.service-options.mediawiki.public = config.homefree.services.mediawiki.public;
-    homefree.service-options.mediawiki.instances = config.homefree.services.mediawiki.instances;
-
-    homefree.service-options.minecraft.enable = config.homefree.services.minecraft.enable;
-    homefree.service-options.minecraft.public = config.homefree.services.minecraft.public;
-    homefree.service-options.minecraft.secrets = config.homefree.services.minecraft.secrets;
-    homefree.service-options.minecraft.instances = config.homefree.services.minecraft.instances;
-
-    homefree.service-options.nextcloud.enable = config.homefree.services.nextcloud.enable;
-    homefree.service-options.nextcloud.public = config.homefree.services.nextcloud.public;
-    homefree.service-options.nextcloud.secrets = config.homefree.services.nextcloud.secrets;
-
-    homefree.service-options.nzbget.enable = config.homefree.services.nzbget.enable;
-    homefree.service-options.nzbget.public = config.homefree.services.nzbget.public;
-
-    homefree.service-options.ollama.enable = config.homefree.services.ollama.enable;
-    homefree.service-options.ollama.public = config.homefree.services.ollama.public;
-
-    homefree.service-options.postgres-vectorchord.enable = config.homefree.services.postgres-vectorchord.enable;
-    homefree.service-options.postgres-vectorchord.public = config.homefree.services.postgres-vectorchord.public;
-
-    homefree.service-options.radicale.enable = config.homefree.services.radicale.enable;
-    homefree.service-options.radicale.public = config.homefree.services.radicale.public;
-
-    homefree.service-options.screeenly.enable = config.homefree.services.screeenly.enable;
-    homefree.service-options.screeenly.public = config.homefree.services.screeenly.public;
-
-    homefree.service-options.snipe-it.enable = config.homefree.services.snipe-it.enable;
-    homefree.service-options.snipe-it.public = config.homefree.services.snipe-it.public;
-    homefree.service-options.snipe-it.secrets = config.homefree.services.snipe-it.secrets;
-
-    homefree.service-options.unifi.enable = config.homefree.services.unifi.enable;
-    homefree.service-options.unifi.public = config.homefree.services.unifi.public;
-
-    homefree.service-options.vaultwarden.enable = config.homefree.services.vaultwarden.enable;
-    homefree.service-options.vaultwarden.public = config.homefree.services.vaultwarden.public;
-
-    homefree.service-options.webdav.enable = config.homefree.services.webdav.enable;
-    homefree.service-options.webdav.public = config.homefree.services.webdav.public;
-
-    homefree.service-options.zitadel.enable = config.homefree.services.zitadel.enable;
-    homefree.service-options.zitadel.public = config.homefree.services.zitadel.public;
-
-    # Compat shim: bridge legacy `homefree.services.headscale.*` writes to the
-    # new colocated `homefree.service-options.headscale.*` namespace declared
-    # in services/headscale.nix. Remove this shim once all configuration.nix
-    # files have migrated to the new path.
-    homefree.service-options.headscale.enable = config.homefree.services.headscale.enable;
-    homefree.service-options.headscale.public = config.homefree.services.headscale.public;
-    homefree.service-options.headscale.stun-port = config.homefree.services.headscale.stun-port;
-    homefree.service-options.headscale.enable-public-derp-fallback = config.homefree.services.headscale.enable-public-derp-fallback;
-
-    # Same shim for NetBird. The admin UI's JSON config writes to
-    # homefree.services.netbird.*; mirror onto the colocated namespace
-    # declared in services/netbird.nix.
-    homefree.service-options.netbird.enable = config.homefree.services.netbird.enable;
-    homefree.service-options.netbird.public = config.homefree.services.netbird.public;
-    homefree.service-options.netbird.client.enable = config.homefree.services.netbird.client.enable;
+    ## Mirror every user-facing `homefree.services.<name>` entry into
+    ## the colocated `homefree.service-options.<name>` namespace that
+    ## admin-web reads to build the admin UI's option schema. Replaces
+    ## a 120-line block of per-service identity assignments.
+    ##
+    ## Filtering rule: only mirror services whose corresponding
+    ## `options.homefree.service-options.<name>` block actually exists
+    ## (declared in `apps/<name>/default.nix` for apps with admin-UI
+    ## metadata). Services like `admin`, `landing-page`, `azuracast`,
+    ## `odoo`, `trilium`, `unifi-os` deliberately have no service-options
+    ## decl and would fail with "option does not exist" if mirrored.
+    ##
+    ## Caveat: `services.homeassistant` is mirrored as
+    ## `service-options.home-assistant` (kebab in the internal namespace,
+    ## concatenated in the user-facing one). The wider fix is to rename
+    ## `services.homeassistant` → `services.home-assistant` consistently,
+    ## but that touches user JSON and is its own task. For now we strip
+    ## `homeassistant` from the generic mirror and override explicitly.
+    homefree.service-options =
+      (lib.intersectAttrs
+        options.homefree.service-options
+        (lib.filterAttrs
+          (name: _: name != "homeassistant")
+          config.homefree.services))
+      // (if options.homefree.service-options ? home-assistant
+          then { home-assistant = config.homefree.services.homeassistant; }
+          else {});
 
     warnings =
       (if config.homefree.backups.enable == false then [
