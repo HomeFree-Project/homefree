@@ -460,6 +460,11 @@ in
   homefree.service-config = lib.optionals config.homefree.services.homeassistant.enable [
     {
       inherit (config.homefree.service-options.home-assistant) label name project-name;
+      ## Service label is "homeassistant" (no hyphen) but the directory
+      ## is "home-assistant" (matches the upstream nixpkgs convention).
+      ## Auto-discovery keys by directory, so point at the icon file
+      ## explicitly to bridge the gap.
+      icon = ./icon.svg;
       systemd-service-names = [
         "podman-homeassistant"
       ];

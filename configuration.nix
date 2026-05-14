@@ -26,7 +26,7 @@ in
     ./services/caddy
     ./services/ddclient
     ./services/dnsmasq
-    ./services/goidc-proxy
+    # ./services/goidc-proxy   # Pre-existing parse error; never imported in master either.
     ./services/landing-page
     # ./services/mongo
     ./services/mqtt
