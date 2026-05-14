@@ -411,10 +411,17 @@ in
         oauth2-proxy = {
           image = "oauth2-proxy/oauth2-proxy:${oauth2ProxyVersion}";
 
-          ## Don't auto-start — gated on the secret files existing
-          ## (see ExecStartPre check in the systemd unit override
-          ## below). Once provisioning lands, the script kicks it.
-          autoStart = false;
+          ## autoStart=true so the unit comes up at every boot AND
+          ## after rebuild-restarts. The ExecStartPre below refuses
+          ## to launch if OIDC secrets aren't on disk yet — that's
+          ## the real gate (fresh install, pre-provision). On boxes
+          ## that have already been provisioned, autoStart ensures
+          ## oauth2-proxy comes back without requiring zitadel-
+          ## provision.service to kick it. (Previously autoStart=
+          ## false meant rebuilds left the unit inactive until the
+          ## next provision-run, which broke admin.<domain> + every
+          ## oauth2-gated service.)
+          autoStart = true;
 
           extraOptions = [
             # @TODO: Is host networking actually necessary?
@@ -570,6 +577,50 @@ in
             > "${zitadelSecretsDir}/oauth2-cookie-secret"
         fi
         chmod 600 "${zitadelSecretsDir}/oauth2-cookie-secret"
+
+        ## Auto-generate the initial admin password if not provided
+        ## by the web installer. Required so a fresh-rebuild path —
+        ## someone upgrading a pre-SSO HomeFree box without going
+        ## through the installer flow — produces a working Zitadel
+        ## bootstrap rather than landing on Zitadel's compiled-in
+        ## default ("RandomInitial1!" historically; not stable across
+        ## versions). On first generation we print a loud banner so
+        ## the operator can grab the password from the journal — the
+        ## file is root-only and they'll need to log in once to
+        ## change it. Subsequent rebuilds are no-op (password kept).
+        if [ ! -s "${zitadelSecretsDir}/admin-password" ]; then
+          ## Zitadel password policy default requires upper+lower+digit
+          ## and at least 8 chars. Base64-of-24-bytes is 32 mixed-case
+          ## alphanumerics — comfortably passes.
+          ${pkgs.openssl}/bin/openssl rand -base64 24 \
+            | tr -d '/+=' \
+            | head -c 24 \
+            > "${zitadelSecretsDir}/admin-password"
+          chmod 600 "${zitadelSecretsDir}/admin-password"
+
+          ## Journal banner. Visible via:
+          ##   sudo journalctl -u zitadel-prepare-secrets.service
+          ## The first interactive login at https://sso.<domain>/
+          ## will force a password change, after which this file is
+          ## stale (Zitadel doesn't sync changes back to disk).
+          PW=$(cat "${zitadelSecretsDir}/admin-password")
+          echo ""
+          echo "════════════════════════════════════════════════════════════════════════════════"
+          echo "  HomeFree SSO — Initial Zitadel admin password (FIRST LOGIN ONLY)"
+          echo "────────────────────────────────────────────────────────────────────────────────"
+          echo "  Username : ${config.homefree.system.adminUsername}"
+          echo "  Password : $PW"
+          echo ""
+          echo "  → Log in once at https://sso.${config.homefree.system.domain}/"
+          echo "  → Zitadel will prompt you to set a new password — pick one you'll remember."
+          echo ""
+          echo "  This is the only time the password appears in the log."
+          echo "  To retrieve it again before first login:"
+          echo "    sudo cat ${zitadelSecretsDir}/admin-password"
+          echo "════════════════════════════════════════════════════════════════════════════════"
+          echo ""
+        fi
+        chmod 600 "${zitadelSecretsDir}/admin-password"
       '';
     };
 
