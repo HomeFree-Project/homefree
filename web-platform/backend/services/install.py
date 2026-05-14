@@ -404,183 +404,33 @@ in
       }) (jsonData.sso.per-service or {});
     };
 
-    services = {
-      adguard.enable = jsonData.services.adguard.enable or false;
-      adguard.public = jsonData.services.adguard.public or false;
-
-      admin.enable = jsonData.services.admin.enable or false;
-      admin.public = jsonData.services.admin.public or false;
-
-      landing-page.enable = jsonData.services.landing-page.enable or false;
-      landing-page.public = jsonData.services.landing-page.public or false;
-
-      headscale.enable = jsonData.services.headscale.enable or false;
-      headscale.public = jsonData.services.headscale.public or false;
-
-      ## netbird: server (mgmt/signal/relay/dashboard) gates on
-      ## .enable; the optional client.enable adds a local peer.
-      netbird.enable = jsonData.services.netbird.enable or false;
-      netbird.public = jsonData.services.netbird.public or false;
-      netbird.client.enable = jsonData.services.netbird.client.enable or false;
-
-      postgres-vectorchord.enable = jsonData.services.postgres-vectorchord.enable or false;
-      postgres-vectorchord.public = jsonData.services.postgres-vectorchord.public or false;
-
-      lidarr.enable = jsonData.services.lidarr.enable or false;
-      lidarr.public = jsonData.services.lidarr.public or false;
-      lidarr.media-path = jsonData.services.lidarr.media-path or null;
-      lidarr.downloads-path = jsonData.services.lidarr.downloads-path or null;
-
-      vaultwarden.enable = jsonData.services.vaultwarden.enable or false;
-      vaultwarden.public = jsonData.services.vaultwarden.public or false;
-
-      webdav.enable = jsonData.services.webdav.enable or false;
-      webdav.public = jsonData.services.webdav.public or false;
-
-      linkwarden.enable = jsonData.services.linkwarden.enable or false;
-      linkwarden.public = jsonData.services.linkwarden.public or false;
-
-      joplin.enable = jsonData.services.joplin.enable or false;
-      joplin.public = jsonData.services.joplin.public or false;
-
-      homeassistant.enable = jsonData.services.homeassistant.enable or false;
-      homeassistant.public = jsonData.services.homeassistant.public or false;
-
-      nextcloud.enable = jsonData.services.nextcloud.enable or false;
-      nextcloud.public = jsonData.services.nextcloud.public or false;
-
-      snipe-it.enable = jsonData.services.snipe-it.enable or false;
-      snipe-it.public = jsonData.services.snipe-it.public or false;
-
-      frigate.enable = jsonData.services.frigate.enable or false;
-      frigate.public = jsonData.services.frigate.public or false;
-      frigate.media-path = jsonData.services.frigate.media-path or null;
-      frigate.hwaccel-args = jsonData.services.frigate.hwaccel-args or "preset-intel-qsv-h264";
-      frigate.cameras = map (camera: {
-        enable = camera.enable or true;
-        direct-stream = camera.direct-stream or false;
-        name = camera.name;
-        path = camera.path;
-        width = camera.width or 1920;
-        height = camera.height or 1080;
-      }) (jsonData.services.frigate.cameras or []);
-
-      unifi.enable = jsonData.services.unifi.enable or false;
-      unifi.public = jsonData.services.unifi.public or false;
-
-      cryptpad.enable = jsonData.services.cryptpad.enable or false;
-      cryptpad.public = jsonData.services.cryptpad.public or false;
-      cryptpad.adminKeys = jsonData.services.cryptpad.adminKeys or [];
-
-      forgejo.enable = jsonData.services.forgejo.enable or false;
-      forgejo.public = jsonData.services.forgejo.public or false;
-
-      jellyfin.enable = jsonData.services.jellyfin.enable or false;
-      jellyfin.public = jsonData.services.jellyfin.public or false;
-      jellyfin.media-path = jsonData.services.jellyfin.media-path or null;
-
-      nzbget.enable = jsonData.services.nzbget.enable or false;
-      nzbget.public = jsonData.services.nzbget.public or false;
-      nzbget.downloads-path = jsonData.services.nzbget.downloads-path or null;
-
-      radicale.enable = jsonData.services.radicale.enable or false;
-      radicale.public = jsonData.services.radicale.public or false;
-
-      freshrss.enable = jsonData.services.freshrss.enable or false;
-      freshrss.public = jsonData.services.freshrss.public or false;
-
-      minecraft.enable = jsonData.services.minecraft.enable or false;
-      minecraft.public = jsonData.services.minecraft.public or false;
-      minecraft.instances = map (instance: {
-        enable = instance.enable or true;
-        public = instance.public or false;
-        subdomain = instance.subdomain;
-        name = instance.name;
-        memory = if (instance.memory or null) == null || instance.memory == "" then null else instance.memory;
-        image-tag = if (instance."image-tag" or null) == null || instance."image-tag" == "" then null else instance."image-tag";
-        mode = instance.mode or "survival";
-        type = if (instance.type or null) == null || instance.type == "" then null else instance.type;
-        mods = map (mod: {
-          download-url = mod."download-url";
-          project-slug = mod."project-slug";
-        }) (instance.mods or []);
-      } // (if (instance."mod-pack" or null) == null then {} else {
-        mod-pack = {
-          download-url = instance."mod-pack"."download-url";
-          project-slug = instance."mod-pack"."project-slug";
-        };
-      })) (jsonData.services.minecraft.instances or []);
-
-      homebox.enable = jsonData.services.homebox.enable or false;
-      homebox.public = jsonData.services.homebox.public or false;
-
-      ollama.enable = jsonData.services.ollama.enable or false;
-      ollama.public = jsonData.services.ollama.public or false;
-
-      grocy.enable = jsonData.services.grocy.enable or false;
-      grocy.public = jsonData.services.grocy.public or false;
-
-      zitadel.enable = jsonData.services.zitadel.enable or false;
-      zitadel.public = jsonData.services.zitadel.public or false;
-
-      immich.enable = jsonData.services.immich.enable or false;
-      immich.public = jsonData.services.immich.public or false;
-
-      matrix.enable = jsonData.services.matrix.enable or false;
-      matrix.public = jsonData.services.matrix.public or false;
-      matrix.enable-federation = jsonData.services.matrix.enable-federation or false;
-      matrix.federation-domain-whitelist =
-        jsonData.services.matrix.federation-domain-whitelist
-        or [ "matrix.org" "nixos.org" "homefree.host" "rycee.net" "gnome.org" ];
-      matrix.admin-account = jsonData.services.matrix.admin-account or null;
-      matrix.server-name = jsonData.services.matrix.server-name or null;
-
-      mediawiki.enable = jsonData.services.mediawiki.enable or false;
-      mediawiki.public = jsonData.services.mediawiki.public or false;
-      mediawiki.instances = map (instance: {
-        enable = instance.enable or true;
-        public = instance.public or false;
-        subdomain = instance.subdomain;
-        name = instance.name;
-        logo-path =
-          let raw = instance."logo-path" or null; in
-          if raw == null || raw == "" then null
-          else
-            ## Path is interpreted relative to /etc/nixos (the flake source
-            ## root). A leading "/etc/nixos/" prefix is stripped so legacy
-            ## absolute paths still resolve. Using ./. + "/relative" makes
-            ## the result a flake-relative path literal, which pure-eval
-            ## accepts and Nix imports into the store automatically.
-            let
-              stripped =
-                if lib.strings.hasPrefix "/etc/nixos/" raw
-                then lib.strings.removePrefix "/etc/nixos/" raw
-                else raw;
-            in (./. + ("/" + stripped));
-        readonly = instance.readonly or false;
-        disable-anonymous-editing = instance."disable-anonymous-editing" or false;
-        disable-anonymous-viewing = instance."disable-anonymous-viewing" or false;
-        disable-user-editing = instance."disable-user-editing" or false;
-        disable-user-registration = instance."disable-user-registration" or false;
-      }) (jsonData.services.mediawiki.instances or []);
-
-      screeenly.enable = jsonData.services.screeenly.enable or false;
-      screeenly.public = jsonData.services.screeenly.public or false;
-
-      baikal.enable = jsonData.services.baikal.enable or false;
-      baikal.public = jsonData.services.baikal.public or false;
-
-      trilium.enable = jsonData.services.trilium.enable or false;
-      trilium.public = jsonData.services.trilium.public or false;
-
-      azuracast.enable = jsonData.services.azuracast.enable or false;
-      azuracast.public = jsonData.services.azuracast.public or false;
-
-      odoo.enable = jsonData.services.odoo.enable or false;
-      odoo.public = jsonData.services.odoo.public or false;
-
-      unifi-os.enable = jsonData.services."unifi-os".enable or false;
-      unifi-os.public = jsonData.services."unifi-os".public or false;
+    ## Generic pass-through of `jsonData.services` into `homefree.services`.
+    ##
+    ## The JSON↔Nix mapping is identity now: every JSON key matches its
+    ## corresponding Nix attribute name verbatim. Submodule defaults in
+    ## module.nix fill in missing keys (e.g. `enable = false` when JSON
+    ## only sets `public`), and the type system rejects unknown keys, so
+    ## the per-service whitelist is no longer needed.
+    ##
+    ## Only mediawiki's instances need a real transform: `logo-path` is a
+    ## string in JSON but needs to be a flake-relative Nix path so Nix
+    ## can import the logo file into the store at build time. Every
+    ## other service is plain pass-through.
+    services = (jsonData.services or {}) // {
+      mediawiki = (jsonData.services.mediawiki or {}) // {
+        instances = map (instance: instance // {
+          logo-path =
+            let raw = instance.logo-path or null; in
+            if raw == null || raw == "" then null
+            else
+              let
+                stripped =
+                  if lib.strings.hasPrefix "/etc/nixos/" raw
+                  then lib.strings.removePrefix "/etc/nixos/" raw
+                  else raw;
+              in (./. + ("/" + stripped));
+        }) (jsonData.services.mediawiki.instances or []);
+      };
     };
 
     backups = {

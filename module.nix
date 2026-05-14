@@ -618,32 +618,6 @@
         };
       };
 
-      authentik = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "enable Authentik";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-
-        secrets = {
-          environment = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Authentik environment variables file. Should not be a file included in your source repo.";
-          };
-
-          ldap-environment = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Authentik LDAP environment variables file. Should not be a file included in your source repo.";
-          };
-        };
-      };
-
       azuracast = {
         enable = lib.mkOption {
           type = lib.types.bool;

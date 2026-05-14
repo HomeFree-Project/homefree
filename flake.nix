@@ -27,17 +27,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    ## @TODO: Remove - this is part of nixpkgs now
-    authentik-nix = {
-      # url = "github:nix-community/authentik-nix";
-      # url = "github:nix-community/authentik-nix/version/2024.10.4";
-      # url = "github:erahhal/authentik-nix/no-docs";
-      url = "github:erahhal/authentik-nix/daba454bd25cea9796e525d225f06fb0782abba6";
-
-      ## optional overrides. Note that using a different version of nixpkgs can cause issues, especially with python dependencies
-      # inputs.flake-parts.follows = "flake-parts";
-    };
-
     # nixos-router = {
     #   url = "github:chayleaf/nixos-router";
     #   inputs.nixpkgs.follows = "nixpkgs";

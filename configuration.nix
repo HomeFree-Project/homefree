@@ -127,8 +127,7 @@ in
   # --------------------------------------------------------------------------------------
 
   # @TODO: Make this UI configurable
-  ## Must be forced due to Authentik hard coding a value of UTC
-  time.timeZone = lib.mkForce config.homefree.system.timeZone;
+  time.timeZone = config.homefree.system.timeZone;
 
   networking = {
     # @TODO: Make this UI configurable

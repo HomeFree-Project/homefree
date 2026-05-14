@@ -15,7 +15,7 @@ from typing import Any, Dict, Set, List, Tuple
 def extract_service_names_from_module(module_file: str) -> List[str]:
     """
     Extract service names from module.nix by parsing the services section.
-    Returns list of service names (e.g., ['adguard', 'authentik', ...])
+    Returns list of service names (e.g., ['adguard', 'jellyfin', ...])
     """
     services = []
     try:
@@ -38,7 +38,11 @@ def extract_service_names_from_module(module_file: str) -> List[str]:
             if not in_services:
                 continue
 
-            # Track brace depth to know when we exit the services block
+            # Depth as we *enter* this line (before applying the line's braces).
+            # Top-level service entries are the ones that sit immediately inside
+            # the `services = { ... }` block — i.e. depth == 1 on entry,
+            # opening their own `{` to become depth 2.
+            depth_before = brace_depth
             brace_depth += line.count('{') - line.count('}')
 
             # Exit services block when braces balance out
@@ -46,7 +50,12 @@ def extract_service_names_from_module(module_file: str) -> List[str]:
                 break
 
             # Look for service definition: servicename = {
-            # followed by enable = lib.mkOption on the next line or soon after
+            # Only count entries opened at depth 1 (immediate children of the
+            # services block). Without this gate, nested sub-options like
+            # `netbird.client = { ... }` get picked up as if they were
+            # top-level services.
+            if depth_before != 1:
+                continue
             service_match = re.match(r'^\s*([\w-]+)\s*=\s*\{', line)
             if service_match:
                 service_name = service_match.group(1)

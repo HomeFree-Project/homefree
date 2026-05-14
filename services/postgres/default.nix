@@ -2,7 +2,6 @@
 {
   services.postgresql = {
     enable = true;
-    # Authentik sets an older package for some reason
     ## When bumping postgres major versions, existing data needs
     ## `pg_upgrade`. NixOS doesn't run this automatically — for an
     ## in-place upgrade you'd need to manually pg_dumpall on the old

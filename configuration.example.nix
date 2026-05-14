@@ -535,11 +535,6 @@ in
           #   ip = "10.0.0.73";
           # }
           # {
-          #   hostname = "authentik";
-          #   domain = "lan";
-          #   ip = "10.0.0.74";
-          # }
-          # {
           #   hostname = "postgres";
           #   domain = "lan";
           #   ip = "10.0.0.75";
@@ -640,14 +635,6 @@ in
     services = {
       adguard = {
         enable = true;
-      };
-
-      authentik = {
-        enable = false;
-        secrets = {
-          environment = config.sops.secrets."authentik/authentik-env".path;
-          ldap-environment = config.sops.secrets."authentik/authentik-ldap-env".path;
-        };
       };
 
       baikal = {
@@ -1064,12 +1051,6 @@ in
     #     hostname = "att.${config.homefree.system.localDomain}";
     #     port = 80;
     #     description = "att";
-    #   }
-    #   {
-    #     label = "authentik_server";
-    #     hostname = "authentik.${config.homefree.system.localDomain}";
-    #     port = 9443;
-    #     description = "Authentik";
     #   }
     #   {
     #     label = "cablemodem_server";
