@@ -1,6 +1,9 @@
 import { LitElement, html, css } from 'lit';
 import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
+import { themeVars } from '../../shared/theme.js';
+import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
+import { shellStyles } from '../../shared/shell.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -43,214 +46,17 @@ class AdminApp extends LitElement {
     userMenuOpen: { type: Boolean, state: true },
   };
 
-  static styles = css`
+  static styles = [themeVars, userMenuStyles, shellStyles, css`
     :host {
       display: block;
       width: 100%;
       height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: var(--hf-text);
-      background: var(--hf-bg);
-      color-scheme: dark;
-
-      --hf-bg:           #0a0a0a;
-      --hf-surface:      #111111;
-      --hf-surface-2:    #1a1a1a;
-      --hf-surface-3:    #242424;
-      --hf-border:       #222222;
-      --hf-border-2:     #2e2e2e;
-      --hf-text:         #ededed;
-      --hf-text-muted:   #888888;
-      --hf-text-subtle:  #555555;
-      --hf-accent:       #6366f1;
-      --hf-accent-hover: #5558e0;
-      --hf-accent-soft:  rgba(99, 102, 241, 0.15);
-      --hf-ok:           #10b981;
-      --hf-warn:         #f59e0b;
-      --hf-err:          #ef4444;
-      --hf-focus-ring:   rgba(99, 102, 241, 0.4);
-      --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.4);
-      --hf-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.6);
     }
 
-    .admin-container {
-      display: flex;
-      height: 100%;
-    }
-
-    /* Sidebar */
-    .sidebar {
-      width: 260px;
-      background: var(--hf-surface);
-      border-right: 1px solid var(--hf-border);
-      color: var(--hf-text);
-      display: flex;
-      flex-direction: column;
-      transition: width 0.3s ease;
-      overflow-x: hidden;
-    }
-
-    .sidebar.collapsed {
-      width: 70px;
-    }
-
-    .sidebar-header {
-      height: 64px;
-      padding: 0 20px;
-      border-bottom: 1px solid var(--hf-border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-shrink: 0;
-    }
-
-    .sidebar.collapsed .sidebar-header h1 {
-      display: none;
-    }
-
-    .sidebar-header h1 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 600;
-      white-space: nowrap;
-      color: var(--hf-text);
-      letter-spacing: -0.01em;
-    }
-
-    .collapse-btn {
-      background: var(--hf-surface-2);
-      border: 1px solid var(--hf-border);
-      color: var(--hf-text-muted);
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.15s;
-    }
-
-    .collapse-btn:hover {
-      background: var(--hf-surface-3);
-      color: var(--hf-text);
-    }
-
-    .nav-menu {
-      flex: 1;
-      padding: 16px 0;
-      overflow-y: auto;
-    }
-
-    .nav-item {
-      display: flex;
-      align-items: center;
-      padding: 10px 20px;
-      color: var(--hf-text-muted);
-      text-decoration: none;
-      cursor: pointer;
-      transition: all 0.15s;
-      border-left: 2px solid transparent;
-      white-space: nowrap;
-    }
-
-    .nav-item:hover {
-      background: var(--hf-surface-2);
-      color: var(--hf-text);
-    }
-
-    .nav-item.active {
-      background: var(--hf-surface-2);
-      color: var(--hf-text);
-      border-left-color: var(--hf-accent);
-    }
-
-    .nav-item-icon {
-      width: 20px;
-      margin-right: 12px;
-      font-size: 16px;
-      flex-shrink: 0;
-      filter: grayscale(0.4);
-    }
-
-    .nav-item.active .nav-item-icon {
-      filter: none;
-    }
-
-    .sidebar.collapsed .nav-item-text {
-      display: none;
-    }
-
-    .nav-section-title {
-      padding: 20px 20px 8px 20px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--hf-text-subtle);
-      white-space: nowrap;
-      overflow: hidden;
-    }
-
-    /* When the sidebar is collapsed, replace the section title text with
-       a divider line so each section's icons stay vertically aligned with
-       their expanded position. The container keeps the same vertical
-       footprint as the expanded title (20px top + ~14px line + 8px bottom). */
-    .sidebar.collapsed .nav-section-title {
-      color: transparent;
-      padding: 20px 12px 8px 12px;
-      position: relative;
-    }
-
-    .sidebar.collapsed .nav-section-title::after {
-      content: '';
-      position: absolute;
-      left: 12px;
-      right: 12px;
-      top: 50%;
-      height: 1px;
-      background: var(--hf-border);
-    }
-
-    /* Main Content */
-    .main-content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      background: var(--hf-bg);
-      overflow: hidden;
-    }
-
-    .top-bar {
-      height: 64px;
-      background: var(--hf-surface);
-      border-bottom: 1px solid var(--hf-border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 24px;
-    }
-
-    .top-bar-title {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      min-width: 0;
-    }
-
-    .top-bar h2 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 600;
-      color: var(--hf-text);
-      letter-spacing: -0.01em;
-    }
-
-    .top-bar-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
+    /* Shell layout (.app-container / sidebar / top-bar / nav-item /
+       hamburger / backdrop / mobile media query) lives in
+       shared/shell.js and is imported via shellStyles above.
+       admin-specific extensions follow. */
 
     /* Sidebar Apply footer — pinned at the bottom by flex layout.
        Pushes itself down by giving nav a flex: 1 above. */
@@ -298,72 +104,8 @@ class AdminApp extends LitElement {
       margin-right: 0;
     }
 
-    /* User menu in the top bar */
-    .user-menu-wrap {
-      position: relative;
-    }
-    .user-menu-trigger {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      border: 1px solid var(--hf-border-2);
-      background: var(--hf-surface);
-      color: var(--hf-text);
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .user-menu-trigger:hover,
-    .user-menu-trigger.open {
-      background: var(--hf-surface-2);
-      border-color: var(--hf-accent);
-    }
-    .user-menu-popover {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      min-width: 200px;
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border-2);
-      border-radius: 8px;
-      box-shadow: var(--hf-shadow-lg);
-      z-index: 100;
-      overflow: hidden;
-    }
-    .user-menu-header {
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--hf-border);
-      font-size: 13px;
-    }
-    .user-menu-header .user-name {
-      color: var(--hf-text);
-      font-weight: 500;
-    }
-    .user-menu-header .user-role {
-      color: var(--hf-text-muted);
-      font-size: 11px;
-      margin-top: 2px;
-    }
-    .user-menu-item {
-      display: block;
-      padding: 10px 14px;
-      color: var(--hf-text);
-      text-decoration: none;
-      font-size: 14px;
-      background: none;
-      border: none;
-      width: 100%;
-      text-align: left;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .user-menu-item:hover {
-      background: var(--hf-surface-2);
-    }
+    /* User-menu styles live in src/shared/user-menu.js and are
+       imported via userMenuStyles in the static styles array. */
 
     /* Save status indicator */
     .save-indicator {
@@ -736,112 +478,24 @@ class AdminApp extends LitElement {
       background: rgba(255, 255, 255, 0.3);
     }
 
-    .admin-container.with-banner {
+    .app-container.with-banner {
       height: calc(100% - 40px);
     }
 
-    /* Hamburger button — hidden on desktop, shown on mobile via the
-       media query below. Sits in the top bar so it's always reachable,
-       even when the sidebar is hidden off-screen. */
-    .hamburger-btn {
-      display: none;
-      background: var(--hf-surface-2);
-      border: 1px solid var(--hf-border);
-      color: var(--hf-text);
-      width: 40px;
-      height: 40px;
-      border-radius: 6px;
-      cursor: pointer;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      margin-right: 12px;
-      flex-shrink: 0;
-    }
-    .hamburger-btn:hover {
-      background: var(--hf-surface-3);
-    }
-
-    /* Backdrop appears behind the slide-in sidebar on mobile, dimming
-       the main content and providing a tap target to close the nav. */
-    .sidebar-backdrop {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.5);
-      z-index: 99;
-    }
-
-    /* Responsive */
+    /* Hamburger, sidebar-backdrop, and the standard 768px mobile
+       overlay treatment live in shared/shell.js. Only admin-
+       specific mobile rules remain below (sidebar-footer hide
+       fix-up + with-banner offset). */
     @media (max-width: 768px) {
-      .hamburger-btn {
-        display: inline-flex;
-      }
-
-      /* On mobile the sidebar is an overlay rather than a flex sibling
-         of main-content. Hidden off-screen by default; transform brings
-         it back into view when .collapsed is removed. Full width so
-         labels remain readable on narrow phones. */
-      .sidebar {
-        position: fixed;
-        top: 0;
-        left: 0;
-        z-index: 100;
-        height: 100%;
-        width: 280px;
-        max-width: 85vw;
-        transform: translateX(0);
-        transition: transform 0.25s ease;
-      }
-      .sidebar.collapsed {
-        /* Override the desktop 70px width so the nav fully slides out
-           of view rather than leaving a narrow strip on screen. */
-        width: 280px;
-        max-width: 85vw;
-        transform: translateX(-100%);
-      }
-      /* On mobile the collapsed nav-item-text rule (display: none)
-         would still apply if we don't disable it. We do want full
-         labels on mobile, since the sidebar is full-width when open. */
-      .sidebar.collapsed .nav-item-text,
-      .sidebar.collapsed .sidebar-header h1,
       .sidebar.collapsed .sidebar-footer .apply-btn-text {
         display: initial;
       }
-      .sidebar.collapsed .nav-section-title {
-        color: var(--hf-text-subtle);
-        padding: 20px 20px 8px 20px;
-      }
-      .sidebar.collapsed .nav-section-title::after {
-        display: none;
-      }
-      /* Backdrop only when sidebar is open (i.e. NOT collapsed). */
-      .sidebar:not(.collapsed) ~ .sidebar-backdrop {
-        display: block;
-      }
-      /* Sidebar's own internal collapse arrow becomes redundant on
-         mobile — the hamburger and backdrop tap already cover it. */
-      .sidebar .collapse-btn {
-        display: none;
-      }
-      /* Account for the with-banner offset so the sidebar starts
-         below the update banner rather than under it. */
-      .admin-container.with-banner .sidebar {
+      .app-container.with-banner .sidebar {
         top: 40px;
         height: calc(100% - 40px);
       }
-      .top-bar {
-        padding: 0 12px;
-      }
-      .content-area {
-        padding: 12px;
-      }
-      /* Individual modules render in their own shadow DOM, so this
-         rule can't reach .module-container inside them — module-side
-         padding tweaks would need to be added to each module file
-         separately. Skipping that for this pass (nav-only). */
     }
-  `;
+  `];
 
   constructor() {
     super();
@@ -2335,39 +1989,27 @@ class AdminApp extends LitElement {
     }
   }
 
-  /** Top-right user menu: avatar circle with the signed-in user's
-   *  initial, click opens a popover with sign-out. Defensive on
-   *  missing currentUser (e.g. /api/users/me failed) — falls back to
-   *  a generic "Account" label. */
+  /** Top-right user menu. Delegates to the shared renderer so
+   *  admin.<domain> and home.<domain> show the same shape.
+   *  Extra items are cross-SITE links (Home dashboard, Manual)
+   *  so an admin can hop between surfaces without going to the
+   *  URL bar. Profile & password lives below the separator and
+   *  routes to home.<domain>/#/profile (the single source of
+   *  truth for self-service settings). */
   _renderUserMenu() {
-    const u = this.currentUser;
-    const username = u?.username || '';
-    const initial = username ? username[0].toUpperCase() : '?';
-    const role = u?.is_admin_user ? 'HomeFree admin' : 'Signed in';
-
-    return html`
-      <div class="user-menu-wrap">
-        <button
-          class="user-menu-trigger ${this.userMenuOpen ? 'open' : ''}"
-          @click=${this.toggleUserMenu}
-          title=${username ? `Signed in as ${username}` : 'Account menu'}
-          aria-haspopup="true"
-          aria-expanded=${this.userMenuOpen}
-        >${initial}</button>
-
-        ${this.userMenuOpen ? html`
-          <div class="user-menu-popover">
-            <div class="user-menu-header">
-              <div class="user-name">${username || 'Account'}</div>
-              <div class="user-role">${role}</div>
-            </div>
-            <a class="user-menu-item" href="#" @click=${handleSignOut}>
-              Sign out
-            </a>
-          </div>
-        ` : ''}
-      </div>
-    `;
+    const host = window.location.hostname;
+    const apex = host.replace(/^(admin|home|manual)\./, '');
+    const proto = window.location.protocol;
+    return renderUserMenu({
+      currentUser: this.currentUser,
+      open: this.userMenuOpen,
+      onToggle: () => this.toggleUserMenu(),
+      profileUrl: profileUrlForCurrentBox(),
+      extraItems: [
+        { label: 'Home',   href: `${proto}//home.${apex}/` },
+        { label: 'Manual', href: `${proto}//manual.${apex}/`, target: '_blank' },
+      ],
+    });
   }
 
   render() {
@@ -2402,7 +2044,7 @@ class AdminApp extends LitElement {
           </button>
         </div>
       ` : ''}
-      <div class="admin-container ${this.updateAvailable ? 'with-banner' : ''}">
+      <div class="app-container ${this.updateAvailable ? 'with-banner' : ''}">
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">

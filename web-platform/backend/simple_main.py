@@ -864,9 +864,14 @@ async def get_services_visible_to_me(request: Request):
 
         out.append({
             "label": label,
+            # `name` is the function (e.g. "Ad Block"). `project_name`
+            # is the brand (e.g. "AdGuard Home"). The user dashboard
+            # shows name as the tile title and project_name beneath
+            # as a subtitle — hides the subtitle when they're equal.
             "name": sc.get("name") or label,
+            "project_name": sc.get("project-name") or "",
             "url": url,
-            "icon": sc.get("icon"),  # null until step 5 populates
+            "icon": sc.get("icon"),
         })
 
     # Stable alphabetical order by display name.

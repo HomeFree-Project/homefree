@@ -379,27 +379,52 @@ let
   config-json = (pkgs.formats.json {}).generate "admin-config.json" admin-config;
 
   # Per-service icons for the home.<domain> app launcher (and any
-  # future admin UI that wants them). Each entry in service-config
-  # has an optional `icon = <path>` field; we collect those into a
-  # single derivation so Caddy can serve them from one mount point.
+  # future admin UI that wants them). Sources:
   #
-  # Output file naming: <label>.<ext> where ext is whatever the
-  # source file used. The launcher hard-codes ".svg" in its URL
-  # template — services should ship SVG icons for crispness. We
-  # don't enforce that here (any extension goes through), but
-  # mismatched extensions just won't be found by the frontend.
+  #   1. The bundled icon set at web-platform/frontend/src/assets/
+  #      icons/ — a curated collection of Simple Icons SVGs, one
+  #      file per service label. Auto-picked up by filename match.
+  #
+  #   2. A per-service `icon = <path>` override on service-config.
+  #      Wins over (1) when set. Useful for third-party service
+  #      modules that ship their own icon.
+  #
+  # All icons land at /run/homefree/admin/icons/<label>.<ext> at
+  # runtime and Caddy serves them from /icons/* on home + admin
+  # vhosts. The frontend hard-codes ".svg" in its URL template,
+  # so anything other than SVG just won't be found — which is
+  # fine (initials fall back gracefully).
+  bundledIconsDir = ../web-platform/frontend/src/assets/icons;
   service-icons-pkg =
     let
-      withIcon = lib.filter
-        (sc: (sc.icon or null) != null)
-        cfg.service-config;
-      copyLines = lib.concatMapStringsSep "\n"
-        (sc: ''cp ${sc.icon} "$out/${sc.label}${
-          let n = baseNameOf (toString sc.icon);
+      # Map of label -> source path, with overrides winning over
+      # bundled icons. We walk every service-config entry to build
+      # this so each service gets at most one icon.
+      explicitOverrides = builtins.listToAttrs (lib.map
+        (sc: { name = sc.label; value = sc.icon; })
+        (lib.filter (sc: (sc.icon or null) != null) cfg.service-config));
+
+      labelsWithBundled =
+        if builtins.pathExists bundledIconsDir
+        then lib.mapAttrs'
+          (filename: _:
+            let label = lib.removeSuffix ".svg" filename;
+            in { name = label; value = "${bundledIconsDir}/${filename}"; })
+          (lib.filterAttrs
+            (n: t: t == "regular" && lib.hasSuffix ".svg" n)
+            (builtins.readDir bundledIconsDir))
+        else { };
+
+      # Override map wins.
+      resolved = labelsWithBundled // explicitOverrides;
+
+      copyLines = lib.concatStringsSep "\n" (lib.mapAttrsToList
+        (label: src:
+          let n = baseNameOf (toString src);
               dot = lib.strings.match ".*(\\.[^.]+)$" n;
-          in if dot != null then builtins.head dot else ""
-        }"'')
-        withIcon;
+              ext = if dot != null then builtins.head dot else "";
+          in ''cp ${src} "$out/${label}${ext}"'')
+        resolved);
     in
     pkgs.runCommand "homefree-service-icons" {} ''
       mkdir -p $out

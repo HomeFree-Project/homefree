@@ -12,283 +12,280 @@ import {
   DEFAULT_POLICY,
 } from '../../shared/password-policy.js';
 import { handleSignOut } from '../../shared/auth.js';
+import { themeVars } from '../../shared/theme.js';
+import {
+  userMenuStyles,
+  renderUserMenu,
+} from '../../shared/user-menu.js';
+import { shellStyles } from '../../shared/shell.js';
 
-// Per-user dashboard. Lives at home.<domain>. Three sections:
-//   1. App launcher grid — services the user can actually open.
-//   2. Profile — first/last name, email (read-only-ish: backend
-//      applies the change to Zitadel).
-//   3. Password change — same validation as the admin Users page.
-// Plus a sticky top bar with the user's name, manual link, admin
-// link (only when is_admin_role), and sign-out.
+// Per-user dashboard at home.<domain>. Same app-shell shape as
+// admin-app: left sidebar for intra-site nav, top-bar with the
+// current page title on the left and the user-menu on the right.
+// The user-menu carries cross-SITE links (Admin, Manual) plus
+// Profile & password and Sign out.
+//
+// Hash routes: #/apps (default), #/profile.
+
+const ROUTE_APPS = 'apps';
+const ROUTE_PROFILE = 'profile';
+
+function routeFromHash() {
+  const h = (window.location.hash || '').replace(/^#\/?/, '').trim();
+  if (h === ROUTE_PROFILE) return ROUTE_PROFILE;
+  return ROUTE_APPS;
+}
+
+const MODULES = [
+  { id: ROUTE_APPS,    title: 'Apps',    icon: '⊞', section: 'Home' },
+  { id: ROUTE_PROFILE, title: 'Profile', icon: '👤', section: 'Account' },
+];
 
 class UserApp extends LitElement {
   static properties = {
+    route: { type: String },
     user: { type: Object },
     services: { type: Array },
     policy: { type: Object },
     loading: { type: Boolean },
     error: { type: String },
-    // Per-section editing state. Kept on the host so each form can
-    // surface its own toast without cross-talk.
+    userMenuOpen: { type: Boolean, state: true },
+    sidebarCollapsed: { type: Boolean, state: true },
+    isMobile: { type: Boolean, state: true },
     profileSaving: { type: Boolean, state: true },
-    profileMessage: { type: Object, state: true }, // {kind, text}
+    profileMessage: { type: Object, state: true },
     passwordSaving: { type: Boolean, state: true },
     passwordMessage: { type: Object, state: true },
   };
 
-  static styles = css`
+  static styles = [themeVars, userMenuStyles, shellStyles, css`
     :host {
       display: block;
-      min-height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
-        Roboto, sans-serif;
-      background: #f5f5f7;
-      color: #1d1d1f;
+      width: 100%;
+      height: 100vh;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
 
-      --hf-accent: #6366f1;
-      --hf-accent-hover: #5558e0;
-      --hf-border: #e5e5ea;
-      --hf-text-muted: #6e6e73;
-      --hf-ok: #10b981;
-      --hf-err: #ef4444;
-      --hf-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-      --hf-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
-    }
-
-    /* Top bar */
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: white;
-      border-bottom: 1px solid var(--hf-border);
-      padding: 14px 24px;
-      display: flex;
-      align-items: center;
-      gap: 20px;
-    }
-    .brand {
-      font-weight: 600;
-      font-size: 18px;
-    }
-    .topbar-spacer { flex: 1; }
-    .topbar a, .topbar button.linklike {
-      color: #1d1d1f;
-      text-decoration: none;
-      font-size: 14px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      background: transparent;
-      border: none;
-      cursor: pointer;
-      font: inherit;
-    }
-    .topbar a:hover, .topbar button.linklike:hover {
-      background: #f0f0f3;
-    }
-    .topbar .user {
-      color: var(--hf-text-muted);
-      font-size: 13px;
-    }
-
-    /* Layout */
-    main {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 32px 24px 80px;
-      display: grid;
-      gap: 24px;
-    }
-    h1 {
-      margin: 8px 0 16px;
-      font-size: 28px;
-      font-weight: 600;
-    }
-    h2 {
-      margin: 0 0 12px;
-      font-size: 17px;
-      font-weight: 600;
-    }
-
-    .card {
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      box-shadow: var(--hf-shadow);
-    }
-
-    /* App grid */
+    /* App launcher grid */
     .app-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 16px;
-      margin-top: 8px;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 14px;
     }
     .app-tile {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      padding: 20px 12px;
-      background: white;
+      background: var(--hf-surface);
       border: 1px solid var(--hf-border);
-      border-radius: 10px;
+      border-radius: 12px;
+      padding: 18px 18px 16px;
+      transition: border-color 0.2s, transform 0.2s, background 0.2s;
       color: inherit;
       text-decoration: none;
-      transition: transform 120ms ease, box-shadow 120ms ease,
-                  border-color 120ms ease;
-      text-align: center;
+      display: block;
     }
     .app-tile:hover {
-      transform: translateY(-2px);
-      box-shadow: var(--hf-shadow-lg);
       border-color: var(--hf-accent);
+      background: var(--hf-surface-2);
+      transform: translateY(-1px);
     }
-    .app-icon {
-      width: 48px;
-      height: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      font-weight: 600;
-      font-size: 20px;
-      border-radius: 12px;
+    .app-tile-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      display: grid;
+      place-items: center;
+      margin-bottom: 12px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
       overflow: hidden;
     }
-    .app-icon img {
-      width: 100%;
-      height: 100%;
+    .app-tile-icon img {
+      width: 70%;
+      height: 70%;
       object-fit: contain;
-      background: white;
+      filter: invert(1) brightness(0.92);
     }
-    .app-name {
-      font-size: 13px;
-      font-weight: 500;
-      word-break: break-word;
+    .app-tile-name {
+      font-weight: 600;
+      font-size: 0.96rem;
+      letter-spacing: -0.01em;
+      margin: 0 0 2px;
+      color: var(--hf-text);
+    }
+    .app-tile-sub {
+      font-size: 0.78rem;
+      color: var(--hf-text-subtle);
+      margin: 0;
     }
     .empty {
       color: var(--hf-text-muted);
       font-size: 14px;
-      padding: 16px 0;
+      padding: 24px 0;
+    }
+
+    /* Cards (Profile page) */
+    .card {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 720px;
+    }
+    .card + .card { margin-top: 16px; }
+    .card h3 {
+      margin: 0 0 16px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--hf-text);
     }
 
     /* Forms */
-    .row {
+    .form-row {
       display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 12px;
+      grid-template-columns: 160px 1fr;
+      gap: 16px;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
-    .row label {
+    @media (max-width: 560px) {
+      .form-row { grid-template-columns: 1fr; gap: 6px; }
+    }
+    .form-row label {
       color: var(--hf-text-muted);
       font-size: 14px;
     }
-    .row input {
-      padding: 8px 10px;
-      border: 1px solid var(--hf-border);
+    .form-row input {
+      padding: 9px 12px;
+      border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       font-size: 14px;
       font: inherit;
       width: 100%;
-      max-width: 360px;
+      max-width: 380px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
     }
-    .row input:focus {
+    .form-row input:focus {
       outline: none;
       border-color: var(--hf-accent);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
+    }
+    .form-row input:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     .actions {
       display: flex;
       gap: 12px;
       align-items: center;
-      margin-top: 8px;
+      margin-top: 16px;
     }
     button.primary {
       background: var(--hf-accent);
-      color: white;
+      color: #0a0c0a;
       border: none;
-      padding: 8px 16px;
+      padding: 9px 18px;
       border-radius: 6px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       font: inherit;
+      transition: background 0.15s;
     }
     button.primary:hover { background: var(--hf-accent-hover); }
-    button.primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .msg {
-      font-size: 13px;
-      padding: 6px 10px;
-      border-radius: 4px;
-    }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .msg { font-size: 13px; }
     .msg.ok  { color: var(--hf-ok); }
     .msg.err { color: var(--hf-err); }
-
-    /* Password requirements */
     .req-list {
       list-style: none;
       padding: 0;
-      margin: 8px 0 0;
+      margin: 8px 0 0 176px;
       font-size: 13px;
       color: var(--hf-text-muted);
     }
+    @media (max-width: 560px) { .req-list { margin-left: 0; } }
     .req-list li::before {
-      content: '○ ';
-      color: var(--hf-text-muted);
+      content: '○ '; color: var(--hf-text-subtle);
     }
     .req-list li.ok::before {
-      content: '✓ ';
-      color: var(--hf-ok);
+      content: '✓ '; color: var(--hf-ok);
     }
 
-    /* Loading + error */
-    .loading-page, .error-page {
-      min-height: 100vh;
+    /* Full-page states */
+    .full-page {
+      min-height: 60vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      color: white;
+      flex-direction: column;
+      gap: 12px;
+      color: var(--hf-text-muted);
     }
     .spinner {
-      width: 40px;
-      height: 40px;
-      border: 4px solid rgba(255,255,255,0.3);
-      border-top-color: white;
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--hf-border-2);
+      border-top-color: var(--hf-accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
-      margin: 0 auto 16px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-  `;
+  `];
 
   constructor() {
     super();
+    this.route = routeFromHash();
     this.user = null;
     this.services = [];
     this.policy = DEFAULT_POLICY;
     this.loading = true;
     this.error = null;
+    this.userMenuOpen = false;
     this.profileSaving = false;
     this.profileMessage = null;
     this.passwordSaving = false;
     this.passwordMessage = null;
+    // Mobile breakpoint mirrors admin-app's behavior: the sidebar
+    // starts collapsed on mobile (hidden overlay) and open on
+    // desktop. matchMedia keeps the two in sync if the viewport
+    // crosses the boundary mid-session.
+    this._mobileMQ = window.matchMedia('(max-width: 768px)');
+    this.isMobile = this._mobileMQ.matches;
+    this.sidebarCollapsed = this.isMobile;
+    this._mobileMQListener = (e) => {
+      const wasMobile = this.isMobile;
+      this.isMobile = e.matches;
+      if (this.isMobile !== wasMobile) {
+        this.sidebarCollapsed = this.isMobile;
+      }
+    };
+    this._onHashChange = () => {
+      this.route = routeFromHash();
+      // Auto-close the overlay sidebar when nav-clicking on mobile.
+      if (this.isMobile) this.sidebarCollapsed = true;
+      // Reset transient form messages when navigating away.
+      this.profileMessage = null;
+      this.passwordMessage = null;
+    };
   }
 
-  async connectedCallback() {
+  connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('hashchange', this._onHashChange);
+    this._mobileMQ.addEventListener('change', this._mobileMQListener);
+    this._loadInitialData();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('hashchange', this._onHashChange);
+    this._mobileMQ.removeEventListener('change', this._mobileMQListener);
+    super.disconnectedCallback();
+  }
+
+  async _loadInitialData() {
     try {
-      // Three independent fetches; let them race. The password
-      // policy is allowed to fall back to DEFAULT_POLICY so we
-      // don't need to await it before rendering — but the user
-      // record is required for the profile form to prefill.
       const [user, services, policy] = await Promise.all([
         getCurrentUser(),
         getVisibleServices().catch(() => []),
@@ -304,90 +301,176 @@ class UserApp extends LitElement {
     }
   }
 
+  toggleSidebar() {
+    this.sidebarCollapsed = !this.sidebarCollapsed;
+  }
+
+  toggleUserMenu() {
+    this.userMenuOpen = !this.userMenuOpen;
+    if (this.userMenuOpen) {
+      const onDocClick = (e) => {
+        const wrap = this.renderRoot?.querySelector('.user-menu-wrap');
+        if (wrap && !wrap.contains(e.target)) {
+          this.userMenuOpen = false;
+          document.removeEventListener('click', onDocClick, true);
+        }
+      };
+      setTimeout(() =>
+        document.addEventListener('click', onDocClick, true), 0);
+    }
+  }
+
+  _apexDomain() {
+    return window.location.hostname.replace(/^home\./, '');
+  }
+  _adminUrl()  { return `${window.location.protocol}//admin.${this._apexDomain()}/`; }
+  _manualUrl() { return `${window.location.protocol}//manual.${this._apexDomain()}/`; }
+
+  _currentTitle() {
+    return MODULES.find(m => m.id === this.route)?.title || 'Home';
+  }
+
   render() {
     if (this.loading) {
       return html`
-        <div class="loading-page">
-          <div>
-            <div class="spinner"></div>
-            <p>Loading your dashboard…</p>
-          </div>
+        <div class="full-page">
+          <div class="spinner"></div>
+          <p>Loading your dashboard…</p>
         </div>
       `;
     }
     if (this.error) {
       return html`
-        <div class="error-page">
-          <div style="text-align:center; padding: 24px;">
-            <h2>Couldn't load dashboard</h2>
-            <p>${this.error}</p>
-            <p style="margin-top: 16px;">
-              <a href="#" @click=${handleSignOut} style="color: white;">
-                Sign out
-              </a>
-            </p>
-          </div>
+        <div class="full-page">
+          <h2>Couldn't load dashboard</h2>
+          <p>${this.error}</p>
+          <p>
+            <a href="#" @click=${handleSignOut}
+               style="color: var(--hf-accent);">Sign out</a>
+          </p>
         </div>
       `;
     }
 
-    const u = this.user || {};
-    const greeting = u.display_name || u.first_name || u.username || 'there';
+    // Sections for the sidebar nav. We only have two items today
+    // but section headers keep the layout aligned with admin's
+    // structure so the eye trains the same way.
+    const sections = {};
+    for (const m of MODULES) {
+      (sections[m.section] ||= []).push(m);
+    }
+
+    // Cross-site links live in the user-menu (right side of topbar).
+    // Admin shows up only if the caller has the homefree-admin role.
+    const crossSiteItems = [
+      ...(this.user?.is_admin_role ? [
+        { label: 'Admin', href: this._adminUrl() },
+      ] : []),
+      { label: 'Manual', href: this._manualUrl(), target: '_blank' },
+    ];
+
     return html`
-      <header class="topbar">
-        <div class="brand">HomeFree</div>
-        <span class="topbar-spacer"></span>
-        <a href="https://manual.${location.hostname.replace(/^home\./, '')}/"
-           target="_blank" rel="noopener">Manual</a>
-        ${u.is_admin_role ? html`
-          <a href="https://admin.${location.hostname.replace(/^home\./, '')}/">
-            Admin
-          </a>
-        ` : ''}
-        <span class="user">${u.username || ''}</span>
-        <button class="linklike" @click=${handleSignOut}>Sign out</button>
-      </header>
+      <div class="app-container">
+        <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
+          <div class="sidebar-header">
+            <h1>HomeFree</h1>
+            <button class="collapse-btn" @click=${() => this.toggleSidebar()}>
+              ${this.sidebarCollapsed ? '→' : '←'}
+            </button>
+          </div>
+          <nav class="nav-menu">
+            ${Object.entries(sections).map(([sect, mods]) => html`
+              <div class="nav-section-title">${sect}</div>
+              ${mods.map(m => html`
+                <a class="nav-item ${this.route === m.id ? 'active' : ''}"
+                   href="#/${m.id}">
+                  <span class="nav-item-icon">${m.icon}</span>
+                  <span class="nav-item-text">${m.title}</span>
+                </a>
+              `)}
+            `)}
+          </nav>
+        </div>
+        <div class="sidebar-backdrop"
+             @click=${() => this.toggleSidebar()}></div>
 
-      <main>
-        <h1>Welcome, ${greeting}.</h1>
-
-        <section class="card">
-          <h2>Your apps</h2>
-          ${this.services.length === 0 ? html`
-            <p class="empty">No apps are available yet.</p>
-          ` : html`
-            <div class="app-grid">
-              ${this.services.map(s => this._renderTile(s))}
+        <div class="main-content">
+          <div class="top-bar">
+            <div class="top-bar-title">
+              <button class="hamburger-btn"
+                      @click=${() => this.toggleSidebar()}
+                      aria-label="Toggle navigation">☰</button>
+              <h2>${this._currentTitle()}</h2>
             </div>
-          `}
-        </section>
+            <div class="top-bar-actions">
+              ${renderUserMenu({
+                currentUser: this.user,
+                open: this.userMenuOpen,
+                onToggle: () => this.toggleUserMenu(),
+                profileUrl: '#/profile',
+                extraItems: crossSiteItems,
+              })}
+            </div>
+          </div>
 
-        ${this._renderProfileCard()}
-        ${this._renderPasswordCard()}
-      </main>
+          <div class="content-area">
+            ${this.route === ROUTE_PROFILE
+              ? this._renderProfileView()
+              : this._renderAppsView()}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderAppsView() {
+    if (this.services.length === 0) {
+      return html`<p class="empty">No apps are available yet.</p>`;
+    }
+    return html`
+      <div class="app-grid">
+        ${this.services.map(s => this._renderTile(s))}
+      </div>
     `;
   }
 
   _renderTile(s) {
-    // Two-letter initials fallback for missing icons. Take the
-    // first letter of each whitespace-separated chunk of the
-    // display name; cap at two so single-word names still produce
-    // one big letter.
-    const initials = (s.name || s.label || '?')
+    const title = s.name || s.label || '?';
+    const subtitle = s.project_name && s.project_name !== title
+      ? s.project_name : '';
+    const initials = title
       .split(/[\s\-_/]+/)
       .map(w => w.charAt(0))
       .join('')
       .slice(0, 2)
       .toUpperCase();
     return html`
-      <a class="app-tile" href="${s.url}" target="_blank" rel="noopener">
-        <div class="app-icon">
-          ${s.icon
-            ? html`<img src="/icons/${s.label}.svg" alt="">`
-            : initials}
+      <a class="app-tile" href="${s.url}"
+         target="_blank" rel="noopener">
+        <div class="app-tile-icon">
+          <img src="/icons/${s.label}.svg" alt=""
+               @error=${this._onIconError}
+               data-initials="${initials}">
         </div>
-        <div class="app-name">${s.name}</div>
+        <p class="app-tile-name">${title}</p>
+        ${subtitle ? html`
+          <p class="app-tile-sub">${subtitle}</p>
+        ` : ''}
       </a>
+    `;
+  }
+
+  _onIconError(e) {
+    const img = e.currentTarget;
+    const initials = img.getAttribute('data-initials') || '?';
+    const parent = img.parentElement;
+    if (parent) parent.textContent = initials;
+  }
+
+  _renderProfileView() {
+    return html`
+      ${this._renderProfileCard()}
+      ${this._renderPasswordCard()}
     `;
   }
 
@@ -395,24 +478,24 @@ class UserApp extends LitElement {
     const u = this.user || {};
     return html`
       <section class="card">
-        <h2>Profile</h2>
+        <h3>Account</h3>
         <form @submit=${this._submitProfile}>
-          <div class="row">
+          <div class="form-row">
             <label for="username">Username</label>
             <input id="username" type="text"
                    value="${u.username || ''}" disabled>
           </div>
-          <div class="row">
+          <div class="form-row">
             <label for="first_name">First name</label>
             <input id="first_name" type="text"
                    .value="${u.first_name || ''}">
           </div>
-          <div class="row">
+          <div class="form-row">
             <label for="last_name">Last name</label>
             <input id="last_name" type="text"
                    .value="${u.last_name || ''}">
           </div>
-          <div class="row">
+          <div class="form-row">
             <label for="email">Email</label>
             <input id="email" type="email"
                    .value="${u.email || ''}">
@@ -439,33 +522,22 @@ class UserApp extends LitElement {
     const first = root.querySelector('#first_name').value.trim();
     const last  = root.querySelector('#last_name').value.trim();
     const email = root.querySelector('#email').value.trim();
-
-    // Only send changed fields. Avoids round-tripping a "blank
-    // email" PUT that would 400 in Zitadel's validator if the
-    // user never had one set.
     const patch = {};
     if (first !== (this.user.first_name || '')) patch.first_name = first;
     if (last  !== (this.user.last_name  || '')) patch.last_name  = last;
     if (email !== (this.user.email      || '')) patch.email      = email;
-
     if (Object.keys(patch).length === 0) {
       this.profileMessage = { kind: 'ok', text: 'No changes to save.' };
       return;
     }
-
     this.profileSaving = true;
     this.profileMessage = null;
     try {
       await updateOwnProfile(patch);
-      // Refresh local copy from server so display name + similar
-      // derived fields reflect the new values.
       this.user = await getCurrentUser();
       this.profileMessage = { kind: 'ok', text: 'Saved.' };
     } catch (err) {
-      this.profileMessage = {
-        kind: 'err',
-        text: err.message || 'Save failed.',
-      };
+      this.profileMessage = { kind: 'err', text: err.message || 'Save failed.' };
     } finally {
       this.profileSaving = false;
     }
@@ -476,18 +548,18 @@ class UserApp extends LitElement {
       this._pendingNewPassword || '', this.policy);
     return html`
       <section class="card">
-        <h2>Change password</h2>
+        <h3>Password</h3>
         <form @submit=${this._submitPassword}>
-          <div class="row">
+          <div class="form-row">
             <label for="cur_pw">Current password</label>
             <input id="cur_pw" type="password" autocomplete="current-password">
           </div>
-          <div class="row">
+          <div class="form-row">
             <label for="new_pw">New password</label>
             <input id="new_pw" type="password" autocomplete="new-password"
                    @input=${this._onNewPasswordInput}>
           </div>
-          <div class="row">
+          <div class="form-row">
             <label for="new_pw2">Confirm</label>
             <input id="new_pw2" type="password" autocomplete="new-password">
           </div>
@@ -523,12 +595,8 @@ class UserApp extends LitElement {
     const cur = root.querySelector('#cur_pw').value;
     const np  = root.querySelector('#new_pw').value;
     const np2 = root.querySelector('#new_pw2').value;
-
     if (!cur || !np) {
-      this.passwordMessage = {
-        kind: 'err',
-        text: 'Current and new password required.',
-      };
+      this.passwordMessage = { kind: 'err', text: 'Current and new password required.' };
       return;
     }
     if (np !== np2) {
@@ -540,7 +608,6 @@ class UserApp extends LitElement {
       this.passwordMessage = { kind: 'err', text: v.error };
       return;
     }
-
     this.passwordSaving = true;
     this.passwordMessage = null;
     try {
@@ -552,10 +619,7 @@ class UserApp extends LitElement {
       this._pendingNewPassword = '';
       this.requestUpdate();
     } catch (err) {
-      this.passwordMessage = {
-        kind: 'err',
-        text: err.message || 'Password change failed.',
-      };
+      this.passwordMessage = { kind: 'err', text: err.message || 'Password change failed.' };
     } finally {
       this.passwordSaving = false;
     }
