@@ -224,6 +224,7 @@ in
             iifname { "lo" } accept comment "Allow localhost to access the router"
             iifname { "${lan-interface}" } accept comment "Allow local network to access the router"
             iifname { "tailscale0" } accept comment "Allow tailscale network to access the router"
+            iifname { "wt0" } accept comment "Allow netbird network to access the router"
             iifname { "podman0" } accept comment "Allow podman network to access the router"
 
             ## Allow for web traffic
@@ -301,6 +302,26 @@ in
             ## Headscale-Podman
             iifname { "tailscale0" } oifname { "podman0" } accept comment "Allow trusted tailscale to podman"
             iifname { "podman0" } oifname { "tailscale0" } ct state established, related accept comment "Allow established back to tailscale"
+
+            ## Netbird-WAN
+            iifname { "wt0" } oifname { "${wan-interface}" } accept comment "Allow trusted netbird to WAN"
+            iifname { "${wan-interface}" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Netbird-LAN
+            iifname { "wt0" } oifname { "${lan-interface}" } accept comment "Allow trusted netbird to LAN"
+            iifname { "${lan-interface}" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## LAN-Netbird
+            iifname { "${lan-interface}" } oifname { "wt0" } accept comment "Allow trusted LAN to netbird"
+            iifname { "wt0" } oifname { "${lan-interface}" } ct state established, related accept comment "Allow established back to lan"
+
+            ## Podman-Netbird
+            iifname { "podman0" } oifname { "wt0" } accept comment "Allow trusted podman to netbird"
+            iifname { "wt0" } oifname { "podman0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Netbird-Podman
+            iifname { "wt0" } oifname { "podman0" } accept comment "Allow trusted netbird to podman"
+            iifname { "podman0" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
           }
         }
 

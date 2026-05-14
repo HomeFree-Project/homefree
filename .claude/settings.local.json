@@ -166,7 +166,11 @@
       "WebFetch(domain:headplane.net)",
       "WebFetch(domain:headscale.net)",
       "Bash(hostnamectl)",
-      "Bash(domainname)"
+      "Bash(domainname)",
+      "Bash(sudo sops --config /etc/nixos/.sops.yaml filestatus /etc/nixos/secrets/secrets.yaml)",
+      "Bash(sudo sops secrets/secrets.yaml --verbose)",
+      "Bash(sudo sops --verbose secrets/secrets.yaml)",
+      "Bash(sudo realpath secrets/secrets.yaml)"
     ]
   }
 }

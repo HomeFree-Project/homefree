@@ -22,19 +22,29 @@
 ## re-prompts and starts from a clean slate.
 ##
 ## DESTRUCTIVE: drops the zitadel, immich, and nextcloud databases
-## AND wipes the corresponding service data directories. Only run on
-## a dev machine where loss of ALL service state is acceptable.
+## AND wipes the data directories for every OIDC-consuming service.
+## Only run on a dev machine where loss of ALL service state is
+## acceptable.
 ##
 ## The full wipe set (zitadel + downstream SSO consumers) is the
 ## minimum that's actually safe to mix-and-match: Zitadel's masterkey
 ## and its postgres database have to be wiped together (a new
 ## masterkey can't decrypt old DB rows → "malformed encrypted value"
-## token errors). Same coupling applies to Immich and Nextcloud:
-## they have OIDC client_id/secret persisted in their own databases,
-## and zitadel-provision will mint NEW client IDs on the fresh
-## Zitadel instance — so the consumer DBs need to be wiped too,
-## otherwise they end up pointing at OIDC apps that no longer exist
-## in Zitadel.
+## token errors). Same coupling applies to every downstream consumer:
+## each holds OIDC client_id/secret + per-user sub-IDs pinned to the
+## old Zitadel instance. zitadel-provision will mint NEW client IDs
+## on the fresh instance, so the consumer state needs to go too —
+## otherwise services end up pointing at OIDC apps that no longer
+## exist, or refuse first-login with "Existing SSO user with same
+## email" / "user already linked" errors.
+##
+## Services included in the wipe (data dir AND /var/lib/homefree-
+## secrets/<svc>): zitadel, oauth2-proxy, nextcloud, forgejo, immich,
+## vaultwarden, cryptpad, freshrss, linkwarden, trilium, homebox,
+## matrix, headscale, netbird, adguard, home-assistant, ollama.
+## Anything not in this list keeps its data; if it ALSO holds a
+## zitadel sub linkage you'll hit a manual SQL re-link on first
+## SSO login post-wipe (documented in TODOS.md).
 ##
 ## The actual rebuild is delegated to scripts/build.sh so it picks up
 ## the local working-tree changes via `nix flake lock --update-input
@@ -51,9 +61,16 @@ readonly NEXTCLOUD_DATA=/var/lib/nextcloud-podman
 readonly FORGEJO_DATA=/var/lib/forgejo
 readonly IMMICH_DATA=/var/lib/immich
 readonly IMMICH_CACHE=/var/cache/immich
-readonly HEADSCALE_DATA=/var/lib/headscale       # only the api-key/pat is wiped; node DB stays
+readonly VAULTWARDEN_DATA=/var/lib/vaultwarden-podman
+readonly CRYPTPAD_DATA=/var/lib/cryptpad-podman
+readonly FRESHRSS_DATA=/var/lib/freshrss-podman
+readonly LINKWARDEN_DATA=/var/lib/linkwarden-podman
+readonly TRILIUM_DATA=/var/lib/trilium-podman
+readonly HOMEBOX_DATA=/var/lib/homebox-podman
+readonly MATRIX_DATA=/var/lib/matrix-synapse-podman
 readonly SENTINEL=$SECRETS_ROOT/.sso-provisioned
 readonly PAT_FILE=$ZITADEL_DATA/pat-bootstrap
+readonly LOGIN_CLIENT_PAT=$ZITADEL_DATA/bootstrap/login-client.pat
 
 ## postgres-vectorchord listens on this port — used to drop the
 ## immich DB. The container's POSTGRES_PASSWORD is hardcoded to
@@ -107,14 +124,16 @@ require_root
 
 step "Pre-flight"
 echo "This will:"
-echo "  - stop Zitadel + downstream service units (nextcloud, forgejo,"
-echo "    immich, headplane, oauth2-proxy)"
+echo "  - stop Zitadel + every OIDC-consuming downstream service unit"
 echo "  - drop the 'zitadel', 'nextcloud', and 'immich' postgres databases"
-echo "  - delete service data dirs ($ZITADEL_DATA, $NEXTCLOUD_DATA,"
-echo "    $FORGEJO_DATA, $IMMICH_DATA, $OAUTH2_DATA)"
+echo "  - delete service data dirs (zitadel, oauth2-proxy, nextcloud,"
+echo "    forgejo, immich, vaultwarden, cryptpad, freshrss, linkwarden,"
+echo "    trilium, homebox, matrix)"
 echo "  - delete $SECRETS_ROOT/{zitadel,zitadel-pam,nextcloud,forgejo,"
-echo "    immich,netbird,headscale,adguard,home-assistant,.sso-provisioned}"
-echo "  - re-prompt for the admin password and re-seed it"
+echo "    immich,vaultwarden,cryptpad,freshrss,linkwarden,homebox,matrix,"
+echo "    netbird,headscale,adguard,home-assistant,ollama,.sso-provisioned}"
+echo "  - optionally re-seed the admin password (or let the build auto-"
+echo "    generate one — see prompt below)"
 echo "  - run 'nixos-rebuild switch' (you'll be asked first)"
 echo "  ALL DATA IN THESE SERVICES WILL BE LOST."
 echo
@@ -146,8 +165,26 @@ for unit in zitadel-provision.service \
             podman-immich-server.service \
             podman-immich-machine-learning.service \
             podman-immich-redis.service \
+            podman-vaultwarden.service \
+            podman-cryptpad.service \
+            podman-freshrss.service \
+            podman-linkwarden.service \
+            podman-trilium.service \
+            podman-homebox.service \
+            podman-matrix-synapse.service \
+            podman-netbird-management.service \
+            podman-netbird-signal.service \
+            podman-netbird-dashboard.service \
+            podman-netbird-relay.service \
+            netbird-mint-setup-key.service \
+            netbird-autoconnect.service \
+            netbird-ensure-route.service \
+            netbird-ensure-nameserver.service \
+            netbird.service \
             headplane.service \
             headscale-mint-api-key.service \
+            headscale-mint-tailscale-key.service \
+            headscale-enable-routes.service \
             headplane-prepare-secrets.service; do
   if systemctl is-loaded --quiet "$unit" 2>/dev/null \
      || systemctl list-unit-files --no-legend --type=service \
@@ -259,15 +296,29 @@ for path in "$ZITADEL_DATA" \
             "$FORGEJO_DATA" \
             "$IMMICH_DATA" \
             "$IMMICH_CACHE" \
+            "$VAULTWARDEN_DATA" \
+            "$CRYPTPAD_DATA" \
+            "$FRESHRSS_DATA" \
+            "$LINKWARDEN_DATA" \
+            "$TRILIUM_DATA" \
+            "$HOMEBOX_DATA" \
+            "$MATRIX_DATA" \
             "$SECRETS_ROOT/zitadel" \
             "$SECRETS_ROOT/zitadel-pam" \
             "$SECRETS_ROOT/netbird" \
             "$SECRETS_ROOT/immich" \
             "$SECRETS_ROOT/nextcloud" \
             "$SECRETS_ROOT/forgejo" \
+            "$SECRETS_ROOT/vaultwarden" \
+            "$SECRETS_ROOT/cryptpad" \
+            "$SECRETS_ROOT/freshrss" \
+            "$SECRETS_ROOT/linkwarden" \
+            "$SECRETS_ROOT/homebox" \
+            "$SECRETS_ROOT/matrix" \
             "$SECRETS_ROOT/headscale" \
             "$SECRETS_ROOT/adguard" \
             "$SECRETS_ROOT/home-assistant" \
+            "$SECRETS_ROOT/ollama" \
             "$SENTINEL"; do
   if [ -e "$path" ]; then
     rm -rf -- "$path"
@@ -275,39 +326,54 @@ for path in "$ZITADEL_DATA" \
   fi
 done
 
-## ─── 2. Re-seed admin password ────────────────────────────────────────
-step "Seeding admin-password"
-echo "Zitadel's FirstInstance bootstrap reads this file to set the human"
-echo "user's initial password. Use the SAME password as your OS admin"
-echo "user (so the PAM sync stays a no-op for matching credentials)."
+## ─── 2. Admin password: prompt OR let the build auto-generate ─────────
+step "Admin password"
+echo "Zitadel's FirstInstance bootstrap reads admin-password to set the"
+echo "human user's initial password. Two options:"
 echo
+echo "  [Y] Pre-seed it now: prompt for a password and write it to"
+echo "      $SECRETS_ROOT/zitadel/admin-password."
+echo "      Useful if you want it to match your OS admin password so"
+echo "      the PAM sync stays a no-op."
+echo
+echo "  [n] Let the build auto-generate a 24-char random password."
+echo "      zitadel-prepare-secrets.service prints a loud banner with"
+echo "      the password on first run. Retrieve it later with:"
+echo "        sudo journalctl -u zitadel-prepare-secrets.service"
+echo "        sudo cat $SECRETS_ROOT/zitadel/admin-password"
+echo
+if confirm "Pre-seed admin-password now?"; then
+  while :; do
+    ask "Admin password (input hidden):"
+    read -rs pw1
+    echo
+    ask "Confirm:                       "
+    read -rs pw2
+    echo
+    if [ -z "$pw1" ]; then
+      warn "Empty password not allowed; try again."
+      continue
+    fi
+    if [ "$pw1" != "$pw2" ]; then
+      warn "Passwords didn't match; try again."
+      continue
+    fi
+    break
+  done
 
-while :; do
-  ask "Admin password (input hidden):"
-  read -rs pw1
-  echo
-  ask "Confirm:                       "
-  read -rs pw2
-  echo
-  if [ -z "$pw1" ]; then
-    warn "Empty password not allowed; try again."
-    continue
-  fi
-  if [ "$pw1" != "$pw2" ]; then
-    warn "Passwords didn't match; try again."
-    continue
-  fi
-  break
-done
-
-mkdir -p "$SECRETS_ROOT/zitadel"
-chmod 700 "$SECRETS_ROOT/zitadel"
-## printf '%s' deliberately omits trailing newline — Zitadel reads the
-## entire file as the password, newlines included.
-printf '%s' "$pw1" > "$SECRETS_ROOT/zitadel/admin-password"
-chmod 600 "$SECRETS_ROOT/zitadel/admin-password"
-unset pw1 pw2
-ok "wrote $SECRETS_ROOT/zitadel/admin-password"
+  mkdir -p "$SECRETS_ROOT/zitadel"
+  chmod 700 "$SECRETS_ROOT/zitadel"
+  ## printf '%s' deliberately omits trailing newline — Zitadel reads the
+  ## entire file as the password, newlines included.
+  printf '%s' "$pw1" > "$SECRETS_ROOT/zitadel/admin-password"
+  chmod 600 "$SECRETS_ROOT/zitadel/admin-password"
+  unset pw1 pw2
+  ADMIN_PASSWORD_SOURCE="pre-seeded"
+  ok "wrote $SECRETS_ROOT/zitadel/admin-password"
+else
+  ADMIN_PASSWORD_SOURCE="auto-generated"
+  ok "skipping — zitadel-prepare-secrets will auto-generate on first run"
+fi
 
 ## Unmask units before rebuild — nixos-rebuild needs to be able to
 ## start them as part of activation. The EXIT trap is a safety net for
@@ -429,10 +495,18 @@ check_marker "global sentinel"    "$SENTINEL"                                   
 
 echo
 echo "Per-service OIDC secrets:"
-for svc in zitadel headscale netbird immich nextcloud forgejo; do
+## Only verify services that zitadel-provision is responsible for.
+## A given box may have some of these disabled — in that case the
+## secrets dir won't exist and we skip it (vs. failing).
+for svc in zitadel headscale netbird immich nextcloud forgejo \
+           vaultwarden cryptpad freshrss linkwarden homebox \
+           home-assistant ollama; do
   cid="$SECRETS_ROOT/$svc/oidc-client-id"
-  csec="$SECRETS_ROOT/$svc/oidc-client-secret"
   prov="$SECRETS_ROOT/$svc/.provisioned"
+  if [ ! -d "$SECRETS_ROOT/$svc" ]; then
+    ok "$svc: secrets dir absent — service likely disabled, skipping"
+    continue
+  fi
   if [ -s "$cid" ]; then
     if [ -e "$prov" ]; then
       ok "$svc: client_id=$(head -c 32 "$cid")... (.provisioned ✓)"
@@ -484,6 +558,13 @@ domain=$(awk -F'"' '/system\.domain/ {print $2; exit}' \
          || echo "<your-domain>")
 
 step "Next steps"
+if [ "${ADMIN_PASSWORD_SOURCE:-pre-seeded}" = "auto-generated" ]; then
+  password_hint="Run: ${C_BOLD}sudo cat $SECRETS_ROOT/zitadel/admin-password${C_RESET}
+   (also shown in the journal: ${C_BOLD}sudo journalctl -u zitadel-prepare-secrets.service${C_RESET})"
+else
+  password_hint="The password you entered above."
+fi
+
 cat <<EOF
 
 1. Try logging into Zitadel directly:
@@ -491,7 +572,9 @@ cat <<EOF
      ${C_BOLD}https://sso.${domain}${C_RESET}
 
    Username: ${C_BOLD}${admin_user}${C_RESET}    (no @zitadel.${domain} suffix)
-   Password: (the one you just entered)
+   Password: ${password_hint}
+
+   Zitadel will prompt you to set a new password on first login.
 
 2. Visit the admin UI in a fresh browser (private window — old
    sessions will skip the SSO redirect):
@@ -504,6 +587,7 @@ cat <<EOF
    touched it.
 
 Live logs:
+  journalctl -u zitadel-prepare-secrets -e
   journalctl -u zitadel-provision -e
   journalctl -u podman-zitadel -e
   journalctl -u podman-oauth2-proxy -e
