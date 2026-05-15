@@ -137,6 +137,25 @@ let
   ## subtree into the HA config dir at preStart.
   authOidcPkg = pkgs.home-assistant-custom-components.auth_oidc;
 
+  ## HACS custom component (optional, gated by enable-hacs). Vendored
+  ## locally because nixpkgs doesn't ship it. Once symlinked into
+  ## /config/custom_components/hacs/, users add it via Settings →
+  ## Devices → Add Integration → HACS to get a UI for installing
+  ## community integrations and frontend cards.
+  hacsPkg = pkgs.callPackage ./hacs.nix {};
+
+  ## Strict-overlay YAML merger. Used by preStart to keep the entries
+  ## declared in cfg.defaults always in sync with /nix/store/<x>/, while
+  ## preserving any additional entries the user creates via HA's UI.
+  ## See merge-ha-yaml.py for semantics. PyYAML is the only runtime
+  ## dep; the script is small enough to keep as a writeShellScript
+  ## wrapper around python3 + pyyaml on PATH.
+  mergeYamlPython = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
+  mergeYamlScript = pkgs.writeShellScript "merge-ha-yaml" ''
+    set -eu
+    exec ${mergeYamlPython}/bin/python3 ${./merge-ha-yaml.py} "$@"
+  '';
+
   preStart = ''
     set -eu
     mkdir -p ${containerDataPath}/config
@@ -149,6 +168,20 @@ let
     ## the store path is enough.
     ln -sfn ${authOidcPkg}/custom_components/auth_oidc \
       ${containerDataPath}/config/custom_components/auth_oidc
+
+    ## HACS: opt-in via enable-hacs. When the toggle flips to false,
+    ## the symlink is removed; the dynamic state HACS wrote (downloaded
+    ## integrations under /config/custom_components/<x>/, frontend
+    ## cards under /config/www/community/) is left alone for the user
+    ## to clean up if they want.
+    ${if cfg.enable-hacs then ''
+      ln -sfn ${hacsPkg}/custom_components/hacs \
+        ${containerDataPath}/config/custom_components/hacs
+    '' else ''
+      [ -L ${containerDataPath}/config/custom_components/hacs ] && \
+        rm -f ${containerDataPath}/config/custom_components/hacs
+      true
+    ''}
 
     ## Instance-provided custom_components packages. Each package
     ## exposes one or more <pkg>/custom_components/<domain>/ subtrees;
@@ -189,14 +222,32 @@ let
     ## Empty files = "no entries", which is what a fresh install
     ## wants anyway.
     ##
-    ## Instance-provided seeds: if cfg.includeFileSeeds.<name> is set
-    ## and /config/<name> doesn't yet exist, copy the seed in. We
-    ## never overwrite — HA's UI writes to these files (automation
-    ## editor, scene editor, etc.) and clobbering destroys user edits.
+    ## Instance-provided `defaults`: strict-overlay merge of declarative
+    ## entries into HA's UI-writable files. The merger replaces entries
+    ## (by `id` for lists, by key for dicts) that exist in both defaults
+    ## and target with the defaults' version. Target-only entries are
+    ## preserved. First install (target doesn't exist) just copies the
+    ## defaults straight in. Rule of thumb for users: if an automation
+    ## (script, scene, group, device alias) lives in Nix, Nix owns it
+    ## fully — UI edits to that entry get overwritten on rebuild. Move
+    ## the entry out of Nix to make it UI-owned.
     ${lib.concatMapStringsSep "\n" (name: ''
-      [ -e "${containerDataPath}/config/${name}" ] || \
-        cp "${cfg.includeFileSeeds.${name}}" "${containerDataPath}/config/${name}"
-    '') (lib.attrNames cfg.includeFileSeeds)}
+      target="${containerDataPath}/config/${name}"
+      defaults="${cfg.defaults.${name}}"
+      if [ ! -e "$target" ]; then
+        cp "$defaults" "$target"
+        chmod u+w "$target"
+      else
+        tmp="$target.merge.$$"
+        if ${mergeYamlScript} --target "$target" --defaults "$defaults" --output "$tmp"; then
+          mv "$tmp" "$target"
+          chmod u+w "$target"
+        else
+          rm -f "$tmp"
+          echo "preStart: merge failed for ${name}, leaving target unchanged" >&2
+        fi
+      fi
+    '') (lib.attrNames cfg.defaults)}
 
     for f in automations.yaml scripts.yaml scenes.yaml groups.yaml; do
       [ -f "${containerDataPath}/config/$f" ] || \
@@ -463,6 +514,24 @@ in
       description = "Open to public on WAN port";
     };
 
+    enable-hacs = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Install the Home Assistant Community Store (HACS) custom
+        component. Once enabled, HACS appears as an integration users
+        can add from Settings → Devices → Add Integration → HACS,
+        providing a UI for installing and updating community
+        integrations and frontend cards from inside HA.
+
+        Note: HACS-installed components live as runtime state under
+        /config/custom_components/<x>/ and /config/www/community/ —
+        outside the declarative Nix-managed paths. They survive
+        rebuilds but are not version-pinned in Git. For declarative
+        custom components, use customComponentPackages instead.
+      '';
+    };
+
     ## Extension points for instance configs. The base repo has no
     ## opinion on what specific integrations, automations, or custom
     ## components a household uses — instance config supplies all of
@@ -501,18 +570,34 @@ in
       '';
     };
 
-    includeFileSeeds = lib.mkOption {
+    defaults = lib.mkOption {
       type = lib.types.attrsOf lib.types.path;
       default = { };
       description = ''
-        Map of filename (relative to /config/) to seed source path.
-        On first install (when /config/<name> doesn't exist), preStart
-        copies the seed into place. On subsequent rebuilds the file is
-        left alone so UI edits (e.g. via the automation editor) are
-        preserved.
+        Map of filename (relative to /config/) to a YAML defaults file.
+        preStart strict-overlay-merges the defaults into the writable
+        target on every rebuild:
 
-        Typical keys: "automations.yaml", "known_devices.yaml",
-        "scripts.yaml", "scenes.yaml", "groups.yaml".
+        - First install (target missing): defaults copied verbatim.
+        - Subsequent rebuilds: entries declared in defaults are
+          re-asserted (replacing same-id/same-key entries in the
+          target). Entries that exist only in the target are
+          preserved.
+
+        Use this for entries you want declaratively managed in Nix
+        while still allowing HA's UI editors to add/remove other
+        entries in the same file.
+
+        Merge keys depend on file shape (auto-detected):
+        - List of dicts with `id` (automations.yaml, scenes.yaml):
+          matched by `id`.
+        - Dict (scripts.yaml, groups.yaml, known_devices.yaml,
+          customize.yaml): matched by top-level key.
+
+        Rule of thumb for users: if an entry is declared in defaults,
+        Nix owns it — UI edits to that exact entry get overwritten
+        on the next rebuild. Move the entry out of defaults to make
+        it UI-owned.
       '';
     };
 
@@ -688,6 +773,12 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "enable-hacs";
+          type = "bool";
+          default = false;
+          description = "Install HACS (Home Assistant Community Store) for installing community integrations from the HA UI";
         }
       ];
     }

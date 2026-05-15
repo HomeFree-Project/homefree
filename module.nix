@@ -864,6 +864,12 @@
           default = false;
           description = "Open to public on WAN port";
         };
+
+        enable-hacs = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Install HACS (Home Assistant Community Store) for installing community integrations from the HA UI";
+        };
       };
 
       homebox = {
