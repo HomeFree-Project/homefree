@@ -73,6 +73,16 @@ let
       ## this, every X-Forwarded-For-bearing request gets 400.
       trusted_proxies:
         - ${config.homefree.network.lan-address}
+      ## HA's inner brute-force protection is redundant when fronted
+      ## by Caddy + Zitadel SSO (the only path to reach HA's auth
+      ## endpoints), and it generates false-positive WARNING noise
+      ## on every SSO login because auth_oidc's SPA opens a
+      ## WebSocket before the bearer token is fully wired through,
+      ## HA rejects the first WS hello, the SPA retries with a valid
+      ## token. Each rejection logs a "ban" warning regardless of
+      ## whether an actual ban triggered. Disabling stops the noise.
+      ## Caddy + Zitadel remain the real defense.
+      ip_ban_enabled: false
 
     ## SSO via the auth_oidc custom component
     ## (pkgs.home-assistant-custom-components.auth_oidc). Does a full

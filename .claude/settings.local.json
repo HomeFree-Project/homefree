@@ -170,7 +170,18 @@
       "Bash(sudo sops --config /etc/nixos/.sops.yaml filestatus /etc/nixos/secrets/secrets.yaml)",
       "Bash(sudo sops secrets/secrets.yaml --verbose)",
       "Bash(sudo sops --verbose secrets/secrets.yaml)",
-      "Bash(sudo realpath secrets/secrets.yaml)"
+      "Bash(sudo realpath secrets/secrets.yaml)",
+      "Bash(lsblk *)",
+      "Bash(sudo wipefs -a /dev/sda)",
+      "Bash(sudo parted -s /dev/sda mklabel gpt)",
+      "Bash(sudo parted -s -a optimal /dev/sda mkpart primary btrfs 0% 100%)",
+      "Bash(sudo partprobe /dev/sda)",
+      "Bash(command *)",
+      "Bash(sudo sfdisk /dev/sda)",
+      "Bash(sudo udevadm settle)",
+      "Bash(sudo mkfs.btrfs -L storage /dev/sda1)",
+      "Bash(sudo blkid /dev/sda1)",
+      "Bash(sudo python3 -c \"import json; json.load\\(open\\('/etc/nixos/homefree-config.json'\\)\\)\")"
     ]
   }
 }

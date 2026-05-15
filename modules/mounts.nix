@@ -13,8 +13,9 @@ let
         "noauto"
         "x-systemd.idle-timeout=${m.idle-timeout}"
       ];
+      computed = nfsOpts ++ automountOpts ++ m.extra-options;
     in
-      nfsOpts ++ automountOpts ++ m.extra-options;
+      if computed == [] then [ "defaults" ] else computed;
 
   mkFileSystem = m: {
     name = m.mount-point;
