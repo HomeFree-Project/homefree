@@ -78,6 +78,78 @@ let
     ignoreregex =
     datepattern = "ts":\s*{EPOCH}
   '';
+
+  ## ── Seed-once default abuse-block list ──────────────────────────
+  ## On a fresh install, homefree-config.json has no
+  ## network.abuseBlockCidrs key. This activation step seeds it ONCE
+  ## with known abusive scraper ranges so a new box gets baseline
+  ## protection without the user having to discover the setting.
+  ##
+  ## Idempotent and seed-ONLY: it writes the key only when it is
+  ## entirely absent. Once present — even as an empty list — the step
+  ## is a no-op forever. So a user who disables or deletes the seeded
+  ## entries via the admin UI is never re-seeded.
+  ##
+  ## Caveat: Nix evaluation reads homefree-config.json *before*
+  ## activation runs, so on the very first rebuild the seeded ranges
+  ## are written but not yet enforced — they take effect on the next
+  ## rebuild. Acceptable: it's a one-time, first-install-only delay.
+  ##
+  ## Alibaba Cloud (AS45102 / AS37963) — 47.74.0.0/15, 47.76.0.0/14,
+  ## 47.80.0.0/13. Confirmed scraping a HomeFree forgejo on
+  ## 2026-05-15 (Go-runtime crash under sustained /user/oauth2/*
+  ## hammering from 47.79.*/47.82.*).
+  homefreeConfigPath = "/etc/nixos/homefree-config.json";
+
+  ## The seeding logic, as a standalone Python file. Kept out of a
+  ## shell heredoc on purpose — heredocs inside Nix `''..''` strings
+  ## mangle Python's significant indentation. The default ranges are
+  ## defined here, in one place.
+  seedAbuseCidrsPy = pkgs.writeText "seed-abuse-block-cidrs.py" ''
+    import json, sys, os, tempfile
+
+    path = sys.argv[1]
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:
+        print("seed-abuse-block-cidrs: cannot read %s: %s" % (path, e),
+              file=sys.stderr)
+        sys.exit(0)  # don't fail activation over this
+
+    net = cfg.setdefault("network", {})
+    if "abuseBlockCidrs" in net:
+        # Key already present (possibly empty) — user owns it now.
+        sys.exit(0)
+
+    _c = ("Alibaba Cloud (AS45102/AS37963) — scraper network, "
+          "seeded by HomeFree default")
+    net["abuseBlockCidrs"] = [
+        {"cidr": "47.74.0.0/15", "enabled": True, "comment": _c},
+        {"cidr": "47.76.0.0/14", "enabled": True, "comment": _c},
+        {"cidr": "47.80.0.0/13", "enabled": True, "comment": _c},
+    ]
+
+    # Atomic write — temp file in the same dir, then rename.
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".homefree-config.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    print("seed-abuse-block-cidrs: seeded network.abuseBlockCidrs")
+  '';
+
+  seedAbuseCidrs = pkgs.writeShellScript "seed-abuse-block-cidrs" ''
+    set -eu
+    CONFIG=${homefreeConfigPath}
+    [ -f "$CONFIG" ] || exit 0   # no config file yet — nothing to seed
+    ${pkgs.python3}/bin/python3 ${seedAbuseCidrsPy} "$CONFIG"
+  '';
 in
 {
   ## fail2ban needs nftables, not iptables. networking.nftables
@@ -102,6 +174,14 @@ in
     "fail2ban/filter.d/caddy-oauth-hammer.conf".source = oauthHammerFilter;
     "fail2ban/filter.d/caddy-404-storm.conf".source = s404StormFilter;
     "fail2ban/filter.d/caddy-error-flood.conf".source = errorFloodFilter;
+  };
+
+  ## Seed the default abuse-block CIDR list on first install. Runs
+  ## during activation; seeds only when network.abuseBlockCidrs is
+  ## absent from homefree-config.json (see seedAbuseCidrs above).
+  system.activationScripts.seedAbuseBlockCidrs = {
+    text = "${seedAbuseCidrs}";
+    deps = [];
   };
 
   services.fail2ban = {

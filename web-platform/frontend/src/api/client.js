@@ -5,17 +5,34 @@
 
 const API_BASE = '';  // Same origin
 
+// Hard ceiling on any single API call. Without this a bare fetch()
+// inherits the browser's network-stack timeout, which over HTTP/3 can
+// stall ~30s on a QUIC connection whose backend died mid-rebuild: the
+// connection isn't dead, just black-holed, so the browser keeps probing
+// it instead of opening a fresh one. Aborting after a few seconds lets
+// the next poll tick reconnect cleanly.
+const DEFAULT_TIMEOUT_MS = 8000;
+
 /**
  * Generic fetch wrapper with error handling
  */
 async function fetchAPI(endpoint, options = {}) {
   try {
+    // Honour a caller-supplied signal if present; otherwise impose the
+    // default timeout. AbortSignal.any keeps both alive when both exist.
+    const timeoutSignal = AbortSignal.timeout(options.timeoutMs || DEFAULT_TIMEOUT_MS);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
+    const { timeoutMs, ...fetchOptions } = options;
+
     const response = await fetch(`${API_BASE}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
-      ...options,
+      ...fetchOptions,
+      signal,
     });
 
     if (!response.ok) {

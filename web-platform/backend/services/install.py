@@ -183,6 +183,18 @@ in
         ip = ip.ip;
         wan-access = ip.wan-access or true;
       }) jsonData.network.static-ips;
+
+      ## Abuse-block CIDR list — each entry { cidr, enabled, comment }.
+      ## `or []` so a JSON file predating this key still evaluates;
+      ## the seed step in modules/abuse-blocking.nix populates it on
+      ## first run, and the admin UI manages it thereafter. Consumed
+      ## by profiles/router.nix to build the abusive_nets4 nftables
+      ## set. Per-field `or` defaults tolerate partial entries.
+      abuseBlockCidrs = map (e: {
+        cidr = e.cidr;
+        enabled = e.enabled or true;
+        comment = e.comment or "";
+      }) (jsonData.network.abuseBlockCidrs or []);
     };
 
     dns = {

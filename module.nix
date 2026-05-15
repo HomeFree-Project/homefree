@@ -328,21 +328,45 @@
         description = "list of domains to block";
       };
 
-      extraAbuseBlockingCidrs = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
+      abuseBlockCidrs = lib.mkOption {
         default = [];
         description = ''
-          Additional IPv4 CIDR ranges to add to the static abuse-block
-          nftables set. Merged with the shared HomeFree default list
-          (Alibaba Cloud scraper ranges declared in profiles/router.nix)
-          at activation time. Use this for per-instance offenders that
-          are not universal — e.g. a specific abuser hammering your
-          install but not seen elsewhere.
+          IPv4 CIDR ranges to drop at the firewall (the abusive_nets4
+          nftables set). Each entry can be individually enabled or
+          disabled and carries a free-text comment explaining why it
+          is blocked.
 
-          The admin UI Abuse Blocking page edits this list and triggers
-          a rebuild. Hand-editing /etc/nixos/homefree-config.json works
-          too if you prefer.
+          This list is fully user-owned. On a fresh install it is
+          seeded once with known abusive scraper networks (Alibaba
+          Cloud — see modules/abuse-blocking.nix), but after that the
+          admin UI's Abuse Blocking page is authoritative: disable an
+          entry to keep it for reference without enforcing it, or
+          remove it entirely. Removed entries are not re-seeded.
+
+          Hand-editing /etc/nixos/homefree-config.json works too.
         '';
+        type = with lib.types; listOf (submodule {
+          options = {
+            cidr = lib.mkOption {
+              type = lib.types.str;
+              description = "IPv4 CIDR range to block, e.g. 47.74.0.0/15.";
+            };
+            enabled = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                Whether this range is actively enforced. A disabled
+                entry stays in the list (and in the UI) but is not
+                added to the nftables drop set.
+              '';
+            };
+            comment = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Free-text note on why this range is blocked.";
+            };
+          };
+        });
       };
 
       geoip = {

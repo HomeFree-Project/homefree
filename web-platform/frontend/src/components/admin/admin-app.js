@@ -610,7 +610,7 @@ class AdminApp extends LitElement {
       },
       {
         id: 'abuse-blocking',
-        title: 'Abuse Blocking',
+        title: 'Network Traffic',
         icon: '🛡️',
         section: 'System'
       },
@@ -810,22 +810,30 @@ class AdminApp extends LitElement {
   async checkServiceAvailability() {
     /**
      * Check if admin-api service is reloading/restarting
-     * Polls /api/service-state and shows overlay if status is 'restarting'
+     * Polls /api/service-state and shows overlay if status is 'restarting'.
+     *
+     * While the overlay is up we retry fast (500ms) so it clears the
+     * instant the API is back. A rebuild restarts admin-api in ~2s; a
+     * flat 2s cadence made the overlay linger up to a full extra tick
+     * after the service was already serving.
      */
+    const RETRY_MS = 500;
+    const scheduleRetry = () => {
+      if (this.serviceStateCheckInterval) {
+        clearTimeout(this.serviceStateCheckInterval);
+      }
+      this.serviceStateCheckInterval = setTimeout(() => {
+        this.checkServiceAvailability();
+      }, RETRY_MS);
+    };
+
     try {
       const state = await getServiceState();
 
       if (state.admin_api_status === 'restarting') {
         this.serviceReloading = true;
         this.serviceReloadMessage = state.message || 'Admin API is restarting...';
-
-        // Poll again in 2 seconds
-        if (this.serviceStateCheckInterval) {
-          clearTimeout(this.serviceStateCheckInterval);
-        }
-        this.serviceStateCheckInterval = setTimeout(() => {
-          this.checkServiceAvailability();
-        }, 2000);
+        scheduleRetry();
       } else {
         // Service is operational
         this.serviceReloading = false;
@@ -842,14 +850,7 @@ class AdminApp extends LitElement {
       console.warn('Service state check failed:', error);
       this.serviceReloading = true;
       this.serviceReloadMessage = 'Connecting to admin API...';
-
-      // Retry in 2 seconds
-      if (this.serviceStateCheckInterval) {
-        clearTimeout(this.serviceStateCheckInterval);
-      }
-      this.serviceStateCheckInterval = setTimeout(() => {
-        this.checkServiceAvailability();
-      }, 2000);
+      scheduleRetry();
     }
   }
 
@@ -858,8 +859,12 @@ class AdminApp extends LitElement {
       // include_history=1 returns the full log on this initial fetch, so a
       // page reload mid-build (or after one finished) hydrates the build
       // logs panel instead of showing empty.
+      const signals = [AbortSignal.timeout(8000)];
+      if (this.rebuildStatusAbortController?.signal) {
+        signals.push(this.rebuildStatusAbortController.signal);
+      }
       const response = await fetch('/api/config/rebuild-status?include_history=1', {
-        signal: this.rebuildStatusAbortController?.signal
+        signal: AbortSignal.any(signals)
       });
 
       // Check if response is OK before parsing JSON
@@ -1721,8 +1726,15 @@ class AdminApp extends LitElement {
 
     const checkStatus = async () => {
       try {
+        // Cap each poll at 8s. A bare fetch over HTTP/3 can otherwise
+        // stall ~30s on a QUIC connection whose backend restarted
+        // mid-rebuild; aborting lets the next tick reconnect cleanly.
+        const signals = [AbortSignal.timeout(8000)];
+        if (this.rebuildStatusAbortController?.signal) {
+          signals.push(this.rebuildStatusAbortController.signal);
+        }
         const response = await fetch('/api/config/rebuild-status', {
-          signal: this.rebuildStatusAbortController?.signal
+          signal: AbortSignal.any(signals)
         });
 
         // Check if response is OK before parsing JSON
@@ -1835,6 +1847,7 @@ class AdminApp extends LitElement {
         }
 
         // Continue polling every 2 seconds
+        this._rebuildPollFailures = 0;
         setTimeout(checkStatus, 2000);
       } catch (error) {
         // Ignore abort errors - these are expected when component disconnects
@@ -1842,12 +1855,29 @@ class AdminApp extends LitElement {
           return;
         }
 
-        console.error('Error polling rebuild status:', error);
-        // Reset polling flag on error
-        this._pollRebuildActive = false;
+        // A connection drop mid-rebuild is EXPECTED: a rebuild routinely
+        // restarts admin-api (the very process serving this status), so
+        // the fetch fails for a couple of seconds. Don't kill the poll
+        // loop — retry fast (admin-api is back in ~2s) so the page picks
+        // the build back up the instant the API returns. Only give up
+        // after a sustained outage that a normal restart can't explain.
+        this._rebuildPollFailures = (this._rebuildPollFailures || 0) + 1;
+        const MAX_TRANSIENT_FAILURES = 15; // ~7.5s at 500ms cadence
 
-        // Reset systemHealth to last known good state or warning
-        // Don't leave it as 'building' since we lost connection
+        if (this._rebuildPollFailures <= MAX_TRANSIENT_FAILURES) {
+          // Keep the spinner up — the build is still considered running.
+          this.rebuildStatus = {
+            running: true,
+            message: 'Reconnecting to rebuild process…',
+            lastUpdate: { success: null }
+          };
+          setTimeout(checkStatus, 500);
+          return;
+        }
+
+        console.error('Error polling rebuild status:', error);
+        // Sustained outage — give up and surface it.
+        this._pollRebuildActive = false;
         if (this.systemHealth === 'building') {
           this.systemHealth = 'warning';
         }
@@ -1856,12 +1886,12 @@ class AdminApp extends LitElement {
           message: 'Lost connection to rebuild process',
           lastUpdate: { success: false }
         };
-        // Don't continue polling on error - stop the loop
         return;
       }
     };
 
     // Start polling
+    this._rebuildPollFailures = 0;
     checkStatus();
   }
 

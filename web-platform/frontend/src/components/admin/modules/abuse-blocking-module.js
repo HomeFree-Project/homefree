@@ -9,7 +9,8 @@ import {
 import { WORLD_LAND_PATH, WORLD_VIEWBOX } from './world-map-path.js';
 
 /**
- * Abuse Blocking module
+ * Network Traffic module (sidebar label; id/route/files remain
+ * "abuse-blocking" — renaming those is churn with no user benefit).
  *
  * Observability + tactical control for the three abuse-mitigation layers:
  *   1. fail2ban (three jails defined in modules/abuse-blocking.nix)
@@ -17,9 +18,10 @@ import { WORLD_LAND_PATH, WORLD_VIEWBOX } from './world-map-path.js';
  *   3. Caddy per-service access logs at /var/log/caddy/access-*.log
  *
  * Read-only for fail2ban status, banned IPs, drop counters, and the
- * top-N attacker list (parsed from logs). The static CIDR list is
- * editable via homefree.network.extraAbuseBlockingCidrs — edits land
- * in pendingConfig and flow through the standard Save/Apply path.
+ * top-N traffic-source list (parsed from logs). The static block
+ * list is editable via homefree.network.abuseBlockCidrs — a list of
+ * { cidr, enabled, comment } records; edits land in pendingConfig and
+ * flow through the standard Save/Apply path.
  *
  * Own polling (5s for status/banned/counters, 30s for top-attackers)
  * so refresh doesn't depend on the parent. Stops on disconnect.
@@ -38,6 +40,7 @@ class AbuseBlockingModule extends LitElement {
     error: { type: String, state: true },
     pendingUnban: { type: Object, state: true },  // {ip: true} while in-flight
     newCidrInput: { type: String, state: true },
+    newCidrComment: { type: String, state: true },
     cidrError: { type: String, state: true },
     mapTooltip: { type: Object, state: true },  // {bucket, x, y} | null
   };
@@ -203,6 +206,32 @@ class AbuseBlockingModule extends LitElement {
       border-color: var(--hf-accent);
     }
 
+    /* Per-row comment field in the block-list table. Borderless
+       until focused so the table stays calm at a glance. */
+    .cidr-comment-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 4px 6px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--hf-text);
+      font-size: 12px;
+      font-family: inherit;
+    }
+    .cidr-comment-input:hover {
+      border-color: var(--hf-border);
+    }
+    .cidr-comment-input:focus {
+      outline: none;
+      border-color: var(--hf-accent);
+      background: var(--hf-surface);
+    }
+    .cidr-comment-input::placeholder {
+      color: var(--hf-text-muted);
+      font-style: italic;
+    }
+
     .cidr-error {
       color: var(--hf-err);
       font-size: 12px;
@@ -326,6 +355,7 @@ class AbuseBlockingModule extends LitElement {
     this.error = null;
     this.pendingUnban = {};
     this.newCidrInput = '';
+    this.newCidrComment = '';
     this.cidrError = null;
     this.mapTooltip = null;
     this._fastPoll = null;
@@ -419,14 +449,23 @@ class AbuseBlockingModule extends LitElement {
     this._refreshTop();
   }
 
-  // CIDR editor: edits land in pendingConfig.network.extraAbuseBlockingCidrs.
-  // Parent handleConfigChange merges this into pendingConfig and the
-  // existing Save/Apply UI takes care of writing + rebuild.
+  // CIDR editor: edits land in pendingConfig.network.abuseBlockCidrs.
+  // Each entry is a record { cidr, enabled, comment }. Parent
+  // handleConfigChange merges this into pendingConfig and the existing
+  // Save/Apply UI takes care of writing + rebuild.
+  //
+  // Returns a normalised array of records. Tolerates an older
+  // plain-string list shape (pre-migration config) by coercing each
+  // string to an enabled record.
   _getCidrList() {
-    const pending = this.pendingConfig?.network?.extraAbuseBlockingCidrs;
-    if (Array.isArray(pending)) return pending;
-    const server = this.serverConfig?.network?.extraAbuseBlockingCidrs;
-    return Array.isArray(server) ? server : [];
+    const raw = this.pendingConfig?.network?.abuseBlockCidrs
+             ?? this.serverConfig?.network?.abuseBlockCidrs;
+    if (!Array.isArray(raw)) return [];
+    return raw.map(e =>
+      typeof e === 'string'
+        ? { cidr: e, enabled: true, comment: '' }
+        : { cidr: e.cidr, enabled: e.enabled !== false, comment: e.comment || '' }
+    );
   }
 
   _emitCidrUpdate(newList) {
@@ -435,7 +474,7 @@ class AbuseBlockingModule extends LitElement {
       ...(this.pendingConfig || {}),
       network: {
         ...((this.pendingConfig && this.pendingConfig.network) || {}),
-        extraAbuseBlockingCidrs: newList,
+        abuseBlockCidrs: newList,
       },
     };
     this.dispatchEvent(new CustomEvent('config-change', {
@@ -456,18 +495,33 @@ class AbuseBlockingModule extends LitElement {
       return;
     }
     const list = this._getCidrList();
-    if (list.includes(raw)) {
+    if (list.some(e => e.cidr === raw)) {
       this.cidrError = `already in the list: ${raw}`;
       return;
     }
-    this._emitCidrUpdate([...list, raw]);
+    this._emitCidrUpdate([
+      ...list,
+      { cidr: raw, enabled: true, comment: (this.newCidrComment || '').trim() },
+    ]);
     this.newCidrInput = '';
+    this.newCidrComment = '';
     this.cidrError = null;
   }
 
   _removeCidr(cidr) {
-    const list = this._getCidrList();
-    this._emitCidrUpdate(list.filter(c => c !== cidr));
+    this._emitCidrUpdate(this._getCidrList().filter(e => e.cidr !== cidr));
+  }
+
+  _toggleCidrEnabled(cidr, enabled) {
+    this._emitCidrUpdate(this._getCidrList().map(e =>
+      e.cidr === cidr ? { ...e, enabled } : e
+    ));
+  }
+
+  _updateCidrComment(cidr, comment) {
+    this._emitCidrUpdate(this._getCidrList().map(e =>
+      e.cidr === cidr ? { ...e, comment } : e
+    ));
   }
 
   // Lightweight CIDR-shape check. The Nix activation does the real
@@ -496,9 +550,12 @@ class AbuseBlockingModule extends LitElement {
         ${this.error ? html`<div class="error-box">${this.error}</div>` : ''}
         ${this._renderSummary()}
         ${this._renderJailStatus()}
+        ${/* Blocking controls grouped together: runtime bans (dynamic,
+             fail2ban-managed) directly above the static block list
+             (declarative config). Traffic observability follows. */ ''}
         ${this._renderBannedTable()}
-        ${this._renderTopTrafficSources()}
         ${this._renderCidrEditor()}
+        ${this._renderTopTrafficSources()}
       </div>
     `;
   }
@@ -905,22 +962,37 @@ class AbuseBlockingModule extends LitElement {
 
   _renderCidrEditor() {
     const list = this._getCidrList();
+    const activeCount = list.filter(e => e.enabled).length;
     return html`
-      <h2>Extra static block list</h2>
+      <h2>Static block list</h2>
       <div class="panel">
         <div class="help-text">
-          Additional IPv4 CIDR ranges to drop at the firewall, in
-          addition to the shared HomeFree default list (Alibaba Cloud
-          scraper ranges). Changes are saved with the rest of your
-          config — they take effect after the next rebuild.
+          IPv4 CIDR ranges dropped at the firewall. On a fresh install
+          this is seeded with known abusive scraper networks (Alibaba
+          Cloud); after that it is yours to manage. Disable an entry to
+          keep it for reference without enforcing it, or remove it
+          entirely. Changes are saved with the rest of your config and
+          take effect after the next rebuild.
+          ${list.length > 0 ? html`
+            <div style="margin-top: 4px;">
+              ${activeCount} of ${list.length} range${list.length === 1 ? '' : 's'} active.
+            </div>
+          ` : ''}
         </div>
 
         <div class="cidr-input-row">
           <input
             type="text"
-            placeholder="e.g. 203.0.113.0/24 or 198.51.100.42/32"
+            placeholder="CIDR — e.g. 203.0.113.0/24 or 198.51.100.42/32"
             .value=${this.newCidrInput}
             @input=${e => { this.newCidrInput = e.target.value; this.cidrError = null; }}
+            @keydown=${e => { if (e.key === 'Enter') this._addCidr(); }}
+          />
+          <input
+            type="text"
+            placeholder="Comment (optional) — why is this blocked?"
+            .value=${this.newCidrComment}
+            @input=${e => { this.newCidrComment = e.target.value; }}
             @keydown=${e => { if (e.key === 'Enter') this._addCidr(); }}
           />
           <button class="action-button" @click=${() => this._addCidr()}>Add</button>
@@ -928,21 +1000,40 @@ class AbuseBlockingModule extends LitElement {
         ${this.cidrError ? html`<div class="cidr-error">${this.cidrError}</div>` : ''}
 
         ${list.length === 0 ? html`
-          <div class="row-empty">No extra CIDRs configured.</div>
+          <div class="row-empty">No blocked ranges configured.</div>
         ` : html`
           <table>
             <thead>
               <tr>
-                <th>CIDR</th>
+                <th class="nowrap">Enabled</th>
+                <th class="nowrap">CIDR</th>
+                <th>Comment</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              ${list.map(c => html`
-                <tr>
-                  <td class="mono">${c}</td>
+              ${list.map(e => html`
+                <tr style=${e.enabled ? '' : 'opacity: 0.55;'}>
+                  <td class="nowrap">
+                    <input
+                      type="checkbox"
+                      .checked=${e.enabled}
+                      title=${e.enabled ? 'Enforced — uncheck to disable' : 'Disabled — check to enforce'}
+                      @change=${ev => this._toggleCidrEnabled(e.cidr, ev.target.checked)}
+                    />
+                  </td>
+                  <td class="mono nowrap">${e.cidr}</td>
                   <td>
-                    <button class="action-button" @click=${() => this._removeCidr(c)}>
+                    <input
+                      class="cidr-comment-input"
+                      type="text"
+                      placeholder="(no comment)"
+                      .value=${e.comment}
+                      @change=${ev => this._updateCidrComment(e.cidr, ev.target.value)}
+                    />
+                  </td>
+                  <td class="nowrap">
+                    <button class="action-button" @click=${() => this._removeCidr(e.cidr)}>
                       Remove
                     </button>
                   </td>

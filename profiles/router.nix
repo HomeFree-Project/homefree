@@ -17,28 +17,15 @@ let
     iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
 
-  ## Static ASN denylist — known abusive scraper networks that
-  ## hammer self-hosted forges, OAuth endpoints, and login pages.
-  ## These are facts about the public internet, not instance-specific
-  ## state, so they live in the shared repo. Add ranges sparingly
-  ## (legitimate users live behind some VPS providers); the dynamic
-  ## fail2ban set below catches abusers in ranges we haven't listed.
-  ##
-  ## Alibaba Cloud (AS45102, AS37963) — 47.74.0.0/15, 47.76.0.0/14,
-  ## 47.80.0.0/13. Confirmed scraping forgejo on 2026-05-15 (Go-fatal
-  ## crash on race in /user/oauth2/* under sustained 47.79.*/47.82.*
-  ## load).
-  static-abuse-cidrs = [
-    "47.74.0.0/15"
-    "47.76.0.0/14"
-    "47.80.0.0/13"
-  ];
-  ## Per-instance extension list, declared in module.nix and edited
-  ## from the admin UI's Abuse Blocking page. Merged with the shared
-  ## list at activation. Empty by default.
-  extra-abuse-cidrs = config.homefree.network.extraAbuseBlockingCidrs;
-  all-abuse-cidrs = static-abuse-cidrs ++ extra-abuse-cidrs;
-  static-abuse-cidrs-str = lib.concatStringsSep ", " all-abuse-cidrs;
+  ## Static abuse blocklist for the abusive_nets4 nftables set.
+  ## Fully driven by config.homefree.network.abuseBlockCidrs — a
+  ## user-owned list (seeded once with Alibaba Cloud scraper ranges
+  ## by modules/abuse-blocking.nix, then editable in the admin UI).
+  ## Only entries with enabled == true are enforced; a disabled
+  ## entry stays in config for reference but is left out of the set.
+  enabled-abuse-cidrs = lib.map (e: e.cidr)
+    (lib.filter (e: e.enabled) config.homefree.network.abuseBlockCidrs);
+  abuse-cidrs-str = lib.concatStringsSep ", " enabled-abuse-cidrs;
 
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
@@ -226,14 +213,19 @@ in
 
         ## "inet" indicates both ipv4 and ipv6
         table inet filter {
-          ## Static abusive-network blocklist. Hard-coded ranges
-          ## known to host scrapers/bots that hammer self-hosted
-          ## services. Adding to this set requires a rebuild; for
-          ## adaptive bans see `f2b_banned4` below.
+          ## Static abusive-network blocklist, driven by the
+          ## user-owned config.homefree.network.abuseBlockCidrs list
+          ## (only enabled entries land here). Editable in the admin
+          ## UI; changing it requires a rebuild. For adaptive bans
+          ## see `f2b_banned4` below.
+          ##
+          ## The `elements = { ... }` line is emitted only when the
+          ## enabled list is non-empty — nftables rejects an empty
+          ## `{ }` initializer. An element-less set is still valid
+          ## and the @abusive_nets4 lookups below simply never match.
           set abusive_nets4 {
             type ipv4_addr
-            flags interval
-            elements = { ${static-abuse-cidrs-str} }
+            flags interval${lib.optionalString (enabled-abuse-cidrs != []) "\n            elements = { ${abuse-cidrs-str} }"}
           }
 
           ## Dynamic ban set populated by fail2ban via the
