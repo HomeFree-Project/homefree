@@ -43,7 +43,6 @@ class NetworkModule extends LitElement {
       border-radius: 8px;
       margin-bottom: 20px;
       color: var(--hf-warn);
-      max-width: 1200px;
     }
 
     .warning-box strong {

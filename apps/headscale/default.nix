@@ -445,16 +445,28 @@ in
   ## *before* ExecStartPre runs, so we can't generate the file from
   ## within headplane.service itself — by the time ExecStartPre would
   ## run, LoadCredential has already failed with status 243.
-  ## RemainAfterExit so that headplane.service's `requires=` doesn't
-  ## treat us as failed after we finish. Idempotent: only writes
-  ## missing files.
+  ##
+  ## We deliberately do NOT use RemainAfterExit here: switch-to-
+  ## configuration won't restart a oneshot that's still "active"
+  ## from a previous boot, so dir-perm resets that happen DURING
+  ## activation (anything that touches /var/lib/homefree-secrets/
+  ## via Python or otherwise can land between tmpfiles and the next
+  ## unit) wouldn't get re-fixed. Without RemainAfterExit the unit
+  ## goes back to inactive after success and re-runs on every
+  ## rebuild. `requires=` on a oneshot is satisfied by the last
+  ## exit being 0, so headplane.service still gates on us correctly.
+  ##
+  ## Belt-and-suspenders: headplane.service also has an
+  ## ExecStartPre that asserts dir perms on every start (see
+  ## below). That covers the case where the dir gets reset
+  ## AFTER prepare-secrets ran but BEFORE headplane starts.
+  ## Idempotent: only writes missing files.
   systemd.services.headplane-prepare-secrets = lib.mkIf deployHeadplane {
     description = "Prepare Headplane runtime secrets and rendered config";
     wantedBy = [ "headplane.service" ];
     before = [ "headplane.service" ];
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = true;
     };
     script = ''
       set -eu
@@ -693,6 +705,28 @@ in
         "oidc-client-secret:${headplaneSecretsDir}/oidc-client-secret"
         "headscale-api-key:${headplaneSecretsDir}/headscale-api-key"
       ];
+
+      ## Re-assert the secrets-dir mode every single time headplane
+      ## starts. Belt-and-suspenders: prepare-secrets already does
+      ## this, but a unit chain that touches /var/lib/homefree-
+      ## secrets/ (Python admin-api, future tooling, manual
+      ## intervention) can land between prepare-secrets and us and
+      ## reset the mode to 0700. headplane runs as user/group
+      ## `headscale` and silently fails with "Could not access
+      ## config file" if it can't traverse the parent dir.
+      ##
+      ## The `+` prefix runs this ExecStartPre as root regardless of
+      ## the unit's User=/Group= (without it, headplane.service's
+      ## User=headscale would propagate to ExecStartPre too, and
+      ## chown'ing the dir to root:headscale would fail with EPERM).
+      ##
+      ## Idempotent: chmod/chown are no-ops if the perms already match.
+      ExecStartPre = "+${pkgs.writeShellScript "headplane-assert-perms" ''
+        set -eu
+        ${pkgs.coreutils}/bin/chown root:${config.services.headscale.group} \
+          ${headplaneSecretsDir}
+        ${pkgs.coreutils}/bin/chmod 0750 ${headplaneSecretsDir}
+      ''}";
     };
   };
 

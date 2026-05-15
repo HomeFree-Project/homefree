@@ -273,6 +273,17 @@ export const getRebuildStatus = () => get('/api/config/rebuild-status');
 // Services
 export const getServices = () => get('/api/services');
 export const getServiceOptionsSchema = () => get('/api/services/options/schema');
+export const postServiceAction = (label, action) =>
+  post(`/api/services/${encodeURIComponent(label)}/action`, { action });
+
+// Abuse blocking (fail2ban + nftables observability)
+export const getAbuseBlockingStatus = () => get('/api/abuse-blocking/status');
+export const getAbuseBlockingBanned = () => get('/api/abuse-blocking/banned');
+export const getAbuseBlockingCounters = () => get('/api/abuse-blocking/counters');
+export const getAbuseBlockingTopTrafficSources = (window = 3600, filter = 'all', limit = 20, includeInternal = false) =>
+  get(`/api/abuse-blocking/top-traffic-sources?window=${window}&filter=${encodeURIComponent(filter)}&limit=${limit}&include_internal=${includeInternal}`);
+export const postAbuseBlockingUnban = (jail, ip) =>
+  post('/api/abuse-blocking/unban', { jail, ip });
 
 // Filesystem
 export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);

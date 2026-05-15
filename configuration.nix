@@ -37,6 +37,9 @@ in
 
     ## Host modules
     ./modules/mounts.nix
+    ./modules/service-restart-policy.nix
+    ./modules/abuse-blocking.nix
+    ./modules/geoip.nix
   ]
   ## Infrastructure modules (system services shared by apps; not
   ## user-facing). Discovered from services/.

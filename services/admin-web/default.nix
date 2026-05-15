@@ -19,6 +19,9 @@ let
     pyyaml
     babel
     httpx
+    ## GeoIP lookups for the Abuse Blocking page's traffic-source
+    ## table. Reads the DB-IP mmdb maintained by modules/geoip.nix.
+    geoip2
   ]);
 
   # Admin backend service package
@@ -527,6 +530,13 @@ in
             ## (Zitadel→OS direction). The PAM bridge handles the
             ## reverse OS→Zitadel direction.
             pkgs.shadow
+            ## fail2ban-client + nft, used by resolvers/abuse_blocking.py
+            ## to read jail status, nftables sets, and run targeted
+            ## unbans. Without these on PATH the Abuse Blocking page
+            ## shows the layer as Down even when fail2ban is happily
+            ## running under systemd.
+            pkgs.fail2ban
+            pkgs.nftables
           ]}"
           # Path of the served frontend bundle, used by the closure-id
           # endpoint. Embeds the nix-store hash, so it changes IFF the

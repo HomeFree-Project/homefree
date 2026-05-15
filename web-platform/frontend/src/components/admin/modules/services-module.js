@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getServices, getServiceOptionsSchema } from '../../../api/client.js';
+import { getServices, getServiceOptionsSchema, postServiceAction } from '../../../api/client.js';
 import '../../shared/config-section.js';
 import '../secrets-input.js';
 import '../service-option-input.js';
@@ -21,7 +21,9 @@ class ServicesModule extends LitElement {
     secretsStatus: { type: Object },     // Status of which secrets are set
     optionsSchema: { type: Object },     // Service options schema for all services
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured (from parent)
-    expandedServices: { type: Set, state: true } // Track which services have secrets expanded
+    expandedServices: { type: Set, state: true }, // Track which services have secrets expanded
+    pendingActions: { type: Object, state: true }, // {label: 'start'|'restart'|'stop'} while in-flight
+    actionErrors: { type: Object, state: true } // {label: 'message'} last error per service
   };
 
   static styles = css`
@@ -40,7 +42,6 @@ class ServicesModule extends LitElement {
       margin-bottom: 20px;
       font-size: 14px;
       color: var(--hf-text);
-      max-width: 1200px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -58,7 +59,6 @@ class ServicesModule extends LitElement {
       margin-bottom: 16px;
       font-size: 13px;
       color: var(--hf-warn);
-      max-width: 1200px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -71,7 +71,6 @@ class ServicesModule extends LitElement {
 
     .search-box {
       margin-bottom: 20px;
-      max-width: 1200px;
     }
 
     .search-box input {
@@ -90,7 +89,7 @@ class ServicesModule extends LitElement {
     }
 
     .services-list {
-      max-width: 1200px;
+      width: 100%;
     }
 
     .service-row {
@@ -388,7 +387,6 @@ class ServicesModule extends LitElement {
       padding: 16px;
       margin-bottom: 20px;
       color: var(--hf-err);
-      max-width: 1200px;
     }
 
     .no-results {
@@ -473,6 +471,44 @@ class ServicesModule extends LitElement {
       background: #dc2626;
     }
 
+    .action-buttons {
+      display: flex;
+      gap: 6px;
+    }
+    .action-button {
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .action-button:hover:not(:disabled) {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-accent);
+    }
+    .action-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .action-button.danger {
+      color: var(--hf-err);
+    }
+    .action-button.danger:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: var(--hf-err);
+    }
+    .action-error {
+      color: var(--hf-err);
+      font-size: 11px;
+      margin-top: 4px;
+      max-width: 280px;
+      text-align: right;
+      word-break: break-word;
+    }
+
     @media (max-width: 768px) {
       .service-row {
         flex-direction: column;
@@ -516,6 +552,8 @@ class ServicesModule extends LitElement {
     this.optionsSchema = {};
     this.hasAuthorizedKeys = false;
     this.expandedServices = new Set();
+    this.pendingActions = {};
+    this.actionErrors = {};
   }
 
   async connectedCallback() {
@@ -763,6 +801,36 @@ class ServicesModule extends LitElement {
     await this.loadServices();
   }
 
+  async handleServiceAction(label, action) {
+    if (action === 'stop') {
+      const ok = window.confirm(
+        `Stop ${label}? The service will not auto-restart until you start it manually or rebuild.`
+      );
+      if (!ok) return;
+    }
+    this.pendingActions = { ...this.pendingActions, [label]: action };
+    this.actionErrors = { ...this.actionErrors, [label]: null };
+    try {
+      const res = await postServiceAction(label, action);
+      if (!res || res.ok === false) {
+        const firstErr = (res?.results || []).find(r => r.returncode !== 0);
+        throw new Error(firstErr?.stderr || 'systemctl returned non-zero');
+      }
+      // Kick a status refresh so the UI catches up faster than the poll
+      await this.loadServices(false);
+    } catch (err) {
+      console.error(`[handleServiceAction] ${action} ${label} failed:`, err);
+      this.actionErrors = {
+        ...this.actionErrors,
+        [label]: err.message || `${action} failed`,
+      };
+    } finally {
+      const next = { ...this.pendingActions };
+      delete next[label];
+      this.pendingActions = next;
+    }
+  }
+
   getStatusClass(activeState, subState, partial = false) {
     if (activeState === 'active' && subState === 'running') {
       return 'running';  // Green - includes partial
@@ -994,11 +1062,55 @@ class ServicesModule extends LitElement {
                 ${isAdminApi ? 'System service' : 'System service (always enabled)'}
               </div>
             ` : ''}
+
+            ${this.renderActionButtons(service)}
           </div>
         </div>
 
         ${this.renderConfigSection(service, hasConfig, isExpanded, expandId)}
       </div>
+    `;
+  }
+
+  /* Per-row Start / Restart / Stop buttons. Hidden for:
+     - services with no backing systemd units (admin parent rows,
+       pending instances not yet realized)
+     - the admin-api / admin services themselves (would cut the
+       request that issued the action; backend also refuses)
+     - synthetic pending instances (no real units yet) */
+  renderActionButtons(service) {
+    if (service.label === 'admin' || service.label === 'admin-api') return '';
+    if (!service.systemd_services || service.systemd_services.length === 0) return '';
+    if (!service.enabled) {
+      // A disabled service shouldn't be controllable here — enable it
+      // via the toggle + rebuild first. Showing buttons would lie
+      // about what they do (the unit may not even exist post-disable).
+      return '';
+    }
+    const pending = this.pendingActions[service.label];
+    const err = this.actionErrors[service.label];
+    const cls = this.getStatusClass(service.active_state, service.sub_state, service.partial);
+    const isRunning = cls === 'running' || cls === 'degraded';
+    const isStopped = cls === 'stopped' || cls === 'failed';
+    return html`
+      <div class="action-buttons">
+        <button class="action-button"
+                ?disabled=${!!pending || isRunning}
+                @click=${() => this.handleServiceAction(service.label, 'start')}>
+          ${pending === 'start' ? 'Starting…' : 'Start'}
+        </button>
+        <button class="action-button"
+                ?disabled=${!!pending || isStopped}
+                @click=${() => this.handleServiceAction(service.label, 'restart')}>
+          ${pending === 'restart' ? 'Restarting…' : 'Restart'}
+        </button>
+        <button class="action-button danger"
+                ?disabled=${!!pending || isStopped}
+                @click=${() => this.handleServiceAction(service.label, 'stop')}>
+          ${pending === 'stop' ? 'Stopping…' : 'Stop'}
+        </button>
+      </div>
+      ${err ? html`<div class="action-error">${err}</div>` : ''}
     `;
   }
 

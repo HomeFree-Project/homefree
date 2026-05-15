@@ -30,6 +30,7 @@ from resolvers.network import NetworkResolver
 from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
 from resolvers.services import ServicesResolver
+from resolvers.abuse_blocking import AbuseBlockingResolver
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
@@ -764,6 +765,176 @@ async def get_service_options_schema():
     except Exception as e:
         logger.error(f"Error getting service options schema: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+_ALLOWED_SERVICE_ACTIONS = {"start", "restart", "stop"}
+
+
+class ServiceActionRequest(BaseModel):
+    action: str
+
+
+@app.post("/api/services/{label}/action")
+async def post_service_action(label: str, body: ServiceActionRequest, request: Request):
+    """Run systemctl start|restart|stop against every unit that backs
+    a service label. Admin-role gated by the global auth middleware
+    (TrustedHeaderAuthMiddleware) — but we re-check the role flag
+    here belt-and-suspenders: a config slip that loosens the
+    middleware shouldn't immediately hand out systemctl.
+
+    Allowlist is the catalog itself — we only operate on units that
+    appear under a known service label in all-services.json /
+    service-config. Arbitrary unit names are rejected.
+    """
+    import subprocess
+
+    groups = getattr(request.state, "auth_groups", set()) or set()
+    if HOMEFREE_ADMIN_ROLE not in groups:
+        raise HTTPException(status_code=403, detail="admin role required")
+
+    action = body.action.lower().strip()
+    if action not in _ALLOWED_SERVICE_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"action must be one of {sorted(_ALLOWED_SERVICE_ACTIONS)}",
+        )
+
+    units = ServicesResolver.get_units_for_label(label)
+    if units is None:
+        raise HTTPException(status_code=404, detail=f"unknown service: {label}")
+    if not units:
+        raise HTTPException(
+            status_code=400,
+            detail=f"service {label!r} has no systemd units to control",
+        )
+
+    ## Refuse to act on admin-api itself — stopping it from its own
+    ## API would deadlock the request and leave the user with no way
+    ## back. Stopping admin-web would do the same.
+    if label in ("admin-api", "admin"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"refusing to {action} {label!r} from itself",
+        )
+
+    user = getattr(request.state, "auth_user", "?")
+    logger.warning(
+        "service action: user=%s label=%s action=%s units=%s",
+        user, label, action, units,
+    )
+
+    results = []
+    for unit in units:
+        try:
+            r = subprocess.run(
+                ["systemctl", action, unit],
+                capture_output=True, text=True, timeout=30,
+            )
+            results.append({
+                "unit": unit,
+                "returncode": r.returncode,
+                "stderr": r.stderr.strip()[:500],
+            })
+        except subprocess.TimeoutExpired:
+            results.append({"unit": unit, "returncode": -1, "stderr": "timeout"})
+        except Exception as e:
+            results.append({"unit": unit, "returncode": -1, "stderr": str(e)[:500]})
+
+    ok = all(r["returncode"] == 0 for r in results)
+    return JSONResponse(
+        status_code=200 if ok else 500,
+        content={"ok": ok, "label": label, "action": action, "results": results},
+    )
+
+
+## ─── Abuse blocking (fail2ban + nftables) ────────────────────────────
+## All routes admin-gated by TrustedHeaderAuthMiddleware. The unban
+## POST additionally re-checks the role for defence-in-depth, matching
+## the pattern from /api/services/{label}/action.
+
+@app.get("/api/abuse-blocking/status")
+async def get_abuse_blocking_status():
+    """fail2ban server + per-jail summary."""
+    try:
+        return JSONResponse(content=AbuseBlockingResolver.get_status())
+    except Exception as e:
+        logger.error(f"abuse-blocking status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/abuse-blocking/banned")
+async def get_abuse_blocking_banned():
+    """Currently banned IPs, merged from f2b_banned4/6 and abusive_nets4."""
+    try:
+        return JSONResponse(content=AbuseBlockingResolver.get_banned_ips())
+    except Exception as e:
+        logger.error(f"abuse-blocking banned: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/abuse-blocking/counters")
+async def get_abuse_blocking_counters():
+    """Packets/bytes dropped per source (static, fail2ban v4, fail2ban v6),
+    summed across input + forward chains."""
+    try:
+        return JSONResponse(content=AbuseBlockingResolver.get_drop_counters())
+    except Exception as e:
+        logger.error(f"abuse-blocking counters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/abuse-blocking/top-traffic-sources")
+async def get_abuse_blocking_top_traffic_sources(
+    window: int = 3600,
+    filter: str = "all",
+    limit: int = 20,
+    include_internal: bool = False,
+):
+    """Top-N source IPs by hit count in the last `window` seconds across
+    Caddy access logs. `filter` is one of all|oauth|4xx|5xx.
+    `include_internal=true` includes LAN / tailnet / ULA / loopback
+    sources (off by default — those are typically your own client
+    apps long-polling and crowd out anything actionable)."""
+    ## Clamp inputs so a malicious-or-careless caller can't blow up
+    ## the parse cost. Window > 1 day is meaningless (we only tail
+    ## the last few MB of each log anyway).
+    window = max(60, min(window, 86400))
+    limit = max(1, min(limit, 100))
+    try:
+        return JSONResponse(content=AbuseBlockingResolver.get_top_traffic_sources(
+            window_seconds=window, filter_kind=filter, limit=limit,
+            include_internal=include_internal,
+        ))
+    except Exception as e:
+        logger.error(f"abuse-blocking top-traffic-sources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AbuseBlockingUnbanRequest(BaseModel):
+    jail: str
+    ip: str
+
+
+@app.post("/api/abuse-blocking/unban")
+async def post_abuse_blocking_unban(body: AbuseBlockingUnbanRequest, request: Request):
+    """Unban one IP from one jail. Belt-and-suspenders admin-role
+    re-check; the resolver validates jail (allowlist) and IP (parses
+    via ipaddress) before reaching the shell."""
+    groups = getattr(request.state, "auth_groups", set()) or set()
+    if HOMEFREE_ADMIN_ROLE not in groups:
+        raise HTTPException(status_code=403, detail="admin role required")
+
+    user = getattr(request.state, "auth_user", "?")
+    logger.warning(
+        "abuse-blocking unban: user=%s jail=%s ip=%s",
+        user, body.jail, body.ip,
+    )
+
+    ok, message = AbuseBlockingResolver.unban(body.jail, body.ip)
+    return JSONResponse(
+        status_code=200 if ok else 400,
+        content={"ok": ok, "jail": body.jail, "ip": body.ip, "message": message},
+    )
 
 
 @app.get("/api/services/visible-to-me")

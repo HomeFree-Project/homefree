@@ -328,6 +328,42 @@
         description = "list of domains to block";
       };
 
+      extraAbuseBlockingCidrs = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = ''
+          Additional IPv4 CIDR ranges to add to the static abuse-block
+          nftables set. Merged with the shared HomeFree default list
+          (Alibaba Cloud scraper ranges declared in profiles/router.nix)
+          at activation time. Use this for per-instance offenders that
+          are not universal — e.g. a specific abuser hammering your
+          install but not seen elsewhere.
+
+          The admin UI Abuse Blocking page edits this list and triggers
+          a rebuild. Hand-editing /etc/nixos/homefree-config.json works
+          too if you prefer.
+        '';
+      };
+
+      geoip = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Maintain a local GeoIP database (DB-IP "IP to City Lite",
+            CC-BY-4.0) so the admin UI's Abuse Blocking page can show
+            the country/city of traffic sources.
+
+            Per-IP lookups are 100% local — no network requests. The
+            ONLY network activity is a weekly download of the refreshed
+            monthly database file from db-ip.com. Disable this if you
+            don't want the server reaching out to db-ip.com at all
+            (air-gapped installs, strict egress policy); the Abuse
+            Blocking page then simply omits the Location column.
+          '';
+        };
+      };
+
       router = {
         enable = lib.mkOption {
           type = lib.types.bool;

@@ -73,7 +73,6 @@ class ConfigSection extends LitElement {
 
     .section-content {
       padding: 24px;
-      max-width: 1200px;
     }
 
     .section-content.collapsed {

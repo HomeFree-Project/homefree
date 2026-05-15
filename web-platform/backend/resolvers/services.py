@@ -430,6 +430,20 @@ class ServicesResolver:
         return agg_active, agg_sub, unit_states
 
     @staticmethod
+    def get_units_for_label(label: str) -> Optional[List[str]]:
+        """Return the list of systemd unit names that back a given service
+        label, or None if the label isn't in the catalog. Used by the
+        action endpoint as an allowlist: only labels that appear in
+        all-services.json (or service-config) can be controlled, and
+        only their declared units."""
+        all_services = ServicesResolver._read_all_services()
+        services_config_map = ServicesResolver._read_service_config_map()
+        if label not in all_services and label not in services_config_map:
+            return None
+        service_config = services_config_map.get(label, {}).get("service-config", {})
+        return service_config.get("systemd-service-names", []) or []
+
+    @staticmethod
     def get_service_options_schema() -> Dict[str, Dict[str, Any]]:
         """
         Get service options schema from generated JSON file.

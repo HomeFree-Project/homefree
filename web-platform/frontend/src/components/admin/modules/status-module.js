@@ -31,7 +31,6 @@ class StatusModule extends LitElement {
       border-radius: 12px;
       margin-bottom: 24px;
       box-shadow: var(--hf-shadow);
-      max-width: 1200px;
     }
 
     .status-indicator {
@@ -99,7 +98,6 @@ class StatusModule extends LitElement {
       border-radius: 12px;
       padding: 24px;
       box-shadow: var(--hf-shadow);
-      max-width: 1200px;
     }
 
     .logs-header {

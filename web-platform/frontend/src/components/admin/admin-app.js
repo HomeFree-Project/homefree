@@ -15,6 +15,7 @@ import './modules/backups-module.js';
 import './modules/sso-module.js';
 import './modules/users-module.js';
 import './modules/status-module.js';
+import './modules/abuse-blocking-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
 
@@ -605,6 +606,12 @@ class AdminApp extends LitElement {
         id: 'status',
         title: 'Status',
         icon: '📊',
+        section: 'System'
+      },
+      {
+        id: 'abuse-blocking',
+        title: 'Abuse Blocking',
+        icon: '🛡️',
         section: 'System'
       },
       {
@@ -1980,6 +1987,15 @@ class AdminApp extends LitElement {
             .systemHealth=${this.systemHealth}
             .buildLogs=${this.buildLogs}
           ></status-module>
+        `;
+
+      case 'abuse-blocking':
+        return html`
+          <abuse-blocking-module
+            .serverConfig=${this.serverConfig}
+            .pendingConfig=${this.pendingConfig}
+            @config-change=${this.handleConfigChange}
+          ></abuse-blocking-module>
         `;
 
       default:

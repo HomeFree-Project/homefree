@@ -70,7 +70,6 @@ class BackupsModule extends LitElement {
       border-radius: 8px;
       margin-bottom: 20px;
       color: var(--hf-accent);
-      max-width: 1200px;
     }
 
     .info-box strong {
@@ -108,7 +107,7 @@ class BackupsModule extends LitElement {
     }
 
     .restore-container {
-      max-width: 1200px;
+      width: 100%;
     }
 
     .status-indicator {

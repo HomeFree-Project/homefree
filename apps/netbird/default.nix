@@ -561,14 +561,29 @@ SQL
     };
 
     ## Autoconnect oneshot: once the daemon is running AND the
-    ## setup-key file exists, run `netbird up` to register this
-    ## host as a peer and advertise the LAN subnet. Idempotent:
-    ## reruns are no-ops once the local config has the management
-    ## URL + key recorded.
+    ## setup-key file exists AND the management backend is
+    ## reachable, run `netbird up` to register this host as a peer
+    ## and advertise the LAN subnet. Idempotent: reruns are no-ops
+    ## once the local config has the management URL + key recorded.
+    ##
+    ## We ordered after podman-netbird-management.service plus a
+    ## runtime readiness probe (the systemd `after=` only sequences
+    ## start-of-unit; the container reports "started" before its
+    ## HTTP listener is ready). Without the probe, `netbird up`
+    ## races the management container and gets a Caddy 502 in the
+    ## brief window before podman publishes the upstream socket.
     systemd.services.netbird-autoconnect = lib.mkIf deployClient {
       description = "Onboard the local netbird client into the tenant";
-      after = [ "netbird.service" "netbird-mint-setup-key.service" ];
-      requires = [ "netbird.service" "netbird-mint-setup-key.service" ];
+      after = [
+        "netbird.service"
+        "netbird-mint-setup-key.service"
+        "podman-netbird-management.service"
+      ];
+      requires = [
+        "netbird.service"
+        "netbird-mint-setup-key.service"
+        "podman-netbird-management.service"
+      ];
       wantedBy = [ "multi-user.target" ];
       unitConfig.ConditionPathExists = [
         "${secretsDir}/setup-key"
@@ -577,7 +592,7 @@ SQL
         Type = "oneshot";
         RemainAfterExit = true;
       };
-      path = with pkgs; [ netbird coreutils jq ];
+      path = with pkgs; [ netbird coreutils jq curl ];
       script = ''
         set -eu
         SECRETS_DIR=${secretsDir}
@@ -592,6 +607,33 @@ SQL
           [ $(date +%s) -ge $deadline ] && \
             { echo "netbird-autoconnect: daemon socket never appeared" >&2; exit 1; }
           sleep 1
+        done
+
+        ## Wait for the management HTTP backend to be ready. The
+        ## management container's systemd unit reports active as
+        ## soon as conmon is up, but the Go process inside takes
+        ## a few seconds to bind the listener and Caddy returns
+        ## 502 until then. We poll a cheap endpoint (the default
+        ## management API root, expected to return 404 once routes
+        ## are mounted — anything that isn't a 5xx/connection-
+        ## error means the backend is reachable).
+        ##
+        ## 60s budget — the container's prestart can be slow on a
+        ## cold boot. Cert verification via the system trust store
+        ## (Caddy's internal CA is mounted into other clients via
+        ## per-service plumbing; for this CLI probe we just trust
+        ## whatever the system trusts).
+        deadline=$(( $(date +%s) + 60 ))
+        while :; do
+          code=$(curl -sk -o /dev/null -w '%{http_code}' \
+            --max-time 3 "$MGMT_URL/" || echo 000)
+          case "$code" in
+            5*|000) ;;          ## not ready — 5xx or connect error
+            *) break ;;         ## any non-5xx response = listener up
+          esac
+          [ $(date +%s) -ge $deadline ] && \
+            { echo "netbird-autoconnect: management backend never became reachable (last HTTP $code)" >&2; exit 1; }
+          sleep 2
         done
 
         if netbird --daemon-addr "$DAEMON_ADDR" status --json 2>/dev/null \

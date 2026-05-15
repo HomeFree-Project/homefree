@@ -46,7 +46,7 @@ class UsersModule extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .module-container { width: 100%; max-width: 1000px; }
+    .module-container { width: 100%; }
 
     .info-box {
       background: var(--hf-accent-soft);

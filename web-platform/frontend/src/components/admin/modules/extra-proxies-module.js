@@ -26,7 +26,6 @@ class ExtraProxiesModule extends LitElement {
       margin-bottom: 20px;
       color: var(--hf-text-muted);
       font-size: 13px;
-      max-width: 1200px;
       line-height: 1.5;
     }
     .help-box strong {
