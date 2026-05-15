@@ -26,6 +26,7 @@ let
   ## .storage/core.config, so changing a value in admin → rebuild
   ## propagates to HA without any UI step.
   sys = config.homefree.system;
+  cfg = config.homefree.service-options.home-assistant;
   haYamlLine = key: value: "  ${key}: ${value}";
   haOptionalLine = key: value:
     if value == null then "" else "  ${key}: ${value}\n";
@@ -123,6 +124,12 @@ let
         ## it at the bundle we synthesize in preStart so Caddy's
         ## local CA root is trusted.
         tls_ca_path: /config/ca-bundle.crt
+
+    ## Instance-provided YAML, e.g. household-specific integrations
+    ## (opnsense, wake_on_lan, custom sensors). Inserted at column 0
+    ## of the YAML output thanks to Nix indent-stripping; instance
+    ## should provide top-level keys at column 0 in their own string.
+    ${cfg.extraConfigYaml}
   '';
 
   ## auth_oidc custom component package — official Nextcloud-style
@@ -142,6 +149,18 @@ let
     ## the store path is enough.
     ln -sfn ${authOidcPkg}/custom_components/auth_oidc \
       ${containerDataPath}/config/custom_components/auth_oidc
+
+    ## Instance-provided custom_components packages. Each package
+    ## exposes one or more <pkg>/custom_components/<domain>/ subtrees;
+    ## symlink each one into /config/custom_components/<domain>/.
+    ${lib.concatMapStringsSep "\n" (pkg: ''
+      if [ -d "${pkg}/custom_components" ]; then
+        for d in ${pkg}/custom_components/*; do
+          n=$(basename "$d")
+          ln -sfn "$d" ${containerDataPath}/config/custom_components/"$n"
+        done
+      fi
+    '') cfg.customComponentPackages}
 
     ## ── configuration.yaml from template ───────────────────────────
     ## auth_oidc requires non-empty client_id/client_secret values; if
@@ -169,6 +188,16 @@ let
     ## mode" (no trusted_proxies → all proxied requests get 400).
     ## Empty files = "no entries", which is what a fresh install
     ## wants anyway.
+    ##
+    ## Instance-provided seeds: if cfg.includeFileSeeds.<name> is set
+    ## and /config/<name> doesn't yet exist, copy the seed in. We
+    ## never overwrite — HA's UI writes to these files (automation
+    ## editor, scene editor, etc.) and clobbering destroys user edits.
+    ${lib.concatMapStringsSep "\n" (name: ''
+      [ -e "${containerDataPath}/config/${name}" ] || \
+        cp "${cfg.includeFileSeeds.${name}}" "${containerDataPath}/config/${name}"
+    '') (lib.attrNames cfg.includeFileSeeds)}
+
     for f in automations.yaml scripts.yaml scenes.yaml groups.yaml; do
       [ -f "${containerDataPath}/config/$f" ] || \
         touch "${containerDataPath}/config/$f"
@@ -185,6 +214,31 @@ let
       chmod 600 ${haSecretsDir}/admin-password
     fi
 
+    ${lib.optionalString cfg.enableSecretsFile ''
+      ## ── secrets.yaml from on-disk secret files ────────────────────
+      ## Generate /config/secrets.yaml from ${haSecretsDir}/secrets/
+      ## (one file per secret key). HA's native `!secret <key>` syntax
+      ## then resolves to these values inside any YAML (including the
+      ## extraConfigYaml block). auth_oidc CANNOT use !secret — see the
+      ## comment above the auth_oidc block — so it keeps the @@...@@
+      ## sed pattern. Everything else (opnsense API keys, ilo password,
+      ## etc.) should use !secret.
+      secrets_dir=${haSecretsDir}/secrets
+      if [ -d "$secrets_dir" ]; then
+        : > ${containerDataPath}/config/secrets.yaml
+        chmod 600 ${containerDataPath}/config/secrets.yaml
+        for f in "$secrets_dir"/*; do
+          [ -f "$f" ] || continue
+          k=$(basename "$f")
+          v=$(cat "$f")
+          ## Quote the scalar; escape embedded double-quotes so
+          ## values with " survive YAML parsing.
+          printf '%s: "%s"\n' "$k" "''${v//\"/\\\"}" \
+            >> ${containerDataPath}/config/secrets.yaml
+        done
+      fi
+    ''}
+
     ## ── CA bundle for auth_oidc's HTTPS discovery fetch ────────────
     ## Caddy issues internal certs from a runtime-generated local CA
     ## that the HA container's Python doesn't trust. Same pattern as
@@ -197,6 +251,21 @@ let
       fi
     } > ${containerDataPath}/config/ca-bundle.crt
     chmod 644 ${containerDataPath}/config/ca-bundle.crt
+
+    ## Instance-provided static directories (themes, blueprints,
+    ## www/community for HACS-style frontend cards). On every rebuild
+    ## we rm the target and re-copy from the Nix store source so the
+    ## tree stays declarative. We COPY rather than symlink because
+    ## HA's frontend uses aiohttp StaticResource with follow_symlinks
+    ## off + a "stay within configured root" check; a symlink to
+    ## /nix/store/<x>/<dir>/ resolves outside /config/www/ and aiohttp
+    ## returns 404 even though the file is readable.
+    ${lib.concatMapStringsSep "\n" (rel: ''
+      mkdir -p "$(dirname ${containerDataPath}/config/${rel})"
+      rm -rf "${containerDataPath}/config/${rel}"
+      cp -aL "${cfg.staticDirs.${rel}}" "${containerDataPath}/config/${rel}"
+      chmod -R u+w "${containerDataPath}/config/${rel}"
+    '') (lib.attrNames cfg.staticDirs)}
   '';
 
   ## postStart bootstraps HA into a state where SSO is the ONLY login
@@ -394,6 +463,86 @@ in
       description = "Open to public on WAN port";
     };
 
+    ## Extension points for instance configs. The base repo has no
+    ## opinion on what specific integrations, automations, or custom
+    ## components a household uses — instance config supplies all of
+    ## those via these options.
+
+    extraConfigYaml = lib.mkOption {
+      type = lib.types.lines;
+      default = "";
+      description = ''
+        Extra YAML appended verbatim to the generated configuration.yaml.
+        Use this to declare integrations specific to this household
+        (e.g. an opnsense block with !secret references, template
+        sensors with hardware-specific entity_ids). Top-level YAML keys
+        should start at column 0 in your string — the value is inserted
+        at column 0 of the configuration.yaml after the standard core,
+        frontend, http, and auth_oidc blocks.
+
+        Secret values: use HA's native `!secret <key>` syntax. The
+        `enableSecretsFile` option (default true) generates the
+        backing secrets.yaml from /var/lib/homefree-secrets/home-assistant/secrets/.
+      '';
+    };
+
+    customComponentPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.package;
+      default = [ ];
+      description = ''
+        List of Nix packages, each exposing one or more
+        `custom_components/<domain>/` subtrees. preStart symlinks each
+        domain directory into /var/lib/homeassistant/config/custom_components/<domain>/.
+
+        For packages in nixpkgs, use
+        `pkgs.home-assistant-custom-components.<name>`. For unpackaged
+        components, write a local derivation that fetches the source
+        and copies the relevant subtree (see auth_oidc as a template).
+      '';
+    };
+
+    includeFileSeeds = lib.mkOption {
+      type = lib.types.attrsOf lib.types.path;
+      default = { };
+      description = ''
+        Map of filename (relative to /config/) to seed source path.
+        On first install (when /config/<name> doesn't exist), preStart
+        copies the seed into place. On subsequent rebuilds the file is
+        left alone so UI edits (e.g. via the automation editor) are
+        preserved.
+
+        Typical keys: "automations.yaml", "known_devices.yaml",
+        "scripts.yaml", "scenes.yaml", "groups.yaml".
+      '';
+    };
+
+    staticDirs = lib.mkOption {
+      type = lib.types.attrsOf lib.types.path;
+      default = { };
+      description = ''
+        Map of relative path (under /config/) to source directory path.
+        preStart symlinks each entry into /config/<rel>/. Replaces any
+        existing dir at the target on every rebuild — these are owned
+        declaratively.
+
+        Typical keys: "themes", "blueprints", "www/community" (for
+        HACS-style frontend cards).
+      '';
+    };
+
+    enableSecretsFile = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        If true, preStart writes /config/secrets.yaml from the contents
+        of /var/lib/homefree-secrets/home-assistant/secrets/ — one file
+        per secret key. HA's `!secret <key>` syntax then resolves to
+        those values inside any YAML. (auth_oidc still requires the
+        @@PLACEHOLDER@@ sed substitution pattern — see the auth_oidc
+        comment above.)
+      '';
+    };
+
     label = lib.mkOption {
       type = lib.types.str;
       default = "home-assistant";
@@ -449,8 +598,14 @@ in
   };
 
   systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.home-assistant.enable {
-    after = [ "dns-ready.service" ];
+    ## When Z-Wave JS UI is also enabled, prefer to start it first.
+    ## `wants` (not `requires`) so HA still boots if Z-Wave is disabled
+    ## or its container fails — HA's zwave_js config entry will retry
+    ## once the WS server comes up.
+    after = [ "dns-ready.service" ]
+      ++ lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
     requires = [ "dns-ready.service" ];
+    wants = lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "homeassistant-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];

@@ -1500,6 +1500,20 @@
         };
       };
 
+      zwave-js-ui = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Z-Wave JS UI controller daemon";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
       zitadel = {
         enable = lib.mkOption {
           type = lib.types.bool;
