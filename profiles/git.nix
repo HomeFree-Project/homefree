@@ -37,6 +37,17 @@
       include = {
         path = "~/.gitconfig.local";
       };
+      safe = {
+        directory = [
+          "/etc/nixos"
+          "/home/${config.homefree.system.adminUsername}/homefree"
+        ];
+      };
+
+      user = {
+        name = config.homefree.system.adminDescription;
+        email = config.homefree.system.adminEmail;
+      };
 
       #==========================
       # Diff settings

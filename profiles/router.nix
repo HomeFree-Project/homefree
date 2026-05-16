@@ -4,6 +4,8 @@ let
   # @TODO: How to determine interface names?
   wan-interface = config.homefree.network.wan-interface;
   lan-interface = config.homefree.network.lan-interface;
+  lan-address = config.homefree.network.lan-address;
+  lan-subnet = config.homefree.network.lan-subnet;
   vlan-wan-id = 100;
   vlan-lan-id = 200;
   vlan-iot-id = 201;
@@ -51,7 +53,7 @@ in
   # IP Forwarding
   #-----------------------------------------------------------------------------------------------------
 
-  boot.kernel.sysctl = {
+  boot.kernel.sysctl = lib.optionalAttrs config.homefree.network.router.enable {
     # enable ipv4 forwarding
     "net.ipv4.conf.all.forwarding" = true;
 
@@ -63,6 +65,12 @@ in
     "net.ipv6.conf.${wan-interface}.autoconf" = 1;
     "net.ipv6.conf.${lan-interface}.accept_ra" = 2;
     "net.ipv6.conf.${lan-interface}.autoconf" = 1;
+
+    # Allow services (AdGuardHome) to bind to LAN-side IPv6 addresses even when
+    # the LAN interface has no carrier — otherwise the address stays tentative
+    # (DAD can't complete on a down link) and AdGuardHome fatals on startup,
+    # taking out DNS for the whole host.
+    "net.ipv6.ip_nonlocal_bind" = 1;
   };
 
   # Required so netavark's IPv6 DNAT rules for podman containers actually load.
@@ -72,7 +80,7 @@ in
   boot.kernelModules = [ "ip6table_nat" ];
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
-  systemd.network = {
+  systemd.network = lib.optionalAttrs config.homefree.network.router.enable {
     links = {
       "01-${wan-interface}" = {
         matchConfig.Name = wan-interface;
@@ -93,7 +101,7 @@ in
         name = lan-interface;
         networkConfig = {
           Description = "LAN link";
-          Address = [ "10.0.0.1/24" "fd01::1/64" ];
+          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.
@@ -101,7 +109,9 @@ in
           # Use a DHCPv6-PD delegated prefix (DHCPv6PrefixDelegation.SubnetId)
           # from the pool and assigns one /64 to this network.
           DHCPPrefixDelegation = "yes";
-          ConfigureWithoutCarrier = "no";
+          ## @TODO: This was set to "no" before, but changed to "yes" so that adguardhome could start even if the LAN
+          ##        port is not connected. Are there ramifications of keeping this set to "yes"?
+          ConfigureWithoutCarrier = "yes";
         };
         ipv6SendRAConfig = {
           # Currently dnsmasq manages DNS servers.
@@ -117,14 +127,13 @@ in
     };
   };
 
-  networking = {
+  networking = lib.optionalAttrs config.homefree.network.router.enable {
     #-----------------------------------------------------------------------------------------------------
     # Interface config
     #-----------------------------------------------------------------------------------------------------
 
     useDHCP = false;
-    ## @TODO: Base on config for lan gateway
-    nameservers = [ "10.0.0.1" ];
+    nameservers = [ lan-address ];
 
     ## Define VLANS
     ## https://www.breakds.org/post/vlan-configuration-by-examples/
@@ -154,8 +163,8 @@ in
       ${lan-interface} = {
         useDHCP = false;
         ipv4.addresses = [{
-          address = "10.0.0.1";
-          prefixLength = 24;
+          address = lan-address;
+          prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" lan-subnet) 1);
         }];
       };
 
@@ -266,6 +275,7 @@ in
             iifname { "lo" } accept comment "Allow localhost to access the router"
             iifname { "${lan-interface}" } accept comment "Allow local network to access the router"
             iifname { "tailscale0" } accept comment "Allow tailscale network to access the router"
+            iifname { "wt0" } accept comment "Allow netbird network to access the router"
             iifname { "podman0" } accept comment "Allow podman network to access the router"
 
             ## Allow for web traffic
@@ -273,6 +283,10 @@ in
             tcp dport { http, https } ct state new accept;
 
             ${service-input-rules}
+
+            ${lib.optionalString config.homefree.development ''
+            tcp dport { 22, 2022 } ct state new accept; # Accept SSH and Eternal Terminal connections
+            ''}
 
             # DHCPv6
             ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept
@@ -348,6 +362,26 @@ in
             ## Headscale-Podman
             iifname { "tailscale0" } oifname { "podman0" } accept comment "Allow trusted tailscale to podman"
             iifname { "podman0" } oifname { "tailscale0" } ct state established, related accept comment "Allow established back to tailscale"
+
+            ## Netbird-WAN
+            iifname { "wt0" } oifname { "${wan-interface}" } accept comment "Allow trusted netbird to WAN"
+            iifname { "${wan-interface}" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Netbird-LAN
+            iifname { "wt0" } oifname { "${lan-interface}" } accept comment "Allow trusted netbird to LAN"
+            iifname { "${lan-interface}" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## LAN-Netbird
+            iifname { "${lan-interface}" } oifname { "wt0" } accept comment "Allow trusted LAN to netbird"
+            iifname { "wt0" } oifname { "${lan-interface}" } ct state established, related accept comment "Allow established back to lan"
+
+            ## Podman-Netbird
+            iifname { "podman0" } oifname { "wt0" } accept comment "Allow trusted podman to netbird"
+            iifname { "wt0" } oifname { "podman0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Netbird-Podman
+            iifname { "wt0" } oifname { "podman0" } accept comment "Allow trusted netbird to podman"
+            iifname { "podman0" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
           }
         }
 
@@ -373,7 +407,7 @@ in
   # Performance Tuning
   #-----------------------------------------------------------------------------------------------------
 
-  systemd.services.configure-ethernet = {
+  systemd.services.configure-ethernet = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## Disabled as it should be handled by systemd.network.links above
     enable = false;
@@ -392,7 +426,7 @@ in
   };
 
   ## @TODO: This was cargo-culted. Evaluate it for efficacy and correctness.
-  systemd.services.tune-router-performance = {
+  systemd.services.tune-router-performance = lib.optionalAttrs config.homefree.network.router.enable {
     wantedBy = [ "multi-user.target" ];
     ## CURRENTLY DISABLED - Need to stabilize network first before enabling this
     enable = false;
@@ -436,21 +470,21 @@ in
 
   # See: https://nixos.wiki/wiki/Systemd-resolved
   ## Disabled as Unbound + Adguard is used instead
-  services.resolved = {
+  services.resolved = lib.optionalAttrs config.homefree.network.router.enable {
     enable = false;
-    dnssec = "true";
-    domains = [ "~." ];
-    fallbackDns = [ "1.1.1.1#one.one.one.one" "1.0.0.1#one.one.one.one" ];
-    extraConfig = ''
-      DNSOverTLS=yes
-    '';
+    settings.Resolve = {
+      DNSSEC = "true";
+      Domains = [ "~." ];
+      FallbackDNS = [ "1.1.1.1#one.one.one.one" "1.0.0.1#one.one.one.one" ];
+      DNSOverTLS = "true";
+    };
   };
 
   #-----------------------------------------------------------------------------------------------------
   # Service Discovery
   #-----------------------------------------------------------------------------------------------------
 
-  services.avahi = {
+  services.avahi = lib.optionalAttrs config.homefree.network.router.enable {
     enable = true;
     reflector = true;
     allowInterfaces = [

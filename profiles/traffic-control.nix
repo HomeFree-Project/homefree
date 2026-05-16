@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   wan-interface = config.homefree.network.wan-interface;
@@ -72,7 +72,11 @@ in
   ##   Dst-port: any
   ##   Target: Downstream queue
 
-  systemd.services.traffic-control-rules = {
+  systemd.services.traffic-control-rules = lib.optionalAttrs (
+    config.homefree.network.router.enable
+    && config.homefree.network.wan-bitrate-mbps-up != null
+    && config.homefree.network.wan-bitrate-mbps-down != null)
+  {
     after = [ "network.target" ];
     description = "Taffic Control Rules";
     enable = true;
