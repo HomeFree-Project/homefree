@@ -11,6 +11,12 @@
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Secure Boot support for the installer's optional lanzaboote path.
+    # Pinned to a release tag; the generated installed-system flake
+    # references this same revision when the user opts into Secure Boot.
+    lanzaboote.url = "github:nix-community/lanzaboote/v0.4.2";
+    lanzaboote.inputs.nixpkgs.follows = "nixpkgs";
+
     nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";
 
     nix-editor.url = "github:snowfallorg/nix-editor";
@@ -74,6 +80,27 @@
           program = "${update-versions}/bin/update-versions";
         };
       };
+    };
+
+    # Development shell with everything ./scripts/run-vm.sh needs to
+    # build an installer image and boot it in QEMU - including swtpm
+    # (emulated TPM2) and virtiofsd (source-tree share / dev mode).
+    devShells.${system}.default = pkgs.mkShell {
+      packages = with pkgs; [
+        qemu            # qemu-system-x86_64 + qemu-img + qemu-bridge-helper
+        swtpm           # emulated TPM2 for --tpm
+        virtiofsd       # source-tree share for the wizard's dev mode
+        OVMF            # UEFI firmware (run-vm.sh also resolves this itself)
+        nix             # build-image / flake builds
+        git
+        jq
+        virt-viewer     # remote-viewer for --virtviewer
+      ];
+      shellHook = ''
+        echo "HomeFree dev shell - VM tooling ready."
+        echo "  nix run .#build           # build the installer ISO"
+        echo "  nix run .#run-vm -- --tpm # boot it with an emulated TPM2"
+      '';
     };
 
     nixosModules = rec {

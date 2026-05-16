@@ -16,6 +16,16 @@ VM_DISK_SIZE="${VM_DISK_SIZE:-50G}"
 USE_VIRTVIEWER="${USE_VIRTVIEWER:-false}"
 USE_HEADLESS="${USE_HEADLESS:-false}"
 USE_UEFI="${USE_UEFI:-true}"
+# Number of data disks to attach. 1 = single-disk install; 2+ lets the
+# installer set up a btrfs RAID. Defaults to 2 so RAID is testable out
+# of the box; override with --disks N (or -n 1 for a single-disk test).
+VM_DISKS="${VM_DISKS:-2}"
+# Emulated TPM2 (swtpm). Needed to test unattended LUKS auto-unlock.
+# Enabled by default; pass --no-tpm to test the passphrase-at-boot path.
+USE_TPM="${USE_TPM:-true}"
+
+# Script-scope state for the cleanup trap (see note below).
+SWTPM_PID=""
 
 # Script-scope state used by the cleanup trap. These must NOT be `local` to
 # cmd_run: when set -e aborts cmd_run, the function returns first and only
@@ -107,11 +117,22 @@ Source-tree sharing (development mode):
                   virtiofsd installed or specifically want to test a clean
                   non-dev installation.
 
+Disk encryption testing:
+  Default:        2 data disks + an emulated TPM2 (swtpm), so btrfs RAID
+                  and unattended LUKS auto-unlock are testable out of the
+                  box. Needs UEFI (the default) and 'swtpm' in PATH.
+  --no-tpm:       Skip the emulated TPM2 — exercises the passphrase-at-
+                  boot path (LUKS defaults off in the wizard with no TPM).
+  --disks N:      Attach N data disks (default 2). Use -n 1 for a
+                  single-disk install test.
+
 Options:
   -i, --iso PATH            Path to ISO (default: auto-detect in build/).
   -m, --memory MB           VM memory (default: 8192).
   -c, --cores N             CPU cores (default: 4).
   -d, --disk-size SIZE      Disk size for fresh installs (default: 50G).
+  -n, --disks N             Number of data disks to attach (default: 2).
+      --tpm / --no-tpm      Emulated TPM2 on/off (default: on).
       --bridge              Use bridge networking instead of user-mode.
       --no-dev              Disable the virtiofs source share.
   -v, --virtviewer          QXL/SPICE + remote-viewer (clipboard).
@@ -124,13 +145,14 @@ Options:
   -h, --help                Show this help.
 
 Environment variables: FLAKE_DIR, VM_MEMORY, VM_CORES, VM_DISK_SIZE,
-BUILD_DIR, VM_STATE_DIR.
+VM_DISKS, USE_TPM, BUILD_DIR, VM_STATE_DIR.
 
 Examples:
-  $SCRIPT_NAME run                        # user-mode + dev (default)
-  $SCRIPT_NAME run --no-dev               # user-mode, no source share
+  $SCRIPT_NAME run                        # 2 disks + TPM2 + dev (default)
+  $SCRIPT_NAME run -n 1                   # single-disk install test
+  $SCRIPT_NAME run --no-tpm               # passphrase-at-boot path
+  $SCRIPT_NAME run --no-dev               # no source share
   $SCRIPT_NAME run --bridge               # router topology + dev share
-  $SCRIPT_NAME run --bridge --no-dev      # clean router install test
   $SCRIPT_NAME run -l                     # bridge + lan-client VM
 EOF
 }
@@ -260,6 +282,18 @@ cmd_run() {
                 VM_DISK_SIZE="$2"
                 shift 2
                 ;;
+            -n|--disks)
+                VM_DISKS="$2"
+                shift 2
+                ;;
+            --tpm)
+                USE_TPM=true
+                shift
+                ;;
+            --no-tpm)
+                USE_TPM=false
+                shift
+                ;;
             --bridge)
                 USE_BRIDGE=true
                 shift
@@ -328,6 +362,25 @@ cmd_run() {
         exit 1
     fi
 
+    # --disks must be a positive integer.
+    if ! [[ "$VM_DISKS" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "--disks must be a positive integer (got: $VM_DISKS)"
+        exit 1
+    fi
+
+    # --tpm needs the swtpm binary and UEFI firmware.
+    if [[ "$USE_TPM" == "true" ]]; then
+        if ! command -v swtpm &> /dev/null; then
+            log_error "swtpm not found in PATH (required for --tpm)."
+            log_error "Install swtpm, or drop --tpm to test passphrase-only unlock."
+            exit 1
+        fi
+        if [[ "$USE_UEFI" != "true" ]]; then
+            log_error "--tpm requires UEFI; do not combine it with --no-uefi."
+            exit 1
+        fi
+    fi
+
     # Ensure directories are absolute paths
     FLAKE_DIR=$(realpath "$FLAKE_DIR")
     BUILD_DIR=$(realpath -m "$BUILD_DIR")
@@ -358,6 +411,9 @@ cmd_run() {
             local sock="$VM_STATE_DIR/vhostqemu.sock"
             sudo pkill -f "virtiofsd.*${sock}" 2>/dev/null || true
             sudo rm -f "$sock" "$sock.pid" 2>/dev/null || true
+        fi
+        if [[ -n "$SWTPM_PID" ]]; then
+            kill "$SWTPM_PID" 2>/dev/null || true
         fi
         [[ -n "$BRIDGE_NAME" ]] && destroy_bridge "$BRIDGE_NAME"
     }
@@ -410,19 +466,32 @@ cmd_run() {
         # actually realises the store path so the firmware is on disk before
         # QEMU references it. Falls back to system paths only if the flake
         # build fails (e.g. no network and not yet cached).
+        #
+        # IMPORTANT: when --tpm is used we need a TPM2-capable OVMF build
+        # (`OVMFFull`, which sets tpmSupport=true). Plain `OVMF` is built
+        # WITHOUT TPM support, so its firmware never issues TPM2_Startup
+        # and the guest kernel's TPM self-test fails with error 256
+        # (TPM_RC_INITIALIZE). The non-Full system fallbacks are skipped
+        # when --tpm is on for the same reason.
         local OVMF_FD=""
+        local ovmf_attr='nixpkgs#OVMF.fd'
+        [[ "$USE_TPM" == "true" ]] && ovmf_attr='nixpkgs#OVMFFull.fd'
         if command -v nix &> /dev/null; then
             OVMF_FD=$(nix build --no-link --print-out-paths \
                 --inputs-from "$FLAKE_DIR" \
-                'nixpkgs#OVMF.fd' 2>/dev/null || true)
+                "$ovmf_attr" 2>/dev/null || true)
         fi
 
         local -a OVMF_CANDIDATES=()
         [[ -n "$OVMF_FD" ]] && OVMF_CANDIDATES+=("$OVMF_FD/FV/OVMF_CODE.fd")
-        OVMF_CANDIDATES+=(
-            "/run/current-system/sw/share/OVMF/OVMF_CODE.fd"
-            "/usr/share/OVMF/OVMF_CODE.fd"
-        )
+        # System-path OVMF builds are typically NOT TPM-capable; only use
+        # them as a fallback when the TPM is not in play.
+        if [[ "$USE_TPM" != "true" ]]; then
+            OVMF_CANDIDATES+=(
+                "/run/current-system/sw/share/OVMF/OVMF_CODE.fd"
+                "/usr/share/OVMF/OVMF_CODE.fd"
+            )
+        fi
 
         for code_path in "${OVMF_CANDIDATES[@]}"; do
             if [[ -f "$code_path" ]]; then
@@ -433,6 +502,15 @@ cmd_run() {
         done
 
         if [[ -z "$OVMF_CODE" ]]; then
+            # With --tpm, UEFI is mandatory (the TPM needs OVMF to issue
+            # TPM2_Startup), so a missing firmware is a hard error rather
+            # than a silent downgrade.
+            if [[ "$USE_TPM" == "true" ]]; then
+                log_error "TPM-capable OVMF firmware (OVMFFull) not found."
+                log_error "Build it with 'nix build nixpkgs#OVMFFull.fd', or"
+                log_error "pass --no-tpm to run without an emulated TPM."
+                exit 1
+            fi
             log_warning "OVMF firmware not found, disabling UEFI boot"
             USE_UEFI=false
         else
@@ -448,33 +526,49 @@ cmd_run() {
         fi
     fi
 
-    # Router VM disk
-    local ROUTER_DISK="$VM_STATE_DIR/homefree-test.qcow2"
+    # Router VM data disks. The first is homefree-test.qcow2 (kept for
+    # backward compatibility); extras are homefree-test-2.qcow2, etc.
+    local -a ROUTER_DISKS=()
+    local d
+    for (( d = 1; d <= VM_DISKS; d++ )); do
+        if [[ $d -eq 1 ]]; then
+            ROUTER_DISKS+=("$VM_STATE_DIR/homefree-test.qcow2")
+        else
+            ROUTER_DISKS+=("$VM_STATE_DIR/homefree-test-$d.qcow2")
+        fi
+    done
 
-    if [[ -f "$ROUTER_DISK" ]]; then
-        local DISK_SIZE
-        DISK_SIZE=$(du -h "$ROUTER_DISK" | cut -f1)
-        log_warning "Existing virtual disk found: $ROUTER_DISK ($DISK_SIZE)"
-        log_warning "If you want to test the installer from scratch, you should delete this disk."
-        log_warning "Otherwise, the VM will boot from the installed system on the disk."
+    # If any disk already exists, offer to wipe them all so the
+    # installer runs from scratch (a stale disk would otherwise boot the
+    # previously installed system instead of the ISO).
+    local existing=false
+    for disk in "${ROUTER_DISKS[@]}"; do
+        [[ -f "$disk" ]] && existing=true
+    done
+    if [[ "$existing" == "true" ]]; then
+        log_warning "Existing virtual disk(s) found in $VM_STATE_DIR."
+        log_warning "To test the installer from scratch they should be deleted."
+        log_warning "Otherwise the VM may boot a previously installed system."
         echo ""
-        read -p "Delete the existing virtual disk and start fresh? [y/N] " -n 1 -r
+        read -p "Delete existing virtual disk(s) and start fresh? [y/N] " -n 1 -r
         echo ""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Deleting old virtual disk..."
-            rm -f "$ROUTER_DISK"
-            log_success "Deleted: $ROUTER_DISK"
+            for disk in "${ROUTER_DISKS[@]}"; do
+                rm -f "$disk" && log_success "Deleted: $disk"
+            done
         else
-            log_info "Keeping existing virtual disk"
+            log_info "Keeping existing virtual disk(s)"
         fi
     fi
 
-    if [[ ! -f "$ROUTER_DISK" ]]; then
-        log_info "Creating router VM disk: $ROUTER_DISK (size: $VM_DISK_SIZE)"
-        qemu-img create -f qcow2 "$ROUTER_DISK" "$VM_DISK_SIZE"
-    else
-        log_info "Using existing router disk: $ROUTER_DISK"
-    fi
+    for disk in "${ROUTER_DISKS[@]}"; do
+        if [[ ! -f "$disk" ]]; then
+            log_info "Creating VM disk: $disk (size: $VM_DISK_SIZE)"
+            qemu-img create -f qcow2 "$disk" "$VM_DISK_SIZE"
+        else
+            log_info "Using existing disk: $disk"
+        fi
+    done
 
     # Build router QEMU command
     local -a ROUTER_QEMU_CMD=(
@@ -499,12 +593,68 @@ cmd_run() {
         )
     fi
 
+    # Attach each data disk. The first carries bootindex=0 so the
+    # installed system boots from it; the ISO is bootindex=1.
+    local disk_idx=0
+    for disk in "${ROUTER_DISKS[@]}"; do
+        local bootopt=""
+        [[ $disk_idx -eq 0 ]] && bootopt=",bootindex=0"
+        ROUTER_QEMU_CMD+=(
+            -drive "file=$disk,format=qcow2,if=none,id=maindisk$disk_idx,cache=writeback,discard=unmap"
+            -device "virtio-blk-pci,drive=maindisk$disk_idx$bootopt"
+        )
+        disk_idx=$(( disk_idx + 1 ))
+    done
     ROUTER_QEMU_CMD+=(
-        -drive "file=$ROUTER_DISK,format=qcow2,if=none,id=maindisk,cache=writeback,discard=unmap"
-        -device "virtio-blk-pci,drive=maindisk,bootindex=0"
         -drive "file=$ISO_PATH,if=none,id=cdrom,media=cdrom,readonly=on"
         -device "ide-cd,drive=cdrom,bootindex=1"
     )
+
+    # Emulated TPM2 via swtpm: start the daemon on a unix socket and
+    # attach it as a tpm-tis device so the guest sees /dev/tpmrm0.
+    #
+    # The daemon must persist across guest *reboots* - QEMU drops and
+    # re-opens the chardev each boot. So NO --terminate (that would make
+    # swtpm exit on the first disconnect, breaking the second boot and
+    # producing a TPM self-test error). swtpm keeps its state under
+    # SWTPM_DIR, which is also what makes a TPM2-enrolled LUKS volume
+    # still unlock after a reboot.
+    if [[ "$USE_TPM" == "true" ]]; then
+        local SWTPM_DIR="$VM_STATE_DIR/swtpm"
+        local SWTPM_SOCK="$SWTPM_DIR/swtpm-sock"
+        mkdir -p "$SWTPM_DIR"
+        rm -f "$SWTPM_SOCK"
+
+        # Initialise the TPM state on first use (idempotent: skipped if
+        # state already exists from an earlier run, so enrolled keys
+        # survive). swtpm_setup creates the EK/SRK and platform certs.
+        if [[ ! -e "$SWTPM_DIR/tpm2-00.permall" ]]; then
+            log_info "Initialising swtpm state..."
+            swtpm_setup --tpmstate "$SWTPM_DIR" --tpm2 \
+                --create-ek-cert --create-platform-cert --lock-nvram \
+                2>/dev/null || log_warning "swtpm_setup reported issues (continuing)"
+        fi
+
+        log_info "Starting swtpm (emulated TPM2)..."
+        swtpm socket --tpmstate "dir=$SWTPM_DIR" \
+            --ctrl "type=unixio,path=$SWTPM_SOCK" \
+            --tpm2 &
+        SWTPM_PID=$!
+        for _ in {1..30}; do
+            [[ -S "$SWTPM_SOCK" ]] && break
+            sleep 0.1
+        done
+        if [[ ! -S "$SWTPM_SOCK" ]]; then
+            log_error "swtpm socket did not appear; aborting."
+            exit 1
+        fi
+        log_success "swtpm ready"
+        ROUTER_QEMU_CMD+=(
+            -chardev "socket,id=chrtpm,path=$SWTPM_SOCK"
+            -tpmdev "emulator,id=tpm0,chardev=chrtpm"
+            -device "tpm-tis,tpmdev=tpm0"
+        )
+    fi
 
     # Networking: user-mode (default, 2 NICs) or bridge (router topology)
     if [[ "$USE_BRIDGE" == "true" ]]; then
@@ -577,7 +727,8 @@ cmd_run() {
     # Launch router VM
     log_info "Launching router VM..."
     log_info "  ISO: $ISO_PATH"
-    log_info "  Disk: $ROUTER_DISK"
+    log_info "  Disks: ${#ROUTER_DISKS[@]} (${ROUTER_DISKS[*]})"
+    log_info "  TPM2: $USE_TPM"
     log_info "  Memory: ${VM_MEMORY}MB"
     log_info "  Cores: $VM_CORES"
 

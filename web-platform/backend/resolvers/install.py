@@ -39,4 +39,5 @@ class InstallResolver:
             message=status.get('message', ''),
             completed=status.get('completed', False),
             error=status.get('error'),
+            recovery_passphrase=status.get('recovery_passphrase'),
         )
