@@ -2,7 +2,7 @@
   description = "HomeFree Self-Hosting Platform";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -13,28 +13,18 @@
 
     nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";
 
-    nixos-generators = {
-      url = "github:nix-community/nixos-generators";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     nix-editor.url = "github:snowfallorg/nix-editor";
 
     sops-nix.url = "github:Mic92/sops-nix";
 
+    headplane = {
+      url = "github:tale/headplane";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
+
     adblock-unbound = {
       url = "github:MayNiklas/nixos-adblock-unbound";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    authentik-nix = {
-      # url = "github:nix-community/authentik-nix";
-      # url = "github:nix-community/authentik-nix/version/2024.10.4";
-      # url = "github:erahhal/authentik-nix/no-docs";
-      url = "github:erahhal/authentik-nix/daba454bd25cea9796e525d225f06fb0782abba6";
-
-      ## optional overrides. Note that using a different version of nixpkgs can cause issues, especially with python dependencies
-      # inputs.flake-parts.follows = "flake-parts";
     };
 
     # nixos-router = {
