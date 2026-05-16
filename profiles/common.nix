@@ -1,4 +1,16 @@
 { pkgs, system, ...}:
+let
+  # Disable SCSI block-device runtime PM for a disk so the kernel does not
+  # runtime-suspend it and issue a STOP UNIT (idle spindown). Invoked from a
+  # udev RUN+= rule with the disk's sysfs path ($1, e.g. /sys/devices/.../sda).
+  disableDiskRuntimePM = pkgs.writeShellScript "disable-disk-runtime-pm" ''
+    dev="$1"
+    [ -w "$dev/device/power/control" ] && echo on > "$dev/device/power/control"
+    for f in "$dev"/device/scsi_disk/*/manage_runtime_start_stop; do
+      [ -w "$f" ] && echo 0 > "$f"
+    done
+  '';
+in
 {
   # --------------------------------------------------------------------------------------
   # Overlays
@@ -228,13 +240,14 @@
   # ATTR{queue/rotational}=="1" scopes the disk rules to spinning disks so
   # SSDs/NVMe are left untouched. APM (-B) is intentionally not set: not all
   # drives support it (the ST28000NT000 reports APM not supported).
-  # The runtime-PM settings are applied via a RUN+= shell command rather than
+  # The runtime-PM settings are applied via a RUN+= helper script rather than
   # ATTR{}: manage_runtime_start_stop lives under scsi_disk/<h:c:t:l>/, whose
   # node name is dynamic, and udev's ATTR{} does not expand path wildcards.
+  # The script takes the disk's sysfs path (%S%p) as its argument.
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
     ACTION=="add|change", SUBSYSTEM=="scsi_host", KERNEL=="host*", TEST=="link_power_management_policy", ATTR{link_power_management_policy}="max_performance"
-    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.bash}/bin/sh -c 'echo on > /sys$devpath/device/power/control; for f in /sys$devpath/device/scsi_disk/*/manage_runtime_start_stop; do [ -e \"$f\" ] && echo 0 > \"$f\"; done'"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${disableDiskRuntimePM} %S%p"
     ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.hdparm}/bin/hdparm -S 0 /dev/%k"
   '';
 
