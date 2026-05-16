@@ -213,16 +213,27 @@
   # `ATTRS{...}` walks parents and matches correctly.
   boot.kernelParams = [ "usbcore.autosuspend=-1" ];
 
-  # Keep storage drives spun up. Defense-in-depth alongside disabling
-  # powertop autotuning above: pin every SATA link to max_performance and
-  # disable the standby timer (-S 0) and APM (-B 255) on rotational HDDs.
-  # Matched by ATTR{queue/rotational}=="1" so SSDs are left untouched.
-  # An always-on server should never spin disks down — idle spindown causes
-  # smartd VERIFY-poll timeouts/link resets and needless head load-cycle wear.
+  # Keep storage drives spun up. An always-on server should never idle-spin
+  # its disks: spindown causes VERIFY-poll timeouts, SATA link resets, and
+  # needless head load-cycle wear. Three independent layers, because the
+  # kernel has three separate disk power-down paths:
+  #   1. SATA host link power management -> pin to max_performance (ALPM off).
+  #   2. SCSI block-device runtime PM -> the kernel runtime-suspends an idle
+  #      disk after power/autosuspend_delay_ms and, with manage_runtime_start_
+  #      stop=1, issues a SCSI STOP UNIT that physically spins the drive down.
+  #      This is the path that actually bit us: the ST28000NT000 was suspended
+  #      ~96% of uptime, and each wake raced a VERIFY poll into a 10s timeout.
+  #      Fix: pin power/control=on and clear manage_runtime_start_stop.
+  #   3. Drive standby timer -> hdparm -S 0 disables it on rotational HDDs.
+  # ATTR{queue/rotational}=="1" scopes the disk rules to spinning disks so
+  # SSDs/NVMe are left untouched. APM (-B) is intentionally not set: not all
+  # drives support it (the ST28000NT000 reports APM not supported).
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
     ACTION=="add|change", SUBSYSTEM=="scsi_host", KERNEL=="host*", TEST=="link_power_management_policy", ATTR{link_power_management_policy}="max_performance"
-    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.hdparm}/bin/hdparm -S 0 -B 255 /dev/%k"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", TEST=="device/power/control", ATTR{device/power/control}="on"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", TEST=="device/scsi_disk/*/manage_runtime_start_stop", ATTR{device/scsi_disk/*/manage_runtime_start_stop}="0"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.hdparm}/bin/hdparm -S 0 /dev/%k"
   '';
 
   # Eternal Terminal
@@ -269,6 +280,7 @@
     git-lfs
     gnumake
     gnupg
+    hdparm
     htop
     hwinfo
     iftop
@@ -297,6 +309,7 @@
     pciutils
     podman-tui
     powertop
+    smartmontools
     sops
     sqlite
     ssh-to-age
