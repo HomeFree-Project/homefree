@@ -1,5 +1,49 @@
-<footer>
+{# Same apex/manual base swap as header.html — see the note there. #}
+{% set onManual = page.url and page.url.startsWith('/manual') %}
+{% if onManual %}
+  {% set apexBase = data.siteUrl %}
+  {% set manualHomeUrl = '/' %}
+{% else %}
+  {% set apexBase = '' %}
+  {% set manualHomeUrl = data.manualUrl + '/' %}
+{% endif %}
+<footer class="site-footer">
   <div class="container">
-    <p>&copy; 2024 HomeFree.</p>
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a href="{{ apexBase }}/" class="logo" style="font-weight:800; font-size:1.05rem; letter-spacing:-0.02em;">
+          <span class="dot" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--accent); margin-right:6px;"></span>HomeFree
+        </a>
+        <p>Personal server + router. Your data, your network, your identity — at home.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="{{ apexBase }}/#apps">Supported apps</a></li>
+          <li><a href="{{ apexBase }}/#compare">Why HomeFree</a></li>
+          <li><a href="{{ manualHomeUrl }}">Manual</a></li>
+          <li><a href="{{ apexBase }}/faq">FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Source</h4>
+        <ul>
+          <li><a href="https://git.homefree.host/homefree" target="_blank" rel="noopener">Git server</a></li>
+          <li><a href="{{ data.manualUrl }}/developers/">Developer docs</a></li>
+          <li><a href="{{ apexBase }}/comparison">Comparison</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://matrix.to/#/#homefree:homefree.host" target="_blank" rel="noopener">Matrix chat</a></li>
+          <li><a href="mailto:hi@homefree.host">Email</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2026 HomeFree. Source available under <a href="https://git.homefree.host/homefree" target="_blank" rel="noopener" style="color:var(--fg-2);">an open-source license</a>.</span>
+      <span>Hosted on HomeFree.</span>
+    </div>
   </div>
 </footer>

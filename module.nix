@@ -12,6 +12,15 @@
 # in
 {
   options.homefree = {
+    development = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Indicates development mode is enabled.
+        When true, services may bind to all interfaces for easier testing.
+      '';
+    };
+
     system = {
       hostName = lib.mkOption {
         type = lib.types.str;
@@ -42,11 +51,71 @@
         '';
       };
 
+      elevation = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = ''
+          Elevation above sea level in meters. Used by Home Assistant
+          for sunrise/sunset and other location-aware integrations.
+        '';
+      };
+
+      latitude = lib.mkOption {
+        type = lib.types.nullOr (lib.types.either lib.types.float lib.types.int);
+        default = null;
+        description = ''
+          Latitude in decimal degrees. Used by Home Assistant for
+          location-based automations (sun, weather, etc.).
+        '';
+      };
+
+      longitude = lib.mkOption {
+        type = lib.types.nullOr (lib.types.either lib.types.float lib.types.int);
+        default = null;
+        description = "Longitude in decimal degrees.";
+      };
+
+      unitSystem = lib.mkOption {
+        type = lib.types.enum [ "metric" "us_customary" ];
+        default = "metric";
+        description = ''
+          Unit system. Values match Home Assistant's
+          `homeassistant.unit_system` config key exactly.
+        '';
+      };
+
+      currency = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          ISO 4217 three-letter currency code (e.g., USD, EUR, JPY).
+          Used by Home Assistant and finance-related services.
+        '';
+      };
+
+      language = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          BCP 47 user-facing language tag (e.g., en, en-GB, de).
+          Distinct from `defaultLocale` (the POSIX system locale like
+          en_US.UTF-8) — this is the preferred UI language passed to
+          apps that have their own language setting (Home Assistant,
+          Nextcloud, etc.).
+        '';
+      };
+
       ## @TODO: Detect during setup
       defaultLocale = lib.mkOption {
         type = lib.types.str;
         default = "en_US.UTF-8";
         description = "Default locale for the system";
+      };
+
+      keyMap = lib.mkOption {
+        type = lib.types.str;
+        default = "us";
+        description = "Keymap for system";
       };
 
       localDomain = lib.mkOption {
@@ -80,10 +149,40 @@
         description = "Additional zones for the system";
       };
 
+      project-mode = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          When true, the apex domain serves the public HomeFree project
+          marketing site (hero, comparison, FAQ, install CTA). This is
+          only appropriate for the upstream homefree.host instance.
+
+          When false (the default for any real personal deployment), the
+          apex domain redirects to home.<domain> — the per-user
+          dashboard — so visitors flow into the SSO sign-in instead of
+          being pitched the HomeFree project.
+
+          The manual subdomain (manual.<domain>) is unaffected and stays
+          available in both modes.
+        '';
+      };
+
       adminUsername = lib.mkOption {
         type = lib.types.str;
         default = "homefree";
         description = "Username for the system admin";
+      };
+
+      adminDescription = lib.mkOption {
+        type = lib.types.str;
+        default = "HomeFree Admin";
+        description = "Username for the system admin";
+      };
+
+      adminEmail = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Email address for the system admin";
       };
 
       adminHashedPassword = lib.mkOption {
@@ -99,11 +198,15 @@
       authorizedKeys = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
-        description = "SSH authorized keys for the system admin";
+        description = ''
+          SSH authorized keys for the system admin.
+
+          Note: The first key will also be used for encrypting secrets with sops-nix.
+          You'll need the corresponding private key to decrypt and manage secrets.
+        '';
       };
     };
 
-    ## @TODO: Add default subnet and gateway config, e.g. 10.0.0.0/24, 10.0.0.1
     ## @TODO: This section doesn't make sense. Some network config is in "system" above
     ##        and some is in separate services, e.g. unbound and ddns
     network = {
@@ -115,12 +218,14 @@
       };
 
       wan-bitrate-mbps-down = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN download bitrate in Mbit/s";
       };
 
       wan-bitrate-mbps-up = lib.mkOption {
-        type = lib.types.int;
+        type = lib.types.nullOr lib.types.int;
+        default = null;
         description = "WAN upload bitrate in Mbit/s";
       };
 
@@ -129,6 +234,47 @@
         type = lib.types.str;
         default = "ens5";
         description = "Internal interface to the local network";
+      };
+
+      # QEMU User-Mode Network Details:
+      # - Guest IP: Always 10.0.2.15
+      # - Gateway/Host: Always 10.0.2.2
+      # - DNS: Always 10.0.2.3
+      # - Network: 10.0.2.0/24
+      lan-address = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.1";
+        description = "IP address of the LAN gateway (router address)";
+      };
+
+      lan-subnet = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.0/24";
+        description = "LAN subnet in CIDR notation";
+      };
+
+      lan-netmask = lib.mkOption {
+        type = lib.types.str;
+        default = "255.255.255.0";
+        description = "LAN subnet mask";
+      };
+
+      dhcp-range-start = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.100";
+        description = "Start of DHCP IP address range";
+      };
+
+      dhcp-range-end = lib.mkOption {
+        type = lib.types.str;
+        default = "10.0.0.254";
+        description = "End of DHCP IP address range";
+      };
+
+      dhcp-lease-time = lib.mkOption {
+        type = lib.types.str;
+        default = "8h";
+        description = "DHCP lease time (e.g., '8h', '24h', '7d')";
       };
 
       static-ip-expiration = lib.mkOption {
@@ -166,16 +312,88 @@
         });
       };
 
-      enable-adblock = lib.mkOption {
+      enable-unbound-adblock = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "enable ad blocking";
+        description = ''
+          Enable the Steven Black hosts list inside the Unbound resolver.
+          This is a separate, lower-level ad-blocking layer than AdGuard
+          Home and is typically left off when AdGuard is enabled.
+        '';
       };
 
       blocked-domains = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "list of domains to block";
+      };
+
+      abuseBlockCidrs = lib.mkOption {
+        default = [];
+        description = ''
+          IPv4 CIDR ranges to drop at the firewall (the abusive_nets4
+          nftables set). Each entry can be individually enabled or
+          disabled and carries a free-text comment explaining why it
+          is blocked.
+
+          This list is fully user-owned. On a fresh install it is
+          seeded once with known abusive scraper networks (Alibaba
+          Cloud — see modules/abuse-blocking.nix), but after that the
+          admin UI's Abuse Blocking page is authoritative: disable an
+          entry to keep it for reference without enforcing it, or
+          remove it entirely. Removed entries are not re-seeded.
+
+          Hand-editing /etc/nixos/homefree-config.json works too.
+        '';
+        type = with lib.types; listOf (submodule {
+          options = {
+            cidr = lib.mkOption {
+              type = lib.types.str;
+              description = "IPv4 CIDR range to block, e.g. 47.74.0.0/15.";
+            };
+            enabled = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                Whether this range is actively enforced. A disabled
+                entry stays in the list (and in the UI) but is not
+                added to the nftables drop set.
+              '';
+            };
+            comment = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Free-text note on why this range is blocked.";
+            };
+          };
+        });
+      };
+
+      geoip = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Maintain a local GeoIP database (DB-IP "IP to City Lite",
+            CC-BY-4.0) so the admin UI's Abuse Blocking page can show
+            the country/city of traffic sources.
+
+            Per-IP lookups are 100% local — no network requests. The
+            ONLY network activity is a weekly download of the refreshed
+            monthly database file from db-ip.com. Disable this if you
+            don't want the server reaching out to db-ip.com at all
+            (air-gapped installs, strict egress policy); the Abuse
+            Blocking page then simply omits the Location column.
+          '';
+        };
+      };
+
+      router = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable router functionality";
+        };
       };
     };
 
@@ -299,6 +517,76 @@
       };
     };
 
+    mounts = lib.mkOption {
+      description = ''
+        Network filesystems to mount on the host. Each entry produces a
+        `fileSystems."<mount-point>"` declaration. NFS entries also
+        enable `services.rpcbind`. Used for backup destinations and
+        media stores that live on a NAS.
+      '';
+      default = [];
+      example = [
+        {
+          mount-point = "/mnt/ellis";
+          device = "10.0.0.42:/volume1/ellis";
+          fs-type = "nfs";
+          nfs-version = "3";
+          automount = true;
+          idle-timeout = "600";
+        }
+      ];
+      type = with lib.types; listOf (submodule {
+        options = {
+          mount-point = lib.mkOption {
+            type = str;
+            description = "Absolute path where the filesystem is mounted (e.g. /mnt/ellis).";
+          };
+
+          device = lib.mkOption {
+            type = str;
+            description = ''
+              Source device. For NFS this is `<host>:<export>`
+              (e.g. `10.0.0.42:/volume1/ellis`).
+            '';
+          };
+
+          fs-type = lib.mkOption {
+            type = str;
+            default = "nfs";
+            description = "Filesystem type passed to mount (e.g. nfs, cifs).";
+          };
+
+          nfs-version = lib.mkOption {
+            type = enum [ "3" "4" "4.1" "4.2" ];
+            default = "3";
+            description = "NFS protocol version. Ignored for non-NFS filesystems.";
+          };
+
+          automount = lib.mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              When true, the mount is realised on first access via
+              x-systemd.automount + noauto, and unmounted after
+              idle-timeout seconds of inactivity.
+            '';
+          };
+
+          idle-timeout = lib.mkOption {
+            type = str;
+            default = "600";
+            description = "Seconds of inactivity before an automount entry is unmounted.";
+          };
+
+          extra-options = lib.mkOption {
+            type = listOf str;
+            default = [];
+            description = "Additional mount options appended after the computed defaults.";
+          };
+        };
+      });
+    };
+
     proxied-domains = lib.mkOption {
       description = "Domain proxy mappings for transparently forwarding entire domains to other servers";
       default = [];
@@ -394,32 +682,6 @@
         };
       };
 
-      authentik = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "enable Authentik";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-
-        secrets = {
-          environment = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Authentik environment variables file. Should not be a file included in your source repo.";
-          };
-
-          ldap-environment = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Authentik LDAP environment variables file. Should not be a file included in your source repo.";
-          };
-        };
-      };
-
       azuracast = {
         enable = lib.mkOption {
           type = lib.types.bool;
@@ -509,6 +771,12 @@
           description = "enable Frigate video recording service";
         };
 
+        enable-coral = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable Google Coral AI processor";
+        };
+
         public = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -516,7 +784,7 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location to save recording";
         };
@@ -533,9 +801,20 @@
           description = "If specified, how long in DAYS to keep files before deleting. This applies to ALL files: clips, recordings, exports, etc.";
         };
 
+        hwaccel-args = lib.mkOption {
+          type = lib.types.str;
+          default = "preset-intel-qsv-h264";
+          description = ''
+            ffmpeg hwaccel preset. Intel iGPU: "preset-intel-qsv-h264".
+            AMD GPU: "preset-vaapi". Raspberry Pi: "-c:v h264_v4l2m2m".
+            Nvidia: "preset-nvidia-h264". Empty string disables hwaccel.
+          '';
+        };
+
         cameras = lib.mkOption {
           description = "list of cameras";
-          type = with lib.types; listOf (submodule {
+          default = null;
+          type = with lib.types; nullOr (listOf (submodule {
             options = {
               enable = lib.mkOption {
                 type = lib.types.bool;
@@ -571,27 +850,7 @@
                 description = "Don't use go2rtc by default. Addresses certain issues, such as audio delay in recordings";
               };
             };
-          });
-        };
-      };
-
-      gitea = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Gitea git service";
-        };
-
-        disable-registration = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "Disable user registration";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
+          }));
         };
       };
 
@@ -614,6 +873,12 @@
           type = lib.types.bool;
           default = false;
           description = "enable Headscale vpn service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "UI open to public on WAN port";
         };
 
         stun-port = lib.mkOption {
@@ -645,19 +910,9 @@
           '';
         };
 
-        secrets = {
-          tailscale-key = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Tailscale client key for server. Should not be a file included in your source repo.";
-          };
-          headplane-env = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Headplane environment var file. Contains COOKIE_SECRET, ROOT_API_KEY, OIDC_CLIENT_SECRET. Should not be a file included in your source repo.";
-          };
-        };
       };
 
-      homeassistant = {
+      home-assistant = {
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -668,6 +923,12 @@
           type = lib.types.bool;
           default = false;
           description = "Open to public on WAN port";
+        };
+
+        enable-hacs = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Install HACS (Home Assistant Community Store) for installing community integrations from the HA UI";
         };
       };
 
@@ -719,7 +980,7 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of media files";
         };
@@ -730,20 +991,6 @@
           type = lib.types.bool;
           default = false;
           description = "enable Joplin notes service";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-      };
-
-      kanidm = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "enable Kanidm";
         };
 
         public = lib.mkOption {
@@ -767,13 +1014,13 @@
         };
 
         media-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of music media";
         };
 
         downloads-path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
+          type = lib.types.nullOr lib.types.path;
           default = null;
           description = "Location of downloads";
         };
@@ -800,23 +1047,10 @@
 
         secrets = {
           environment = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Linkwarden environment variables file. Should not be a file included in your source repo.";
           };
-        };
-      };
-
-      logseq = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable Logseq knowledge management service";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
         };
       };
 
@@ -839,7 +1073,7 @@
             "matrix.org"
             "nixos.org"
             "homefree.host"
-            "rycee.net" # home-manager room
+            "rycee.net"
             "gnome.org"
           ];
         };
@@ -853,18 +1087,19 @@
         admin-account = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
-          description = "Admin user for matrix synapse server";
+          description = "Admin user for matrix synapse server (localpart only)";
         };
 
-        secrets = {
-          registration-shared-secret = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Matrix Synapse shared secret file. Should not be a file included in your source repo.";
-          };
-          admin-account-password = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of admin account password. Should not be a file included in your source repo.";
-          };
+        server-name = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Override Matrix server_name. Defaults to homefree.system.domain.";
+        };
+
+        secrets = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+          default = {};
+          description = "Secrets for Matrix service";
         };
       };
 
@@ -875,11 +1110,23 @@
           description = "enable MediaWiki";
         };
 
-        sites = lib.mkOption {
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+
+        instances = lib.mkOption {
           description = "Wiki site config";
           default = [];
           type = with lib.types; listOf (submodule {
             options = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Enable this MediaWiki site";
+              };
+
               public = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
@@ -899,8 +1146,9 @@
               };
 
               logo-path = lib.mkOption {
-                type = lib.types.path;
-                description = "Location of MediaWiki logo file";
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Location of MediaWiki logo file. Optional — when null, MediaWiki's default placeholder logo is used.";
               };
 
               readonly = lib.mkOption {
@@ -936,20 +1184,10 @@
           });
         };
 
-        secrets = {
-          mysql-password = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of MediaWiki mysql password file. Should not be a file included in your source repo.";
-          };
-          wgSecretKey = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of MediaWiki wgSecretKey file. Should not be a file included in your source repo.";
-          };
-          env = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of MediaWiki env file. Contains DB_PASSWORD";
-          };
-        };
+        # NB: MediaWiki has no user-facing secrets. Both the MySQL user
+        # password and wgSecretKey are auto-generated on first start (see
+        # mediawiki-podman.nix preStart). Everything is internal to this
+        # host, so there's nothing for the user to provide.
       };
 
       minecraft = {
@@ -959,32 +1197,17 @@
           description = "enable Minecraft servers";
         };
 
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+
         secrets = {
           curseforge-api-key = lib.mkOption {
-            type = lib.types.nullOr lib.types.path;
+            type = lib.types.nullOr lib.types.str;
             default = null;
-            description = ''
-              Location of Curseforge API Key, required for automatic mod/modpack downloads";
-
-              See:
-              https://console.curseforge.com/#/api-keys
-            '';
-          };
-
-          env = lib.mkOption {
-            type = lib.types.path;
-            description = ''
-              Location of docker env file. Contains:
-
-              NEXTCLOUD_ADMIN_PASSWORD=<password>
-
-              Should not be a file included in your source repo.
-            '';
-          };
-
-          secret-file = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
+            description = "CurseForge API key for downloading modpacks (SOPS-managed)";
           };
         };
 
@@ -993,6 +1216,12 @@
           default = [];
           type = with lib.types; listOf (submodule {
             options = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Enable this Minecraft instance";
+              };
+
               public = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
@@ -1115,12 +1344,14 @@
 
         secrets = {
           admin-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
           };
 
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = ''
               Location of docker env file. Contains:
 
@@ -1131,7 +1362,8 @@
           };
 
           secret-file = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
           };
         };
@@ -1180,7 +1412,8 @@
       oauth2-proxy = {
         secrets = {
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = ''
               Location of oauth2-proxy env file. Contains:
 
@@ -1199,6 +1432,20 @@
           type = lib.types.bool;
           default = false;
           description = "enable Ollama GenAI service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
+      postgres-vectorchord = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable VectorChord PostgreSQL service";
         };
 
         public = lib.mkOption {
@@ -1251,11 +1498,13 @@
 
         secrets = {
           mysql-password = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Snipe-IT mysql password file. Should not be a file included in your source repo.";
           };
           env = lib.mkOption {
-            type = lib.types.path;
+            type = lib.types.nullOr lib.types.path;
+            default = null;
             description = "Location of Snipe-IT env file. Contains DB_PASSWORD, which is the same as mysql-password above, and APP_KEY. Should not be a file included in your source repo.";
           };
         };
@@ -1280,20 +1529,6 @@
           type = lib.types.bool;
           default = false;
           description = "enable Unifi controller";
-        };
-
-        public = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Open to public on WAN port";
-        };
-      };
-
-      unifi-os = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "enable UniFi OS Server (replaces legacy UniFi Controller)";
         };
 
         public = lib.mkOption {
@@ -1331,10 +1566,30 @@
         };
       };
 
-      zitadel = {
+      zwave-js-ui = {
         enable = lib.mkOption {
           type = lib.types.bool;
           default = false;
+          description = "enable Z-Wave JS UI controller daemon";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+      };
+
+      zitadel = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          ## Zitadel is the SSO identity provider. Every other
+          ## HomeFree app authenticates against it (oauth2-proxy
+          ## for caddy-gated services, native OIDC for the rest),
+          ## so disabling Zitadel breaks login for the box. Default
+          ## on; fresh installs get a working SSO stack out of the
+          ## box.
+          default = true;
           description = "enable Zitadel auth service";
         };
 
@@ -1344,11 +1599,68 @@
           description = "Open to public on WAN port";
         };
 
-        secrets = {
-          env = lib.mkOption {
-            type = lib.types.path;
-            description = "Location of Zitadel environment var file. Contains ZITADEL_MASTERKEY. Should not be a file included in your source repo.";
+      };
+
+      ## NetBird is a second VPN service alongside Headscale. The full
+      ## option schema lives in services/netbird.nix under
+      ## homefree.service-options.netbird; the legacy declarations below
+      ## are the path the admin UI's JSON config writes to. A compat shim
+      ## further down mirrors them onto the new namespace.
+      netbird = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable NetBird VPN server";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Dashboard accessible from WAN";
+        };
+
+        client = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Run the NetBird client on this host (router as peer). Independent of server.";
           };
+        };
+      };
+
+      admin = {
+        # Note: admin service is always enabled - the enable option exists for config consistency
+        # but the service will run regardless of this setting
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable admin interface (always enabled, this option exists for config consistency)";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port (not recommended)";
+        };
+      };
+
+      landing-page = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable landing page";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Open to public on WAN port";
+        };
+
+        path = lib.mkOption {
+          type = lib.types.path;
+          default = "${pkgs.homefree-site}/lib/node_modules/homefree-site/public";
+          description = "Path to landing page";
         };
       };
     };
@@ -1382,6 +1694,12 @@
             type = lib.types.str;
             default = "";
             description = "Official project name of application";
+          };
+
+          parent = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Label of parent service (for child instances)";
           };
 
           release-tracking = {
@@ -1430,6 +1748,57 @@
                 default = [];
                 description = "list of open udp ports";
               };
+            };
+          };
+
+          ## SSO catalog metadata. Drives the SSO admin page and any
+          ## other tooling that needs to know how a service authenticates.
+          ## Lives here (alongside reverse-proxy, backup, etc.) so each
+          ## service declares its own SSO posture in its own .nix file
+          ## — single source of truth. The activation-time renderer
+          ## (services/service-config-json.nix) emits this whole tree
+          ## to /etc/homefree/service-config.json for the admin
+          ## backend to consume.
+          sso = {
+            kind = lib.mkOption {
+              type = lib.types.enum [ "native_oidc" "caddy_gated" "basic_auth" "infra" "none" ];
+              default = "none";
+              description = ''
+                How the service authenticates:
+                  native_oidc  — service has its own OIDC client (Forgejo,
+                                 Nextcloud, Vaultwarden, etc.)
+                  caddy_gated  — outer SSO gate via oauth2-proxy in Caddy;
+                                 user still sees the app's local login or
+                                 lands directly on the app (no inner SSO)
+                  basic_auth   — Caddy SSO gate + per-request HTTP Basic
+                                 Auth injection (AdGuard, WebDAV)
+                  infra        — this IS the SSO infrastructure (Zitadel
+                                 itself, oauth2-proxy). Hidden from the
+                                 SSO admin page since it's not a consumer.
+                  none         — no SSO yet; local login only
+              '';
+            };
+
+            notes = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Optional caveat / status note for the admin UI. Use this
+                for things like "Master password still required after SSO"
+                or "Outer gate admin-only; inner login still appears".
+              '';
+            };
+
+            secrets-dir = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Override the on-disk secrets dir name when it diverges
+                from the service label. Defaults to the label
+                (/var/lib/homefree-secrets/<label>/). Example: Home
+                Assistant uses label `homeassistant` but its secrets
+                live in `home-assistant/`.
+              '';
             };
           };
 
@@ -1513,6 +1882,23 @@
               description = "Whether to verify certificate of upstream service";
             };
 
+            disable-keepalive = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy will not reuse HTTP connections to
+                this upstream — every request opens a fresh TCP
+                connection. Default is off (Caddy's normal pooling).
+                Set to true for upstream servers with broken or
+                non-existent keep-alive handling (typical pattern:
+                tiny embedded HTTP servers on appliances —
+                OpenSprinkler, some smart-home gear, older NAS
+                admin pages) where Caddy's pooled connection gets
+                a TCP RST after the upstream's per-request close,
+                producing intermittent 502s.
+              '';
+            };
+
             basic-auth = lib.mkOption {
               type = lib.types.bool;
               default = false;
@@ -1529,6 +1915,97 @@
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = "custom caddy config";
+            };
+
+            dav-bypass = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When set together with `oauth2 = true`, the SSO gate
+                does NOT run for requests that look like CalDAV /
+                CardDAV traffic:
+                  - any request carrying `Authorization: Basic ...`
+                    (every DAV client sends credentials on every
+                    request, so this fingerprints them)
+                  - any request using a DAV-only HTTP method
+                    (PROPFIND, PROPPATCH, REPORT, MKCALENDAR, MKCOL,
+                    COPY, MOVE, LOCK, UNLOCK)
+
+                Browser traffic without Basic auth (the admin UI) is
+                still gated by SSO; DAV clients reach the upstream
+                directly and authenticate to it with their own
+                per-user app password. Lets one host serve both an
+                SSO-gated admin UI and a working DAV endpoint for
+                Thunderbird / iOS Calendar / etc.
+
+                Only meaningful for services that speak DAV: Baikal,
+                Radicale, the Nextcloud /remote.php/dav split.
+              '';
+            };
+
+            require-admin-role = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Whether this service requires the homefree-admin
+                project role on top of basic authentication. Only
+                meaningful when `oauth2` is also true (admin-only
+                services that gate via the Caddy oauth2-proxy
+                forward_auth flow).
+
+                When set, Caddy adds a second forward_auth call to
+                the admin-api's /api/auth/admin-check endpoint after
+                the oauth2-proxy session is validated. admin-api's
+                middleware decides 200-vs-403 based on whether the
+                user's Zitadel token carries homefree-admin in the
+                project-roles claim. Non-admin authenticated users
+                see a 403 from Caddy without ever reaching the
+                upstream.
+
+                We can't put this check on oauth2-proxy itself —
+                Zitadel's namespaced role claim comes through as a
+                JSON-object whose keys ARE the role names, and
+                oauth2-proxy's group parser doesn't extract keys
+                from that shape. admin-api's middleware does.
+              '';
+            };
+
+            inject-basic-auth-env = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Name of an environment variable (loaded into Caddy via
+                EnvironmentFile) whose value is the base64-encoded
+                `username:password` string. When set, Caddy injects an
+                `Authorization: Basic {env.NAME}` header on every
+                request it forwards to the upstream. Used to bridge
+                services that have no OIDC support (e.g. AdGuard) but
+                accept HTTP Basic Auth — the SSO gate authenticates the
+                user, Caddy then logs them into the upstream with the
+                service's own admin credentials, and the user never
+                sees the second login form.
+              '';
+            };
+
+            upstream-logout-paths = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = [ "/control/logout" ];
+              description = ''
+                URL paths on the upstream that represent a sign-out
+                action. When the user hits one of these, Caddy
+                short-circuits the request and redirects to the full
+                SSO sign-out chain instead of forwarding to the
+                upstream.
+
+                Only meaningful when `inject-basic-auth-env` is set:
+                without the redirect, the upstream's own logout
+                endpoint clears its session, but Caddy immediately
+                re-authenticates the next request with the injected
+                Basic Auth header — so the user can never actually
+                sign out. Intercepting the path turns the upstream's
+                "Sign out" button into a real sign-out.
+              '';
             };
           };
 
@@ -1550,6 +2027,124 @@
               default = [];
               description = "list of postgres databases to backup";
             };
+          };
+
+          options-metadata = lib.mkOption {
+            type = with lib.types; listOf (submodule {
+              options = {
+                path = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Option path/key";
+                };
+
+                type = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Option type (bool, str, int, path, listOf str, listOf submodule, etc.)";
+                };
+
+                nullable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether option is nullable (nullOr type)";
+                };
+
+                default = lib.mkOption {
+                  type = lib.types.anything;
+                  default = null;
+                  description = "Default value for option";
+                };
+
+                description = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "Human-readable description";
+                };
+
+                required = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether option is required";
+                };
+
+                category = lib.mkOption {
+                  type = lib.types.str;
+                  default = "basic";
+                  description = "UI category (basic, advanced, secrets)";
+                };
+
+                ui-hint = lib.mkOption {
+                  type = lib.types.nullOr lib.types.anything;
+                  default = null;
+                  description = "UI rendering hints (string or attrs)";
+                };
+
+                enum-values = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                  default = null;
+                  description = "For enum types, the list of valid string values";
+                };
+
+                sops-managed = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether this option (or its sub-fields) holds SOPS-encrypted secrets";
+                };
+
+                submodule-fields = lib.mkOption {
+                  type = with lib.types; nullOr (listOf (submodule {
+                    options = {
+                      path = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Field path/key within submodule";
+                      };
+                      type = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Field type";
+                      };
+                      nullable = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether field is nullable";
+                      };
+                      default = lib.mkOption {
+                        type = lib.types.anything;
+                        default = null;
+                        description = "Default value";
+                      };
+                      description = lib.mkOption {
+                        type = lib.types.str;
+                        default = "";
+                        description = "Field description";
+                      };
+                      required = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether field is required";
+                      };
+                      ui-hint = lib.mkOption {
+                        type = lib.types.nullOr lib.types.anything;
+                        default = null;
+                        description = "UI rendering hints";
+                      };
+                      enum-values = lib.mkOption {
+                        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                        default = null;
+                        description = "For enum types, the list of valid string values";
+                      };
+                      sops-managed = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether this field holds a SOPS-encrypted secret";
+                      };
+                    };
+                  }));
+                  default = null;
+                  description = "For listOf submodule types, defines the submodule fields";
+                };
+              };
+            });
+            default = [];
+            description = "Metadata for service options to enable admin UI configuration";
           };
         };
       });
@@ -1575,22 +2170,6 @@
       };
     };
 
-    admin-page = {
-      public = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Open to public on WAN port (not recommended)";
-      };
-    };
-
-    landing-page = {
-      path = lib.mkOption {
-        type = lib.types.path;
-        default = "${pkgs.homefree-site}/lib/node_modules/homefree-site/public";
-        description = "Path to landing page";
-      };
-    };
-
     backups = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -1599,7 +2178,7 @@
       };
 
       to-path = lib.mkOption {
-        type = lib.types.path;
+        type = lib.types.nullOr lib.types.str;
         default = "/var/lib/backups";
         description = "Path to store backups";
       };
@@ -1613,7 +2192,7 @@
       backblaze = {
         enable = lib.mkOption {
           type = lib.types.bool;
-          default = true;
+          default = false;
           description = "Whether to enable Backblaze backups";
         };
 
@@ -1625,33 +2204,120 @@
 
       secrets = {
         restic-password = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of Restic password file. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Restic repository password for encryption/decryption of backups (managed via SOPS)";
         };
 
         restic-environment = lib.mkOption {
-          type = lib.types.path;
+          type = lib.types.nullOr lib.types.str;
+          default = null;
           description = ''
-            Location of Restic environment variables.
+            Restic environment variables (managed via SOPS).
 
             If using Backblaze, put in your ID and key in here, e.g.:
 
             B2_ACCOUNT_ID=<id>
             B2_ACCOUNT_KEY=<key>
-
-            Should not be a file included in your source repo.";
           '';
         };
 
         backblaze-id = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of file with Backblaze ID. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Backblaze account ID for B2 storage (managed via SOPS)";
         };
 
         backblaze-key = lib.mkOption {
-          type = lib.types.path;
-          description = "Location of file with Backblaze key. Should not be a file included in your source repo.";
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Backblaze account key for B2 storage (managed via SOPS)";
         };
+      };
+
+      # Internal option to hold metadata for admin UI schema generation
+      options-metadata = lib.mkOption {
+        type = lib.types.listOf lib.types.attrs;
+        internal = true;
+        default = [
+          {
+            path = "enable";
+            type = "bool";
+            default = false;
+            description = "Enable automatic backups";
+          }
+          {
+            path = "to-path";
+            type = "str";
+            default = "/var/lib/backups";
+            description = "Local directory path where backups are stored";
+          }
+          {
+            path = "extra-from-paths";
+            type = "listOf str";
+            default = [];
+            description = "Additional custom paths to include in backups";
+          }
+          {
+            path = "backblaze";
+            type = "submodule";
+            description = "Backblaze B2 cloud backup configuration";
+            submodule-fields = [
+              {
+                path = "enable";
+                type = "bool";
+                default = false;
+                description = "Enable Backblaze B2 cloud backups";
+              }
+              {
+                path = "bucket";
+                type = "str";
+                default = "";
+                description = "Backblaze B2 bucket name";
+              }
+            ];
+          }
+          {
+            path = "secrets";
+            type = "submodule";
+            description = "Secret values for backup service (managed via SOPS)";
+            sops-managed = true;
+            submodule-fields = [
+              {
+                path = "restic-password";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Restic repository password for encryption/decryption of backups";
+                sops-managed = true;
+              }
+              {
+                path = "restic-environment";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Restic environment variables (B2_ACCOUNT_ID and B2_ACCOUNT_KEY for Backblaze)";
+                sops-managed = true;
+              }
+              {
+                path = "backblaze-id";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Backblaze account ID for B2 storage";
+                sops-managed = true;
+              }
+              {
+                path = "backblaze-key";
+                type = "str";
+                nullable = true;
+                default = null;
+                description = "Backblaze account key for B2 storage";
+                sops-managed = true;
+              }
+            ];
+          }
+        ];
       };
     };
   };
@@ -1723,6 +2389,22 @@
       }
     ];
 
+    ## Mirror every user-facing `homefree.services.<name>` entry into
+    ## the colocated `homefree.service-options.<name>` namespace that
+    ## admin-web reads to build the admin UI's option schema. Replaces
+    ## a 120-line block of per-service identity assignments.
+    ##
+    ## Filtering rule: only mirror services whose corresponding
+    ## `options.homefree.service-options.<name>` block actually exists
+    ## (declared in `apps/<name>/default.nix` for apps with admin-UI
+    ## metadata). Services like `admin`, `landing-page`, `azuracast`,
+    ## `odoo`, `trilium`, `unifi-os` deliberately have no service-options
+    ## decl and would fail with "option does not exist" if mirrored.
+    homefree.service-options =
+      lib.intersectAttrs
+        options.homefree.service-options
+        config.homefree.services;
+
     warnings =
       (if config.homefree.backups.enable == false then [
         ''
@@ -1732,9 +2414,9 @@
         ''
       ] else [])
     ++
-      (if config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
+      (if config.homefree.backups.enable == true && config.homefree.backups.to-path == options.homefree.backups.to-path.default then [
         ''
-          Backups being written locally to the default path of "${config.homefree.backups.path}".
+          Backups being written locally to the default path of "${config.homefree.backups.to-path}".
           You should backup to an off-machine location, e.g. to an NFS mounted path. To change
           the backup path:
 
@@ -1742,11 +2424,11 @@
         ''
       ] else [])
     ++
-      (if config.homefree.landing-page.path == options.homefree.landing-page.path.default then [
+      (if config.homefree.services.landing-page.path == options.homefree.services.landing-page.path.default then [
         ''
           Landing page is set to the default Homefree project landing page.
 
-            homefree.landing-page.path = "<path to html root>";
+            homefree.services.landing-page.path = "<path to html root>";
         ''
       ] else [])
     ++

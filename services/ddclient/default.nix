@@ -1,0 +1,27 @@
+{ config, lib, ... }:
+let
+  cfg = config.homefree.dns.remote.dynamic-dns;
+in
+{
+  nixpkgs.overlays = [
+    (import ../../overlays/ddclient-hetzner-cloud.nix)
+  ];
+  #-----------------------------------------------------------------------------------------------------
+  # Dynamic DNS
+  #-----------------------------------------------------------------------------------------------------
+
+  services.ddclient-multi = {
+    enable = true;
+    interval = cfg.interval;
+    usev4 = cfg.usev4;
+    usev6 = cfg.usev6;
+    verbose = true;
+    zones = lib.map (zone: {
+      protocol = zone.protocol;
+      username = zone.username;
+      zone = zone.zone;
+      domains = zone.domains;
+      passwordFile = toString zone.passwordFile;
+    }) cfg.zones;
+  };
+}

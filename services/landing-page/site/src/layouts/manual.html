@@ -1,0 +1,152 @@
+---
+layout: base.html
+---
+<style>
+  .manual-wrap {
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 32px var(--pad-x) 96px;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 48px;
+  }
+  @media (max-width: 800px) {
+    .manual-wrap { grid-template-columns: 1fr; gap: 24px; }
+    .manual-sidebar { position: static; }
+  }
+  .manual-sidebar {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    border-right: 1px solid var(--border);
+    padding-right: 24px;
+    font-size: 0.95rem;
+  }
+  .manual-sidebar h4 {
+    margin: 16px 0 8px;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    font-weight: 600;
+  }
+  .manual-sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 8px;
+  }
+  .manual-sidebar li { margin: 4px 0; }
+  .manual-sidebar a {
+    color: var(--fg-2);
+    text-decoration: none;
+    display: block;
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .manual-sidebar a:hover { color: var(--fg); background: var(--bg-2); }
+  .manual-sidebar a.active { color: var(--accent); background: var(--bg-2); }
+  .manual-content { min-width: 0; }
+  .manual-content .prose { max-width: 760px; }
+  .manual-content pre {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+  .manual-content code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .manual-content pre code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+  }
+  .manual-content .mermaid {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 24px 0;
+    text-align: center;
+  }
+  .manual-content h1 { margin-top: 8px; }
+  .manual-content h2 {
+    margin-top: 40px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .manual-content h3 { margin-top: 28px; }
+  .manual-content blockquote {
+    border-left: 3px solid var(--accent);
+    background: var(--bg-2);
+    margin: 16px 0;
+    padding: 8px 16px;
+    color: var(--fg-2);
+  }
+  .manual-content table {
+    border-collapse: collapse;
+    margin: 16px 0;
+    width: 100%;
+  }
+  .manual-content th, .manual-content td {
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    text-align: left;
+  }
+  .manual-content th { background: var(--bg-2); }
+</style>
+
+<div class="manual-wrap">
+  <aside class="manual-sidebar">
+    {# Sidebar links use clean URLs (no /manual prefix). The manual
+       vhost's try_files maps these to /manual/X internally. Active-state
+       check still compares against page.url which Eleventy reports with
+       the on-disk /manual/X form. #}
+    <h4>Get started</h4>
+    <ul>
+      <li><a href="/"{% if page.url == "/manual/" %} class="active"{% endif %}>Introduction</a></li>
+      <li><a href="/hardware-setup/"{% if page.url == "/manual/hardware-setup/" %} class="active"{% endif %}>Hardware setup</a></li>
+      <li><a href="/installation/"{% if page.url == "/manual/installation/" %} class="active"{% endif %}>Installation</a></li>
+    </ul>
+    <h4>Apps</h4>
+    <ul>
+      <li><a href="/apps/freshrss/"{% if page.url == "/manual/apps/freshrss/" %} class="active"{% endif %}>FreshRSS</a></li>
+      <li><a href="/apps/freshrss-capy/"{% if page.url == "/manual/apps/freshrss-capy/" %} class="active"{% endif %}>FreshRSS on Android</a></li>
+    </ul>
+    <h4>Developers</h4>
+    <ul>
+      <li><a href="/developers/"{% if page.url == "/manual/developers/" %} class="active"{% endif %}>How HomeFree is built</a></li>
+      <li><a href="/developers/advanced-installation/"{% if page.url == "/manual/developers/advanced-installation/" %} class="active"{% endif %}>Advanced installation</a></li>
+    </ul>
+  </aside>
+  <article class="manual-content prose">
+    {{ content | safe }}
+  </article>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#11141a',
+      primaryColor: '#181b21',
+      primaryTextColor: '#f5f7fa',
+      primaryBorderColor: '#34d399',
+      lineColor: '#b6bcc4',
+      secondaryColor: '#14181e',
+      tertiaryColor: '#181b21'
+    }
+  });
+</script>
