@@ -1862,6 +1862,18 @@
               description = "list of https domains";
             };
 
+            extra-http-hosts = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              description = ''
+                Literal Caddy site addresses (e.g. "http://10.0.0.1")
+                appended verbatim to this service's virtualHost. Unlike
+                http-domains these are NOT crossed with `subdomains` — they
+                are used as-is. Intended for serving a service on a bare IP
+                or other fixed address with no subdomain prefix.
+              '';
+            };
+
             host = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;

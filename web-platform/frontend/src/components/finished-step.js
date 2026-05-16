@@ -130,6 +130,52 @@ class FinishedStep extends LitElement {
       display: block;
       margin-bottom: 8px;
     }
+
+    /* Prominent finish-setup callout — the single most important
+       thing the user needs to do after reboot, so it is not buried
+       among the info boxes. */
+    .finish-setup {
+      background: #eef0ff;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      padding: 24px;
+      margin: 24px 0;
+      text-align: left;
+    }
+
+    .finish-setup h3 {
+      color: #4c51bf;
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .finish-setup p {
+      color: #444;
+      line-height: 1.6;
+      margin: 8px 0;
+    }
+
+    .finish-setup .urls {
+      margin: 14px 0;
+      padding: 14px 18px;
+      background: white;
+      border-radius: 6px;
+      border: 1px solid #d6d9f5;
+    }
+
+    .finish-setup .urls code {
+      background: #e0e0e0;
+      padding: 3px 10px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 15px;
+      font-weight: bold;
+    }
+
+    .finish-setup .note {
+      font-size: 13px;
+      color: #666;
+    }
   `;
 
   handleReboot() {
@@ -141,6 +187,15 @@ class FinishedStep extends LitElement {
 
   render() {
     const { data } = this;
+    // localDomain defaults to "lan" and lan-address to 10.0.0.1 (module.nix);
+    // the installer doesn't currently let the user change either.
+    // Primary URL is the bare LAN IP — a hostname in a link is resolved by
+    // the user's own device, which may map admin.<localDomain> to a
+    // different HomeFree box; the IP is unambiguous.
+    const localDomain = data.localDomain || 'lan';
+    const lanAddress = data.lanAddress || '10.0.0.1';
+    const wizardUrl = `http://${lanAddress}/`;
+    const wizardNameUrl = `http://admin.${localDomain}/`;
 
     return html`
       <div class="finished-container">
@@ -150,12 +205,35 @@ class FinishedStep extends LitElement {
           HomeFree has been successfully installed on your system.
         </p>
 
+        <div class="finish-setup">
+          <h3>⚠️ One more step: finish setup in a browser</h3>
+          <p>
+            HomeFree still needs an SSH key and a DNS provider token to
+            secure the admin site — these couldn't be entered here. After
+            you reboot, complete setup from a phone or laptop
+            <strong>connected to the LAN port</strong>
+            (the <code>${data.lanInterface}</code> interface).
+          </p>
+          <div class="urls">
+            Open: <code>${wizardUrl}</code><br/>
+            <span class="note">
+              Or try <code>${wizardNameUrl}</code>.
+              Many devices will also show a "Sign in to network" prompt
+              automatically when you connect.
+            </span>
+          </div>
+          <p class="note">
+            <strong>Write this address down now</strong> — you'll need it
+            after the system reboots.
+          </p>
+        </div>
+
         <div class="info-boxes">
           <div class="info-box">
             <h4>🌐 Admin Dashboard</h4>
             <p>
-              Access at:<br/>
-              <code>http://${data.hostname || 'homefree'}.lan</code>
+              After finishing setup, access at:<br/>
+              <code>${wizardUrl}</code>
             </p>
           </div>
 
@@ -194,7 +272,12 @@ class FinishedStep extends LitElement {
               <strong>Reboot the system</strong> using the button below
             </li>
             <li>
-              <strong>Connect LAN devices</strong> to the ${data.lanInterface} interface
+              <strong>Connect a laptop or phone to the LAN port</strong>
+              (the ${data.lanInterface} interface)
+            </li>
+            <li>
+              <strong>Finish setup</strong> by opening <code>${wizardUrl}</code>
+              in that device's browser
             </li>
             <li>
               <strong>Configure services</strong> at the admin dashboard

@@ -231,6 +231,36 @@ class NixOperations:
             # shell. /run/current-system/sw/bin has all of them on a working
             # NixOS install — it's the canonical "system PATH".
             rebuild_path = NixOperations._build_rebuild_path()
+
+            # Env vars nixos-rebuild and the tools it shells out to need:
+            # - HOME is required by libgit2 (used by Nix to read flake
+            #   inputs of type git+file://). Without it libgit2's ownership
+            #   check misbehaves on dev trees.
+            # - NIX_PATH / XDG_* keep nix's caches/config consistent with
+            #   the host.
+            # - LOCALE_ARCHIVE / LANG / TZDIR avoid spurious locale/timezone
+            #   warnings.
+            #
+            # CRITICAL: only inherit a var that is actually set AND non-empty.
+            # `--setenv=NAME` for a NAME that is unset/empty in the caller's
+            # environment propagates an EMPTY value. Nix then derives, e.g.,
+            # its git cache as `$XDG_CACHE_HOME/nix/gitv3` — which with an
+            # empty XDG_CACHE_HOME becomes the *relative* path "nix/gitv3"
+            # and the flake-input fetch dies with
+            #   error: not an absolute path: "nix/gitv3"
+            # Omitting the flag entirely lets Nix compute its correct
+            # default (e.g. $HOME/.cache) — and HOME is always set below.
+            inherit_vars = [
+                "HOME", "NIX_PATH", "NIX_REMOTE",
+                "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                "LOCALE_ARCHIVE", "LANG", "TZDIR",
+            ]
+            setenv_flags = [
+                f"--setenv={name}"
+                for name in inherit_vars
+                if os.environ.get(name)  # set and non-empty
+            ]
+
             cmd = [
                 "systemd-run",
                 "--unit", unit_name,
@@ -239,28 +269,7 @@ class NixOperations:
                 f"--property=StandardOutput=append:{output_path}",
                 f"--property=StandardError=append:{output_path}",
                 f"--setenv=PATH={rebuild_path}",
-                # Inherit a small set of env vars that nixos-rebuild and the
-                # tools it shells out to need. Notably:
-                # - HOME is required by libgit2 (used by Nix to read flake
-                #   inputs of type git+file://). Without it libgit2's
-                #   ownership check misbehaves and fails on dev trees owned
-                #   by the user even though /etc/gitconfig has the
-                #   appropriate `safe.directory` entry.
-                # - NIX_PATH / XDG_* keep nix's caches/config consistent
-                #   with what the host would use.
-                # - LOCALE_ARCHIVE / LANG / TZDIR avoid spurious locale and
-                #   timezone warnings.
-                # `--setenv=NAME` (no =VALUE) tells systemd-run to inherit
-                # the value from the caller's environment.
-                "--setenv=HOME",
-                "--setenv=NIX_PATH",
-                "--setenv=NIX_REMOTE",
-                "--setenv=XDG_CACHE_HOME",
-                "--setenv=XDG_CONFIG_HOME",
-                "--setenv=XDG_DATA_HOME",
-                "--setenv=LOCALE_ARCHIVE",
-                "--setenv=LANG",
-                "--setenv=TZDIR",
+                *setenv_flags,
                 "nixos-rebuild", "switch", "--flake", str(NixOperations.FLAKE_DIR),
             ]
 

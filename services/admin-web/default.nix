@@ -547,6 +547,14 @@ in
           # endpoint. Embeds the nix-store hash, so it changes IFF the
           # frontend itself changed (not on every unrelated rebuild).
           "HOMEFREE_FRONTEND_PATH=${installerWebPath}/frontend"
+          # Development-mode flag. A dev box uses Caddy's internal CA and
+          # is typically a port-forwarded test VM where a real SSO login
+          # can never complete (oauth2-proxy's redirect URLs are
+          # port-less). admin-api's auth middleware reads this to relax
+          # the SSO-header requirement in dev mode only — production
+          # boxes are never in dev mode, so the gate stays fully enforced
+          # there. See TrustedHeaderAuthMiddleware._is_dev_mode().
+          "HOMEFREE_DEVELOPMENT=${if config.homefree.development then "1" else "0"}"
         ];
       };
     };
@@ -581,6 +589,13 @@ in
             cfg.system.localDomain
           ];
           https-domains = [ cfg.system.domain ] ++ cfg.system.additionalDomains;
+
+          ## Also serve the admin UI on the bare LAN IP. The finish-setup
+          ## captive portal redirects to http://<lan-ip>/ — an IP, never a
+          ## hostname — because a hostname in a redirect is resolved by
+          ## whatever client follows it (which may be on a different network
+          ## and resolve admin.<localDomain> to a *different* HomeFree box).
+          extra-http-hosts = [ "http://${cfg.network.lan-address}" ];
 
           # Use static-path for serving files
           static-path = "${installerWebPath}/frontend";
@@ -648,27 +663,11 @@ in
               }
             }
 
-            # Disable caching entirely for the admin UI's static files.
-            # The frontend is served straight from /nix/store, where every
-            # file has mtime=epoch (1970-01-01) and Caddy's file_server
-            # generates an empty/identical ETag. Combined with
-            # `Cache-Control: no-cache` (which only requires revalidation,
-            # not skipping the cache), the browser sends `If-None-Match: ""`
-            # + `If-Modified-Since: epoch`, Caddy returns 304, and the
-            # browser serves the OLD cached file even after a rebuild —
-            # nothing short of shift+reload picks up new JS.
-            #
-            # `no-store` forces a fresh fetch every time and side-steps
-            # the validation entirely. Cost is trivial on a LAN; benefit
-            # is "Refresh" actually works.
-            @adminstatic {
-              path *.js *.css *.html *.svg *.png *.woff *.woff2
-            }
-            header @adminstatic {
-              Cache-Control "no-store"
-              -ETag
-              -Last-Modified
-            }
+            # NOTE: cache headers (no-store, strip ETag/Last-Modified) are
+            # set centrally in services/caddy/default.nix's static-path
+            # block — one unmatched `header` for the whole site. Do not add
+            # another `header` block here: two unmatched `header` directives
+            # in one site is ambiguous in Caddy.
           '';
         };
       }
@@ -761,17 +760,9 @@ in
               }
             }
 
-            # Same no-store caching policy as admin: /nix/store mtimes
-            # are epoch, ETags collide across rebuilds; no-store forces
-            # a fresh fetch each time so refresh actually works.
-            @userstatic {
-              path *.js *.css *.html *.svg *.png *.woff *.woff2
-            }
-            header @userstatic {
-              Cache-Control "no-store"
-              -ETag
-              -Last-Modified
-            }
+            # NOTE: cache headers are set centrally in
+            # services/caddy/default.nix's static-path block. Do not add a
+            # `header` block here — see the admin vhost note above.
           '';
         };
       }

@@ -26,7 +26,11 @@ let
 
   bootstrapScript = pkgs.writeShellScript "ddclient-bootstrap-rrsets" ''
     set -u
-    PATH=${lib.makeBinPath [ pkgs.curl pkgs.jq pkgs.coreutils ]}
+    ## gnugrep is required — the rrset-existence checks below use
+    ## `grep -qxF`. Omitting it made every check fail with "grep: command
+    ## not found", so the script could neither detect existing records
+    ## nor reliably create missing ones.
+    PATH=${lib.makeBinPath [ pkgs.curl pkgs.jq pkgs.coreutils pkgs.gnugrep ]}
 
     HETZNER_API="https://api.hetzner.cloud/v1"
 

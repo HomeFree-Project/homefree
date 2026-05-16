@@ -128,6 +128,42 @@ async def get_user_key():
         )
 
 
+class AuthorizedKeyRequest(BaseModel):
+    """Request model for adding an SSH authorized key"""
+    public_key: str
+
+
+@router.post("/keys/user", response_model=SecretResponse)
+async def add_user_key(request: AuthorizedKeyRequest):
+    """
+    Add an SSH authorized key to system.authorizedKeys and (re)generate the
+    SOPS config so the key becomes a secrets recipient.
+
+    This is the bootstrap step for the post-install "finish setup" wizard: a
+    freshly-installed box ships with no authorized key, so no secret can be
+    encrypted until one is added.
+    """
+    try:
+        success, error = SecretsManager.add_user_authorized_key(request.public_key)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error or "Failed to add authorized key"
+            )
+        return SecretResponse(
+            success=True,
+            message="Authorized key added successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding authorized key: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add authorized key: {str(e)}"
+        )
+
+
 @router.post("/{service_label}/{secret_key}", response_model=SecretResponse)
 async def set_secret(service_label: str, secret_key: str, request: SecretSetRequest):
     """
