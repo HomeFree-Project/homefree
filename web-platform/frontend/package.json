@@ -1,0 +1,21 @@
+{
+  "name": "homefree-web-installer-frontend",
+  "version": "1.0.0",
+  "description": "HomeFree Web-Based Installer Frontend",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lit": "^3.1.0",
+    "graphql": "^16.8.1",
+    "@urql/core": "^5.0.0",
+    "wonka": "^6.3.4"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

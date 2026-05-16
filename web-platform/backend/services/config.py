@@ -1,0 +1,109 @@
+"""
+Configuration service for storing installation settings
+"""
+
+from typing import Dict, Any, Optional
+
+
+class ConfigService:
+    """Service for managing installation configuration"""
+
+    # In-memory storage for installation configuration
+    _config: Dict[str, Any] = {
+        'hostname': 'homefree',
+        'domain': 'homefree.host',
+        'timezone': 'America/Los_Angeles',
+        'locale': 'en_US.UTF-8',
+        'country_code': None,
+        'elevation': None,
+        'latitude': None,
+        'longitude': None,
+        'unit_system': 'metric',
+        'currency': None,
+        'language': None,
+        'keymap': 'us',
+        'vconsole': 'us',
+        'username': 'admin',
+        'fullname': 'HomeFree Admin',
+        'email': '',
+        'password': '',
+        'partitioning': None,
+        'development_mode': False,
+    }
+
+    @staticmethod
+    def set_hostname(hostname: str):
+        """Set system hostname"""
+        ConfigService._config['hostname'] = hostname
+
+    @staticmethod
+    def set_domain(domain: str):
+        """Set domain for HomeFree instance"""
+        ConfigService._config['domain'] = domain
+
+    @staticmethod
+    def set_timezone(timezone: str):
+        """Set system timezone"""
+        ConfigService._config['timezone'] = timezone
+
+    @staticmethod
+    def set_locale(locale: str):
+        """Set system locale"""
+        ConfigService._config['locale'] = locale
+
+    @staticmethod
+    def set_localization(**kwargs):
+        """Bulk-set the optional localization fields (country, language,
+        currency, unit_system, elevation, latitude, longitude). Any
+        kwarg that is None is left unchanged; pass an explicit empty
+        string '' to clear a field."""
+        for key in (
+            'country_code', 'language', 'currency', 'unit_system',
+            'elevation', 'latitude', 'longitude',
+        ):
+            if key in kwargs and kwargs[key] is not None:
+                ConfigService._config[key] = kwargs[key]
+
+    @staticmethod
+    def set_keyboard(layout: str, vconsole: str):
+        """Set keyboard layout"""
+        ConfigService._config['keymap'] = layout
+        ConfigService._config['vconsole'] = vconsole
+
+    @staticmethod
+    def set_user(username: str, fullname: str, email: str, password: str):
+        """Set user account information"""
+        ConfigService._config['username'] = username
+        ConfigService._config['fullname'] = fullname
+        ConfigService._config['email'] = email
+        ConfigService._config['password'] = password
+
+    @staticmethod
+    def set_partitioning(config: str):
+        """Set partitioning configuration"""
+        # Parse config string (JSON or other format)
+        import json
+        try:
+            ConfigService._config['partitioning'] = json.loads(config)
+        except:
+            ConfigService._config['partitioning'] = {'raw': config}
+
+    @staticmethod
+    def get_config() -> Dict[str, Any]:
+        """Get current configuration"""
+        return ConfigService._config.copy()
+
+    @staticmethod
+    def get(key: str, default: Any = None) -> Any:
+        """Get a specific config value"""
+        return ConfigService._config.get(key, default)
+
+    @staticmethod
+    def set_development_mode(enabled: bool):
+        """Enable or disable development mode"""
+        ConfigService._config['development_mode'] = enabled
+
+    @staticmethod
+    def is_development_mode() -> bool:
+        """Check if development mode is enabled"""
+        return ConfigService._config.get('development_mode', False)
