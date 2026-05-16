@@ -29,6 +29,9 @@ class BackupsModule extends LitElement {
     canaryStatus: { type: Object },
     canaryStarting: { type: Boolean },
 
+    // Scheduled-backup health (last run + success per source)
+    backupHealth: { type: Object },
+
     // Restore tab repository lists
     localServices: { type: Array },
     localSystemConfig: { type: Array },
@@ -48,7 +51,8 @@ class BackupsModule extends LitElement {
     pathsProgress: { type: Object },
 
     // Snapshot picker (expanded repo)
-    expandedRepo: { type: String },     // "source:repo" currently expanded
+    expandedRepo: { type: String },     // repo name currently expanded
+    expandedSource: { type: String },   // 'local' | 'backblaze' shown in card
     snapshots: { type: Array },
     snapshotsLoading: { type: Boolean },
     selectedSnapshot: { type: String },
@@ -123,6 +127,48 @@ class BackupsModule extends LitElement {
     .status-line.err { background: rgba(239,68,68,.10);  color: var(--hf-err); }
     .status-line.muted {
       background: var(--hf-surface-2); color: var(--hf-text-muted);
+    }
+
+    /* Backup Health rows */
+    .health-row {
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: var(--hf-surface-2);
+      border-left: 4px solid var(--hf-border-2);
+      margin-bottom: 10px;
+    }
+    .health-row:last-child { margin-bottom: 0; }
+    .health-row.ok  { border-left-color: var(--hf-ok); }
+    .health-row.err { border-left-color: var(--hf-err); }
+    .health-name {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .health-detail {
+      font-size: 13px;
+      color: var(--hf-text-muted);
+      margin-top: 3px;
+    }
+    .health-failed {
+      font-size: 13px;
+      color: var(--hf-err);
+      margin-top: 6px;
+      word-break: break-word;
+    }
+    .health-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .health-badge.ok  {
+      background: rgba(16,185,129,.15); color: var(--hf-ok);
+    }
+    .health-badge.err {
+      background: rgba(239,68,68,.15); color: var(--hf-err);
     }
 
     /* Self-test status row: fixed minimum height and an always-present
@@ -251,6 +297,7 @@ class BackupsModule extends LitElement {
     }
     .skeleton-title { width: 180px; height: 15px; }
     .skeleton-sub   { width: 110px; height: 11px; margin-top: 6px; }
+    .skeleton-badge { width: 70px; height: 16px; border-radius: 999px; }
     @keyframes shimmer {
       from { background-position: 100% 0; }
       to   { background-position: 0 0; }
@@ -278,6 +325,32 @@ class BackupsModule extends LitElement {
       padding: 14px;
       border-top: 1px solid var(--hf-border);
       background: var(--hf-surface);
+    }
+
+    /* ---- source toggle (Local / Backblaze) inside an expanded card ---- */
+    .source-toggle {
+      display: inline-flex;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .source-toggle-btn {
+      padding: 7px 16px;
+      background: var(--hf-surface-2);
+      border: none;
+      border-right: 1px solid var(--hf-border-2);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--hf-text-muted);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .source-toggle-btn:last-child { border-right: none; }
+    .source-toggle-btn:hover { color: var(--hf-text); }
+    .source-toggle-btn.active {
+      background: var(--hf-accent);
+      color: #fff;
     }
 
     /* ---- snapshot list ---- */
@@ -471,12 +544,13 @@ class BackupsModule extends LitElement {
       }
     };
     this.modified = false;
-    this.activeTab = 'configuration';
+    this.activeTab = 'status';
     this.secretsStatus = null;
     this.backupConfigStatus = null;
     this.hasAuthorizedKeys = false;
     this.canaryStatus = null;
     this.canaryStarting = false;
+    this.backupHealth = null;
 
     this.localServices = [];
     this.localSystemConfig = [];
@@ -493,6 +567,7 @@ class BackupsModule extends LitElement {
     this.pathsProgress = { done: 0, total: 0, state: 'idle' };
 
     this.expandedRepo = null;
+    this.expandedSource = null;
     this.snapshots = [];
     this.snapshotsLoading = false;
     this.selectedSnapshot = null;
@@ -524,6 +599,7 @@ class BackupsModule extends LitElement {
       this.loadSecretsStatus(),
       this.loadBackupConfigStatus(),
       this.loadCanaryStatus(),
+      this.loadBackupHealth(),
       this.refreshCurrentJob()
     ]);
     // If a job is already running, attach the live poller.
@@ -633,6 +709,10 @@ class BackupsModule extends LitElement {
     if (kind === 'restore' || kind === 'restore-all') {
       this.loadServices(true);
     }
+    // A backup/sync run changes last-run health - refresh the panel.
+    if (kind === 'backup' || kind === 'sync') {
+      this.loadBackupHealth();
+    }
   }
 
   jobKindLabel(kind) {
@@ -722,6 +802,15 @@ class BackupsModule extends LitElement {
       if (res.ok) this.canaryStatus = await res.json();
     } catch (e) {
       console.error('Error loading canary status:', e);
+    }
+  }
+
+  async loadBackupHealth() {
+    try {
+      const res = await fetch('/api/backups/health');
+      if (res.ok) this.backupHealth = await res.json();
+    } catch (e) {
+      console.error('Error loading backup health:', e);
     }
   }
 
@@ -911,13 +1000,41 @@ class BackupsModule extends LitElement {
     }
   }
 
-  async toggleRepo(repo, source) {
-    const key = `${source}:${repo}`;
-    if (this.expandedRepo === key) {
+  /** Which sources have a backup for this repo, in display order. */
+  sourcesForRepo(repo) {
+    const sources = [];
+    if (this.localServices.includes(repo)
+        || this.localSystemConfig.includes(repo)
+        || this.localExtraPaths.includes(repo)) {
+      sources.push('local');
+    }
+    if (this.backblazeServices.includes(repo)
+        || this.backblazeSystemConfig.includes(repo)
+        || this.backblazeExtraPaths.includes(repo)) {
+      sources.push('backblaze');
+    }
+    return sources;
+  }
+
+  /** Expand/collapse a service card. On expand, default to local if it
+   *  has a local backup, otherwise the first available source. */
+  async toggleRepo(repo) {
+    if (this.expandedRepo === repo) {
       this.expandedRepo = null;
+      this.expandedSource = null;
       return;
     }
-    this.expandedRepo = key;
+    const sources = this.sourcesForRepo(repo);
+    const source = sources[0] || 'local';
+    this.expandedRepo = repo;
+    this.expandedSource = source;
+    await this.loadSnapshots(repo, source);
+  }
+
+  /** Switch the source shown inside an already-expanded card. */
+  async selectRepoSource(repo, source) {
+    if (this.expandedSource === source) return;
+    this.expandedSource = source;
     await this.loadSnapshots(repo, source);
   }
 
@@ -1102,6 +1219,19 @@ class BackupsModule extends LitElement {
     return date.toLocaleString();
   }
 
+  /** Relative time for a future timestamp ("in 6 hours"). */
+  formatFuture(ts) {
+    if (!ts) return '';
+    const date = new Date(ts);
+    const mins = Math.floor((date - Date.now()) / 60000);
+    if (mins < 1) return 'shortly';
+    if (mins < 60) return `in ${mins} minute${mins !== 1 ? 's' : ''}`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `in ${hrs} hour${hrs !== 1 ? 's' : ''}`;
+    const days = Math.floor(hrs / 24);
+    return `in ${days} day${days !== 1 ? 's' : ''}`;
+  }
+
   /** Is a repository action blocked because a job is running? */
   get actionsLocked() {
     return this.isJobActive(this.currentJob);
@@ -1226,6 +1356,19 @@ class BackupsModule extends LitElement {
 
   // ----------------------------------------------------- render: config
 
+  /**
+   * Status tab - the landing view. Answers "are my backups OK?" first:
+   * the live job banner, the per-source Backup Health panel, and the
+   * Backup Self-Test.
+   */
+  renderStatusTab() {
+    return html`
+      ${this.renderJobBanner()}
+      ${this.renderBackupHealth()}
+      ${this.renderCanarySection()}
+    `;
+  }
+
   renderConfigurationTab() {
     const { backups } = this.config;
     // Single source of truth for "is restic configured", shared with the
@@ -1234,8 +1377,6 @@ class BackupsModule extends LitElement {
 
     return html`
       ${this.renderJobBanner()}
-
-      ${this.renderCanarySection()}
 
       <config-section
         title="Local Backups"
@@ -1444,6 +1585,100 @@ class BackupsModule extends LitElement {
       bubbles: true,
       composed: true
     }));
+  }
+
+  /**
+   * Backup Health panel: at a glance, did the most recent scheduled
+   * backups succeed, when did they run, and when do they run next -
+   * per source (Local / Backblaze).
+   */
+  renderBackupHealth() {
+    const h = this.backupHealth;
+    // The section renders immediately - while health is still loading
+    // it shows skeleton rows rather than popping in seconds later.
+    const loading = !h;
+
+    return html`
+      <config-section
+        title="Backup Health"
+        description="Whether your most recent scheduled backups succeeded"
+      >
+        ${loading || !h.success
+          ? html`
+            ${this.renderHealthRowSkeleton('Local backups')}
+            ${this.renderHealthRowSkeleton('Backblaze backups')}
+          `
+          : html`
+            ${this.renderHealthRow('Local backups', h.local)}
+            ${h.backblaze
+              ? this.renderHealthRow('Backblaze backups', h.backblaze)
+              : html`
+                <div class="health-row">
+                  <div class="health-name">Backblaze backups</div>
+                  <div class="health-detail"
+                    style="color:var(--hf-text-muted);">
+                    Not configured — offsite backups are off.
+                  </div>
+                </div>`}
+          `}
+      </config-section>
+    `;
+  }
+
+  /** Placeholder health row shown while backup health is loading. */
+  renderHealthRowSkeleton(label) {
+    return html`
+      <div class="health-row">
+        <div class="health-name">
+          ${label}
+          <span class="skeleton skeleton-badge"></span>
+        </div>
+        <div class="health-detail">
+          <span class="skeleton skeleton-sub"></span>
+        </div>
+      </div>
+    `;
+  }
+
+  /** One source's health line. `data` = {total, ok, failed, ...}. */
+  renderHealthRow(label, data) {
+    if (!data || data.total === 0) {
+      return html`
+        <div class="health-row">
+          <div class="health-name">${label}</div>
+          <div class="health-detail" style="color:var(--hf-text-muted);">
+            No backup jobs found.
+          </div>
+        </div>`;
+    }
+
+    const healthy = data.failed === 0;
+    const cls = healthy ? 'ok' : 'err';
+    const summary = healthy
+      ? html`<span class="health-badge ok">✓ Healthy</span>`
+      : html`<span class="health-badge err">✗ ${data.failed}
+          failed</span>`;
+
+    return html`
+      <div class="health-row ${cls}">
+        <div class="health-name">
+          ${label} ${summary}
+        </div>
+        <div class="health-detail">
+          ${data.ok} of ${data.total} succeeded
+          ${data.last_run
+            ? html` · last run ${this.formatTimestamp(data.last_run)}`
+            : ''}
+          ${data.next_run
+            ? html` · next ${this.formatFuture(data.next_run)}`
+            : ''}
+        </div>
+        ${!healthy && data.failed_services?.length ? html`
+          <div class="health-failed">
+            Failed: ${data.failed_services.join(', ')}
+          </div>` : ''}
+      </div>
+    `;
   }
 
   /**
@@ -1797,6 +2032,9 @@ class BackupsModule extends LitElement {
 
   renderRepoGroup(title, desc, localRepos, bbRepos, isSystem) {
     if (localRepos.length === 0 && bbRepos.length === 0) return '';
+    // One card per repo: a repo backed up both locally and to Backblaze
+    // is a single entry, with the source chosen inside the card.
+    const repos = [...new Set([...localRepos, ...bbRepos])].sort();
     return html`
       <div class="repo-group ${isSystem ? 'system' : ''}">
         <h4 style=${isSystem ? 'color:var(--hf-warn);' : ''}>${title}</h4>
@@ -1808,8 +2046,7 @@ class BackupsModule extends LitElement {
             <code>nixos-rebuild</code> afterwards.
           </div>` : ''}
         <div class="repo-list">
-          ${localRepos.map(r => this.renderRepoRow(r, 'local'))}
-          ${bbRepos.map(r => this.renderRepoRow(r, 'backblaze'))}
+          ${repos.map(r => this.renderRepoRow(r))}
         </div>
       </div>
     `;
@@ -1824,36 +2061,30 @@ class BackupsModule extends LitElement {
     return repo.startsWith('extra-path-') || repo === 'extra-paths';
   }
 
-  renderRepoRow(repo, source) {
-    const key = `${source}:${repo}`;
-    const expanded = this.expandedRepo === key;
-    const paths = this.repositoryPaths[key];
+  renderRepoRow(repo) {
+    const expanded = this.expandedRepo === repo;
     const isExtra = this.isExtraPathRepo(repo);
+    const sources = this.sourcesForRepo(repo);
 
-    // Paths arrive in one batch (loadAllPaths). Until the batch resolves
-    // we show a skeleton - never the opaque "extra-path-N" id, which is
-    // meaningless to a user, and never a guessed path.
+    // Path summary for the collapsed header: use whichever source has
+    // resolved paths (both sources back up the same dirs for a service).
+    const paths = this.repositoryPaths[`local:${repo}`]
+      ?? this.repositoryPaths[`backblaze:${repo}`];
     const pathsKnown = paths !== undefined;
 
-    // Title:
-    //  - service repos      -> the service name
-    //  - extra-path repos   -> the actual backed-up directory; while the
-    //                          batch is loading, a skeleton (no id shown)
-    let title = null;          // null => render a skeleton bar instead
+    // Title: service repos -> service name; extra-path repos -> the
+    // actual backed-up directory (skeleton until paths resolve).
+    let title = null;
     if (isExtra) {
       if (pathsKnown) {
-        title = paths.length > 0 ? paths[0] : repo;  // fall back only if
-                                                     // the repo truly has
-                                                     // no snapshot
+        title = paths.length > 0 ? paths[0] : repo;
       }
     } else {
       title = repo;
     }
 
     // Secondary line under the title.
-    //  - extra-path: any *additional* roots beyond the title (no id)
-    //  - service:    the backup root(s)
-    let summary = null;        // null => skeleton (extra) or nothing
+    let summary = null;
     if (pathsKnown) {
       if (isExtra) {
         summary = paths.length > 1
@@ -1869,19 +2100,26 @@ class BackupsModule extends LitElement {
       }
     }
 
+    // Source availability tags shown on the collapsed header.
+    const sourceTags = html`
+      ${sources.includes('local')
+        ? html`<span class="repo-tag">Local</span>` : ''}
+      ${sources.includes('backblaze')
+        ? html`<span class="repo-tag bb">☁️ Backblaze</span>` : ''}
+    `;
+
     return html`
       <div class="repo-row">
         <div class="repo-head ${this.actionsLocked ? 'disabled' : ''}"
           @click=${() => { if (!this.actionsLocked)
-            this.toggleRepo(repo, source); }}>
+            this.toggleRepo(repo); }}>
           <span class="chevron ${expanded ? 'open' : ''}">▶</span>
           <div class="grow">
             <div>
               ${title !== null
                 ? html`<span class="repo-name" title=${title}>${title}</span>`
                 : html`<span class="skeleton skeleton-title"></span>`}
-              <span class="repo-tag ${source === 'backblaze' ? 'bb' : ''}">
-                ${source === 'backblaze' ? '☁️ Backblaze' : 'Local'}</span>
+              ${sourceTags}
             </div>
             ${summary === null
               ? html`<span class="skeleton skeleton-sub"></span>`
@@ -1890,9 +2128,33 @@ class BackupsModule extends LitElement {
           </div>
         </div>
         ${expanded ? html`
-          <div class="repo-body">${this.renderSnapshotPicker(repo, source)}</div>
+          <div class="repo-body">
+            ${this.renderRepoBody(repo, sources)}
+          </div>
         ` : ''}
       </div>
+    `;
+  }
+
+  /**
+   * The expanded card body: a segmented Local/Backblaze source toggle
+   * (only shown when the repo has both sources), then the snapshot
+   * picker for the selected source.
+   */
+  renderRepoBody(repo, sources) {
+    const source = this.expandedSource;
+    return html`
+      ${sources.length > 1 ? html`
+        <div class="source-toggle">
+          ${sources.map(s => html`
+            <button
+              class="source-toggle-btn ${s === source ? 'active' : ''}"
+              @click=${() => this.selectRepoSource(repo, s)}
+            >${s === 'backblaze' ? '☁️ Backblaze' : 'Local'}</button>
+          `)}
+        </div>
+      ` : ''}
+      ${this.renderSnapshotPicker(repo, source)}
     `;
   }
 
@@ -1951,6 +2213,10 @@ class BackupsModule extends LitElement {
     return html`
       <div class="module-container">
         <div class="tabs">
+          <button class="tab ${this.activeTab === 'status'
+            ? 'active' : ''}"
+            @click=${() => this.handleTabChange('status')}
+          >Status</button>
           <button class="tab ${this.activeTab === 'configuration'
             ? 'active' : ''}"
             @click=${() => this.handleTabChange('configuration')}
@@ -1962,7 +2228,9 @@ class BackupsModule extends LitElement {
 
         ${this.activeTab === 'configuration'
           ? this.renderConfigurationTab()
-          : this.renderRestoreTab()}
+          : this.activeTab === 'restore'
+            ? this.renderRestoreTab()
+            : this.renderStatusTab()}
       </div>
 
       ${this.renderJobOverlay()}

@@ -1069,6 +1069,132 @@ class BackupOperations:
         except Exception:
             return False
 
+    # ------------------------------------------------------- backup health
+
+    @staticmethod
+    def _health_for_prefix(prefix: str) -> Dict[str, Any]:
+        """Health summary for one backup source (local | backblaze).
+
+        Reads each restic-backups-<prefix>-* unit's last result and
+        run time straight from systemd - cheap, no restic calls.
+
+        Returns:
+            {total, ok, failed, failed_services, last_run, next_run}
+            timestamps are ISO strings (or None).
+        """
+        unit_prefix = f"restic-backups-{prefix}-"
+        services = [u.replace(unit_prefix, "").replace(".service", "")
+                    for u in BackupOperations._list_backup_units(prefix)]
+        result: Dict[str, Any] = {
+            "total": len(services), "ok": 0, "failed": 0,
+            "failed_services": [], "last_run": None, "next_run": None,
+        }
+        if not services:
+            return result
+
+        last_run_ts = 0.0
+        next_run_ts = 0.0
+        for svc in services:
+            unit = f"{unit_prefix}{svc}.service"
+            timer = f"{unit_prefix}{svc}.timer"
+            try:
+                show = subprocess.run(
+                    ["systemctl", "show", unit,
+                     "-p", "Result", "-p", "ExecMainStatus",
+                     "-p", "ExecMainExitTimestampMonotonic",
+                     "-p", "ExecMainExitTimestamp"],
+                    capture_output=True, text=True, timeout=5)
+                props = dict(
+                    line.split("=", 1)
+                    for line in show.stdout.strip().split("\n")
+                    if "=" in line)
+            except Exception:
+                props = {}
+
+            res = props.get("Result", "")
+            exit_status = props.get("ExecMainStatus", "")
+            has_run = bool(props.get("ExecMainExitTimestamp", "").strip())
+
+            # A unit that has run is OK iff Result=success and exit 0.
+            # A unit that has never run counts as failed-to-have-data:
+            # surface it as "failed" so a never-running backup is visible.
+            if not has_run:
+                result["failed"] += 1
+                result["failed_services"].append(svc)
+            elif res == "success" and exit_status in ("0", ""):
+                result["ok"] += 1
+            else:
+                result["failed"] += 1
+                result["failed_services"].append(svc)
+
+            # Track most-recent run across all units.
+            exit_ts = props.get("ExecMainExitTimestamp", "").strip()
+            if exit_ts:
+                parsed = BackupOperations._parse_systemd_ts(exit_ts)
+                if parsed and parsed > last_run_ts:
+                    last_run_ts = parsed
+
+            # Track the soonest upcoming run from the timer.
+            try:
+                tshow = subprocess.run(
+                    ["systemctl", "show", timer,
+                     "-p", "NextElapseUSecRealtime"],
+                    capture_output=True, text=True, timeout=5)
+                nxt = tshow.stdout.strip().split("=", 1)
+                if len(nxt) == 2 and nxt[1].strip():
+                    parsed = BackupOperations._parse_systemd_ts(nxt[1].strip())
+                    if parsed and (next_run_ts == 0.0
+                                   or parsed < next_run_ts):
+                        next_run_ts = parsed
+            except Exception:
+                pass
+
+        if last_run_ts:
+            result["last_run"] = datetime.fromtimestamp(
+                last_run_ts).isoformat()
+        if next_run_ts:
+            result["next_run"] = datetime.fromtimestamp(
+                next_run_ts).isoformat()
+        return result
+
+    @staticmethod
+    def _parse_systemd_ts(value: str) -> Optional[float]:
+        """Parse a systemd human timestamp ('Sat 2026-05-16 02:20:50 PDT')
+        into a POSIX timestamp. Returns None on failure.
+        """
+        # Strip the leading weekday and trailing timezone abbreviation.
+        parts = value.split()
+        if len(parts) >= 3:
+            # parts: [Weekday, YYYY-MM-DD, HH:MM:SS, TZ]
+            date_part = parts[1] if len(parts) > 1 else ""
+            time_part = parts[2] if len(parts) > 2 else ""
+            try:
+                dt = datetime.strptime(f"{date_part} {time_part}",
+                                       "%Y-%m-%d %H:%M:%S")
+                return dt.timestamp()
+            except ValueError:
+                pass
+        return None
+
+    @staticmethod
+    def get_backup_health() -> Dict[str, Any]:
+        """Return last-run health for local and Backblaze backups.
+
+        {success, local: {...}, backblaze: {...}} - each sub-dict has
+        total / ok / failed / failed_services / last_run / next_run.
+        `backblaze` is None when no B2 backup units exist.
+        """
+        try:
+            local = BackupOperations._health_for_prefix("local")
+            bb_units = BackupOperations._list_backup_units("backblaze")
+            backblaze = (BackupOperations._health_for_prefix("backblaze")
+                         if bb_units else None)
+            return {"success": True, "local": local,
+                    "backblaze": backblaze}
+        except Exception as e:
+            logger.error(f"Error getting backup health: {e}")
+            return {"success": False, "error": str(e)}
+
     @staticmethod
     def get_canary_status() -> Dict[str, Any]:
         """Return the backup canary's latest self-test result.

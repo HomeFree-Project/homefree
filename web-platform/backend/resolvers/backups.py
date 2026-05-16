@@ -109,6 +109,16 @@ class CanaryStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
+class BackupHealthResponse(BaseModel):
+    """Last-run health of scheduled backups, per source."""
+    success: bool
+    # {total, ok, failed, failed_services, last_run, next_run}
+    local: Optional[Dict[str, Any]] = None
+    # None when no Backblaze backup units exist
+    backblaze: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
 class JobLogResponse(BaseModel):
     """Incremental log output for a job (for live streaming)."""
     success: bool
@@ -478,6 +488,23 @@ async def get_backup_status():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get backup status: {str(e)}")
+
+
+@router.get("/health", response_model=BackupHealthResponse)
+async def get_backup_health():
+    """Last-run health of scheduled backups.
+
+    Reads each restic backup unit's last result and run time from
+    systemd (no restic calls). Lets the UI show, per source, whether
+    the most recent scheduled backups succeeded and when they ran.
+    """
+    try:
+        return BackupHealthResponse(**BackupOperations.get_backup_health())
+    except Exception as e:
+        logger.error(f"Error getting backup health: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get backup health: {str(e)}")
 
 
 @router.get("/canary", response_model=CanaryStatusResponse)
