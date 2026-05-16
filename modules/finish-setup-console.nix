@@ -30,12 +30,32 @@ let
   ## Live status screen. Plain ANSI (no whiptail) so it re-renders cleanly on
   ## a timer and has no extra dependency. Reads link state straight from
   ## sysfs — the same signal NetworkService._has_carrier uses.
+  ##
+  ## ANSI escapes: a literal ESC byte is captured once into $ESC via
+  ## printf — Nix double-quoted strings do not interpret `\033`, and a
+  ## heredoc would print it literally, so we build the sequences explicitly.
+  ## Redraw moves the cursor home and clears each line rather than running a
+  ## full-screen `clear`, which avoids the visible flash on every refresh.
   consoleScript = pkgs.writeShellScript "homefree-finish-setup-console" ''
     set -u
     PATH=${lib.makeBinPath (with pkgs; [ coreutils gawk iproute2 ncurses ])}:$PATH
 
     carrier_file=/sys/class/net/${lanInterface}/carrier
     operstate_file=/sys/class/net/${lanInterface}/operstate
+
+    ESC=$(printf '\033')
+    bold="$ESC[1m"
+    reset="$ESC[0m"
+    home="$ESC[H"          # cursor to top-left
+    clr_eos="$ESC[J"       # clear from cursor to end of screen
+    hide_cursor="$ESC[?25l"
+    show_cursor="$ESC[?25h"
+
+    cleanup() { printf '%s' "$show_cursor"; }
+    trap cleanup EXIT INT TERM
+
+    ## Clear once on entry; subsequent redraws overwrite in place.
+    printf '%s%s%s' "$hide_cursor" "$ESC[2J" "$home"
 
     while true; do
       ## Setup finished elsewhere (wizard + rebuild) — hand tty1 back.
@@ -54,41 +74,43 @@ let
       ## LAN IPv4 actually assigned to the interface.
       lan_ip="$(ip -4 -o addr show dev ${lanInterface} 2>/dev/null \
         | awk '{print $4}' | cut -d/ -f1 | head -n1)"
-      [ -z "$lan_ip" ] && lan_ip="(none yet — configured: ${lanAddress})"
+      [ -z "$lan_ip" ] && lan_ip="(none yet - configured: ${lanAddress})"
 
       override="off"
       [ -f ${portalDisabledSentinel} ] && override="ON (LAN browsing allowed)"
 
-      clear
-      cat <<EOF
+      ## Redraw in place: home the cursor, print, then clear any leftover
+      ## lines below. printf interprets the $ESC sequences in the variables.
+      printf '%s' "$home"
+      printf '%s\n' "" \
+        "  ''${bold}HomeFree - finish setup''${reset}" \
+        "  -----------------------------------------------" \
+        "" \
+        "  Setup is NOT finished. Complete it from a browser" \
+        "  on another device connected to the LAN port." \
+        "" \
+        "    LAN port (${lanInterface}):  $link" \
+        "    LAN address:               $lan_ip" \
+        "" \
+        "    Open:   ''${bold}http://${wizardHost}/''${reset}" \
+        "            http://$lan_ip/   (if the name fails)" \
+        "" \
+        "    Setup redirect override: $override" \
+        "" \
+        "  Connect a laptop or phone to the LAN port and open" \
+        "  the address above. Most devices will offer a" \
+        '  "Sign in to network" prompt automatically.' \
+        "" \
+        "  -----------------------------------------------" \
+        "  Press ''${bold}d''${reset} to disable the setup redirect (lets LAN" \
+        "  devices browse the internet before you finish)." \
+        "  This screen refreshes automatically." \
+        ""
+      printf '%s' "$clr_eos"
 
-      ${"\033"}[1mHomeFree — finish setup${"\033"}[0m
-      -----------------------------------------------
-
-      Setup is NOT finished. Complete it from a browser
-      on another device connected to the LAN port.
-
-        LAN port (${lanInterface}):  $link
-        LAN address:                $lan_ip
-
-        Open:   ${"\033"}[1mhttp://${wizardHost}/${"\033"}[0m
-                http://$lan_ip/        (if the name fails)
-
-        Setup redirect override: $override
-
-      Connect a laptop or phone to the LAN port and open
-      the address above. Most devices will offer a
-      "Sign in to network" prompt automatically.
-
-      -----------------------------------------------
-      Press ${"\033"}[1md${"\033"}[0m to disable the setup redirect (lets LAN
-      devices browse the internet before you finish).
-      This screen refreshes automatically.
-
-EOF
       ## Wait up to 5s for a keypress, then refresh.
       ## Caddy's portal matcher checks the sentinel at request time, so
-      ## dropping the file takes effect on the next request — no reload.
+      ## dropping the file takes effect on the next request - no reload.
       if read -r -n1 -t5 key 2>/dev/null; then
         if [ "$key" = "d" ] || [ "$key" = "D" ]; then
           mkdir -p /var/lib/homefree-secrets 2>/dev/null || true
