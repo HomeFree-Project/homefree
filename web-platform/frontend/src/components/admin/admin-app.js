@@ -1955,6 +1955,7 @@ class AdminApp extends LitElement {
         return html`
           <dns-module
             .config=${this.config}
+            .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @config-change=${this.handleConfigChange}
           ></dns-module>
         `;

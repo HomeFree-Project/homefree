@@ -2,6 +2,15 @@ import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
 import '../../shared/table-editor.js';
+import '../secrets-input.js';
+
+// Synthetic service labels under which DNS-related secrets are stored in
+// SOPS. write_secret_files() materialises them at
+// /var/lib/homefree-secrets/<label>/<key>, which is exactly where
+// ddclient and the DNS-01 cert provider read their credentials.
+const DDNS_SECRET_LABEL = 'ddclient';
+const DNS_CERT_SECRET_LABEL = 'dns';
+const DNS_CERT_SECRET_KEY = 'api-token';
 
 /**
  * DNS configuration module
@@ -11,7 +20,9 @@ import '../../shared/table-editor.js';
 class DnsModule extends LitElement {
   static properties = {
     config: { type: Object },
-    modified: { type: Boolean }
+    modified: { type: Boolean },
+    hasAuthorizedKeys: { type: Boolean },
+    secretsStatus: { type: Object, state: true }
   };
 
   static styles = css`
@@ -72,6 +83,36 @@ class DnsModule extends LitElement {
       }
     };
     this.modified = false;
+    this.hasAuthorizedKeys = false;
+    // Map of "<label>": { "<key>": boolean } — which secrets are set.
+    this.secretsStatus = {};
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.loadSecretsStatus();
+  }
+
+  async loadSecretsStatus() {
+    try {
+      const response = await fetch('/api/secrets/status');
+      if (response.ok) {
+        const data = await response.json();
+        this.secretsStatus = data.secrets || {};
+      }
+    } catch (error) {
+      // Non-fatal: secrets-input falls back to "Not Set" and still works.
+      console.error('Error loading secrets status:', error);
+    }
+  }
+
+  secretExists(label, key) {
+    return !!(this.secretsStatus[label] && this.secretsStatus[label][key]);
+  }
+
+  handleSecretUpdated() {
+    // Refresh status so the Set/Not Set badges reflect the change.
+    this.loadSecretsStatus();
   }
 
   handleFieldChange(field, value) {
@@ -144,6 +185,15 @@ class DnsModule extends LitElement {
       { key: 'disable', label: 'Disabled', type: 'boolean' }
     ];
 
+    // Distinct password keys referenced by the zones — one secret input
+    // each. Zones sharing a key share a single credential.
+    const ddnsSecretKeys = [...new Set(
+      (dynamicDns.zones || [])
+        .map(z => (z['password-secret-key'] || '').trim())
+        .filter(Boolean)
+    )];
+    const certProviderSet = !!(certMgmt.provider && certMgmt.provider.trim());
+
     return html`
       <div class="module-container">
         <config-section
@@ -168,12 +218,11 @@ class DnsModule extends LitElement {
         >
           <div class="help-box">
             <strong>How DDNS zone passwords work</strong>
-            Each zone needs an API password or token. Don't paste it
-            into this form. Instead, give the secret a short key
-            (e.g. <code>password</code>) and drop the secret file at
-            <code>/var/lib/homefree-secrets/ddclient/&lt;key&gt;</code>
-            (mode 0600, owned by root). The system reloads ddclient
-            automatically after a rebuild. Zones can share a single
+            Each zone needs an API password or token. Give the secret a
+            short key in the zone's <code>Password File Key</code>
+            column (e.g. <code>password</code>), then enter the secret
+            value below. It is encrypted into the SOPS config and
+            ddclient picks it up automatically. Zones can share a single
             key if they share a credential.
           </div>
 
@@ -214,6 +263,28 @@ class DnsModule extends LitElement {
             addLabel="Add Zone"
             @data-change=${this.handleZonesChange}
           ></table-editor>
+
+          ${ddnsSecretKeys.length > 0 ? html`
+            <h4 style="font-size: 14px; color: var(--hf-text); margin: 20px 0 12px;">
+              Zone Credentials
+            </h4>
+            ${ddnsSecretKeys.map(key => html`
+              <secrets-input
+                .serviceLabel=${DDNS_SECRET_LABEL}
+                .secretKey=${key}
+                .label=${`Password / API token (key: ${key})`}
+                .description=${'API password or token for every zone using this Password File Key.'}
+                .required=${true}
+                .disabled=${!this.hasAuthorizedKeys}
+                .exists=${this.secretExists(DDNS_SECRET_LABEL, key)}
+                @secret-updated=${this.handleSecretUpdated}
+              ></secrets-input>
+            `)}
+          ` : html`
+            <p style="color: var(--hf-text-muted); font-size: 13px; margin-top: 16px;">
+              Add a zone with a <code>Password File Key</code> to enter its credential here.
+            </p>
+          `}
         </config-section>
 
         <config-section
@@ -221,12 +292,11 @@ class DnsModule extends LitElement {
           description="ACME DNS-01 provider for *.<domain> certificates"
         >
           <div class="help-box">
-            <strong>API token location</strong>
-            Drop the provider's API token at
-            <code>/var/lib/homefree-secrets/dns/api-token</code>
-            (mode 0600, owned by root). Wildcard cert renewal happens
-            via Caddy and is wired up automatically when a provider is
-            selected.
+            <strong>How the API token is stored</strong>
+            Select a provider, then enter its API token below. It is
+            encrypted into the SOPS config and Caddy uses it for
+            wildcard cert renewal automatically — no files to place by
+            hand.
           </div>
 
           <div class="field-row">
@@ -239,6 +309,19 @@ class DnsModule extends LitElement {
               @field-change=${(e) => this.handleFieldChange('dns.cert-management.provider', e.detail.value || null)}
             ></form-field>
           </div>
+
+          ${certProviderSet ? html`
+            <secrets-input
+              .serviceLabel=${DNS_CERT_SECRET_LABEL}
+              .secretKey=${DNS_CERT_SECRET_KEY}
+              .label=${'DNS Provider API Token'}
+              .description=${'API token for the DNS-01 challenge, used to issue *.<domain> certificates.'}
+              .required=${true}
+              .disabled=${!this.hasAuthorizedKeys}
+              .exists=${this.secretExists(DNS_CERT_SECRET_LABEL, DNS_CERT_SECRET_KEY)}
+              @secret-updated=${this.handleSecretUpdated}
+            ></secrets-input>
+          ` : ''}
         </config-section>
       </div>
     `;
