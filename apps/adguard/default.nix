@@ -378,6 +378,20 @@ in
   systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.service-options.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
+    ## AdGuard is the front-end resolver and caches whatever unbound
+    ## returns. With `cache_optimistic = true` and `cache_ttl_min =
+    ## 3600` it will keep serving a stale answer for up to 12h. When a
+    ## service is toggled public<->private, unbound's local-zone /
+    ## local-data records change (e.g. a private service's AAAA flips
+    ## from a WAN address to NODATA) — but AdGuard would go on handing
+    ## clients the old record, so the service appears unreachable
+    ## (IPv6-preferring browsers connect over WAN to a LAN-only vhost
+    ## and get a blank page). Restarting AdGuard whenever unbound's
+    ## config changes flushes its cache so the new records take effect
+    ## immediately.
+    restartTriggers = [
+      (builtins.toJSON config.services.unbound.settings)
+    ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
       # Cleanup any leftover DNS proxy processes on service stop/restart/failure

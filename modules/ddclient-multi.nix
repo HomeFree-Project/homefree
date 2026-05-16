@@ -259,9 +259,28 @@ with lib;
         inherit StateDirectory;
         Type = "oneshot";
         ExecStartPre = [ "!${pkgs.writeShellScript "ddclient-prestart" preStart}" ];
-        ExecStart = ''
-          ${pkgs.bash}/bin/bash -c '${lib.getExe cfg.package} -file /run/${RuntimeDirectory}/ddclient.conf 2>&1 | ${pkgs.coreutils-full}/bin/tee >(${pkgs.gnugrep}/bin/grep -q "422" && exit 0); exit ''\${pipestatus[0]}'
-        '';
+        ## Run ddclient and propagate its real exit code, EXCEPT when
+        ## the only failure was an HTTP 422 from the provider — that
+        ## means a record-update was rejected (e.g. a name that does
+        ## not exist, or a type conflict). A 422 is a configuration
+        ## issue, not a transient fault, so failing the unit (and
+        ## triggering Restart=) would just spin. We log it and exit 0.
+        ##
+        ## NOTE: the previous inline form referenced `${pipestatus[0]}`
+        ## (lowercase) — bash's array is `PIPESTATUS`, so it always
+        ## evaluated empty ("Invalid environment variable name").
+        ## A standalone script avoids the heredoc-escaping trap.
+        ExecStart = "${pkgs.writeShellScript "ddclient-run" ''
+          set -o pipefail
+          out="$(${lib.getExe cfg.package} -file /run/${RuntimeDirectory}/ddclient.conf 2>&1)"
+          rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | ${pkgs.gnugrep}/bin/grep -q '422'; then
+            echo "ddclient: exit $rc included a 422 (record update rejected) — treating as non-fatal" >&2
+            exit 0
+          fi
+          exit "$rc"
+        ''}";
       };
     };
 

@@ -316,8 +316,18 @@ class SecretsManager:
             env = os.environ.copy()
             env['SOPS_AGE_KEY'] = age_private_key
 
+            # `sops --set` takes two space-separated JSON tokens: the
+            # path and the value. Both must be valid JSON, so build
+            # them with json.dumps rather than f-string interpolation
+            # — otherwise any secret containing a quote, backslash or
+            # newline produces malformed JSON ("Value for --set is not
+            # valid JSON"). Trailing whitespace is stripped so values
+            # pasted with a newline (or read from a file) round-trip
+            # cleanly.
+            set_path = json.dumps([sops_key])
+            set_value = json.dumps(secret_value.rstrip('\n'))
             subprocess.run(
-                ['sops', '--age', age_recipients_str, '--set', f'["{sops_key}"] "{secret_value}"', str(SECRETS_FILE)],
+                ['sops', '--age', age_recipients_str, '--set', f'{set_path} {set_value}', str(SECRETS_FILE)],
                 check=True,
                 capture_output=True,
                 text=True,
