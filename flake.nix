@@ -48,32 +48,80 @@
         exec python3 ${./scripts/check-container-updates.py} "$@"
       '';
     };
+
+    # Helper function to create script apps
+    mkScriptApp = system: pkgs: scriptName: scriptPath: {
+      type = "app";
+      program = "${pkgs.writeShellScriptBin scriptName ''
+        exec ${scriptPath} "$@"
+      ''}/bin/${scriptName}";
+    };
+
+    # Create apps for a specific system
+    mkSystemApps = system: pkgs: {
+      deploy = mkScriptApp system pkgs "deploy" ./scripts/deploy.sh;
+      build-iso-image = mkScriptApp system pkgs "build-image" ./scripts/build-image.sh;
+      flash = mkScriptApp system pkgs "flash" ./scripts/flash.sh;
+      build = mkScriptApp system pkgs "build" ./scripts/build.sh;
+      run-vm = mkScriptApp system pkgs "run" ./scripts/run-vm.sh;
+    };
   in
   {
+    apps = {
+      ${system} = (mkSystemApps system inputs.nixpkgs.legacyPackages.${system}) // {
+        update-versions = {
+          type = "app";
+          program = "${update-versions}/bin/update-versions";
+        };
+      };
+    };
+
     nixosModules = rec {
       homefree = import ./default.nix { inherit homefree-inputs; inherit system; };
       imports = [ ];
       default = homefree;
       lan-client = import ./lan-client.nix { inherit homefree-inputs; inherit system; };
     };
+
     nixosConfigurations = {
-      homefree-test = inputs.nixpkgs.lib.nixosSystem {
+      # Note that this uses unstable
+      homefree = inputs.nixpkgs-unstable.lib.nixosSystem {
         system = system;
         modules = [
           self.nixosModules.homefree
+          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
         ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
       };
-      lan-client = inputs.nixpkgs.lib.nixosSystem {
+
+      # Note that this uses unstable
+      lan-client = inputs.nixpkgs-unstable.lib.nixosSystem {
         system = system;
         modules = [
           self.nixosModules.lan-client
+          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
         ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
       };
-    };
-    apps.${system} = {
-      update-versions = {
-        type = "app";
-        program = "${update-versions}/bin/update-versions";
+
+      # Default installer - Web-based (replaces Calamares)
+      # Note that this uses STABLE, as the installation CD doesn't necessarily work on unstable
+      homefree-installer = inputs.nixpkgs.lib.nixosSystem {
+        system = system;
+        modules = [
+          ## HomeFree web-based installer
+          ./installer
+        ];
+        specialArgs = {
+          system = system;
+          inherit homefree-inputs;
+        };
       };
     };
     packages.${system} = {
