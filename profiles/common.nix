@@ -187,9 +187,15 @@
   services.upower.enable = true;
 
   # Enable power management
+  # Note: powertop autotuning is intentionally disabled. On a server its
+  # autotuning enables SATA link power management (ALPM) and disk APM, which
+  # spins HDDs down while idle. The next smartd VERIFY poll then times out
+  # ("qc timeout ... VERIFY failed"), forcing a SATA link reset roughly every
+  # 10 minutes — that hang/reset cycle corrupts or drops long disk copies.
+  # Idle disk spindown is the wrong default for an always-on server anyway.
   powerManagement = {
     enable = true;
-    powertop.enable = true;
+    powertop.enable = false;
   };
 
   # Disable USB autosuspend for HID devices (keyboards, mice, etc.).
@@ -206,8 +212,17 @@
   # power/control is on the parent USB device, so the match never fired.
   # `ATTRS{...}` walks parents and matches correctly.
   boot.kernelParams = [ "usbcore.autosuspend=-1" ];
+
+  # Keep storage drives spun up. Defense-in-depth alongside disabling
+  # powertop autotuning above: pin every SATA link to max_performance and
+  # disable the standby timer (-S 0) and APM (-B 255) on rotational HDDs.
+  # Matched by ATTR{queue/rotational}=="1" so SSDs are left untouched.
+  # An always-on server should never spin disks down — idle spindown causes
+  # smartd VERIFY-poll timeouts/link resets and needless head load-cycle wear.
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
+    ACTION=="add|change", SUBSYSTEM=="scsi_host", KERNEL=="host*", TEST=="link_power_management_policy", ATTR{link_power_management_policy}="max_performance"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.hdparm}/bin/hdparm -S 0 -B 255 /dev/%k"
   '';
 
   # Eternal Terminal
