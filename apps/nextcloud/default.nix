@@ -577,6 +577,14 @@ in
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "dns-ready.service" ];
     wants = [ "postgresql.service" ];
+    ## The container bind-mounts the host's /run/postgresql (a per-boot
+    ## tmpfs that postgresql.service owns via RuntimeDirectory). When
+    ## Postgres restarts it recreates that directory with a fresh
+    ## inode, orphaning the container's existing mount — the container
+    ## then sees an empty dir and "connection to socket failed".
+    ## partOf makes a Postgres restart propagate a restart here so the
+    ## bind mount is re-established against the live directory.
+    partOf = [ "postgresql.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nextcloud-prestart" preStart}" ];
       ExecStartPost = [ "!${pkgs.writeShellScript "nextcloud-poststart" postStart}" ];
