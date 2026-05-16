@@ -1,0 +1,6 @@
+strawberry-graphql[asgi]==0.217.1
+uvicorn[standard]==0.27.0
+fastapi==0.109.0
+python-multipart==0.0.6
+psutil==5.9.8
+pyudev==0.24.1
