@@ -11,9 +11,19 @@ let
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
   blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
-    iifname ${wan-interface} saddr ${entry.ip} drop
-    iifname ${wan-interface} daddr ${entry.ip} drop
+    iifname ${wan-interface} ip saddr ${entry.ip} drop
+    iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
+
+  ## Static abuse blocklist for the abusive_nets4 nftables set.
+  ## Fully driven by config.homefree.network.abuseBlockCidrs — a
+  ## user-owned list (seeded once with Alibaba Cloud scraper ranges
+  ## by modules/abuse-blocking.nix, then editable in the admin UI).
+  ## Only entries with enabled == true are enforced; a disabled
+  ## entry stays in config for reference but is left out of the set.
+  enabled-abuse-cidrs = lib.map (e: e.cidr)
+    (lib.filter (e: e.enabled) config.homefree.network.abuseBlockCidrs);
+  abuse-cidrs-str = lib.concatStringsSep ", " enabled-abuse-cidrs;
 
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
@@ -194,6 +204,39 @@ in
 
         ## "inet" indicates both ipv4 and ipv6
         table inet filter {
+          ## Static abusive-network blocklist, driven by the
+          ## user-owned config.homefree.network.abuseBlockCidrs list
+          ## (only enabled entries land here). Editable in the admin
+          ## UI; changing it requires a rebuild. For adaptive bans
+          ## see `f2b_banned4` below.
+          ##
+          ## The `elements = { ... }` line is emitted only when the
+          ## enabled list is non-empty — nftables rejects an empty
+          ## `{ }` initializer. An element-less set is still valid
+          ## and the @abusive_nets4 lookups below simply never match.
+          set abusive_nets4 {
+            type ipv4_addr
+            flags interval${lib.optionalString (enabled-abuse-cidrs != []) "\n            elements = { ${abuse-cidrs-str} }"}
+          }
+
+          ## Dynamic ban set populated by fail2ban via the
+          ## nftables-multiport action. Entries time out
+          ## automatically (bantime configured in modules/abuse-
+          ## blocking.nix); fail2ban refreshes them as needed.
+          ## We declare the set here so the nftables ruleset
+          ## reload (on every nixos-rebuild switch) doesn't
+          ## wipe an existing fail2ban-populated set's *schema*
+          ## — fail2ban will re-populate elements on restart if
+          ## the kernel set is empty.
+          set f2b_banned4 {
+            type ipv4_addr
+            flags timeout
+          }
+          set f2b_banned6 {
+            type ipv6_addr
+            flags timeout
+          }
+
           ## allow all packets sent by the firewall machine itself
           chain output {
             type filter hook output priority 100; policy accept;
@@ -204,6 +247,14 @@ in
             type filter hook input priority 0; policy drop;
 
             ${blocked-ip-rules}
+
+            ## Drop traffic from statically-banned scraper
+            ## networks and dynamically-banned IPs. Counter
+            ## helps quantify abuse pressure via `nft list
+            ## ruleset`.
+            iifname "${wan-interface}" ip saddr @abusive_nets4 counter drop comment "Static abuse block"
+            iifname "${wan-interface}" ip saddr @f2b_banned4 counter drop comment "fail2ban v4"
+            iifname "${wan-interface}" ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6"
 
             ## Allow for ipv6 route advertisements
             icmpv6 type { echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, nd-redirect, ind-neighbor-solicit, ind-neighbor-advert, router-renumbering, mld-listener-query, mld-listener-report, mld-listener-done, mld-listener-reduction, mld2-listener-report } accept;
@@ -242,6 +293,15 @@ in
             type filter hook forward priority 0; policy drop;
 
             ${blocked-ip-rules}
+
+            ## Same abuse blocks at the forwarding hook so that
+            ## traffic destined for podman-hosted services (which
+            ## is routed, not input-ed to the host) is also
+            ## dropped early. Without this, the input-chain block
+            ## above only protects services bound to the host.
+            iifname "${wan-interface}" ip saddr @abusive_nets4 counter drop comment "Static abuse block (fwd)"
+            iifname "${wan-interface}" ip saddr @f2b_banned4 counter drop comment "fail2ban v4 (fwd)"
+            iifname "${wan-interface}" ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6 (fwd)"
 
             ## LAN-WAN
             iifname { "${lan-interface}" } oifname { "${wan-interface}" } accept comment "Allow trusted LAN to WAN"
