@@ -302,6 +302,12 @@ export const getAbuseBlockingTopTrafficSources = (window = 3600, filter = 'all',
 export const postAbuseBlockingUnban = (jail, ip) =>
   post('/api/abuse-blocking/unban', { jail, ip });
 
+// Dashboard — system overview, time-series history, LAN clients.
+// None are cached: the dashboard polls them for live data.
+export const getDashboardOverview = () => get('/api/dashboard/overview');
+export const getDashboardHistory = () => get('/api/dashboard/history');
+export const getLanClients = () => get('/api/dashboard/lan-clients');
+
 // Filesystem
 export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);
 export const createFolder = (path) => post('/api/filesystem/mkdir', { path });

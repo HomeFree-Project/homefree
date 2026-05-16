@@ -537,6 +537,11 @@ in
             ## running under systemd.
             pkgs.fail2ban
             pkgs.nftables
+            ## `ip`, used by resolvers/dashboard.py for default-route
+            ## gateway discovery and the LAN-clients neighbour table.
+            ## Without it the dashboard's gateway fields are blank and
+            ## every LAN client shows offline.
+            pkgs.iproute2
           ]}"
           # Path of the served frontend bundle, used by the closure-id
           # endpoint. Embeds the nix-store hash, so it changes IFF the
