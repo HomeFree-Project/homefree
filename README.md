@@ -1,44 +1,89 @@
-## HomeFree Self-Hosting Platform
+# HomeFree
 
-**HomeFree** is a platform for easy, flexible, and progressive self-hosting to
-liberate you from giant cloud providers.
+**A personal server *and* router in one box — your apps, your identity, your connectivity, on hardware you own.**
 
-## Installing
+> Status: technical preview. Production users welcome, but expect some sharp edges.
 
-See the [sample config repo](https://git.homefree.host/homefree/sample-config) for installation instructions
+## What it is
 
-Configure system by setting up values as defined in the [HomeFree module](./module.nix)
+HomeFree is a declarative [NixOS](https://nixos.org/) system that sits between your
+internet modem and the rest of your home network. Most self-hosting projects are app
+launchers; HomeFree is also your router — firewall, ad-blocking DNS, dynamic DNS,
+automatic HTTPS, and a private mesh VPN are built in. On top of that it runs a curated
+suite of apps, every one of them behind a single sign-on, with encrypted backups to
+local disk, a NAS, or S3. Router, apps, identity, and backups are configured together
+and declared in one config — rebuild the whole machine, reproducibly, anywhere.
 
-## Gateway-specific config
+## What's included
 
-### AT&T Fiber Router
+**Infrastructure** — Zitadel SSO + oauth2-proxy (one login, every app), Caddy reverse
+proxy with automatic TLS, Unbound DNS, AdGuard ad-blocking, multi-zone dynamic DNS,
+headscale mesh VPN, restic backups (local / NAS / S3), nftables abuse-blocking.
 
-* Firewall Settings
-  * On "IP Passthrough" page, set
-    * Allocation Mode: "PassThrough"
-    * Default Server Internal Address: <empty>
-    * Passthrough Mode: "DHCPS-fixed"
-    * Passthrough Fixed MAC Address: Choose the MAC of the WAN interface of your HomeFree device
-  * Make sure to disable all packet filters on "Package Filter" tab
-  * Absolutely make sure to disable all settings on "Firewall Advanced" tab
+**Admin** — a web-based installer and an admin dashboard at `admin.<domain>`, a
+per-user app dashboard at `home.<domain>`, backed by a FastAPI service.
 
-### Intel NUC
+**Apps** — all opt-in, all gated by SSO: Nextcloud, Immich, Jellyfin, Matrix/Synapse,
+Vaultwarden, Home Assistant, Forgejo, Frigate, CryptPad, FreshRSS, Trilium, Ollama,
+and more — see [`apps/`](./apps) for the full catalog.
 
-* Prevent hangs on boot due to alerts (e.g. if no monitor attached)
-  * F2 to enter BIOS
-  * Select "Boot" tab
-  * Enable Fast Boot
-  * Select "Boot Display Configuration"
-  * Enable "Suppress Alert Messages at Boot"
-* Enable headless GPU
-  * Plug in a dummy HDMI dongle
+## Install
 
-## Don't passively use the Feed. Cultivate the Seed.
+The supported path is the guided ISO installer — no command line required:
 
-> “These were rice paddies before they were parking lots. Rice was the basis for our society. Peasants planted the seeds and had highest status in the Confucian hierarchy. As the Master said, “Let the producers be many and the consumers few.' When the Feed came in from Atlantis, from Nippon, we no longer had to plant, because the rice now came from the matter compiler. It was the destruction of our society. When our society was based upon planting, it could truly be said, as the Master did, “Virtue is the root; wealth is the result.' But under the Western ti, wealth comes not from virtue but from cleverness. So the filial relationships became deranged. Chaos,” Dr. X said regretfully, then looked up from his tea and nodded out the window. “Parking lots and chaos.”
+1. Download the HomeFree ISO from [homefree.host](https://homefree.host/).
+2. Write it to an 8 GB+ USB stick — [balenaEtcher](https://www.balena.io/etcher/)
+   works on any OS, or use `dd` if you're on Linux/macOS:
 
-― Neal Stephenson, The Diamond Age: Or, a Young Lady's Illustrated Primer
+   ```sh
+   # replace /dev/sdX with your USB device — this erases it
+   sudo dd if=homefree-latest.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   ```
+3. Boot the HomeFree box from the USB stick and follow the on-screen installer (~20 min).
 
-> Dr. X raised one hand a few inches from the tabletop, palm down, and pawed once at the air. Hackworth recognized it as the gesture that well-to-do Chinese used to dismiss beggars, or even to call bullshit on people during meetings. "They are wrong," he said. "They do not understand. They think of the Seed from a Western perspective. Your cultures--and that of the Coastal Republic--are poorly organized. There is no respect for order, no reverence for authority. Order must be enforced from above lest anarchy break out. You are afraid to give the Seed to your people because they can use it to make weapons, viruses, drugs of their own design, and destroy order. You enforce order through control of the Feed. But in the Celestial Kingdom, we are disciplined, we revere authority, we have order within our own minds, and hence the family is orderly, the village is orderly, the state is orderly. In our hands the Seed would be harmless."
+See the manual for the full walkthrough, including how to wire up the hardware and
+set your modem and Wi-Fi to bridge mode:
 
-― Neal Stephenson, The Diamond Age: Or, a Young Lady's Illustrated Primer
+- [Hardware setup](https://homefree.host/hardware-setup/)
+- [Installation](https://homefree.host/installation/)
+
+## Repo layout
+
+| Path | Contents |
+|---|---|
+| `apps/` | Per-app service modules (Nextcloud, Immich, Zitadel, …) |
+| `services/` | Core infrastructure (Caddy, DNS, SSO, admin web, landing page) |
+| `modules/` | System modules (abuse-blocking, geoIP, dynamic DNS) |
+| `profiles/` | Configuration profiles (boot, networking, router, secrets) |
+| `web-platform/` | Web installer + admin UI (Lit frontend, FastAPI backend) |
+| `scripts/` | Build and deploy automation |
+| `flake.nix` | Flake inputs and outputs — the build entry point |
+| `module.nix` | The `homefree.*` NixOS option schema (single source of truth) |
+| `configuration.example.nix` | Annotated example system configuration |
+
+## Development
+
+A host is configured through the `homefree.*` options declared in `module.nix`,
+supplied per-host via `homefree-configuration.nix` (the installer writes this).
+
+Flake apps:
+
+```sh
+nix run .#run-vm           # boot the configuration in a QEMU VM
+nix run .#build-iso-image  # build the installer ISO
+nix run .#deploy           # build locally and deploy to a remote host
+nix run .#flash            # write an ISO to a USB stick
+```
+
+`scripts/build.sh` runs a local `nixos-rebuild`; `scripts/deploy.sh` builds locally
+and activates the closure on a remote host.
+
+## Documentation
+
+- [Manual](https://homefree.host/manual/) · [FAQ](https://homefree.host/faq/) · [Comparison with other projects](https://homefree.host/comparison/)
+- [Backup & restore guide](./docs/BACKUP_RESTORE.md)
+- The landing page and manual sources live in [`services/landing-page/`](./services/landing-page).
+
+## License
+
+GPLv3 — see [`LICENSE`](./LICENSE).
