@@ -4,6 +4,7 @@ import { handleSignOut } from '../../shared/auth.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
 import { shellStyles } from '../../shared/shell.js';
+import './modules/dashboard-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/dns-module.js';
@@ -507,7 +508,7 @@ class AdminApp extends LitElement {
     this.pendingConfig = {};
     this.config = {};  // Initialize merged config
     this.dirtyModules = new Set();
-    this.currentModule = 'system';
+    this.currentModule = 'dashboard';
     this.loading = true;
     this.error = null;
     /* On mobile (≤768px) the sidebar is an overlay and should start
@@ -567,6 +568,12 @@ class AdminApp extends LitElement {
     // with the section name.
     this.modules = [
       {
+        id: 'dashboard',
+        title: 'Dashboard',
+        icon: '📊',
+        section: 'System'
+      },
+      {
         id: 'system',
         title: 'Host',
         icon: '⚙️',
@@ -603,12 +610,6 @@ class AdminApp extends LitElement {
         section: 'System'
       },
       {
-        id: 'status',
-        title: 'Status',
-        icon: '📊',
-        section: 'System'
-      },
-      {
         id: 'abuse-blocking',
         title: 'Network Traffic',
         icon: '🛡️',
@@ -618,6 +619,12 @@ class AdminApp extends LitElement {
         id: 'advanced',
         title: 'Advanced',
         icon: '🔧',
+        section: 'System'
+      },
+      {
+        id: 'status',
+        title: 'Status',
+        icon: '📊',
         section: 'System'
       },
       {
@@ -768,8 +775,8 @@ class AdminApp extends LitElement {
     if (hash && this.modules.find(m => m.id === hash)) {
       this.currentModule = hash;
     } else if (!hash) {
-      // Default to system if no hash
-      this.currentModule = 'system';
+      // Default to the dashboard landing page if no hash
+      this.currentModule = 'dashboard';
     }
   }
 
@@ -1906,6 +1913,11 @@ class AdminApp extends LitElement {
 
     // Render appropriate module based on currentModule
     switch (this.currentModule) {
+      case 'dashboard':
+        return html`
+          <dashboard-module></dashboard-module>
+        `;
+
       case 'system':
         return html`
           <system-module

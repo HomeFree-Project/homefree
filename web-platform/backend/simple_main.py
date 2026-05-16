@@ -31,6 +31,7 @@ from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
 from resolvers.services import ServicesResolver
 from resolvers.abuse_blocking import AbuseBlockingResolver
+from resolvers.dashboard import DashboardResolver, start_sampler
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
@@ -394,6 +395,13 @@ async def clear_service_restart_flag():
         logger.info("Service state file updated to operational status")
     except Exception as e:
         logger.error(f"Error clearing service restart flag: {e}")
+
+    # Kick off the dashboard stats sampler. It runs as a daemon thread,
+    # filling an in-memory ring buffer that backs the dashboard charts.
+    try:
+        start_sampler()
+    except Exception as e:
+        logger.error(f"Error starting dashboard stats sampler: {e}")
 
 # Request/Response Models
 class NetworkConfigRequest(BaseModel):
@@ -935,6 +943,39 @@ async def post_abuse_blocking_unban(body: AbuseBlockingUnbanRequest, request: Re
         status_code=200 if ok else 400,
         content={"ok": ok, "jail": body.jail, "ip": body.ip, "message": message},
     )
+
+
+@app.get("/api/dashboard/overview")
+async def get_dashboard_overview():
+    """One-shot system overview: CPU, memory, disks, NICs, IPs, gateway,
+    connectivity, LAN client count. Powers the admin dashboard page."""
+    try:
+        return JSONResponse(content=DashboardResolver.get_overview())
+    except Exception as e:
+        logger.error(f"dashboard overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/history")
+async def get_dashboard_history():
+    """Time-series samples (throughput, connectivity, CPU, memory) from
+    the in-memory ring buffer. Resets on admin-api restart."""
+    try:
+        return JSONResponse(content=DashboardResolver.get_history())
+    except Exception as e:
+        logger.error(f"dashboard history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/lan-clients")
+async def get_dashboard_lan_clients():
+    """LAN client inventory: DHCP leases merged with the kernel
+    neighbour table. Backs the dedicated LAN Clients admin page."""
+    try:
+        return JSONResponse(content=DashboardResolver.get_lan_clients())
+    except Exception as e:
+        logger.error(f"dashboard lan-clients: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/services/visible-to-me")
