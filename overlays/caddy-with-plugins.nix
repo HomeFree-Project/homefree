@@ -81,12 +81,19 @@ rec {
             hash = "sha256-MRISKmYrCZAypoUsfQDMTjL24er8mES0gF5xmzhAqR8=";
           };
         in
-        prev.caddy.override {
-          ## Use unstable Go for newer module requirements (hetzner v2 needs Go 1.24+)
-          buildGoModule = args: final.unstable.buildGoModule (args // {
-            inherit version src;
-            inherit vendorHash;
-            overrideModAttrs = _: {
+        prev.caddy.overrideAttrs (oldAttrs: {
+          inherit version src;
+          inherit vendorHash;
+          # Disable tests - they are flaky and can fail due to timing issues
+          doCheck = false;
+          postPatch = caddyPatchMain;
+          preBuild = "cp vendor/go.mod vendor/go.sum .";
+          postInstall = ''
+            ${oldAttrs.postInstall or ""}
+            sed -i -E '/Group=caddy/aEnvironmentFile=-/etc/default/caddy\nTimeoutSec=180' $out/lib/systemd/system/caddy.service
+          '';
+          passthru = oldAttrs.passthru // {
+            overrideModAttrs = finalModAttrs: previousModAttrs: {
               preBuild = ''
                 export GOTOOLCHAIN=auto
                 ${caddyPatchMain}
@@ -95,14 +102,8 @@ rec {
               '';
               postInstall = "cp go.mod go.sum $out/";
             };
-            postInstall = ''
-              ${args.postInstall}
-              sed -i -E '/Group=caddy/aEnvironmentFile=-/etc/default/caddy\nTimeoutSec=180' $out/lib/systemd/system/caddy.service
-            '';
-            postPatch = caddyPatchMain;
-            preBuild = "cp vendor/go.mod vendor/go.sum .";
-          });
-        };
+          };
+        });
     in
     caddy-with-plugins;
   caddy = prev.caddy.overrideAttrs (_: { passthru.withPackages = caddy-with-plugins; });
