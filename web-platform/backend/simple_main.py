@@ -403,6 +403,14 @@ async def clear_service_restart_flag():
     except Exception as e:
         logger.error(f"Error starting dashboard stats sampler: {e}")
 
+    # Pre-warm the backup repository path cache in a daemon thread so the
+    # Restore tab's per-repository path summaries render without a wait.
+    try:
+        from services.backup_operations import BackupOperations
+        BackupOperations.start_prewarm_thread()
+    except Exception as e:
+        logger.error(f"Error starting backup path cache pre-warm: {e}")
+
 # Request/Response Models
 class NetworkConfigRequest(BaseModel):
     wan_interface: str

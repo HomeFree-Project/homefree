@@ -696,6 +696,29 @@
         };
       };
 
+      backup-canary = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "enable the Backup Self-Test (backup-canary) service";
+        };
+
+        public = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open to public on WAN port";
+        };
+
+        selftest-source = lib.mkOption {
+          type = lib.types.enum [ "local" "backblaze" "both" ];
+          default = "local";
+          description = ''
+            Which backup source the automated self-test exercises:
+            'local', 'backblaze', or 'both'.
+          '';
+        };
+      };
+
       baikal = {
         enable = lib.mkOption {
           type = lib.types.bool;
