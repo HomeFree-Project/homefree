@@ -582,6 +582,13 @@ in
           ];
           https-domains = [ cfg.system.domain ] ++ cfg.system.additionalDomains;
 
+          ## Also serve the admin UI on the bare LAN IP. The finish-setup
+          ## captive portal redirects to http://<lan-ip>/ — an IP, never a
+          ## hostname — because a hostname in a redirect is resolved by
+          ## whatever client follows it (which may be on a different network
+          ## and resolve admin.<localDomain> to a *different* HomeFree box).
+          extra-http-hosts = [ "http://${cfg.network.lan-address}" ];
+
           # Use static-path for serving files
           static-path = "${installerWebPath}/frontend";
 

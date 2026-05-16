@@ -46,8 +46,11 @@ let
     ESC=$(printf '\033')
     bold="$ESC[1m"
     reset="$ESC[0m"
+    green="$ESC[1;32m"     # redirect active (the normal, helpful state)
+    yellow="$ESC[1;33m"    # redirect disabled (override engaged)
     home="$ESC[H"          # cursor to top-left
     clr_eos="$ESC[J"       # clear from cursor to end of screen
+    clr_eol="$ESC[K"       # clear from cursor to end of line
     hide_cursor="$ESC[?25l"
     show_cursor="$ESC[?25h"
 
@@ -76,45 +79,72 @@ let
         | awk '{print $4}' | cut -d/ -f1 | head -n1)"
       [ -z "$lan_ip" ] && lan_ip="(none yet - configured: ${lanAddress})"
 
-      override="off"
-      [ -f ${portalDisabledSentinel} ] && override="ON (LAN browsing allowed)"
+      ## Captive-portal redirect status. The redirect only ever intercepts
+      ## plain-HTTP requests (HTTPS sites load normally either way); when ON
+      ## it bounces them to the wizard so a connected device finds it
+      ## automatically. The override sentinel turns that bouncing off.
+      if [ -f ${portalDisabledSentinel} ]; then
+        redirect_state="''${yellow}OFF''${reset}"
+        redirect_hint="HTTP requests are NOT being redirected to the wizard."
+        key_action="re-enable"
+      else
+        redirect_state="''${green}ON''${reset}"
+        redirect_hint="HTTP requests on the LAN are redirected to the wizard."
+        key_action="disable"
+      fi
 
-      ## Redraw in place: home the cursor, print, then clear any leftover
-      ## lines below. printf interprets the $ESC sequences in the variables.
+      ## Redraw in place. Home the cursor, then print each line followed by
+      ## ESC[K (clear to end of line) BEFORE the newline — so a line that got
+      ## shorter since the last frame (e.g. the long "(none yet ...)"
+      ## fallback being replaced by a short IP) doesn't leave stale tail
+      ## characters behind. A final clear-to-end-of-screen mops up any lines
+      ## removed from the bottom.
       printf '%s' "$home"
-      printf '%s\n' "" \
-        "  ''${bold}HomeFree - finish setup''${reset}" \
-        "  -----------------------------------------------" \
-        "" \
-        "  Setup is NOT finished. Complete it from a browser" \
-        "  on another device connected to the LAN port." \
-        "" \
-        "    LAN port (${lanInterface}):  $link" \
-        "    LAN address:               $lan_ip" \
-        "" \
-        "    Open:   ''${bold}http://${wizardHost}/''${reset}" \
-        "            http://$lan_ip/   (if the name fails)" \
-        "" \
-        "    Setup redirect override: $override" \
-        "" \
-        "  Connect a laptop or phone to the LAN port and open" \
-        "  the address above. Most devices will offer a" \
-        '  "Sign in to network" prompt automatically.' \
-        "" \
-        "  -----------------------------------------------" \
-        "  Press ''${bold}d''${reset} to disable the setup redirect (lets LAN" \
-        "  devices browse the internet before you finish)." \
-        "  This screen refreshes automatically." \
-        ""
+      while IFS= read -r line; do
+        printf '%s%s\n' "$line" "$clr_eol"
+      done <<EOF
+
+  ''${bold}HomeFree - finish setup''${reset}
+  -----------------------------------------------
+
+  Setup is NOT finished. Complete it from a browser
+  on another device connected to the LAN port.
+
+    LAN port (${lanInterface}):  $link
+    LAN address (detected):    $lan_ip
+
+    Open:   ''${bold}http://${lanAddress}/''${reset}
+            (or http://${wizardHost}/ )
+
+    Setup redirect:  $redirect_state
+    $redirect_hint
+
+  Connect a laptop or phone to the LAN port and open
+  the address above. Most devices will offer a
+  "Sign in to network" prompt automatically.
+
+  -----------------------------------------------
+  Press ''${bold}d''${reset} to $key_action the setup redirect. Disable it if
+  you need a device to browse the web (e.g. to fetch a
+  DNS token) before finishing setup. HTTPS sites always
+  work either way. This screen refreshes automatically.
+EOF
       printf '%s' "$clr_eos"
 
       ## Wait up to 5s for a keypress, then refresh.
-      ## Caddy's portal matcher checks the sentinel at request time, so
-      ## dropping the file takes effect on the next request - no reload.
+      ## `d` TOGGLES the override: create the sentinel if absent, remove it
+      ## if present. Caddy's portal matcher checks the sentinel at request
+      ## time, so the change takes effect on the next request — no reload.
+      ## The status line above flips colour on the next redraw, so the user
+      ## sees the toggle land.
       if read -r -n1 -t5 key 2>/dev/null; then
         if [ "$key" = "d" ] || [ "$key" = "D" ]; then
-          mkdir -p /var/lib/homefree-secrets 2>/dev/null || true
-          touch ${portalDisabledSentinel} 2>/dev/null || true
+          if [ -f ${portalDisabledSentinel} ]; then
+            rm -f ${portalDisabledSentinel} 2>/dev/null || true
+          else
+            mkdir -p /var/lib/homefree-secrets 2>/dev/null || true
+            touch ${portalDisabledSentinel} 2>/dev/null || true
+          fi
         fi
       fi
     done
@@ -155,8 +185,8 @@ in
     ********************************************************
     *  HomeFree setup is NOT finished.                     *
     *                                                      *
-    *  Open  http://${wizardHost}/
-    *  (or   http://${lanAddress}/  if the name fails)
+    *  Open  http://${lanAddress}/
+    *  (or   http://${wizardHost}/ )
     *  from a device connected to the LAN port to finish.   *
     ********************************************************
 

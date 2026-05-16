@@ -32,17 +32,17 @@
 let
   cfg = config.homefree;
 
-  ## Where the wizard lives. The admin UI is served at admin.<localDomain>
-  ## (services/admin-web registers `subdomains = ["admin"]` against the local
-  ## domain). HomeFree's own unbound generates an A record for every non-public
-  ## reverse-proxy FQDN pointing at the LAN IP (services/unbound), so
-  ## `admin.<localDomain>` resolves on a fresh box as long as HomeFree is the
-  ## LAN's DNS server (the router-mode default).
+  ## Where the wizard lives. We redirect to the box's bare LAN IP, NOT a
+  ## hostname: a hostname in a redirect is resolved by whatever client
+  ## follows it, and that client may resolve admin.<localDomain> to a
+  ## *different* HomeFree box (a stale DNS entry, a second box, a VM tester
+  ## whose host network maps the name to their production instance). The IP
+  ## is unambiguous — it is always this box on this LAN.
   ##
-  ## Note we do NOT need a separate bare-IP virtualHost: the `:80`
-  ## catch-all below already matches a request to the bare LAN IP and
-  ## redirects it here, so a user who types the IP still lands on the wizard.
-  wizardUrl = "http://admin.${cfg.system.localDomain}/";
+  ## admin-web registers this exact address as an explicit virtualHost
+  ## (`extra-http-hosts`), so http://<lan-ip>/ serves the admin UI directly
+  ## and is more specific than this `:80` catch-all — no redirect loop.
+  wizardUrl = "http://${cfg.network.lan-address}/";
 
   ## Domains a user may legitimately need to reach BEFORE finishing setup —
   ## chiefly to generate a DNS-provider API token or fetch an SSH key. Plain-

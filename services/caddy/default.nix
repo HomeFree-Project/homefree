@@ -358,6 +358,11 @@ in
         reverse-proxy-config = service-config.reverse-proxy;
         http-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "http://${subdomain}.${domain}") reverse-proxy-config.http-domains)) reverse-proxy-config.subdomains);
         https-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "https://${subdomain}.${domain}") reverse-proxy-config.https-domains)) reverse-proxy-config.subdomains);
+        ## Literal site addresses appended verbatim — no subdomain cross-
+        ## product. Used to serve a service on a bare IP (the finish-setup
+        ## wizard is reached at http://<lan-ip>/ so the captive portal can
+        ## redirect to an IP, never a client-resolved hostname).
+        extra-http-urls = reverse-proxy-config.extra-http-hosts or [];
         http-urls-root-domain = if reverse-proxy-config.rootDomain == true then (lib.map (domain: "http://${domain}") reverse-proxy-config.http-domains) else [];
         https-urls-root-domain = if reverse-proxy-config.rootDomain == true then (lib.map (domain: "https://${domain}") reverse-proxy-config.https-domains) else [];
 
@@ -372,9 +377,9 @@ in
             urls = if needsSplit then
               (if includeHttps
                then https-urls ++ https-urls-root-domain
-               else http-urls ++ http-urls-root-domain)
+               else http-urls ++ http-urls-root-domain ++ extra-http-urls)
             else
-              http-urls ++ https-urls ++ http-urls-root-domain ++ https-urls-root-domain;
+              http-urls ++ https-urls ++ http-urls-root-domain ++ https-urls-root-domain ++ extra-http-urls;
             host-string = lib.concatStringsSep ", " urls;
           in {
         name = host-string;

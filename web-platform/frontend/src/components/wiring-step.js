@@ -315,25 +315,28 @@ class WiringStep extends LitElement {
 
         <!-- ===== Optional switch group (dashed) ===== -->
         <!-- Dashed enclosure -->
-        <rect class="opt-box" x="250" y="150" width="430" height="126" rx="10"/>
+        <rect class="opt-box" x="250" y="150" width="430" height="130" rx="10"/>
         <text class="opt-lbl" x="266" y="170">OPTIONAL — ADD A SWITCH FOR WIRED DEVICES</text>
 
-        <!-- branch down from the LAN wire into the optional group -->
-        <path class="opt-wire" d="M445 64 V 210 H 300"/>
+        <!-- Branch straight DOWN off the LAN wire into the switch's top
+             edge. The switch sits directly below the branch point, so the
+             wire reads cleanly: signal comes in from the top, fans out to
+             the right. No backward dogleg. -->
+        <path class="opt-wire" d="M430 64 V 196"/>
 
-        <!-- Switch -->
-        <rect class="opt-box" x="270" y="184" width="110" height="56" rx="8"/>
-        <text class="lbl" x="325" y="216" text-anchor="middle">Switch</text>
+        <!-- Switch (input on top, outputs on the right) -->
+        <rect class="opt-box" x="375" y="196" width="110" height="56" rx="8"/>
+        <text class="lbl" x="430" y="228" text-anchor="middle">Switch</text>
 
-        <!-- switch -> Wi-Fi AP (alternative AP path, via switch) -->
-        <path class="opt-wire" d="M380 200 H 470"/>
-        <rect class="opt-box" x="470" y="176" width="90" height="48" rx="8"/>
-        <text class="lbl" x="515" y="204" text-anchor="middle">Wi-Fi AP</text>
+        <!-- switch -> Wi-Fi AP (out the right edge) -->
+        <path class="opt-wire" d="M485 212 H 545"/>
+        <rect class="opt-box" x="545" y="190" width="115" height="44" rx="8"/>
+        <text class="lbl" x="602" y="216" text-anchor="middle">Wi-Fi AP</text>
 
-        <!-- switch -> wired devices -->
-        <path class="opt-wire" d="M380 224 H 470"/>
-        <rect class="opt-box" x="470" y="232" width="90" height="36" rx="8"/>
-        <text class="lbl" x="515" y="254" text-anchor="middle">Wired</text>
+        <!-- switch -> wired devices (out the right edge) -->
+        <path class="opt-wire" d="M485 236 H 545"/>
+        <rect class="opt-box" x="545" y="240" width="115" height="34" rx="8"/>
+        <text class="lbl" x="602" y="261" text-anchor="middle">Wired devices</text>
       </svg>
     `;
   }

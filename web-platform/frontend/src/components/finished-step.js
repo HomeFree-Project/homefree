@@ -189,10 +189,13 @@ class FinishedStep extends LitElement {
     const { data } = this;
     // localDomain defaults to "lan" and lan-address to 10.0.0.1 (module.nix);
     // the installer doesn't currently let the user change either.
+    // Primary URL is the bare LAN IP — a hostname in a link is resolved by
+    // the user's own device, which may map admin.<localDomain> to a
+    // different HomeFree box; the IP is unambiguous.
     const localDomain = data.localDomain || 'lan';
     const lanAddress = data.lanAddress || '10.0.0.1';
-    const wizardUrl = `http://admin.${localDomain}/`;
-    const wizardIpUrl = `http://${lanAddress}/`;
+    const wizardUrl = `http://${lanAddress}/`;
+    const wizardNameUrl = `http://admin.${localDomain}/`;
 
     return html`
       <div class="finished-container">
@@ -214,7 +217,7 @@ class FinishedStep extends LitElement {
           <div class="urls">
             Open: <code>${wizardUrl}</code><br/>
             <span class="note">
-              If that address doesn't load, try <code>${wizardIpUrl}</code>.
+              Or try <code>${wizardNameUrl}</code>.
               Many devices will also show a "Sign in to network" prompt
               automatically when you connect.
             </span>
