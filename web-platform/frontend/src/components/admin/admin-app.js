@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
@@ -20,6 +20,7 @@ import './modules/status-module.js';
 import './modules/abuse-blocking-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
+import './finish-setup-wizard.js';
 
 class AdminApp extends LitElement {
   static properties = {
@@ -39,6 +40,7 @@ class AdminApp extends LitElement {
     statusFlashing: { type: Boolean }, // Status nav item flash animation
     statusNeedsAttention: { type: Boolean }, // Persistent flash until user clicks Status
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
+    pendingSetupItems: { type: Array, state: true }, // Post-install finish-setup items still missing
     serviceReloading: { type: Boolean }, // Whether admin-api is restarting
     serviceReloadMessage: { type: String }, // Message to show during reload
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
@@ -534,6 +536,7 @@ class AdminApp extends LitElement {
     this.statusNeedsAttention = false;
     this._toastIdCounter = 0;
     this.hasAuthorizedKeys = false;
+    this.pendingSetupItems = [];
     this.serviceReloading = false;
     this.currentUser = null;
     this.userMenuOpen = false;
@@ -718,6 +721,16 @@ class AdminApp extends LitElement {
 
     // Load SSH key status for secrets management
     await this.loadSSHKeyStatus();
+
+    // Check whether post-install setup is still incomplete. A fresh box
+    // installed from the ISO ships without an SSH key / DNS-01 provider; the
+    // finish-setup wizard overlay handles those before the dashboard is used.
+    try {
+      const mode = await getMode();
+      this.pendingSetupItems = mode.pending_setup_items || [];
+    } catch (e) {
+      this.pendingSetupItems = [];
+    }
 
     // Check if a rebuild is already in progress
     await this.checkRebuildStatus();
@@ -2100,6 +2113,17 @@ class AdminApp extends LitElement {
           <div class="loading-spinner"></div>
           <div class="loading-text">Loading configuration...</div>
         </div>
+      `;
+    }
+
+    // Post-install: if required finish-setup items are still missing, take
+    // over the screen with the wizard before the dashboard is reachable.
+    // (See finish-setup-wizard.js — runs over plain-HTTP LAN, no cert needed.)
+    if (this.pendingSetupItems && this.pendingSetupItems.length > 0) {
+      return html`
+        <finish-setup-wizard
+          .pendingItems=${this.pendingSetupItems}
+        ></finish-setup-wizard>
       `;
     }
 

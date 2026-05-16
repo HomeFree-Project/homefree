@@ -287,6 +287,12 @@ export const applyConfigChanges = (config) => post('/api/config/apply', config);
 export const getConfigDirty = () => get('/api/config/dirty');
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
 
+// Secrets — used by the finish-setup wizard and the DNS module.
+export const getSecretsStatus = () => get('/api/secrets/status');
+// Add an SSH authorized key (bootstraps SOPS recipients on a fresh box).
+export const addAuthorizedKey = (publicKey) =>
+  post('/api/secrets/keys/user', { public_key: publicKey });
+
 // Services
 export const getServices = () => get('/api/services');
 export const getServiceOptionsSchema = () => get('/api/services/options/schema');
@@ -393,4 +399,6 @@ export default {
   getInstallStatus,
   pollInstallStatus,
   rebootSystem,
+  getSecretsStatus,
+  addAuthorizedKey,
 };

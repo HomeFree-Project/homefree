@@ -411,6 +411,83 @@ class SecretsManager:
             return False, f"Error deleting secret: {str(e)}"
 
     @staticmethod
+    def add_user_authorized_key(public_key: str) -> Tuple[bool, Optional[str]]:
+        """
+        Add an SSH public key to system.authorizedKeys in homefree-config.json
+        and (re)generate .sops.yaml so the key becomes a SOPS recipient.
+
+        This is the bootstrap step for a freshly-installed box: the ISO never
+        collects an authorized key, so no secret can be encrypted until one is
+        added. The first authorized key is what SecretsManager.set_secret() uses
+        as the user age recipient.
+
+        If a secrets file already exists, it is re-encrypted ("updatekeys") so
+        it carries the new recipient set.
+
+        Args:
+            public_key: SSH public key string
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        public_key = (public_key or "").strip()
+
+        valid, err = SecretsManager.validate_ssh_public_key(public_key)
+        if not valid:
+            return False, err or "Invalid SSH public key"
+
+        if not CONFIG_FILE.exists():
+            return False, f"Config file not found: {CONFIG_FILE}"
+
+        system_key = SecretsManager.get_system_ssh_public_key()
+        if not system_key:
+            return False, "System SSH host key not found"
+
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            system_section = config.setdefault('system', {})
+            keys = system_section.setdefault('authorizedKeys', [])
+
+            if public_key not in keys:
+                keys.append(public_key)
+                # Atomic write.
+                tmp_path = f"{CONFIG_FILE}.tmp"
+                with open(tmp_path, 'w') as f:
+                    json.dump(config, f, indent=2, sort_keys=False)
+                    f.write('\n')
+                os.replace(tmp_path, CONFIG_FILE)
+
+            # Regenerate .sops.yaml with system + first user key as recipients.
+            SecretsManager.ensure_secrets_dir()
+            SecretsManager.create_sops_config(system_key, keys[0])
+
+            # If secrets already exist, re-encrypt them to the new recipients.
+            if SECRETS_FILE.exists():
+                age_private_key = SecretsManager.ssh_private_to_age(SYSTEM_SSH_PRIVATE_KEY)
+                if not age_private_key:
+                    return False, "Failed to convert system SSH private key to age format"
+                env = os.environ.copy()
+                env['SOPS_AGE_KEY'] = age_private_key
+                subprocess.run(
+                    ['sops', '--config', str(SOPS_CONFIG_FILE),
+                     'updatekeys', '--yes', str(SECRETS_FILE)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else str(e)
+            return False, f"Failed to update SOPS keys: {error_msg}"
+        except Exception as e:
+            return False, f"Error adding authorized key: {str(e)}"
+
+    @staticmethod
     def get_schema() -> Dict[str, Dict[str, Dict]]:
         """
         Get secrets schema from generated JSON file
