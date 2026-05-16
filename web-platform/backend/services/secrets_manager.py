@@ -463,21 +463,53 @@ class SecretsManager:
             SecretsManager.ensure_secrets_dir()
             SecretsManager.create_sops_config(system_key, keys[0])
 
-            # If secrets already exist, re-encrypt them to the new recipients.
+            # If secrets already exist, re-encrypt them so the file carries
+            # the new recipient set. We do NOT use `sops updatekeys` here:
+            # it matches the file against .sops.yaml's creation rules and
+            # is fragile (it fails with "no matching creation rules found"
+            # depending on path resolution / sops version). Instead we do
+            # the same decrypt-then-re-encrypt that set_secret() uses — the
+            # proven path: decrypt with the system host key, re-encrypt with
+            # `--age <recipients>` directly.
             if SECRETS_FILE.exists():
                 age_private_key = SecretsManager.ssh_private_to_age(SYSTEM_SSH_PRIVATE_KEY)
                 if not age_private_key:
                     return False, "Failed to convert system SSH private key to age format"
+
+                # Build the age recipient list: system host key + user key.
+                system_age_key = SecretsManager.ssh_to_age(system_key)
+                if not system_age_key:
+                    return False, "Failed to convert system SSH key to age format"
+                age_recipients = [system_age_key]
+                user_age_key = SecretsManager.ssh_to_age(keys[0])
+                if user_age_key:
+                    age_recipients.append(user_age_key)
+                age_recipients_str = ','.join(age_recipients)
+
                 env = os.environ.copy()
                 env['SOPS_AGE_KEY'] = age_private_key
-                subprocess.run(
-                    ['sops', '--config', str(SOPS_CONFIG_FILE),
-                     'updatekeys', '--yes', str(SECRETS_FILE)],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                )
+
+                # Decrypt the current secrets file to plaintext YAML.
+                decrypted = subprocess.run(
+                    ['sops', '--decrypt', '--input-type', 'yaml',
+                     '--output-type', 'yaml', str(SECRETS_FILE)],
+                    check=True, capture_output=True, text=True, env=env,
+                ).stdout
+
+                # Re-encrypt to the new recipient set, replacing the file.
+                with tempfile.NamedTemporaryFile(
+                        mode='w', suffix='.yaml', delete=False) as tmp:
+                    tmp.write(decrypted)
+                    tmp_plain = tmp.name
+                try:
+                    subprocess.run(
+                        ['sops', '--age', age_recipients_str, '--encrypt',
+                         '--input-type', 'yaml', '--output-type', 'yaml',
+                         '--output', str(SECRETS_FILE), tmp_plain],
+                        check=True, capture_output=True, text=True, env=env,
+                    )
+                finally:
+                    os.unlink(tmp_plain)
 
             return True, None
 

@@ -405,9 +405,8 @@ class FinishSetupWizard extends LitElement {
       <div class="wizard">
         <h1>Finish setting up HomeFree</h1>
         <p class="subtitle">
-          A few things couldn't be collected during installation because the
-          installer had no way for you to paste keys and tokens. Complete them
-          here from a device where you have those credentials.
+          Almost done — just a few last steps to secure your HomeFree and
+          make it reachable. This takes a couple of minutes.
         </p>
         <div class="steps">
           ${[0, 1, 2, 3].map((i) => html`
@@ -432,8 +431,8 @@ class FinishSetupWizard extends LitElement {
           this box can be saved — and you would have no SSH access.
         </div>
 
-        <details class="help">
-          <summary>What is this, and how do I get one? (read me if unsure)</summary>
+        <details class="help" open>
+          <summary>What is this, and how do I get one? (click to collapse)</summary>
           <div class="help-body">
             <p>
               An <strong>SSH key</strong> is a pair of files: a

@@ -86,6 +86,16 @@ let
   ## wizard (= the admin UI frontend) inline for every host, with /api
   ## proxied to the admin backend. No redirect — see `devMode` above.
   devInlineConfig = ''
+    ## /api/service-state is served by Caddy as a FILE in the real admin
+    ## vhost (it must work even when the backend is down). The backend has
+    ## no such route, so without this handler the frontend's poll 404s and
+    ## spams the console. Mirror admin-web's handler.
+    handle /api/service-state {
+      root * /var/lib/homefree-admin
+      try_files service-state.json
+      file_server
+    }
+
     ## API + health -> admin backend. Mirrors admin-web's @api handler,
     ## including the graceful fallback when the backend is briefly down.
     @api path /api/* /health
