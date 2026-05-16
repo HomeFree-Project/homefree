@@ -78,18 +78,20 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     ## itself: anyone on the LAN of an unfinished box already has
     ## physical-equivalent control.
     FINISH_SETUP_PATHS = {
-        "/api/secrets/keys/user",   # add the first SSH authorized key
-        "/api/secrets/keys/system",
-        "/api/secrets/status",
-        "/api/config/save",         # write DNS-01 / ddclient config
-        "/api/config/apply",        # trigger the finishing rebuild
-        "/api/config/current",
-        "/api/config/rebuild-status",
+        "/api/system/closure-id",   # frontend staleness check
     }
-    ## Prefix-matched: POST /api/secrets/{service}/{key} for the DNS-01
-    ## token and ddclient zone passwords.
+    ## Prefix-matched. While setup is pending the wizard legitimately needs
+    ## the whole secrets + config surface (read config, write SSH key /
+    ## DNS-01 / ddclient secrets, save+apply, poll rebuild status) and the
+    ## finish-setup completion endpoint. Admitting the prefixes — rather
+    ## than enumerating every path and missing one — is deliberate: the
+    ## trust model already accepts that anyone on an unfinished box's LAN
+    ## has physical-equivalent control, and the whole bypass evaporates the
+    ## moment the wizard writes .setup-complete.
     FINISH_SETUP_PREFIXES = (
         "/api/secrets/",
+        "/api/config/",
+        "/api/finish-setup/",
     )
     PUBLIC_PATHS = {
         "/health",
@@ -2600,6 +2602,36 @@ async def get_mode():
     except Exception as e:
         logger.error(f"Error detecting mode: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/finish-setup/complete")
+async def mark_finish_setup_complete():
+    """Mark post-install setup as complete.
+
+    Called by the finish-setup wizard on its FINAL step (after the rebuild
+    has been applied). Writes the /var/lib/homefree-secrets/.setup-complete
+    sentinel — the single fact the captive portal, console TUI, and the
+    admin-api auth bypass all key off.
+
+    The sentinel is set ONLY here, by an explicit wizard action — never
+    inferred from config state. Inferring it (authorizedKeys + DNS-01 both
+    present) flips it mid-wizard, because those are written on early steps,
+    which slams the auth bypass shut before the user finishes.
+    """
+    try:
+        sentinel = Path("/var/lib/homefree-secrets/.setup-complete")
+        override = Path("/var/lib/homefree-secrets/.setup-portal-disabled")
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.touch()
+        # The portal override is only meaningful while setup is pending.
+        try:
+            override.unlink()
+        except FileNotFoundError:
+            pass
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        logger.error(f"Error marking setup complete: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/config/current")
 async def get_current_config():

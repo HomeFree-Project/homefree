@@ -7,6 +7,7 @@ import {
   applyConfigChanges,
   getRebuildStatus,
   getCurrentConfig,
+  markFinishSetupComplete,
 } from '../../api/client.js';
 import './secrets-input.js';
 
@@ -246,6 +247,39 @@ class FinishSetupWizard extends LitElement {
       this.step = 1;
     }
     await this.refreshSecretsStatus();
+    await this.seedZonesFromConfig();
+  }
+
+  // Pre-populate the ddclient step with one zone for the box's own domain
+  // (collected by the ISO installer and stored as system.domain). Saves the
+  // user re-typing it. Skipped if the config already has zones — e.g. the
+  // user is returning to a partially-finished setup.
+  async seedZonesFromConfig() {
+    if (this.ddnsZones.length > 0) return;
+    try {
+      const config = await getCurrentConfig();
+      const existing = config?.dns?.['dynamic-dns']?.zones;
+      if (Array.isArray(existing) && existing.length > 0) {
+        // Config already carries zones — show those instead of a fresh seed.
+        this.ddnsZones = existing.map((z) => ({
+          zone: z.zone || '',
+          protocol: z.protocol || 'hetzner',
+          username: z.username || '',
+          domains: Array.isArray(z.domains) ? z.domains.join(' ') : '@ *',
+          key: z['password-secret-key'] || 'password',
+        }));
+        return;
+      }
+      const domain = config?.system?.domain;
+      if (domain) {
+        this.ddnsZones = [
+          { zone: domain, protocol: 'hetzner', username: '',
+            domains: '@ *', key: 'password' },
+        ];
+      }
+    } catch (e) {
+      // Non-fatal — the user can still add a zone by hand.
+    }
   }
 
   async refreshSecretsStatus() {
@@ -378,8 +412,20 @@ class FinishSetupWizard extends LitElement {
         if (!s.running) {
           clearInterval(this._rebuildPoll);
           this._rebuildPoll = null;
-          this.applyState = s.success ? 'done' : 'failed';
-          if (!s.success) {
+          if (s.success) {
+            // Mark setup complete ONLY now — after a successful rebuild.
+            // This writes the .setup-complete sentinel, which closes the
+            // auth bypass and the captive portal. Must finish before the
+            // user reloads into the dashboard. A failure here is non-fatal
+            // (the box still works); log and continue.
+            try {
+              await markFinishSetupComplete();
+            } catch (e) {
+              console.warn('Failed to mark setup complete:', e);
+            }
+            this.applyState = 'done';
+          } else {
+            this.applyState = 'failed';
             this.error = 'The rebuild did not complete successfully. Check the log below.';
           }
         }

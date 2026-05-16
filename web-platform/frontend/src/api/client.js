@@ -292,6 +292,11 @@ export const getSecretsStatus = () => get('/api/secrets/status');
 // Add an SSH authorized key (bootstraps SOPS recipients on a fresh box).
 export const addAuthorizedKey = (publicKey) =>
   post('/api/secrets/keys/user', { public_key: publicKey });
+// Mark post-install setup complete — called by the finish-setup wizard's
+// final step. Writes the .setup-complete sentinel, closing the auth bypass
+// and the captive portal.
+export const markFinishSetupComplete = () =>
+  post('/api/finish-setup/complete', {});
 
 // Services
 export const getServices = () => get('/api/services');
@@ -401,4 +406,5 @@ export default {
   rebootSystem,
   getSecretsStatus,
   addAuthorizedKey,
+  markFinishSetupComplete,
 };

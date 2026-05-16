@@ -732,6 +732,15 @@ class AdminApp extends LitElement {
       this.pendingSetupItems = [];
     }
 
+    // When the finish-setup wizard is showing, the normal admin dashboard
+    // is not active — so skip its background pollers entirely. They hit
+    // endpoints outside the finish-setup auth bypass (config/dirty,
+    // closure-id, rebuild-status) and would 401 every few seconds, spamming
+    // the console. The wizard does its own rebuild-status polling.
+    if (this.pendingSetupItems && this.pendingSetupItems.length > 0) {
+      return;
+    }
+
     // Check if a rebuild is already in progress
     await this.checkRebuildStatus();
 
