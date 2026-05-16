@@ -7,6 +7,7 @@ import { shellStyles } from '../../shared/shell.js';
 import './modules/dashboard-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
+import './modules/lan-clients-module.js';
 import './modules/dns-module.js';
 import './modules/mounts-module.js';
 import './modules/extra-proxies-module.js';
@@ -583,6 +584,12 @@ class AdminApp extends LitElement {
         id: 'network',
         title: 'Network',
         icon: '🌐',
+        section: 'System'
+      },
+      {
+        id: 'lan-clients',
+        title: 'LAN Clients',
+        icon: '💻',
         section: 'System'
       },
       {
@@ -1916,6 +1923,15 @@ class AdminApp extends LitElement {
       case 'dashboard':
         return html`
           <dashboard-module></dashboard-module>
+        `;
+
+      case 'lan-clients':
+        return html`
+          <lan-clients-module
+            .serverConfig=${this.serverConfig}
+            .pendingConfig=${this.pendingConfig}
+            @config-change=${this.handleConfigChange}
+          ></lan-clients-module>
         `;
 
       case 'system':
