@@ -65,6 +65,32 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     SENTINEL = Path("/var/lib/homefree-secrets/.sso-provisioned")
     ADMIN_USERNAME_FILE = Path("/var/lib/homefree-admin/admin-username")
     ADMIN_ROLE = "homefree-admin"
+
+    ## Finish-setup sentinel (maintained by modules/setup-state.nix).
+    ## Absent => post-install setup is still pending.
+    SETUP_COMPLETE_SENTINEL = Path("/var/lib/homefree-secrets/.setup-complete")
+    ## Endpoints the first-boot finish-setup wizard must reach BEFORE the
+    ## admin has any working credentials. The wizard runs on a box where
+    ## the admin can't yet sign in (no SSH key, no finished SSO) — so these
+    ## are admitted without a session, but ONLY while .setup-complete is
+    ## absent. Once setup finishes the bypass closes and the normal
+    ## admin-role gate applies. The trust model matches the installer
+    ## itself: anyone on the LAN of an unfinished box already has
+    ## physical-equivalent control.
+    FINISH_SETUP_PATHS = {
+        "/api/secrets/keys/user",   # add the first SSH authorized key
+        "/api/secrets/keys/system",
+        "/api/secrets/status",
+        "/api/config/save",         # write DNS-01 / ddclient config
+        "/api/config/apply",        # trigger the finishing rebuild
+        "/api/config/current",
+        "/api/config/rebuild-status",
+    }
+    ## Prefix-matched: POST /api/secrets/{service}/{key} for the DNS-01
+    ## token and ddclient zone passwords.
+    FINISH_SETUP_PREFIXES = (
+        "/api/secrets/",
+    )
     PUBLIC_PATHS = {
         "/health",
         "/api/service-state",
@@ -174,6 +200,17 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         # Always-allowed paths.
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
+
+        # Finish-setup bypass. While post-install setup is still pending
+        # (.setup-complete absent), the first-boot wizard's endpoints are
+        # admitted without a session — the admin has no working
+        # credentials yet, so requiring one would deadlock setup. The
+        # bypass closes automatically once setup completes.
+        if not self.SETUP_COMPLETE_SENTINEL.exists():
+            path = request.url.path
+            if path in self.FINISH_SETUP_PATHS \
+                    or any(path.startswith(p) for p in self.FINISH_SETUP_PREFIXES):
+                return await call_next(request)
 
         user = request.headers.get(self.USER_HEADER) \
             or request.headers.get(self.USER_HEADER_FALLBACK)

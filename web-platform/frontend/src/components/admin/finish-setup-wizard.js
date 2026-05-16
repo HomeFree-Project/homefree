@@ -99,6 +99,55 @@ class FinishSetupWizard extends LitElement {
       margin: 14px 0 18px;
       line-height: 1.5;
     }
+    /* Beginner help — collapsible so experienced users can skip it. */
+    details.help {
+      margin: 14px 0 18px;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      background: var(--hf-surface-2);
+    }
+    details.help summary {
+      cursor: pointer;
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hf-accent);
+      list-style: none;
+    }
+    details.help summary::-webkit-details-marker { display: none; }
+    details.help summary::before { content: "▸ "; }
+    details.help[open] summary::before { content: "▾ "; }
+    details.help .help-body {
+      padding: 0 16px 14px;
+      font-size: 13px;
+      color: var(--hf-text-muted);
+      line-height: 1.6;
+    }
+    details.help .help-body h4 {
+      color: var(--hf-text);
+      font-size: 13px;
+      margin: 14px 0 4px;
+    }
+    details.help .help-body pre {
+      background: var(--hf-bg);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      padding: 8px 10px;
+      overflow-x: auto;
+      font-size: 12px;
+      color: var(--hf-text);
+    }
+    details.help .help-body code {
+      background: var(--hf-bg);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    details.help .help-body a { color: var(--hf-accent); }
+    details.help .help-body .url {
+      color: var(--hf-text-subtle);
+      font-size: 12px;
+    }
     label { display: block; font-size: 13px; font-weight: 500; margin: 14px 0 6px; }
     textarea, input[type=text] {
       width: 100%;
@@ -382,9 +431,103 @@ class FinishSetupWizard extends LitElement {
           key plus the system host key. Without it, no other credential on
           this box can be saved — and you would have no SSH access.
         </div>
+
+        <details class="help">
+          <summary>What is this, and how do I get one? (read me if unsure)</summary>
+          <div class="help-body">
+            <p>
+              An <strong>SSH key</strong> is a pair of files: a
+              <strong>private key</strong> (kept secret, never shared) and a
+              <strong>public key</strong> (safe to share). You paste the
+              <strong>public</strong> key below. HomeFree uses it to encrypt
+              your settings and to let you log in to the box securely.
+            </p>
+
+            <h4>Already have one? Reuse it.</h4>
+            <p>
+              If you use GitHub, GitLab, a work server, or have ever set up
+              SSH before, you probably already have a key — use it, no need
+              to make a new one. Find your public key:
+            </p>
+            <p><strong>Mac or Linux</strong> — open the Terminal app and run:</p>
+            <pre>cat ~/.ssh/id_ed25519.pub</pre>
+            <p>
+              If that says "No such file", try
+              <code>cat ~/.ssh/id_rsa.pub</code>. If both fail, you don't
+              have one yet — make one below.
+            </p>
+            <p>
+              <strong>Windows</strong> — open PowerShell and run:
+            </p>
+            <pre>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</pre>
+            <p>
+              Whatever it prints — one line starting with
+              <code>ssh-ed25519</code> or <code>ssh-rsa</code> — is your
+              public key. Copy the whole line and paste it below.
+            </p>
+            <p>
+              On GitHub you can also see your public keys at:<br/>
+              <a href="https://github.com/settings/keys" target="_blank"
+                 rel="noopener">github.com/settings/keys</a>
+              <span class="url">(https://github.com/settings/keys)</span>
+            </p>
+
+            <h4>Don't have one? Create one.</h4>
+            <p>
+              <strong>Mac or Linux</strong> — in the Terminal, run (replace
+              the email with your own — it's just a label):
+            </p>
+            <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
+            <p>
+              Press Enter to accept the default location. You'll be asked for
+              a passphrase — setting one is recommended (it protects the key
+              if your computer is stolen). Then run
+              <code>cat ~/.ssh/id_ed25519.pub</code> and copy the line it
+              prints.
+            </p>
+            <p>
+              <strong>Windows</strong> — open PowerShell and run the same
+              command:
+            </p>
+            <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
+            <p>
+              Then <code>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</code>
+              to print the public key.
+            </p>
+            <p>
+              Step-by-step guide with screenshots (works for all three
+              systems):<br/>
+              <a href="https://docs.github.com/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent"
+                 target="_blank" rel="noopener">
+                GitHub's "Generating a new SSH key" guide</a>
+              <span class="url">(https://docs.github.com/en/authentication/
+              connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)</span>
+            </p>
+
+            <h4>Don't lose your key</h4>
+            <p>
+              The <strong>private</strong> key — the file
+              <em>without</em> <code>.pub</code>, e.g.
+              <code>~/.ssh/id_ed25519</code> — is the one that matters. If you
+              lose it you lose access to this box.
+            </p>
+            <ul>
+              <li>Keep it in <code>~/.ssh/</code> on a computer you control —
+                don't delete that folder.</li>
+              <li>Back up <code>id_ed25519</code> <em>and</em>
+                <code>id_ed25519.pub</code> somewhere safe — a password
+                manager (1Password, Bitwarden) stores files, or an encrypted
+                USB drive.</li>
+              <li><strong>Never</strong> paste the private key anywhere
+                online or share it. Only the <code>.pub</code> file is shared
+                — that's what goes in the box below.</li>
+            </ul>
+          </div>
+        </details>
+
         <label>Your SSH public key</label>
         <textarea
-          placeholder="ssh-ed25519 AAAA... user@host"
+          placeholder="ssh-ed25519 AAAA... you@example.com"
           .value=${this.sshKeyInput}
           @input=${(e) => { this.sshKeyInput = e.target.value; }}
         ></textarea>
