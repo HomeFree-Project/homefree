@@ -411,6 +411,115 @@ class SecretsManager:
             return False, f"Error deleting secret: {str(e)}"
 
     @staticmethod
+    def add_user_authorized_key(public_key: str) -> Tuple[bool, Optional[str]]:
+        """
+        Add an SSH public key to system.authorizedKeys in homefree-config.json
+        and (re)generate .sops.yaml so the key becomes a SOPS recipient.
+
+        This is the bootstrap step for a freshly-installed box: the ISO never
+        collects an authorized key, so no secret can be encrypted until one is
+        added. The first authorized key is what SecretsManager.set_secret() uses
+        as the user age recipient.
+
+        If a secrets file already exists, it is re-encrypted ("updatekeys") so
+        it carries the new recipient set.
+
+        Args:
+            public_key: SSH public key string
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        public_key = (public_key or "").strip()
+
+        valid, err = SecretsManager.validate_ssh_public_key(public_key)
+        if not valid:
+            return False, err or "Invalid SSH public key"
+
+        if not CONFIG_FILE.exists():
+            return False, f"Config file not found: {CONFIG_FILE}"
+
+        system_key = SecretsManager.get_system_ssh_public_key()
+        if not system_key:
+            return False, "System SSH host key not found"
+
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            system_section = config.setdefault('system', {})
+            keys = system_section.setdefault('authorizedKeys', [])
+
+            if public_key not in keys:
+                keys.append(public_key)
+                # Atomic write.
+                tmp_path = f"{CONFIG_FILE}.tmp"
+                with open(tmp_path, 'w') as f:
+                    json.dump(config, f, indent=2, sort_keys=False)
+                    f.write('\n')
+                os.replace(tmp_path, CONFIG_FILE)
+
+            # Regenerate .sops.yaml with system + first user key as recipients.
+            SecretsManager.ensure_secrets_dir()
+            SecretsManager.create_sops_config(system_key, keys[0])
+
+            # If secrets already exist, re-encrypt them so the file carries
+            # the new recipient set. We do NOT use `sops updatekeys` here:
+            # it matches the file against .sops.yaml's creation rules and
+            # is fragile (it fails with "no matching creation rules found"
+            # depending on path resolution / sops version). Instead we do
+            # the same decrypt-then-re-encrypt that set_secret() uses — the
+            # proven path: decrypt with the system host key, re-encrypt with
+            # `--age <recipients>` directly.
+            if SECRETS_FILE.exists():
+                age_private_key = SecretsManager.ssh_private_to_age(SYSTEM_SSH_PRIVATE_KEY)
+                if not age_private_key:
+                    return False, "Failed to convert system SSH private key to age format"
+
+                # Build the age recipient list: system host key + user key.
+                system_age_key = SecretsManager.ssh_to_age(system_key)
+                if not system_age_key:
+                    return False, "Failed to convert system SSH key to age format"
+                age_recipients = [system_age_key]
+                user_age_key = SecretsManager.ssh_to_age(keys[0])
+                if user_age_key:
+                    age_recipients.append(user_age_key)
+                age_recipients_str = ','.join(age_recipients)
+
+                env = os.environ.copy()
+                env['SOPS_AGE_KEY'] = age_private_key
+
+                # Decrypt the current secrets file to plaintext YAML.
+                decrypted = subprocess.run(
+                    ['sops', '--decrypt', '--input-type', 'yaml',
+                     '--output-type', 'yaml', str(SECRETS_FILE)],
+                    check=True, capture_output=True, text=True, env=env,
+                ).stdout
+
+                # Re-encrypt to the new recipient set, replacing the file.
+                with tempfile.NamedTemporaryFile(
+                        mode='w', suffix='.yaml', delete=False) as tmp:
+                    tmp.write(decrypted)
+                    tmp_plain = tmp.name
+                try:
+                    subprocess.run(
+                        ['sops', '--age', age_recipients_str, '--encrypt',
+                         '--input-type', 'yaml', '--output-type', 'yaml',
+                         '--output', str(SECRETS_FILE), tmp_plain],
+                        check=True, capture_output=True, text=True, env=env,
+                    )
+                finally:
+                    os.unlink(tmp_plain)
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else str(e)
+            return False, f"Failed to update SOPS keys: {error_msg}"
+        except Exception as e:
+            return False, f"Error adding authorized key: {str(e)}"
+
+    @staticmethod
     def get_schema() -> Dict[str, Dict[str, Dict]]:
         """
         Get secrets schema from generated JSON file

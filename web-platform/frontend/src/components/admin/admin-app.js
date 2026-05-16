@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
@@ -20,6 +20,7 @@ import './modules/status-module.js';
 import './modules/abuse-blocking-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
+import './finish-setup-wizard.js';
 
 class AdminApp extends LitElement {
   static properties = {
@@ -39,6 +40,12 @@ class AdminApp extends LitElement {
     statusFlashing: { type: Boolean }, // Status nav item flash animation
     statusNeedsAttention: { type: Boolean }, // Persistent flash until user clicks Status
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
+    setupIncomplete: { type: Boolean, state: true }, // Finish-setup wizard not yet completed (authoritative gate)
+    pendingSetupItems: { type: Array, state: true }, // Hint: which finish-setup steps remain (for wizard start step)
+    // Finish-setup wizard's current step, lifted up here so navigating
+    // away from and back to the wizard doesn't reset it to step 0 (the
+    // wizard component is destroyed and recreated on each nav change).
+    wizardStep: { type: Number, state: true },
     serviceReloading: { type: Boolean }, // Whether admin-api is restarting
     serviceReloadMessage: { type: String }, // Message to show during reload
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
@@ -484,6 +491,40 @@ class AdminApp extends LitElement {
       background: rgba(255, 255, 255, 0.3);
     }
 
+    /* Setup-incomplete warning banner. Same geometry as .update-banner
+       so .with-banner's height math (100% - 40px) holds for either. */
+    .setup-banner {
+      height: 40px;
+      background: #b7791f;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      flex-shrink: 0;
+    }
+
+    .setup-banner-icon { font-size: 15px; }
+
+    .setup-banner-btn {
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .setup-banner-btn:hover {
+      background: rgba(255, 255, 255, 0.32);
+    }
+
     .app-container.with-banner {
       height: calc(100% - 40px);
     }
@@ -534,6 +575,9 @@ class AdminApp extends LitElement {
     this.statusNeedsAttention = false;
     this._toastIdCounter = 0;
     this.hasAuthorizedKeys = false;
+    this.setupIncomplete = false;
+    this.pendingSetupItems = [];
+    this.wizardStep = -1;  // -1 = not yet initialised; wizard picks its start step
     this.serviceReloading = false;
     this.currentUser = null;
     this.userMenuOpen = false;
@@ -572,6 +616,15 @@ class AdminApp extends LitElement {
         id: 'dashboard',
         title: 'Dashboard',
         icon: '📊',
+        section: 'System'
+      },
+      {
+        // Post-install finish-setup. Listed in the nav ONLY while setup is
+        // incomplete (filtered by getVisibleModules); the warning banner
+        // also links here. Renders the finish-setup-wizard component.
+        id: 'finish-setup',
+        title: 'Finish Setup',
+        icon: '🚀',
         section: 'System'
       },
       {
@@ -719,12 +772,50 @@ class AdminApp extends LitElement {
     // Load SSH key status for secrets management
     await this.loadSSHKeyStatus();
 
-    // Check if a rebuild is already in progress
-    await this.checkRebuildStatus();
+    // Check whether post-install setup is still incomplete. A fresh box
+    // installed from the ISO ships without an SSH key / DNS-01 provider; the
+    // finish-setup wizard overlay handles those before the dashboard is used.
+    //
+    // `setupIncomplete` is the AUTHORITATIVE gate — it comes from the backend's
+    // .setup-complete marker, which only flips when the wizard explicitly
+    // finishes. `pendingSetupItems` is just a hint for which step the wizard
+    // opens on; it must NOT gate wizard-vs-dashboard because it empties out
+    // mid-wizard (the wizard writes the SSH key / DNS-01 on its early pages).
+    try {
+      const mode = await getMode();
+      this.setupIncomplete = !!mode.setup_incomplete;
+      this.pendingSetupItems = mode.pending_setup_items || [];
+    } catch (e) {
+      this.setupIncomplete = false;
+      this.pendingSetupItems = [];
+    }
 
-    // Start continuous polling to keep status icon up-to-date
-    // This ensures the icon updates even after backend restarts or external rebuilds
+    // On a fresh load with no explicit route in the URL, land on the
+    // Finish Setup page while setup is incomplete — that is the thing the
+    // user needs to do next, not the dashboard. loadRouteFromHash() ran
+    // earlier (before setup status was known) and defaulted to
+    // 'dashboard'; correct it here. An explicit hash (the user navigated
+    // somewhere on purpose) is always respected.
+    if (this.setupIncomplete && !window.location.hash.slice(2)) {
+      this.currentModule = 'finish-setup';
+    }
+
+    // The rebuild-status poller ALWAYS runs — including during finish-setup.
+    // The Status page must show the wizard's rebuild just as it shows a
+    // normal Apply: same backend path (/api/config/apply ->
+    // homefree-rebuild.service), same /api/config/rebuild-status endpoint.
+    // The endpoint is stateless and returns the full log, so the Status
+    // page and the finish-setup wizard can both watch the same rebuild
+    // with no interference.
+    await this.checkRebuildStatus();
     this.statusPollInterval = setInterval(() => this.checkRebuildStatus(), 3000);
+
+    // The remaining pollers are dashboard-only (Apply-button dirty state,
+    // closure-id refresh banner) and pointless while the wizard is the
+    // active surface — skip them until setup is complete.
+    if (this.setupIncomplete) {
+      return;
+    }
 
     // Initial dirty check + periodic refresh for the Apply button enabled state
     this.checkConfigDirty();
@@ -1076,6 +1167,14 @@ class AdminApp extends LitElement {
   getCurrentModuleTitle() {
     const module = this.modules.find(m => m.id === this.currentModule);
     return module ? module.title : 'HomeFree Admin';
+  }
+
+  // Modules shown in the nav. The 'finish-setup' module only appears while
+  // post-install setup is incomplete; once done it drops out of the nav.
+  getVisibleModules() {
+    return this.modules.filter(
+      m => m.id !== 'finish-setup' || this.setupIncomplete
+    );
   }
 
   renderSaveIndicator() {
@@ -1759,9 +1858,13 @@ class AdminApp extends LitElement {
         const status = await response.json();
 
         if (status.output) {
-          // Accumulate output (trim to remove leading/trailing whitespace)
+          // The backend returns the COMPLETE log every poll, so REPLACE
+          // the buffer wholesale — never append. This is what makes the
+          // log gapless across an admin-api/Caddy restart: the first
+          // successful poll after a reconnect carries the entire log so
+          // far, with nothing missed in the disconnected window.
           const newLines = status.output.trim().split('\n').filter(l => l.trim());
-          this.buildLogs = [...this.buildLogs, ...newLines];
+          this.buildLogs = newLines;
 
           // Update header status with last line
           const lastLine = newLines[newLines.length - 1] || 'Building...';
@@ -1923,6 +2026,15 @@ class AdminApp extends LitElement {
       case 'dashboard':
         return html`
           <dashboard-module></dashboard-module>
+        `;
+
+      case 'finish-setup':
+        return html`
+          <finish-setup-wizard
+            .pendingItems=${this.pendingSetupItems}
+            .initialStep=${this.wizardStep}
+            @wizard-step-change=${(e) => { this.wizardStep = e.detail.step; }}
+          ></finish-setup-wizard>
         `;
 
       case 'lan-clients':
@@ -2103,14 +2215,26 @@ class AdminApp extends LitElement {
       `;
     }
 
-    // Group modules by section
+    // Post-install: the finish-setup wizard is NOT a blocking takeover.
+    // The admin dashboard is always reachable; while setup is incomplete a
+    // warning banner links to the "Finish setup" page (a normal nav module).
+    // `setupIncomplete` is the backend .setup-complete marker.
+
+    // Group modules by section. The finish-setup module is pinned at the
+    // TOP of the nav as its own highlighted item (not inside a section), so
+    // it is excluded from the section grouping here.
     const sections = {};
-    this.modules.forEach(module => {
-      if (!sections[module.section]) {
-        sections[module.section] = [];
-      }
-      sections[module.section].push(module);
-    });
+    this.getVisibleModules()
+      .filter(module => module.id !== 'finish-setup')
+      .forEach(module => {
+        if (!sections[module.section]) {
+          sections[module.section] = [];
+        }
+        sections[module.section].push(module);
+      });
+    const finishSetupModule = this.setupIncomplete
+      ? this.modules.find(m => m.id === 'finish-setup')
+      : null;
 
     return html`
       ${this.updateAvailable ? html`
@@ -2124,7 +2248,22 @@ class AdminApp extends LitElement {
           </button>
         </div>
       ` : ''}
-      <div class="app-container ${this.updateAvailable ? 'with-banner' : ''}">
+      ${this.setupIncomplete ? html`
+        <div class="setup-banner" role="status">
+          <span class="setup-banner-icon">⚠</span>
+          <span class="setup-banner-text">
+            HomeFree isn't fully set up yet — finish setup to secure the box
+            and enable HTTPS.
+          </span>
+          <button
+            class="setup-banner-btn"
+            @click=${() => this.handleModuleClick('finish-setup')}
+          >
+            Finish setup
+          </button>
+        </div>
+      ` : ''}
+      <div class="app-container ${this.updateAvailable || this.setupIncomplete ? 'with-banner' : ''}">
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">
@@ -2135,6 +2274,15 @@ class AdminApp extends LitElement {
           </div>
 
           <nav class="nav-menu">
+            ${finishSetupModule ? html`
+              <div
+                class="nav-item nav-item-finish-setup ${this.currentModule === 'finish-setup' ? 'active' : ''}"
+                @click=${() => this.handleModuleClick('finish-setup')}
+              >
+                <span class="nav-item-icon">${finishSetupModule.icon}</span>
+                <span class="nav-item-text">${finishSetupModule.title}</span>
+              </div>
+            ` : ''}
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`

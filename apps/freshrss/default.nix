@@ -311,8 +311,17 @@ in
     };
 
     systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
-      after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
+      ## FreshRSS connects to PostgreSQL over the host's
+      ## /run/postgresql socket, bind-mounted into the container. A
+      ## bind mount pins the directory inode at container-start time,
+      ## so when PostgreSQL restarts it recreates the socket in a dir
+      ## the running container can no longer see — every DB query then
+      ## fails with "No such file or directory". `partOf` makes a
+      ## PostgreSQL restart cascade a FreshRSS restart, re-binding the
+      ## current /run/postgresql.
+      after = [ "dns-ready.service" "postgresql.service" ];
+      requires = [ "dns-ready.service" "postgresql.service" ];
+      partOf = [ "postgresql.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "freshrss-prestart" preStart}" ];
         ExecStartPost = [ "!${pkgs.writeShellScript "freshrss-poststart" postStart}" ];
