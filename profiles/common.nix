@@ -228,11 +228,13 @@
   # ATTR{queue/rotational}=="1" scopes the disk rules to spinning disks so
   # SSDs/NVMe are left untouched. APM (-B) is intentionally not set: not all
   # drives support it (the ST28000NT000 reports APM not supported).
+  # The runtime-PM settings are applied via a RUN+= shell command rather than
+  # ATTR{}: manage_runtime_start_stop lives under scsi_disk/<h:c:t:l>/, whose
+  # node name is dynamic, and udev's ATTR{} does not expand path wildcards.
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
     ACTION=="add|change", SUBSYSTEM=="scsi_host", KERNEL=="host*", TEST=="link_power_management_policy", ATTR{link_power_management_policy}="max_performance"
-    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", TEST=="device/power/control", ATTR{device/power/control}="on"
-    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", TEST=="device/scsi_disk/*/manage_runtime_start_stop", ATTR{device/scsi_disk/*/manage_runtime_start_stop}="0"
+    ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.bash}/bin/sh -c 'echo on > /sys$devpath/device/power/control; for f in /sys$devpath/device/scsi_disk/*/manage_runtime_start_stop; do [ -e \"$f\" ] && echo 0 > \"$f\"; done'"
     ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd*", ENV{DEVTYPE}=="disk", ATTR{queue/rotational}=="1", RUN+="${pkgs.hdparm}/bin/hdparm -S 0 /dev/%k"
   '';
 
