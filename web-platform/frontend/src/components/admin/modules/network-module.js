@@ -1,12 +1,13 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
-import '../../shared/table-editor.js';
 import { getNetworkInterfaces } from '../../../api/client.js';
 
 /**
  * Network configuration module
- * Handles: WAN/LAN interfaces, router settings, DHCP, static IPs, ad-blocking
+ * Handles: WAN/LAN interfaces, router settings, DHCP, traffic control,
+ * ad-blocking. Static-IP reservations are managed on the LAN Clients
+ * page, which has live device context — see lan-clients-module.js.
  */
 class NetworkModule extends LitElement {
   static properties = {
@@ -125,20 +126,8 @@ class NetworkModule extends LitElement {
     }));
   }
 
-  handleStaticIpsChange(e) {
-    this.handleFieldChange('network.static-ips', e.detail.data);
-  }
-
   render() {
     const { network } = this.config;
-
-    // Static IP table columns
-    const staticIpColumns = [
-      { key: 'mac-address', label: 'MAC Address', type: 'text', placeholder: '00:11:22:33:44:55' },
-      { key: 'hostname', label: 'Hostname', type: 'text', placeholder: 'device-name' },
-      { key: 'ip', label: 'IP Address', type: 'text', placeholder: '10.0.0.50' },
-      { key: 'wan-access', label: 'Allow Internet Access', type: 'boolean', default: true }
-    ];
 
     return html`
       <div class="module-container">
@@ -234,19 +223,6 @@ class NetworkModule extends LitElement {
               @field-change=${(e) => this.handleFieldChange('network.dhcp-range-end', e.detail.value)}
             ></form-field>
           </div>
-        </config-section>
-
-        <!-- Static IP Assignments -->
-        <config-section
-          title="Static IP Assignments"
-          description="Reserve specific IP addresses for devices by MAC address"
-        >
-          <table-editor
-            .columns=${staticIpColumns}
-            .data=${network['static-ips'] || []}
-            addLabel="Add Static IP"
-            @data-change=${this.handleStaticIpsChange}
-          ></table-editor>
         </config-section>
 
         <!-- Traffic Control -->
