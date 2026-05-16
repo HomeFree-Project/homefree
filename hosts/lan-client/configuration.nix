@@ -1,4 +1,4 @@
-{ ... }:
+{ lib, ... }:
 
 {
   imports = [
@@ -52,13 +52,41 @@
       enable = false;
     };
     interfaces = {
-      ens3.useDHCP = true;
+      eth0.useDHCP = true;
     };
+  };
+
+  # VM-specific configuration
+  virtualisation.qemu = {
+    # Disable default user networking - we use bridge networking set via QEMU_OPTS
+    networkingOptions = lib.mkForce [ ];
   };
 
   # --------------------------------------------------------------------------------------
   # Hardware specific
   # --------------------------------------------------------------------------------------
+
+  # --------------------------------------------------------------------------------------
+  # Users
+  # --------------------------------------------------------------------------------------
+
+  users.users.homefree = {
+    isNormalUser = true;
+    description = "HomeFree Test User";
+    extraGroups = [ "wheel" "networkmanager" ];
+    password = "homefree";
+  };
+
+  # Display login credentials at the login prompt
+  services.getty.helpLine = ''
+
+    ╔════════════════════════════════════════╗
+    ║   LAN Client VM - Test Credentials     ║
+    ║   Username: homefree                   ║
+    ║   Password: homefree                   ║
+    ╚════════════════════════════════════════╝
+
+  '';
 }
 
 

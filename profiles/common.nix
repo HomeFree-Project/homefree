@@ -1,6 +1,5 @@
-{ config, homefree-inputs, pkgs, system, ...}:
+{ pkgs, system, ...}:
 {
-
   # --------------------------------------------------------------------------------------
   # Overlays
   # --------------------------------------------------------------------------------------
@@ -12,14 +11,6 @@
   # --------------------------------------------------------------------------------------
   # Base Nix config
   # --------------------------------------------------------------------------------------
-
-  # This vale determines the NixOS release from which the default
-  # settings for stateful data, like file locations and database versions
-  # on your system were taken. It‘s perfectly fine and recommended to leave
-  # this value at the release version of the first install of this system.
-  # Before changing this value read the documentation for this option
-  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
-  system.stateVersion = "25.05"; # Did you read the comment?
 
   # @TODO: Could this be useful for auto-upgrading systems out there?
   # system.autoUpgrade = {
@@ -35,8 +26,6 @@
   # };
 
   nix = {
-    nixPath = [ "nixpkgs=${homefree-inputs.nixpkgs}" "nixos-config=/home/${config.homefree.system.adminUsername}/nixcfg" ];
-
     # Which package collection to use system-wide.
     package = pkgs.nixVersions.stable;
     # package = pkgs.nixFlakes;
@@ -84,8 +73,6 @@
         keep-outputs = true
       '';
 
-    # registry.nixpkgs.flake = homefree-inputs.nixpkgs;
-
     # Garbage collection - deletes all unreachable paths in Nix store.
     gc = {
       # Run garbage collection automatically
@@ -106,15 +93,6 @@
   # --------------------------------------------------------------------------------------
   # User config
   # --------------------------------------------------------------------------------------
-
-  users.users."${config.homefree.system.adminUsername}" = {
-    isNormalUser  = true;
-    home  = "/home/${config.homefree.system.adminUsername}";
-    description  = "Homefree Admin";
-    extraGroups  = [ "wheel" "docker" ];
-    openssh.authorizedKeys.keys= config.homefree.system.authorizedKeys;
-    hashedPassword = config.homefree.system.adminHashedPassword;
-  };
 
   users.users.www-data = {
     uid = 33;
@@ -143,12 +121,6 @@
     config = {
       # Allow proprietary packages.
       allowUnfree = true;
-      packageOverrides = pkgs: {
-        unstable = import homefree-inputs.nixpkgs-unstable {
-          config = config.nixpkgs.config;
-          inherit system;
-        };
-      };
     };
   };
 
@@ -156,13 +128,14 @@
   # Boot / Kernel
   # --------------------------------------------------------------------------------------
 
-  # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort. Nix mounts read-write automatically when it needs to write to it.
-  boot.readOnlyNixStore = true;
+  # Disables writing to Nix store by mounting read-only. "false" should only be used as a last resort.
+  # Nix mounts read-write automatically when it needs to write to it.
+  boot.nixStoreMountOpts = [ "ro" ];
 
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+  # boot.kernelPackages = pkgs.linuxPackages_latest;
 
   boot.kernel.sysctl = {
-    "fs.inotify.max_user_watches" = 1048576; # defau
+    "fs.inotify.max_user_watches" = 1048577; # defau
     "fs.inotify.max_user_instances" = 1024; # default: 128
     "fs.inotify.max_queued_events" = 32768; # default: 16384
   };
@@ -179,7 +152,7 @@
   # --------------------------------------------------------------------------------------
 
   ## Needed to avoid "too many file open" errors when building containers
-  systemd.extraConfig = "DefaultLimitNOFILE=4096";
+  systemd.settings.Manager.DefaultLimitNOFILE = 4096;
   security.pam.loginLimits = [
     { domain = "*"; item = "nofile"; type = "-"; value = "65536"; }
   ];
@@ -192,7 +165,7 @@
   services.fwupd.enable = true;
 
   # Setting to true will kill things like tmux on logout
-  services.logind.killUserProcesses = false;
+  services.logind.settings.Login.KillUserProcesses = false;
 
   services.gvfs.enable = true; # SMB mounts, trash, and other functionality
   services.tumbler.enable = true; # Thumbnail support for images
@@ -219,6 +192,24 @@
     powertop.enable = true;
   };
 
+  # Disable USB autosuspend for HID devices (keyboards, mice, etc.).
+  # Why: powertop's autotuning enables USB autosuspend system-wide, which
+  # causes the first few keystrokes after an idle period to be dropped while
+  # the device negotiates resume. HID devices save no meaningful power from
+  # suspending. Two layers, both class-level (no per-device hardware IDs):
+  #   1. Kernel param sets the default control=on for all USB devices.
+  #   2. udev rule pins HID devices to control=on, defending against any
+  #      later runtime tool (powertop CLI, tlp, etc.) flipping the default.
+  # The previous udev rule used `ATTR{bInterfaceClass}` (single S) — that
+  # only matches when bInterfaceClass and power/control live on the same
+  # sysfs node, but bInterfaceClass is on the interface child and
+  # power/control is on the parent USB device, so the match never fired.
+  # `ATTRS{...}` walks parents and matches correctly.
+  boot.kernelParams = [ "usbcore.autosuspend=-1" ];
+  services.udev.extraRules = ''
+    ACTION=="add", SUBSYSTEM=="usb", ATTRS{bInterfaceClass}=="03", ATTR{power/control}="on"
+  '';
+
   # Eternal Terminal
   services.eternal-terminal.enable = true;
   # et port
@@ -227,41 +218,19 @@
     ET_NO_TELEMETRY = "1";
   };
 
-
-  # --------------------------------------------------------------------------------------
-  # i18n
-  # --------------------------------------------------------------------------------------
-
-  # @TODO: Make this UI configurable
-  i18n.defaultLocale = "en_US.UTF-8";
-
-  # --------------------------------------------------------------------------------------
-  # Networking
-  # --------------------------------------------------------------------------------------
-
-  networking.search = [ config.homefree.system.localDomain ];
-
   # --------------------------------------------------------------------------------------
   # Base Packages
   # --------------------------------------------------------------------------------------
-
-  nixvim-config = {
-    enable = true;
-    startify-header = let header-space = "   "; in [
-     ''${header-space}  ___ ___                      ___________''
-     ''${header-space} /   |   \  ____   _____   ____\_   _____/______   ____   ____''
-     ''${header-space}/    ~    \/  _ \ /     \_/ __ \|    __) \_  __ \_/ __ \_/ __ \''
-     ''${header-space}\    Y    (  <_> )  Y Y  \  ___/|     \   |  | \/\  ___/\  ___/''
-     ''${header-space} \___|_  / \____/|__|_|  /\___  >___  /   |__|    \___  >\___  >''
-     ''${header-space}       \/              \/     \/    \/                \/     \/''
-    ];
-  };
 
   programs.nix-ld.enable = true;
 
   programs.mosh.enable = true;
 
   environment.systemPackages = with pkgs; [
+    (python3.withPackages (python-pkgs: with python-pkgs; [
+      pandas
+      requests
+    ]))
     at-spi2-core
     backblaze-b2
     bashmount
@@ -269,7 +238,7 @@
     bind
     btop
     ccze             # readable parsed system logs
-    unstable.claude-code
+    claude-code
     cpufrequtils
     distrobox
     dmidecode
@@ -303,7 +272,7 @@
     memtest86plus
     minicom
     ncdu
-    neofetch
+    fastfetch
     nil
     nix-index
     nodejs
@@ -315,11 +284,12 @@
     powertop
     sops
     sqlite
+    ssh-to-age
     sshpass
     steampipe
     tmux
     usbutils
-    utillinux
+    util-linux
     vulnix
     wireguard-tools
     wget

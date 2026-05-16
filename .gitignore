@@ -7,3 +7,9 @@ services/landing-page/site/node_modules
 services/landing-page/site/public
 services/admin/site/node_modules
 __pycache__
+web-platform/frontend/node_modules
+web-platform/frontend/package-lock.json
+vm-state
+.claude
+CLAUDE.md
+result-installer
