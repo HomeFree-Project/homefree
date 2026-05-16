@@ -33,16 +33,6 @@ Configure system by setting up values as defined in the [HomeFree module](./modu
 * Enable headless GPU
   * Plug in a dummy HDMI dongle
 
-## Initializing Authentik
-
-Browse to:
-
-http://ha.homefree.lan:9000/if/flow/initial-setup/
-
-## Changing password for Authentik
-
-ak create_recovery_key 10 akadmin
-
 ## Don't passively use the Feed. Cultivate the Seed.
 
 > “These were rice paddies before they were parking lots. Rice was the basis for our society. Peasants planted the seeds and had highest status in the Confucian hierarchy. As the Master said, “Let the producers be many and the consumers few.' When the Feed came in from Atlantis, from Nippon, we no longer had to plant, because the rice now came from the matter compiler. It was the destruction of our society. When our society was based upon planting, it could truly be said, as the Master did, “Virtue is the root; wealth is the result.' But under the Western ti, wealth comes not from virtue but from cleverness. So the filial relationships became deranged. Chaos,” Dr. X said regretfully, then looked up from his tea and nodded out the window. “Parking lots and chaos.”
