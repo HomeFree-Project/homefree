@@ -258,6 +258,7 @@ class FinishSetupWizard extends LitElement {
     if (this.ddnsZones.length > 0) return;
     try {
       const config = await getCurrentConfig();
+      console.log('[finish-setup] seedZonesFromConfig: config =', config);
       const existing = config?.dns?.['dynamic-dns']?.zones;
       if (Array.isArray(existing) && existing.length > 0) {
         // Config already carries zones — show those instead of a fresh seed.
@@ -271,6 +272,7 @@ class FinishSetupWizard extends LitElement {
         return;
       }
       const domain = config?.system?.domain;
+      console.log('[finish-setup] seedZonesFromConfig: system.domain =', domain);
       if (domain) {
         this.ddnsZones = [
           { zone: domain, protocol: 'hetzner', username: '',
@@ -278,7 +280,9 @@ class FinishSetupWizard extends LitElement {
         ];
       }
     } catch (e) {
-      // Non-fatal — the user can still add a zone by hand.
+      // Non-fatal — the user can still add a zone by hand — but surface it
+      // so a silent failure isn't mistaken for "feature doesn't work".
+      console.warn('[finish-setup] seedZonesFromConfig failed:', e);
     }
   }
 
@@ -397,7 +401,7 @@ class FinishSetupWizard extends LitElement {
       await applyConfigChanges(current);
       this.pollRebuild();
     } catch (e) {
-      this.error = e.message || 'Failed to start the rebuild.';
+      this.error = e.message || "Couldn't finish setup. Please try again.";
       this.applyState = 'failed';
     }
   }
@@ -426,7 +430,7 @@ class FinishSetupWizard extends LitElement {
             this.applyState = 'done';
           } else {
             this.applyState = 'failed';
-            this.error = 'The rebuild did not complete successfully. Check the log below.';
+            this.error = "Setup didn't complete successfully. Details are below.";
           }
         }
       } catch (e) {
@@ -696,27 +700,26 @@ class FinishSetupWizard extends LitElement {
   renderApplyStep() {
     return html`
       <div class="card">
-        <h2>4. Apply & rebuild</h2>
+        <h2>4. Finish setup</h2>
         <p style="color:var(--hf-text-muted);font-size:13px;line-height:1.5;">
-          Applying rebuilds the system so HomeFree picks up your SSH key, the
-          DNS-01 provider, and any ddclient zones. Once the rebuild finishes,
-          HomeFree requests the wildcard certificate and
-          <code>https://admin.&lt;domain&gt;</code> becomes reachable.
+          This applies everything you just entered. When it's done, HomeFree
+          will be secured and your admin page will be reachable. This usually
+          takes a few minutes — you can leave this page open while it works.
         </p>
         ${this.applyState === 'idle' ? html`
           <div class="actions">
             <button class="link" @click=${() => { this.step = 2; }}>Back</button>
             <button class="primary" @click=${this.applyAndRebuild}>
-              Apply & rebuild
+              Finish setup
             </button>
           </div>
         ` : ''}
         ${this.applyState === 'running' ? html`
-          <div class="ok">Rebuild in progress — this can take several minutes…</div>
-          <div class="log">${this.rebuildOutput || 'Starting rebuild…'}</div>
+          <div class="ok">Setting things up — this can take a few minutes…</div>
+          <div class="log">${this.rebuildOutput || 'Starting…'}</div>
         ` : ''}
         ${this.applyState === 'done' ? html`
-          <div class="ok">✓ Setup complete. The system has been rebuilt.</div>
+          <div class="ok">✓ All done! HomeFree is set up and ready.</div>
           <div class="actions">
             <span></span>
             <button class="primary" @click=${this.finishWizard}>
