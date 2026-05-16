@@ -39,27 +39,25 @@ let
     name = entry.label;
     value = entry.backup.mysql-databases;
   }) config.homefree.service-config);
-  quoted-backup-path-list = lib.concatStringsSep " " (lib.map (entry: ''"${backup-to-path}/${entry.label}"'') backup-from-paths);
-  backup-cli = pkgs.writeShellScriptBin "backup-cli" ''
-    # Use SOPS-managed secret from /var/lib/homefree-secrets
-    if [ -f /var/lib/homefree-secrets/backup/restic-password ]; then
-      RESTIC_PASSWORD=$(cat /var/lib/homefree-secrets/backup/restic-password)
-    else
-      echo "Error: Restic password not configured. Please set it in the admin UI." >&2
-      exit 1
-    fi
-    export RESTIC_PASSWORD
-
-    backup_paths=(${quoted-backup-path-list})
-
-    for backup_path in "''\${backup_paths[@]}"
-    do
-      export RESTIC_REPOSITORY="''\${backup_path}"
-      sudo --preserve-env=RESTIC_REPOSITORY --preserve-env=RESTIC_PASSWORD restic ls latest
-    done
-  '';
+  ## Backblaze B2 is used as a NATIVE restic repository (b2:bucket:label),
+  ## not a mounted filesystem. restic talks to B2 directly; offsite gets a
+  ## real restic repo with its own snapshot history and retention - so a
+  ## corrupt latest snapshot can be rolled back offsite too, and `prune`
+  ## bounds the offsite size. The credentials live in an EnvironmentFile.
+  backblaze-enabled = config.homefree.backups.enable
+    && config.homefree.backups.backblaze.enable;
+  backblaze-bucket = config.homefree.backups.backblaze.bucket;
+  restic-env-file = "/var/lib/homefree-secrets/backup/restic-environment";
   restore-cli = pkgs.writeShellScriptBin "restore-cli" ''
-    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:${pkgs.restic}/bin:${pkgs.findutils}/bin:${pkgs.gnugrep}/bin:${pkgs.gawk}/bin:${pkgs.gnused}/bin:${pkgs.rsync}/bin:${pkgs.gzip}/bin:${pkgs.sudo}/bin:${pkgs.postgresql}/bin:${pkgs.mariadb}/bin:$PATH"
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:${pkgs.restic}/bin:${pkgs.findutils}/bin:${pkgs.gnugrep}/bin:${pkgs.gawk}/bin:${pkgs.gnused}/bin:${pkgs.rsync}/bin:${pkgs.gzip}/bin:${pkgs.sudo}/bin:${pkgs.postgresql}/bin:${pkgs.mariadb}/bin:${pkgs.jq}/bin:${pkgs.rclone}/bin:$PATH"
+    ## Point the script at the configured local backup directory. Without
+    ## this it falls back to its built-in default (/var/lib/backups) and
+    ## cannot find repositories under a custom backups.to-path.
+    export BACKUP_LOCAL_PATH="${backup-to-path}"
+    ## Backblaze B2 is a native restic repo - tell the script the bucket
+    ## and where the B2 credentials live so `--source backblaze` works.
+    export BACKBLAZE_BUCKET="${if backblaze-enabled then backblaze-bucket else ""}"
+    export RESTIC_ENV_FILE="${restic-env-file}"
     exec ${pkgs.bash}/bin/bash ${../../scripts/restore.sh} "$@"
   '';
   backup-mysql-script =
@@ -87,8 +85,6 @@ in
 
   environment.systemPackages = [
     pkgs.restic
-    pkgs.rclone
-    backup-cli
     restore-cli
     pkgs.jq
   ];
@@ -151,27 +147,27 @@ in
   # Incremental Backups
   # --------------------------------------------------------------------------------------
 
+  ## Shared retention: keep 7 daily, 5 weekly, 10 yearly snapshots.
+  ## restic prune enforces this, which also bounds repository size.
+
   services.restic.backups = lib.mkMerge ([
+    ## --- Local restic repositories (on-disk, primary copy) -------------
     (lib.listToAttrs (lib.map (entry:
     {
       name = "local-${entry.label}";
       value = {
         initialize = true;
         passwordFile = "/var/lib/homefree-secrets/backup/restic-password";
-        # What to backup
         paths = entry.paths;
-        # the name of the repository
         repository = backup-to-path + "/${entry.label}";
         # Run after 02:00, staggered across a 45-minute window so the ~40
-        # restic jobs don't all contend for disk/CPU at once. Stays clear of
-        # the 03:00 Backblaze rsync. Persistent so a missed run catches up.
+        # restic jobs don't all contend for disk/CPU at once.
+        # Persistent so a missed run (box off) catches up.
         timerConfig = {
           OnCalendar = "02:00";
           RandomizedDelaySec = "45m";
           Persistent = true;
         };
-
-        # Keep 7 daily, 5 weekly, and 10 annual backups
         pruneOpts = [
           "--keep-daily 7"
           "--keep-weekly 5"
@@ -180,183 +176,143 @@ in
       };
     }
     ) backup-from-paths))
-    # (lib.listToAttrs (lib.map (entry:
-    # {
-    #   name = "backblaze-${entry.label}";
-    #   value = {
-    #     initialize = true;
-    #     passwordFile = "/run/secrets/backup/restic-password";
-    #     environmentFile = "/run/secrets/backup/restic-environment";
-    #     # What to backup
-    #     paths = entry.paths;
-    #     # the name of the repository
-    #     repository = "b2:${entry.label}";
-    #     timerConfig = {
-    #       OnCalendar = "daily";
-    #     };
-    #
-    #     # Keep 7 daily, 5 weekly, and 10 annual backups
-    #     pruneOpts = [
-    #       "--keep-daily 7"
-    #       "--keep-weekly 5"
-    #       "--keep-yearly 10"
-    #     ];
-    #   };
-    # }
-    # ) backup-from-paths))
-    # (if config.homefree.backups.backblaze.enable then {
-    #   "backblaze-${config.homefree.backups.backblaze.bucket}" = {
-    #     initialize = true;
-    #     passwordFile = "/run/secrets/backup/restic-password";
-    #     environmentFile = "/run/secrets/backup/restic-environment";
-    #     # What to backup
-    #     paths = [
-    #       backup-to-path
-    #     ];
-    #     # the name of the repository
-    #     repository = "b2:${config.homefree.backups.backblaze.bucket}";
-    #     timerConfig = {
-    #       OnCalendar = "daily";
-    #     };
-    #
-    #     # Keep 7 daily, 5 weekly, and 10 annual backups
-    #     pruneOpts = [
-    #       "--keep-daily 7"
-    #       "--keep-weekly 5"
-    #       "--keep-yearly 10"
-    #     ];
-    #   };
-    # } else {})
+  ]
+  ## --- Backblaze B2 restic repositories (offsite, native) ------------
+  ## Each service gets its own native restic repo at b2:<bucket>:<label>.
+  ## This is a real restic repository with independent snapshot history
+  ## and retention - NOT an rsync mirror of the local copy. A corrupt
+  ## local snapshot therefore cannot corrupt the offsite copy, and a
+  ## corrupt latest snapshot can be rolled back to an earlier one offsite.
+  ++ lib.optionals backblaze-enabled [
+    (lib.listToAttrs (lib.map (entry:
+    {
+      name = "backblaze-${entry.label}";
+      value = {
+        initialize = true;
+        passwordFile = "/var/lib/homefree-secrets/backup/restic-password";
+        environmentFile = restic-env-file;  # B2_ACCOUNT_ID / B2_ACCOUNT_KEY
+        paths = entry.paths;
+        repository = "b2:${backblaze-bucket}:${entry.label}";
+        # Run after 04:00 - well after the 02:00-02:45 local window, so the
+        # offsite job picks up the freshly-written local DB dumps and does
+        # not contend with local backups for disk.
+        timerConfig = {
+          OnCalendar = "04:00";
+          RandomizedDelaySec = "45m";
+          Persistent = true;
+        };
+        pruneOpts = [
+          "--keep-daily 7"
+          "--keep-weekly 5"
+          "--keep-yearly 10"
+        ];
+      };
+    }
+    ) backup-from-paths))
   ]);
 
-  # Create mount point
-  systemd.tmpfiles.rules = [
-    "d /mnt/backup-backblaze 0750 root root -"
-  ];
+  ## A restic backup unit's ExecStartPre: refresh this service's database
+  ## dumps so the snapshot captures an up-to-date dump. Used by BOTH the
+  ## local and the Backblaze backup units for a given service, so each
+  ## repository is internally consistent regardless of run order.
+  ##
+  ## The dump step FAILS LOUDLY if a dump did not succeed - a backup must
+  ## never silently capture a stale database dump.
+  systemd.services =
+  let
+    mkPreStart = entry: pkgs.writeShellScript "restic-backup-prestart-${entry.label}" (''
+      set -euo pipefail
+      ## Make sure the local backup path exists.
+      mkdir -p "${backup-to-path + "/${entry.label}"}"
+    ''
+    + (lib.optionalString (lib.hasAttr entry.label service-to-postgres-databases-map)
+        (lib.concatMapStrings (database: ''
+          ## Refresh the PostgreSQL dump for ${database}. `systemctl restart`
+          ## of a Type=oneshot blocks until the dump finishes and returns
+          ## non-zero if it failed - so a stale dump can never be captured.
+          echo "Dumping PostgreSQL database ${database}..."
+          if ! systemctl restart postgresqlBackup-${database}; then
+            echo "ERROR: PostgreSQL dump for ${database} failed - aborting backup" >&2
+            exit 1
+          fi
+          if [ ! -s "/var/backup/postgresql/${database}.sql.gz" ]; then
+            echo "ERROR: PostgreSQL dump /var/backup/postgresql/${database}.sql.gz missing or empty" >&2
+            exit 1
+          fi
+          mkdir -p "/var/backup/postgresql-homefree/${entry.label}"
+          cp -f "/var/backup/postgresql/${database}.sql.gz" "/var/backup/postgresql-homefree/${entry.label}/"
+        '') service-to-postgres-databases-map.${entry.label}))
+    + (lib.optionalString (lib.hasAttr entry.label service-to-mysql-databases-map)
+        (lib.concatMapStrings (database: ''
+          echo "Dumping MySQL database ${database}..."
+          ${backup-mysql-script database}
+          if [ -n "''${failed:-}" ]; then
+            echo "ERROR: MySQL dump for ${database} failed - aborting backup" >&2
+            exit 1
+          fi
+          if [ ! -s "${config.services.mysqlBackup.location}/${database}.gz" ]; then
+            echo "ERROR: MySQL dump for ${database} missing or empty" >&2
+            exit 1
+          fi
+          mkdir -p "/var/backup/mysql-homefree/${entry.label}"
+          cp -f "${config.services.mysqlBackup.location}/${database}.gz" "/var/backup/mysql-homefree/${entry.label}/"
+        '') service-to-mysql-databases-map.${entry.label})));
 
-  systemd.services = lib.listToAttrs (
-    (lib.map (entry: {
-    name = "restic-backups-local-${entry.label}";
-    value = {
-      serviceConfig =
-      let
-        preStart = ''
-          ## Make sure backup path exists
-          mkdir -p "${backup-to-path + "/${entry.label}"}"
+    ## Override applied to each restic-backups-<prefix>-<label> unit:
+    ## prepend the DB-dump preStart (mkBefore so it runs before the restic
+    ## module's own ExecStartPre). Backblaze units additionally require the
+    ## B2 credentials env file to have been generated.
+    mkUnitOverride = entry: prefix: {
+      name = "restic-backups-${prefix}-${entry.label}";
+      value = {
+        serviceConfig.ExecStartPre =
+          lib.mkBefore [ "!${mkPreStart entry}" ];
+      } // (lib.optionalAttrs (prefix == "backblaze") {
+        after = [ "backup-b2-env.service" ];
+        requires = [ "backup-b2-env.service" ];
+        ## Belt-and-suspenders: also assert the env file exists at start,
+        ## in case backup-b2-env's RemainAfterExit-less state drifted.
+        unitConfig.ConditionPathExists = restic-env-file;
+      });
+    };
 
-        ''
-        +
-        (if (lib.hasAttr entry.label service-to-postgres-databases-map) then
-          (lib.concatStrings
-            (lib.map
-              (database: ''
-                ## Dump postgres DB
-                ## This could also be controlled by setting
-                ## PartOf=restic-backups-local-${entry.label} in the postgresBackup-${database} settings
-                systemctl restart postgresqlBackup-${database}
-
-                mkdir -p "/var/backup/postgresql-homefree/${entry.label}"
-                cp -rf "/var/backup/postgresql/${database}.sql.gz" "/var/backup/postgresql-homefree/${entry.label}/"
-
-              '')
-              service-to-postgres-databases-map.${entry.label}
-            )
-          )
-        else
-          ""
-        )
-        +
-        (if (lib.hasAttr entry.label service-to-mysql-databases-map) then
-          (lib.concatStrings
-            (lib.map
-              (database: ''
-                ${backup-mysql-script database}
-
-                mkdir -p "/var/backup/mysql-homefree/${entry.label}"
-                cp -rf "/var/backup/mysql/${database}.gz" "/var/backup/mysql-homefree/${entry.label}/"
-
-              '')
-              service-to-mysql-databases-map.${entry.label}
-            )
-          )
-        else
-          ""
-        );
-      in
-      {
-        ## Must use lib.mkBefore to make sure path is created before other ExecStartPre scripts are run
-        ExecStartPre = lib.mkBefore [ "!${pkgs.writeShellScript "restic-backups-to-local-${entry.label}" preStart}" ];
+    ## Generates the restic B2 credentials EnvironmentFile from the
+    ## admin-managed backblaze-id / backblaze-key secrets. restic's B2
+    ## backend reads B2_ACCOUNT_ID / B2_ACCOUNT_KEY from the environment.
+    ##
+    ## This is a oneshot WITHOUT RemainAfterExit so it re-runs every
+    ## rebuild/boot and stays in sync if the credentials change.
+    b2EnvUnit = lib.optionalAttrs backblaze-enabled {
+      backup-b2-env = {
+        description = "Generate restic Backblaze B2 credentials env file";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = "root";
+          ExecStart = pkgs.writeShellScript "backup-b2-env" ''
+            set -euo pipefail
+            id_file=/var/lib/homefree-secrets/backup/backblaze-id
+            key_file=/var/lib/homefree-secrets/backup/backblaze-key
+            if [ ! -s "$id_file" ] || [ ! -s "$key_file" ]; then
+              echo "Backblaze credentials not configured yet; skipping" >&2
+              exit 0
+            fi
+            umask 077
+            tmp=$(mktemp)
+            {
+              echo "B2_ACCOUNT_ID=$(cat "$id_file")"
+              echo "B2_ACCOUNT_KEY=$(cat "$key_file")"
+            } > "$tmp"
+            mv "$tmp" "${restic-env-file}"
+            chmod 0600 "${restic-env-file}"
+          '';
+        };
       };
     };
-  }
-  ) backup-from-paths)
-  ++ (if config.homefree.backups.backblaze.enable == true then [
-  {
-    name = "rclone-backblaze";
-    value = {
-      description = "Mount Backblaze B2 bucket";
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "notify";
-        ExecStartPre = [
-          "${pkgs.writeShellScript "create-rclone-config" ''
-            mkdir -p /root/.config/rclone
-            cat > /root/.config/rclone/rclone.conf << EOF
-            [b2]
-            type = b2
-            account = $(cat /var/lib/homefree-secrets/backup/backblaze-id)
-            key = $(cat /var/lib/homefree-secrets/backup/backblaze-key)
-            EOF
-          ''}"
-        ];
-        ExecStart = ''
-          ${pkgs.rclone}/bin/rclone mount \
-            --config /root/.config/rclone/rclone.conf \
-            --vfs-cache-mode full \
-            --vfs-cache-max-age 24h \
-            --log-level INFO \
-            --log-file /var/log/rclone.log \
-            --allow-non-empty \
-            b2:${config.homefree.backups.backblaze.bucket} /mnt/backup-backblaze
-        '';
-        ExecStop = "${pkgs.fuse}/bin/fusermount -u /mnt/backup-backblaze";
-        Restart = "on-failure";
-        RestartSec = "10s";
-        RemainAfterExit = "yes";
-        User = "root";
-      };
-    };
-  }
-  {
-    name = "restic-backblaze-rsync";
-    value = {
-      description = "Sync local restic backup to Backblaze";
-      after = [ "rclone-backblaze.service" ];
-      requires = [ "rclone-backblaze.service" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        User = "root";
-        ExecStart = "${pkgs.rsync}/bin/rsync -av --delete ${backup-to-path}/ /mnt/backup-backblaze";
-      };
-    };
-  }
-  ] else []));
-
-  systemd.timers = if config.homefree.backups.backblaze.enable == true then {
-    restic-backblaze-rsync = {
-      wantedBy = [ "timers.target" ];
-      after = [ "rclone-backblaze.service" ];
-      requires = [ "rclone-backblaze.service" ];
-
-      timerConfig = {
-        OnCalendar = "03:00";
-        RandomizedDelaySec = "30m";
-        Persistent = true;
-      };
-    };
-  } else {};
+  in
+    b2EnvUnit // lib.listToAttrs (
+      (lib.map (entry: mkUnitOverride entry "local") backup-from-paths)
+      ++ lib.optionals backblaze-enabled
+        (lib.map (entry: mkUnitOverride entry "backblaze") backup-from-paths)
+    );
 }

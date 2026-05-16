@@ -1,965 +1,1138 @@
 """
-Backup operations service - handles restore.sh script operations
+Backup operations service - handles restore.sh script operations.
+
+Architecture (rearchitected):
+
+* A single "job" abstraction tracks every long-running operation
+  (restore-all, single restore, trigger-backups, sync). Jobs are
+  persisted as JSON under /var/lib/homefree-admin/backup-jobs/ so they
+  survive reads across requests and a reaper can detect dead processes.
+
+* A flock-based lock (/var/lib/homefree-admin/backup.lock) guarantees
+  mutual exclusion: a restore cannot start while a backup/sync runs and
+  vice versa. Callers that find the lock held get a structured "busy"
+  result so the API can return 409 with a clear reason.
+
+* list-services is cheap (directory scan, no restic). Per-repository
+  paths load lazily on demand and are cached; a background pre-warm
+  thread keeps the cache hot so the UI rarely waits.
 """
 
-import subprocess
-import logging
-import json
+import os
 import re
+import json
+import fcntl
+import signal
+import logging
 import threading
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+import subprocess
 from enum import Enum
+from pathlib import Path
 from datetime import datetime
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
 
 def strip_ansi_codes(text: str) -> str:
-    """
-    Remove ANSI escape codes (color codes, formatting) from text.
-
-    Args:
-        text: Text potentially containing ANSI codes
-
-    Returns:
-        Clean text without ANSI codes
-    """
+    """Remove ANSI escape sequences (color/formatting) from text."""
     if not text:
         return text
-    # Remove ANSI escape sequences: \x1b[...m or \033[...m
-    ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
-    return ansi_pattern.sub('', text)
+    return re.compile(r'\x1b\[[0-9;]*m').sub('', text)
 
 
 class BackupSource(Enum):
-    """Backup source locations"""
+    """Backup source locations."""
     AUTO = "auto"
     LOCAL = "local"
     BACKBLAZE = "backblaze"
 
 
+class JobKind(str, Enum):
+    """Kinds of long-running backup-subsystem operations."""
+    RESTORE = "restore"          # single repository restore
+    RESTORE_ALL = "restore-all"  # full-system restore
+    BACKUP = "backup"            # trigger all backup jobs
+    SYNC = "sync"                # sync local repos to Backblaze
+
+
+class JobState(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class BackupBusy(Exception):
+    """Raised/returned when the backup subsystem lock is already held."""
+
+    def __init__(self, kind: str, job_id: Optional[str]):
+        self.kind = kind          # what currently holds the lock
+        self.job_id = job_id
+        super().__init__(f"Backup subsystem busy with {kind}")
+
+
 class BackupOperations:
-    """Service for backup/restore operations"""
+    """Service for backup/restore operations."""
 
     RESTORE_SCRIPT = Path("/nix/var/nix/profiles/system/sw/bin/restore-cli")
-    LOG_DIR = Path("/var/lib/homefree-admin/restore-logs")
-    LATEST_STATUS = LOG_DIR / "latest-status.json"
-    MAX_LOGS_TO_KEEP = 10
 
-    # Persistent restore state (survives service restarts)
-    RESTORE_STATE_DIR = Path("/var/lib/homefree-admin")
-    RESTORE_PID_FILE = RESTORE_STATE_DIR / "restore.pid"
-    RESTORE_LOG_FILE_REF = RESTORE_STATE_DIR / "restore.log"
-    RESTORE_OFFSET_FILE = RESTORE_STATE_DIR / "restore.offset"
-    RESTORE_STATUS_FILE = RESTORE_STATE_DIR / "restore-status.json"
+    STATE_DIR = Path("/var/lib/homefree-admin")
+    JOBS_DIR = STATE_DIR / "backup-jobs"
+    LOG_DIR = STATE_DIR / "backup-logs"
+    LOCK_FILE = STATE_DIR / "backup.lock"
+    CURRENT_JOB_FILE = STATE_DIR / "backup-current-job"  # holds active job id
 
-    # Server-side cache for list_services (persists until force refresh)
-    _services_cache: Dict[str, Any] = {}  # Cache by source (local, backblaze)
-    _services_cache_timestamp: Dict[str, float] = {}  # Timestamp by source
+    MAX_LOGS_TO_KEEP = 20
 
-    # Server-side cache for get_repository_paths (persists until force refresh)
-    _paths_cache: Dict[str, Any] = {}  # Cache by "source:service"
-    _paths_cache_timestamp: Dict[str, float] = {}  # Timestamp by "source:service"
+    # Server-side caches (persist until force refresh / pre-warm).
+    _services_cache: Dict[str, Any] = {}
+    _services_cache_timestamp: Dict[str, float] = {}
+    _paths_cache: Dict[str, Any] = {}
+    _paths_cache_timestamp: Dict[str, float] = {}
 
-    _current_restore_process = None
-    _current_restore_output_file = None
-    _current_restore_output_offset = 0
-    _last_restore_error = None
-    _last_restore_exit_code = None
-    _last_restore_output = None
+    # Live progress of the all-repository path warm, keyed by source.
+    # {source: {state, done, total, error}} where state is
+    # idle | running | ready | error. Lets the UI show a progress bar.
+    _paths_progress: Dict[str, Dict[str, Any]] = {}
+
+    # Guards job-file writes within this process.
+    _job_write_lock = threading.Lock()
+    # Ensures only one path-warm per source runs at a time.
+    _paths_warm_lock = threading.Lock()
+    _paths_warming: Dict[str, bool] = {}
+
+    # ----------------------------------------------------------------- setup
 
     @staticmethod
     def _ensure_directories() -> None:
-        """Ensure required directories exist"""
-        BackupOperations.LOG_DIR.mkdir(parents=True, exist_ok=True)
-        BackupOperations.RESTORE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        for d in (BackupOperations.STATE_DIR, BackupOperations.JOBS_DIR,
+                  BackupOperations.LOG_DIR):
+            d.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------ lock layer
 
     @staticmethod
-    def list_services(source: BackupSource = BackupSource.AUTO, force_refresh: bool = False) -> Dict[str, Any]:
+    def _lock_holder() -> Optional[Dict[str, Any]]:
+        """Return {kind, job_id} of whoever holds the lock, or None if free.
+
+        Uses a non-blocking flock probe: if we can grab the lock the
+        subsystem is idle. We never keep the probe lock - the owning job
+        holds its own flock for the duration of its background thread.
         """
-        List all services that have backups available.
+        BackupOperations._ensure_directories()
+        try:
+            fd = os.open(str(BackupOperations.LOCK_FILE),
+                         os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as e:
+            logger.warning(f"Could not open backup lock file: {e}")
+            return None
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Held by a live job - read its metadata.
+                meta = BackupOperations._read_current_job_ref()
+                return meta or {"kind": "unknown", "job_id": None}
+            else:
+                # Lock was free; release immediately.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                return None
+        finally:
+            os.close(fd)
 
-        Args:
-            source: Backup source (auto, local, or backblaze)
-            force_refresh: If True, bypass cache and fetch fresh data
+    @staticmethod
+    def _read_current_job_ref() -> Optional[Dict[str, Any]]:
+        try:
+            if BackupOperations.CURRENT_JOB_FILE.exists():
+                raw = BackupOperations.CURRENT_JOB_FILE.read_text().strip()
+                if raw:
+                    job = BackupOperations._read_job(raw)
+                    if job and job.get("state") in (JobState.QUEUED,
+                                                    JobState.RUNNING):
+                        return {"kind": job.get("kind"), "job_id": raw}
+        except Exception as e:
+            logger.warning(f"Error reading current job ref: {e}")
+        return None
 
-        Returns:
-            Dictionary with:
-                - success: bool
-                - services: List[str] (service names)
-                - error: str (if failed)
+    # ------------------------------------------------------------- job model
+
+    @staticmethod
+    def _job_path(job_id: str) -> Path:
+        return BackupOperations.JOBS_DIR / f"{job_id}.json"
+
+    @staticmethod
+    def _read_job(job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            p = BackupOperations._job_path(job_id)
+            if p.exists():
+                return json.loads(p.read_text())
+        except Exception as e:
+            logger.warning(f"Error reading job {job_id}: {e}")
+        return None
+
+    @staticmethod
+    def _write_job(job: Dict[str, Any]) -> None:
+        """Atomically persist a job record."""
+        with BackupOperations._job_write_lock:
+            try:
+                BackupOperations._ensure_directories()
+                p = BackupOperations._job_path(job["id"])
+                tmp = p.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(job, indent=2))
+                tmp.replace(p)
+            except Exception as e:
+                logger.warning(f"Error writing job {job.get('id')}: {e}")
+
+    @staticmethod
+    def _new_job(kind: JobKind, repos: List[str]) -> Dict[str, Any]:
+        job_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + kind.value
+        log_file = BackupOperations.LOG_DIR / f"{job_id}.log"
+        job = {
+            "id": job_id,
+            "kind": kind.value,
+            "state": JobState.QUEUED.value,
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "log_file": str(log_file),
+            "pid": None,
+            "current_repo": None,
+            "repos": [{"name": r, "state": "pending", "error": None}
+                      for r in repos],
+            "exit_code": None,
+            "error": None,
+        }
+        BackupOperations._write_job(job)
+        return job
+
+    @staticmethod
+    def _update_repo(job: Dict[str, Any], name: str,
+                     state: str, error: Optional[str] = None) -> None:
+        for r in job["repos"]:
+            if r["name"] == name:
+                r["state"] = state
+                r["error"] = error
+                break
+        if state == "running":
+            job["current_repo"] = name
+        BackupOperations._write_job(job)
+
+    @staticmethod
+    def _finish_job(job: Dict[str, Any], state: JobState,
+                    exit_code: Optional[int] = None,
+                    error: Optional[str] = None) -> None:
+        job["state"] = state.value
+        job["finished_at"] = datetime.now().isoformat()
+        job["exit_code"] = exit_code
+        job["error"] = error
+        job["current_repo"] = None
+        BackupOperations._write_job(job)
+        # Clear the current-job pointer if it still points at us.
+        try:
+            ref = BackupOperations.CURRENT_JOB_FILE
+            if ref.exists() and ref.read_text().strip() == job["id"]:
+                ref.unlink()
+        except Exception as e:
+            logger.warning(f"Error clearing current job ref: {e}")
+        BackupOperations._prune_old_jobs()
+
+    @staticmethod
+    def _prune_old_jobs() -> None:
+        try:
+            jobs = sorted(BackupOperations.JOBS_DIR.glob("*.json"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            for stale in jobs[BackupOperations.MAX_LOGS_TO_KEEP:]:
+                stale.unlink(missing_ok=True)
+            logs = sorted(BackupOperations.LOG_DIR.glob("*.log"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            for stale in logs[BackupOperations.MAX_LOGS_TO_KEEP:]:
+                stale.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Error pruning old jobs: {e}")
+
+    @staticmethod
+    def _reap_if_dead(job: Dict[str, Any]) -> Dict[str, Any]:
+        """Mark a job failed if it claims to be running but its PID is gone."""
+        if job.get("state") != JobState.RUNNING.value:
+            return job
+        pid = job.get("pid")
+        alive = False
+        if pid:
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except (ProcessLookupError, PermissionError):
+                alive = job.get("pid") is None
+        # A job whose worker thread set no PID (pure-Python loop) is tracked
+        # via the lock instead: if the lock is free, the worker is gone.
+        if not pid:
+            holder = BackupOperations._lock_holder()
+            alive = holder is not None and holder.get("job_id") == job["id"]
+        if not alive:
+            logger.info(f"Reaping dead job {job['id']} (pid={pid})")
+            BackupOperations._finish_job(
+                job, JobState.FAILED,
+                error="Operation terminated unexpectedly "
+                      "(admin service restarted or process killed).")
+        return BackupOperations._read_job(job["id"]) or job
+
+    @staticmethod
+    def get_current_job() -> Dict[str, Any]:
+        """Return the active job (reaped if dead), or {job: None}."""
+        ref = BackupOperations._read_current_job_ref()
+        if not ref or not ref.get("job_id"):
+            return {"success": True, "job": None}
+        job = BackupOperations._read_job(ref["job_id"])
+        if not job:
+            return {"success": True, "job": None}
+        job = BackupOperations._reap_if_dead(job)
+        if job.get("state") in (JobState.QUEUED.value, JobState.RUNNING.value):
+            return {"success": True, "job": job}
+        # Finished since the ref was written - still report it once so the
+        # UI can show the terminal state, but the ref is already cleared.
+        return {"success": True, "job": job}
+
+    @staticmethod
+    def get_job(job_id: str) -> Dict[str, Any]:
+        job = BackupOperations._read_job(job_id)
+        if not job:
+            return {"success": False, "error": "Job not found"}
+        job = BackupOperations._reap_if_dead(job)
+        return {"success": True, "job": job}
+
+    @staticmethod
+    def get_job_log(job_id: str, offset: int = 0) -> Dict[str, Any]:
+        """Return new log bytes since `offset` for live streaming."""
+        job = BackupOperations._read_job(job_id)
+        if not job:
+            return {"success": False, "error": "Job not found"}
+        log_file = Path(job["log_file"])
+        if not log_file.exists():
+            return {"success": True, "lines": "", "offset": 0,
+                    "eof": job.get("state") in (JobState.DONE.value,
+                                                JobState.FAILED.value)}
+        try:
+            size = log_file.stat().st_size
+            if offset > size:        # log rotated/truncated
+                offset = 0
+            with open(log_file, "r", errors="replace") as f:
+                f.seek(offset)
+                chunk = f.read()
+                new_offset = f.tell()
+            return {
+                "success": True,
+                "lines": strip_ansi_codes(chunk),
+                "offset": new_offset,
+                "eof": job.get("state") in (JobState.DONE.value,
+                                            JobState.FAILED.value),
+            }
+        except Exception as e:
+            logger.warning(f"Error reading job log {job_id}: {e}")
+            return {"success": False, "error": str(e)}
+
+    # -------------------------------------------------- timer suspend/resume
+
+    @staticmethod
+    def _backup_timers_for(repos: List[str]) -> List[str]:
+        """Return restic-backups-local-*.timer units for the given repos.
+
+        If `repos` is empty, returns every local backup timer.
         """
         try:
-            # Check cache unless force refresh
+            result = subprocess.run(
+                ["systemctl", "list-units", "--all",
+                 "restic-backups-local-*.timer", "--no-pager", "--no-legend"],
+                capture_output=True, text=True, timeout=10)
+            units = []
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                unit = line.split()[0]
+                if not unit.endswith(".timer"):
+                    continue
+                if not repos:
+                    units.append(unit)
+                    continue
+                svc = unit.replace("restic-backups-local-", "").replace(
+                    ".timer", "")
+                if svc in repos:
+                    units.append(unit)
+            return units
+        except Exception as e:
+            logger.warning(f"Error listing backup timers: {e}")
+            return []
+
+    @staticmethod
+    def _suspend_backup_timers(repos: List[str]) -> List[str]:
+        """Stop backup timers so a scheduled run can't collide with a restore.
+
+        Returns the list of units stopped, for later resume.
+        """
+        units = BackupOperations._backup_timers_for(repos)
+        stopped = []
+        for unit in units:
+            try:
+                subprocess.run(["systemctl", "stop", unit],
+                               capture_output=True, text=True, timeout=10)
+                stopped.append(unit)
+            except Exception as e:
+                logger.warning(f"Failed to stop {unit}: {e}")
+        if stopped:
+            logger.info(f"Suspended {len(stopped)} backup timer(s) for restore")
+        return stopped
+
+    @staticmethod
+    def _resume_backup_timers(units: List[str]) -> None:
+        for unit in units:
+            try:
+                subprocess.run(["systemctl", "start", unit],
+                               capture_output=True, text=True, timeout=10)
+            except Exception as e:
+                logger.warning(f"Failed to restart {unit}: {e}")
+        if units:
+            logger.info(f"Resumed {len(units)} backup timer(s) after restore")
+
+    # ------------------------------------------------------- list operations
+
+    @staticmethod
+    def list_services(source: BackupSource = BackupSource.AUTO,
+                      force_refresh: bool = False) -> Dict[str, Any]:
+        """List repositories that have backups available (cheap, no restic)."""
+        try:
             cache_key = source.value
             if not force_refresh:
-                cached_data = BackupOperations._services_cache.get(cache_key)
-                if cached_data:
-                    cached_timestamp = BackupOperations._services_cache_timestamp.get(cache_key, 0)
-                    age = datetime.now().timestamp() - cached_timestamp
-                    logger.info(f"Returning cached services for {cache_key} (age: {age:.1f}s)")
-                    return cached_data
+                cached = BackupOperations._services_cache.get(cache_key)
+                if cached:
+                    return cached
 
-            logger.info(f"Fetching fresh services list for {cache_key}")
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-services"]
             if source != BackupSource.AUTO:
-                cmd.extend(["--source", source.value])
+                cmd += ["--source", source.value]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120  # Increased for Backblaze operations
-            )
-
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=120)
             if result.returncode == 0:
-                # Parse service names from output (one per line)
-                # Filter out log lines (contain ANSI color codes, [INFO], [WARN], etc.)
                 services = []
-                for line in result.stdout.strip().split('\n'):
+                for line in result.stdout.strip().split("\n"):
                     line = line.strip()
-                    # Skip empty lines, lines with ANSI codes, or log prefixes
-                    if line and '\x1b' not in line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]']):
+                    if line and "\x1b" not in line and not any(
+                            x in line for x in ["[INFO]", "[WARN]", "[ERROR]"]):
                         services.append(line)
-
-                response = {
-                    'success': True,
-                    'services': services
-                }
-
-                # Only cache if we got actual data (don't cache empty results)
-                # This prevents caching failure states or temporary empty responses
+                response = {"success": True, "services": services}
                 if services:
                     BackupOperations._services_cache[cache_key] = response
-                    BackupOperations._services_cache_timestamp[cache_key] = datetime.now().timestamp()
-                    logger.info(f"Cached {len(services)} services for {cache_key}")
-                else:
-                    logger.warning(f"Not caching empty services list for {cache_key}")
-
+                    BackupOperations._services_cache_timestamp[cache_key] = \
+                        datetime.now().timestamp()
                 return response
-            else:
-                return {
-                    'success': False,
-                    'services': [],
-                    'error': result.stderr or result.stdout
-                }
-
+            return {"success": False, "services": [],
+                    "error": result.stderr or result.stdout}
         except subprocess.TimeoutExpired:
-            logger.error("list-services timed out")
-            return {
-                'success': False,
-                'services': [],
-                'error': 'Operation timed out after 120 seconds'
-            }
+            return {"success": False, "services": [],
+                    "error": "Operation timed out after 120 seconds"}
         except Exception as e:
             logger.error(f"Error listing services: {e}")
-            return {
-                'success': False,
-                'services': [],
-                'error': str(e)
-            }
+            return {"success": False, "services": [], "error": str(e)}
 
     @staticmethod
-    def list_snapshots(service: str, source: BackupSource = BackupSource.AUTO) -> Dict[str, Any]:
-        """
-        List all snapshots for a specific service.
-
-        Args:
-            service: Service name
-            source: Backup source (auto, local, or backblaze)
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - snapshots: List[Dict] (snapshot info with id, time, hostname, paths)
-                - error: str (if failed)
-        """
+    def list_snapshots(service: str,
+                       source: BackupSource = BackupSource.AUTO
+                       ) -> Dict[str, Any]:
+        """List all snapshots for a specific service."""
         try:
-            cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-snapshots", service]
+            cmd = [str(BackupOperations.RESTORE_SCRIPT),
+                   "list-snapshots", service]
             if source != BackupSource.AUTO:
-                cmd.extend(["--source", source.value])
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-
+                cmd += ["--source", source.value]
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=60)
             if result.returncode == 0:
-                # Parse snapshot info from output
-                # Expected format: one snapshot per line with JSON structure
-                # or simple text format: "ID | Time | Hostname | Paths"
-                snapshots = BackupOperations._parse_snapshots(result.stdout)
-                return {
-                    'success': True,
-                    'snapshots': snapshots
-                }
-            else:
-                return {
-                    'success': False,
-                    'snapshots': [],
-                    'error': result.stderr or result.stdout
-                }
-
+                return {"success": True,
+                        "snapshots": BackupOperations._parse_snapshots(
+                            result.stdout)}
+            return {"success": False, "snapshots": [],
+                    "error": result.stderr or result.stdout}
         except subprocess.TimeoutExpired:
-            logger.error("list-snapshots timed out")
-            return {
-                'success': False,
-                'snapshots': [],
-                'error': 'Operation timed out after 60 seconds'
-            }
+            return {"success": False, "snapshots": [],
+                    "error": "Operation timed out after 60 seconds"}
         except Exception as e:
             logger.error(f"Error listing snapshots: {e}")
-            return {
-                'success': False,
-                'snapshots': [],
-                'error': str(e)
-            }
+            return {"success": False, "snapshots": [], "error": str(e)}
 
     @staticmethod
     def _parse_snapshots(output: str) -> List[Dict[str, Any]]:
-        """
-        Parse snapshot output into structured data.
-
-        Args:
-            output: Raw output from list-snapshots command (JSON array from restic)
-
-        Returns:
-            List of snapshot dictionaries
-        """
         if not output.strip():
             return []
-
         try:
-            # Try to parse as JSON array (restic --json output)
             snapshots = json.loads(output.strip())
             if isinstance(snapshots, list):
                 return snapshots
         except json.JSONDecodeError:
             pass
-
-        # Fall back to line-by-line parsing for other formats
         snapshots = []
-        for line in output.strip().split('\n'):
+        for line in output.strip().split("\n"):
             if not line.strip():
                 continue
-
-            # Try to parse as JSON object
             try:
-                snapshot = json.loads(line)
-                snapshots.append(snapshot)
+                snapshots.append(json.loads(line))
                 continue
             except json.JSONDecodeError:
                 pass
-
-            # Fall back to pipe-separated format: "ID | Time | Hostname | Paths"
-            parts = [p.strip() for p in line.split('|')]
+            parts = [p.strip() for p in line.split("|")]
             if len(parts) >= 3:
                 snapshots.append({
-                    'id': parts[0],
-                    'time': parts[1],
-                    'hostname': parts[2] if len(parts) > 2 else '',
-                    'paths': parts[3] if len(parts) > 3 else ''
+                    "id": parts[0], "time": parts[1],
+                    "hostname": parts[2] if len(parts) > 2 else "",
+                    "paths": parts[3] if len(parts) > 3 else "",
                 })
-
         return snapshots
 
     @staticmethod
-    def download_service(service: str) -> Dict[str, Any]:
-        """
-        Download a service backup from Backblaze to local storage.
+    def get_repository_paths(service: str,
+                             source: BackupSource = BackupSource.AUTO,
+                             force_refresh: bool = False) -> Dict[str, Any]:
+        """Get the backup root paths of a repository's latest snapshot.
 
-        Args:
-            service: Service name
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - output: str (command output)
-                - error: str (if failed)
+        `restore.sh list-paths` emits the snapshot's `paths` array (the
+        directories handed to `restic backup`) - one clean path per line.
+        These are the meaningful roots, e.g. /var/lib/adguardhome or a
+        configured extra path, not the full file tree.
         """
         try:
-            cmd = [str(BackupOperations.RESTORE_SCRIPT), "download", service]
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600  # 1 hour for large downloads
-            )
-
-            if result.returncode == 0:
-                return {
-                    'success': True,
-                    'output': result.stdout
-                }
-            else:
-                return {
-                    'success': False,
-                    'output': result.stdout,
-                    'error': result.stderr or "Download failed"
-                }
-
-        except subprocess.TimeoutExpired:
-            logger.error("download timed out")
-            return {
-                'success': False,
-                'error': 'Download timed out after 1 hour'
-            }
-        except Exception as e:
-            logger.error(f"Error downloading service backup: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-
-    @staticmethod
-    def get_repository_paths(service: str, source: BackupSource = BackupSource.AUTO, force_refresh: bool = False) -> Dict[str, Any]:
-        """
-        Get the list of paths backed up in a repository.
-
-        Args:
-            service: Service/repository name
-            source: Backup source (auto, local, or backblaze)
-            force_refresh: If True, bypass cache and fetch fresh data
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - paths: List[str] (paths in the repository)
-                - error: str (if failed)
-        """
-        try:
-            # Check cache unless force refresh
             cache_key = f"{source.value}:{service}"
             if not force_refresh:
-                cached_data = BackupOperations._paths_cache.get(cache_key)
-                if cached_data:
-                    cached_timestamp = BackupOperations._paths_cache_timestamp.get(cache_key, 0)
-                    age = datetime.now().timestamp() - cached_timestamp
-                    logger.info(f"Returning cached paths for {cache_key} (age: {age:.1f}s)")
-                    return cached_data
-
-            logger.info(f"Fetching fresh paths for {cache_key}")
+                cached = BackupOperations._paths_cache.get(cache_key)
+                if cached:
+                    return cached
 
             cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-paths", service]
             if source != BackupSource.AUTO:
-                cmd.extend(["--source", source.value])
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-
+                cmd += ["--source", source.value]
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=60)
             if result.returncode == 0:
-                # Parse paths from output (one per line, filter out metadata/log lines)
                 paths = []
-                for line in result.stdout.strip().split('\n'):
+                for line in result.stdout.strip().split("\n"):
                     line = strip_ansi_codes(line.strip())
-                    # Skip empty lines, lines with ANSI codes, or log prefixes
-                    if line and not any(x in line for x in ['[INFO]', '[WARN]', '[ERROR]', 'snapshot', 'repository']):
+                    # restore.sh logs to stderr, so stdout is path-only;
+                    # still guard against a stray log line leaking in.
+                    if line and not any(x in line for x in [
+                            "[INFO]", "[WARN]", "[ERROR]"]):
                         paths.append(line)
-
-                response = {
-                    'success': True,
-                    'paths': paths
-                }
-
-                # Only cache if we got actual data (don't cache empty results)
-                # This prevents caching failure states or temporary empty responses
+                response = {"success": True, "paths": paths}
                 if paths:
                     BackupOperations._paths_cache[cache_key] = response
-                    BackupOperations._paths_cache_timestamp[cache_key] = datetime.now().timestamp()
-                    logger.info(f"Cached {len(paths)} paths for {cache_key}")
-                else:
-                    logger.warning(f"Not caching empty paths list for {cache_key}")
-
+                    BackupOperations._paths_cache_timestamp[cache_key] = \
+                        datetime.now().timestamp()
                 return response
-            else:
-                return {
-                    'success': False,
-                    'paths': [],
-                    'error': result.stderr or result.stdout
-                }
-
+            return {"success": False, "paths": [],
+                    "error": result.stderr or result.stdout}
         except subprocess.TimeoutExpired:
-            logger.error("get_repository_paths timed out")
-            return {
-                'success': False,
-                'paths': [],
-                'error': 'Operation timed out after 60 seconds'
-            }
+            return {"success": False, "paths": [],
+                    "error": "Operation timed out after 60 seconds"}
         except Exception as e:
             logger.error(f"Error getting repository paths: {e}")
-            return {
-                'success': False,
-                'paths': [],
-                'error': str(e)
-            }
+            return {"success": False, "paths": [], "error": str(e)}
 
     @staticmethod
-    def _write_restore_status(service: str, restore_type: str):
-        """Write restore status to file for tracking."""
-        try:
-            BackupOperations.RESTORE_STATE_DIR.mkdir(parents=True, exist_ok=True)
-            status = {
-                'running': True,
-                'service': service,
-                'type': restore_type,
-                'started_at': datetime.now().isoformat()
-            }
-            with open(BackupOperations.RESTORE_STATUS_FILE, 'w') as f:
-                json.dump(status, f)
-        except Exception as e:
-            logger.warning(f"Failed to write restore status: {e}")
+    def get_all_repository_paths(source: BackupSource = BackupSource.LOCAL
+                                 ) -> Dict[str, Any]:
+        """Return whatever all-repository path data is currently cached.
 
-    @staticmethod
-    def _clear_restore_status():
-        """Clear restore status file."""
-        try:
-            if BackupOperations.RESTORE_STATUS_FILE.exists():
-                BackupOperations.RESTORE_STATUS_FILE.unlink()
-        except Exception as e:
-            logger.warning(f"Failed to clear restore status: {e}")
+        This never blocks. The actual resolution happens in a background
+        warm (`_warm_paths`) that streams progress; callers poll this
+        plus `get_paths_progress` to drive a progress bar.
 
-    @staticmethod
-    def restore_service(
-        service: str,
-        snapshot_id: Optional[str] = None,
-        source: BackupSource = BackupSource.AUTO,
-        dry_run: bool = False,
-        create_snapshot: bool = False,
-        _skip_status_tracking: bool = False
-    ) -> Dict[str, Any]:
+        Returns: {success, paths: {repo: [path, ...]}, ready: bool}
         """
-        Restore a service from backup.
-
-        Args:
-            service: Service name
-            snapshot_id: Specific snapshot ID to restore (None = latest)
-            source: Backup source (auto, local, or backblaze)
-            dry_run: If True, only show what would be restored
-            create_snapshot: If True, create a snapshot before restoring
-            _skip_status_tracking: Internal flag to skip status tracking (when called from restore_all)
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - output: str (command output)
-                - error: str (if failed)
-        """
-        try:
-            # Write restore status before starting (unless called from restore_all)
-            if not _skip_status_tracking:
-                # Clear any stale status before starting new restore
-                BackupOperations._clear_restore_status()
-                BackupOperations._write_restore_status(service, 'service')
-
-            cmd = [str(BackupOperations.RESTORE_SCRIPT), "restore", service]
-
-            if snapshot_id:
-                cmd.append(snapshot_id)
-
-            if source != BackupSource.AUTO:
-                cmd.extend(["--source", source.value])
-
-            # Add --yes flag for non-interactive mode (API calls)
-            cmd.append("--yes")
-
-            # Note: dry_run and create_snapshot would need to be added to restore.sh
-            # For now, we'll log them but not pass them to the script
-            if dry_run:
-                logger.info(f"Dry-run mode requested (not yet implemented in restore.sh)")
-            if create_snapshot:
-                logger.info(f"Create-snapshot mode requested (not yet implemented in restore.sh)")
-
-            # Log the command for debugging
-            logger.info(f"Running restore command: {' '.join(cmd)}")
-
-            # Create log file for this restore operation
-            BackupOperations._ensure_directories()
-            log_file = BackupOperations.LOG_DIR / f"restore-{service}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-
-            # Run restore in background using Popen (non-blocking)
-            with open(log_file, 'w') as f:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-
-            # Store process info for monitoring
-            BackupOperations._current_restore_process = process
-            BackupOperations._current_restore_output_file = log_file
-            BackupOperations._current_restore_output_offset = 0
-
-            logger.info(f"Restore process started in background (PID: {process.pid}), logging to {log_file}")
-
-            # Return immediately - process runs in background
-            return {
-                'success': True,
-                'message': f'Restore started in background (PID: {process.pid})',
-                'log_file': str(log_file),
-                'pid': process.pid
-            }
-
-        except FileNotFoundError:
-            logger.error(f"Restore script not found: {BackupOperations.RESTORE_SCRIPT}")
-            return {
-                'success': False,
-                'error': f'Restore script not found: {BackupOperations.RESTORE_SCRIPT}'
-            }
-        except Exception as e:
-            logger.error(f"Error restoring service: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-        # Note: Status is NOT cleared here since process runs in background
-        # Status will be cleared when process finishes or next restore starts
-
-    @staticmethod
-    def restore_all(
-        snapshot_id: Optional[str] = None,
-        source: BackupSource = BackupSource.AUTO,
-        dry_run: bool = False,
-        include_system_config: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Restore all services from backup.
-
-        Args:
-            snapshot_id: Specific snapshot ID to restore (None = latest)
-            source: Backup source (auto, local, or backblaze)
-            dry_run: If True, only show what would be restored
-            include_system_config: If True, include system-config in restore
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - output: str (command output)
-                - error: str (if failed)
-        """
-        try:
-            # Clear any stale status before starting new restore
-            BackupOperations._clear_restore_status()
-            # Write restore status before starting (use "ALL" as service name for restore-all)
-            BackupOperations._write_restore_status("ALL", 'all')
-
-            # If system-config should be excluded, restore services individually
-            if not include_system_config:
-                logger.info("Excluding system-config from restore-all")
-
-                # Get list of all services
-                services_result = BackupOperations.list_services(source)
-                if not services_result['success']:
-                    return {
-                        'success': False,
-                        'error': f"Failed to list services: {services_result.get('error', 'Unknown error')}"
-                    }
-
-                all_services = services_result.get('services', [])
-                system_config = services_result.get('system_config', [])
-                extra_paths = services_result.get('extra_paths', [])
-
-                # Combine all repositories except system-config
-                repositories_to_restore = all_services + extra_paths
-
-                if not repositories_to_restore:
-                    return {
-                        'success': False,
-                        'error': 'No repositories found to restore'
-                    }
-
-                logger.info(f"Restoring {len(repositories_to_restore)} repositories (excluding system-config)")
-
-                # Restore each repository individually
-                combined_output = []
-                failed_services = []
-
-                for service in repositories_to_restore:
-                    logger.info(f"Restoring {service}...")
-                    result = BackupOperations.restore_service(
-                        service=service,
-                        snapshot_id=snapshot_id,
-                        source=source,
-                        dry_run=dry_run,
-                        _skip_status_tracking=True  # restore_all manages status tracking
-                    )
-
-                    combined_output.append(f"=== Restoring {service} ===")
-                    combined_output.append(result.get('output', ''))
-
-                    if not result['success']:
-                        failed_services.append(service)
-                        logger.error(f"Failed to restore {service}: {result.get('error', 'Unknown error')}")
-
-                if failed_services:
-                    return {
-                        'success': False,
-                        'output': '\n'.join(combined_output),
-                        'error': f"Failed to restore {len(failed_services)} repositories: {', '.join(failed_services)}"
-                    }
-                else:
-                    return {
-                        'success': True,
-                        'output': '\n'.join(combined_output)
-                    }
-
-            # Otherwise, use the standard restore-all command
-            cmd = [str(BackupOperations.RESTORE_SCRIPT), "restore-all"]
-
-            if snapshot_id:
-                cmd.append(snapshot_id)
-
-            if source != BackupSource.AUTO:
-                cmd.extend(["--source", source.value])
-
-            # Add --yes flag for non-interactive mode (API calls)
-            cmd.append("--yes")
-
-            if dry_run:
-                logger.info(f"Dry-run mode requested (not yet implemented in restore.sh)")
-
-            # Log the command for debugging
-            logger.info(f"Running restore-all command: {' '.join(cmd)}")
-
-            # Create log file for this restore operation
-            BackupOperations._ensure_directories()
-            log_file = BackupOperations.LOG_DIR / f"restore-all-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-
-            # Run restore-all in background using Popen (non-blocking)
-            with open(log_file, 'w') as f:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-
-            # Store process info for monitoring
-            BackupOperations._current_restore_process = process
-            BackupOperations._current_restore_output_file = log_file
-            BackupOperations._current_restore_output_offset = 0
-
-            logger.info(f"Restore-all process started in background (PID: {process.pid}), logging to {log_file}")
-
-            # Return immediately - process runs in background
-            return {
-                'success': True,
-                'message': f'Restore-all started in background (PID: {process.pid})',
-                'log_file': str(log_file),
-                'pid': process.pid
-            }
-
-        except FileNotFoundError:
-            logger.error(f"Restore script not found: {BackupOperations.RESTORE_SCRIPT}")
-            return {
-                'success': False,
-                'error': f'Restore script not found: {BackupOperations.RESTORE_SCRIPT}'
-            }
-        except Exception as e:
-            logger.error(f"Error restoring all services: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-        # Note: Status is NOT cleared here since process runs in background
-        # Status will be cleared when process finishes or next restore starts
-
-    @staticmethod
-    def get_backup_config_status() -> Dict[str, Any]:
-        """
-        Check if backup/restore configuration is ready.
-
-        Returns:
-            Dictionary with:
-                - restic_password_configured: bool
-                - backblaze_configured: bool
-                - local_backup_path: str
-                - local_backups_available: bool
-                - backblaze_mounted: bool
-        """
-        restic_password_file = Path("/var/lib/homefree-secrets/backup/restic-password")
-        backblaze_id_file = Path("/var/lib/homefree-secrets/backup/backblaze-id")
-        backblaze_key_file = Path("/var/lib/homefree-secrets/backup/backblaze-key")
-        local_backup_path = Path("/var/lib/backups")
-        backblaze_mount = Path("/mnt/backup-backblaze")
-
+        cache_key = f"all:{source.value}"
+        cached = BackupOperations._paths_cache.get(cache_key)
+        progress = BackupOperations._paths_progress.get(source.value, {})
+        ready = progress.get("state") == "ready"
         return {
-            'restic_password_configured': restic_password_file.exists() and restic_password_file.stat().st_size > 0,
-            'backblaze_configured': (
-                backblaze_id_file.exists() and backblaze_id_file.stat().st_size > 0 and
-                backblaze_key_file.exists() and backblaze_key_file.stat().st_size > 0
-            ),
-            'local_backup_path': str(local_backup_path),
-            'local_backups_available': local_backup_path.exists() and any(local_backup_path.iterdir()) if local_backup_path.exists() else False,
-            'backblaze_mounted': backblaze_mount.exists() and backblaze_mount.is_mount()
+            "success": True,
+            "paths": (cached or {}).get("paths", {}),
+            "ready": ready,
         }
 
     @staticmethod
-    def _trigger_backups_worker():
+    def get_paths_progress(source: BackupSource = BackupSource.LOCAL
+                           ) -> Dict[str, Any]:
+        """Return live progress of the all-repository path warm.
+
+        {state, done, total, error} - state is one of
+        idle | running | ready | error.
         """
-        Worker function that runs in background thread to start backup services.
-        This runs asynchronously and logs results but doesn't return anything.
+        p = BackupOperations._paths_progress.get(source.value)
+        if not p:
+            return {"state": "idle", "done": 0, "total": 0, "error": None}
+        return dict(p)
+
+    @staticmethod
+    def _warm_paths(source: BackupSource) -> None:
+        """Resolve every repository's backup-root paths, with progress.
+
+        Runs `restore.sh list-all-paths`, which streams one NDJSON line
+        per repository. Each line updates `_paths_progress` and the
+        cache incrementally, so the UI sees a moving progress bar and
+        repo rows fill in as their paths arrive.
         """
+        skey = source.value
+        cache_key = f"all:{skey}"
+        progress = {"state": "running", "done": 0, "total": 0, "error": None}
+        BackupOperations._paths_progress[skey] = progress
+
+        # Accumulate into a fresh map; only swap the cache atomically.
+        paths_map: Dict[str, List[str]] = {}
+        proc = None
         try:
-            # Get list of all backup services
-            result = subprocess.run(
-                ['systemctl', 'list-units', '--all', 'restic-backups-local-*.service', '--no-pager', '--no-legend'],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-
-            if result.returncode != 0:
-                logger.error(f"Failed to list backup services: {result.stderr}")
-                return
-
-            # Parse service names from output
-            services = []
-            for line in result.stdout.strip().split('\n'):
-                if line.strip():
-                    # Extract service name (first field)
-                    parts = line.split()
-                    if parts and parts[0].endswith('.service'):
-                        services.append(parts[0])
-
-            if not services:
-                logger.warning('No backup services found to trigger')
-                return
-
-            # Trigger all backup services
-            logger.info(f"Starting {len(services)} backup services in background")
-            failed_services = []
-
-            for service in services:
+            cmd = [str(BackupOperations.RESTORE_SCRIPT), "list-all-paths"]
+            if source != BackupSource.AUTO:
+                cmd += ["--source", skey]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True)
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    subprocess.run(
-                        ['systemctl', 'start', service],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        check=True
-                    )
-                    logger.debug(f"Started {service}")
-                except subprocess.CalledProcessError as e:
-                    error_msg = f"{service}: {e.stderr}"
-                    failed_services.append(error_msg)
-                    logger.error(f"Failed to start {error_msg}")
-                except subprocess.TimeoutExpired:
-                    error_msg = f"{service}: timeout"
-                    failed_services.append(error_msg)
-                    logger.error(f"Timeout starting {service}")
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue   # ignore any stray non-JSON line
+                etype = evt.get("event")
+                if etype == "begin":
+                    progress["total"] = evt.get("total", 0)
+                elif etype == "repo":
+                    repo = evt.get("name")
+                    repo_paths = evt.get("paths", []) or []
+                    paths_map[repo] = repo_paths
+                    progress["done"] = evt.get("index", progress["done"] + 1)
+                    # Seed the per-repo cache as each repo resolves so an
+                    # already-rendered row can fill in immediately.
+                    if repo_paths:
+                        sk = f"{skey}:{repo}"
+                        BackupOperations._paths_cache[sk] = {
+                            "success": True, "paths": repo_paths}
+                        BackupOperations._paths_cache_timestamp[sk] = \
+                            datetime.now().timestamp()
+                    # Publish a partial all-map so polling shows progress.
+                    BackupOperations._paths_cache[cache_key] = {
+                        "paths": dict(paths_map)}
+                # "end" - loop will terminate when the pipe closes.
 
-            if failed_services:
-                logger.warning(f"Started {len(services) - len(failed_services)}/{len(services)} services. Failed: {', '.join(failed_services)}")
-            else:
-                logger.info(f"Successfully started all {len(services)} backup services")
+            ret = proc.wait()
+            if ret != 0:
+                progress["state"] = "error"
+                progress["error"] = f"list-all-paths exited {ret}"
+                logger.warning(f"Path warm for {skey} exited {ret}")
+                return
 
-        except subprocess.TimeoutExpired:
-            logger.error("Backup trigger worker timed out")
+            BackupOperations._paths_cache[cache_key] = {"paths": paths_map}
+            BackupOperations._paths_cache_timestamp[cache_key] = \
+                datetime.now().timestamp()
+            progress["state"] = "ready"
+            logger.info(f"Path warm for {skey} complete "
+                        f"({len(paths_map)} repos)")
         except Exception as e:
-            logger.error(f"Error in backup trigger worker: {e}")
+            logger.error(f"Path warm for {skey} failed: {e}")
+            progress["state"] = "error"
+            progress["error"] = str(e)
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        finally:
+            BackupOperations._paths_warming[skey] = False
+
+    @staticmethod
+    def ensure_paths_warm(source: BackupSource = BackupSource.LOCAL,
+                          force: bool = False) -> Dict[str, Any]:
+        """Kick off a background path warm for `source` if not already
+        running (or done). Returns the current progress immediately.
+        """
+        skey = source.value
+        with BackupOperations._paths_warm_lock:
+            progress = BackupOperations._paths_progress.get(skey, {})
+            already_done = (progress.get("state") == "ready" and not force)
+            running = BackupOperations._paths_warming.get(skey, False)
+            if already_done:
+                return BackupOperations.get_paths_progress(source)
+            if running:
+                return BackupOperations.get_paths_progress(source)
+            # Don't fight an in-flight backup/restore for restic locks.
+            if BackupOperations._lock_holder() is not None:
+                logger.info("Path warm deferred: backup subsystem busy")
+                return BackupOperations.get_paths_progress(source)
+            BackupOperations._paths_warming[skey] = True
+            BackupOperations._paths_progress[skey] = {
+                "state": "running", "done": 0, "total": 0, "error": None}
+        threading.Thread(target=BackupOperations._warm_paths,
+                         args=(source,), daemon=True,
+                         name=f"backup-paths-warm-{skey}").start()
+        return BackupOperations.get_paths_progress(source)
+
+    @staticmethod
+    def prewarm_paths_cache() -> None:
+        """Pre-warm the path cache for all sources at startup / post-job."""
+        for src in (BackupSource.LOCAL, BackupSource.BACKBLAZE):
+            BackupOperations.ensure_paths_warm(src, force=True)
+
+    @staticmethod
+    def start_prewarm_thread() -> None:
+        # ensure_paths_warm already spawns per-source daemon threads;
+        # call it directly (cheap, non-blocking).
+        BackupOperations.prewarm_paths_cache()
+
+    # ------------------------------------------------------------- downloads
+
+    @staticmethod
+    def download_service(service: str) -> Dict[str, Any]:
+        """Download a service backup from Backblaze to local storage."""
+        try:
+            cmd = [str(BackupOperations.RESTORE_SCRIPT), "download", service]
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=3600)
+            if result.returncode == 0:
+                return {"success": True, "output": result.stdout}
+            return {"success": False, "output": result.stdout,
+                    "error": result.stderr or "Download failed"}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Download timed out after 1 hour"}
+        except Exception as e:
+            logger.error(f"Error downloading service backup: {e}")
+            return {"success": False, "error": str(e)}
+
+    # -------------------------------------------------------------- restores
+
+    @staticmethod
+    def _start_restore_job(kind: JobKind, repos: List[str],
+                           snapshot_id: Optional[str],
+                           source: BackupSource) -> Dict[str, Any]:
+        """Create a restore job and drive it in a background thread.
+
+        Acquires the subsystem lock; raises BackupBusy if already held.
+        """
+        holder = BackupOperations._lock_holder()
+        if holder is not None:
+            raise BackupBusy(holder.get("kind", "unknown"),
+                             holder.get("job_id"))
+
+        BackupOperations._ensure_directories()
+        job = BackupOperations._new_job(kind, repos)
+        BackupOperations.CURRENT_JOB_FILE.write_text(job["id"])
+
+        thread = threading.Thread(
+            target=BackupOperations._restore_worker,
+            args=(job, repos, snapshot_id, source),
+            daemon=True, name=f"restore-{job['id']}")
+        thread.start()
+        return {"success": True, "job_id": job["id"], "job": job}
+
+    @staticmethod
+    def _restore_worker(job: Dict[str, Any], repos: List[str],
+                        snapshot_id: Optional[str],
+                        source: BackupSource) -> None:
+        """Background worker: holds the lock, restores each repo in turn."""
+        lock_fd = os.open(str(BackupOperations.LOCK_FILE),
+                          os.O_RDWR | os.O_CREAT, 0o600)
+        suspended_timers: List[str] = []
+        log_file = Path(job["log_file"])
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            job["state"] = JobState.RUNNING.value
+            BackupOperations._write_job(job)
+
+            # Suspend backup timers for the affected repos so a scheduled
+            # backup can't run restic against a repo mid-restore.
+            suspended_timers = BackupOperations._suspend_backup_timers(repos)
+
+            failed: List[str] = []
+            with open(log_file, "a", buffering=1) as logf:
+                logf.write(f"=== Restore job {job['id']} "
+                           f"({job['kind']}) ===\n")
+                logf.write(f"Repositories: {', '.join(repos)}\n\n")
+                for repo in repos:
+                    BackupOperations._update_repo(job, repo, "running")
+                    logf.write(f"\n=== Restoring {repo} ===\n")
+                    logf.flush()
+                    cmd = [str(BackupOperations.RESTORE_SCRIPT),
+                           "restore", repo]
+                    if snapshot_id:
+                        cmd.append(snapshot_id)
+                    if source != BackupSource.AUTO:
+                        cmd += ["--source", source.value]
+                    cmd.append("--yes")
+                    proc = subprocess.run(cmd, stdout=logf,
+                                          stderr=subprocess.STDOUT, text=True)
+                    if proc.returncode == 0:
+                        BackupOperations._update_repo(job, repo, "done")
+                    else:
+                        failed.append(repo)
+                        BackupOperations._update_repo(
+                            job, repo, "failed",
+                            error=f"restore exited {proc.returncode}")
+                        logf.write(f"!!! {repo} failed "
+                                   f"(exit {proc.returncode})\n")
+
+            if failed:
+                BackupOperations._finish_job(
+                    job, JobState.FAILED,
+                    error=f"Failed to restore: {', '.join(failed)}")
+            else:
+                BackupOperations._finish_job(job, JobState.DONE, exit_code=0)
+        except Exception as e:
+            logger.error(f"Restore worker error ({job['id']}): {e}")
+            try:
+                with open(log_file, "a") as logf:
+                    logf.write(f"\n!!! Restore worker crashed: {e}\n")
+            except Exception:
+                pass
+            BackupOperations._finish_job(job, JobState.FAILED, error=str(e))
+        finally:
+            BackupOperations._resume_backup_timers(suspended_timers)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            os.close(lock_fd)
+            # Refresh path cache now that data changed.
+            BackupOperations.start_prewarm_thread()
+
+    @staticmethod
+    def restore_service(service: str, snapshot_id: Optional[str] = None,
+                        source: BackupSource = BackupSource.AUTO,
+                        dry_run: bool = False,
+                        create_snapshot: bool = False) -> Dict[str, Any]:
+        """Restore a single repository. Non-blocking; returns a job id.
+
+        Raises BackupBusy if a backup/restore/sync is already running.
+        """
+        if dry_run or create_snapshot:
+            logger.info("dry_run/create_snapshot requested but not yet "
+                        "implemented in restore.sh")
+        return BackupOperations._start_restore_job(
+            JobKind.RESTORE, [service], snapshot_id, source)
+
+    @staticmethod
+    def restore_all(snapshot_id: Optional[str] = None,
+                    source: BackupSource = BackupSource.AUTO,
+                    dry_run: bool = False,
+                    include_system_config: bool = False) -> Dict[str, Any]:
+        """Restore every repository. Non-blocking; returns a job id.
+
+        Always loops per-repo so the job reports per-repository progress.
+        Raises BackupBusy if the subsystem is already in use.
+        """
+        if dry_run:
+            logger.info("dry_run requested but not yet implemented")
+
+        services_result = BackupOperations.list_services(source)
+        if not services_result["success"]:
+            return {"success": False,
+                    "error": f"Failed to list services: "
+                             f"{services_result.get('error', 'Unknown error')}"}
+
+        repos: List[str] = []
+        for repo in services_result.get("services", []):
+            if repo == "system-config" and not include_system_config:
+                continue
+            repos.append(repo)
+
+        if not repos:
+            return {"success": False,
+                    "error": "No repositories found to restore"}
+
+        return BackupOperations._start_restore_job(
+            JobKind.RESTORE_ALL, repos, snapshot_id, source)
+
+    # -------------------------------------------------------- config status
+
+    @staticmethod
+    def get_backup_config_status() -> Dict[str, Any]:
+        """Check whether backup/restore configuration is ready.
+
+        Backblaze B2 is a native restic repository (no FUSE mount), so
+        "available" means the credentials are present - restic can then
+        talk to B2 directly.
+        """
+        restic_pw = Path("/var/lib/homefree-secrets/backup/restic-password")
+        bb_id = Path("/var/lib/homefree-secrets/backup/backblaze-id")
+        bb_key = Path("/var/lib/homefree-secrets/backup/backblaze-key")
+        local_path = Path("/var/lib/backups")
+        backblaze_configured = (
+            bb_id.exists() and bb_id.stat().st_size > 0
+            and bb_key.exists() and bb_key.stat().st_size > 0)
+        return {
+            "restic_password_configured":
+                restic_pw.exists() and restic_pw.stat().st_size > 0,
+            "backblaze_configured": backblaze_configured,
+            "local_backup_path": str(local_path),
+            "local_backups_available": (
+                local_path.exists() and any(local_path.iterdir())
+                if local_path.exists() else False),
+            # Native B2: usable as soon as credentials exist (no mount).
+            "backblaze_available": backblaze_configured,
+        }
+
+    # ----------------------------------------------------------- backups
+
+    @staticmethod
+    def _list_backup_units(prefix: str) -> List[str]:
+        """Return restic-backups-<prefix>-*.service unit names."""
+        result = subprocess.run(
+            ["systemctl", "list-units", "--all",
+             f"restic-backups-{prefix}-*.service",
+             "--no-pager", "--no-legend"],
+            capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return []
+        units = []
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split()
+            if parts and parts[0].endswith(".service"):
+                units.append(parts[0])
+        return units
+
+    @staticmethod
+    def _trigger_backups_worker(job: Dict[str, Any], prefix: str,
+                                exclude_repos: List[str]) -> None:
+        """Background worker that starts every restic-backups-<prefix>-*
+        unit, recording per-repository progress on the job.
+        """
+        lock_fd = os.open(str(BackupOperations.LOCK_FILE),
+                          os.O_RDWR | os.O_CREAT, 0o600)
+        log_file = Path(job["log_file"])
+        unit_prefix = f"restic-backups-{prefix}-"
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            job["state"] = JobState.RUNNING.value
+            BackupOperations._write_job(job)
+
+            with open(log_file, "a", buffering=1) as logf:
+                units = [u for u in BackupOperations._list_backup_units(prefix)
+                         if u.replace(unit_prefix, "").replace(".service", "")
+                         not in exclude_repos]
+                if not units:
+                    BackupOperations._finish_job(
+                        job, JobState.FAILED,
+                        error="No backup services found to trigger")
+                    return
+
+                logf.write(f"Triggering {len(units)} {prefix} "
+                           f"backup service(s)\n")
+                failed = []
+                for svc in units:
+                    repo = svc.replace(unit_prefix, "").replace(
+                        ".service", "")
+                    BackupOperations._update_repo(job, repo, "running")
+                    try:
+                        # `systemctl start` of the oneshot blocks until the
+                        # restic backup finishes - so per-repo state is real.
+                        subprocess.run(["systemctl", "start", svc],
+                                       capture_output=True, text=True,
+                                       timeout=3600, check=True)
+                        BackupOperations._update_repo(job, repo, "done")
+                        logf.write(f"  {svc}: completed\n")
+                    except subprocess.CalledProcessError as e:
+                        failed.append(repo)
+                        BackupOperations._update_repo(
+                            job, repo, "failed",
+                            error=e.stderr or "systemctl start failed")
+                        logf.write(f"  {svc}: FAILED - {e.stderr}\n")
+                    except subprocess.TimeoutExpired:
+                        failed.append(repo)
+                        BackupOperations._update_repo(job, repo, "failed",
+                                                      error="timeout")
+                        logf.write(f"  {svc}: TIMEOUT\n")
+
+            if failed:
+                BackupOperations._finish_job(
+                    job, JobState.FAILED,
+                    error=f"Failed for: {', '.join(failed)}")
+            else:
+                BackupOperations._finish_job(job, JobState.DONE, exit_code=0)
+        except Exception as e:
+            logger.error(f"Backup trigger worker error: {e}")
+            BackupOperations._finish_job(job, JobState.FAILED, error=str(e))
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            os.close(lock_fd)
+            # Backups changed the repos - refresh the path cache.
+            BackupOperations.start_prewarm_thread()
+
+    @staticmethod
+    def _trigger_backups(prefix: str, kind: JobKind) -> Dict[str, Any]:
+        """Shared implementation: start every restic-backups-<prefix>-*
+        unit as a tracked job. Non-blocking; returns a job id.
+        """
+        holder = BackupOperations._lock_holder()
+        if holder is not None:
+            raise BackupBusy(holder.get("kind", "unknown"),
+                             holder.get("job_id"))
+
+        unit_prefix = f"restic-backups-{prefix}-"
+        units = BackupOperations._list_backup_units(prefix)
+        repos = [u.replace(unit_prefix, "").replace(".service", "")
+                 for u in units]
+        if not repos:
+            return {"success": False,
+                    "error": f"No {prefix} backup services found. "
+                             f"Ensure backups are enabled."}
+
+        BackupOperations._ensure_directories()
+        job = BackupOperations._new_job(kind, repos)
+        BackupOperations.CURRENT_JOB_FILE.write_text(job["id"])
+        threading.Thread(
+            target=BackupOperations._trigger_backups_worker,
+            args=(job, prefix, []), daemon=True,
+            name=f"{kind.value}-{job['id']}").start()
+        return {"success": True, "job_id": job["id"], "job": job}
 
     @staticmethod
     def trigger_all_backups() -> Dict[str, Any]:
+        """Run all LOCAL backups now. Non-blocking; returns a job id.
+
+        Raises BackupBusy if the subsystem is already in use.
         """
-        Trigger all backup services to run immediately.
-        Returns immediately after starting background thread.
-
-        Returns:
-            Dictionary with:
-                - success: bool
-                - output: str
-        """
-        try:
-            # Get list of services quickly to validate they exist
-            result = subprocess.run(
-                ['systemctl', 'list-units', '--all', 'restic-backups-local-*.service', '--no-pager', '--no-legend'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            if result.returncode != 0:
-                return {
-                    'success': False,
-                    'error': f"Failed to list backup services: {result.stderr}"
-                }
-
-            # Count services
-            services_count = len([line for line in result.stdout.strip().split('\n') if line.strip()])
-
-            if services_count == 0:
-                return {
-                    'success': False,
-                    'error': 'No backup services found. Ensure backups are enabled.'
-                }
-
-            # Start background thread to trigger services
-            thread = threading.Thread(
-                target=BackupOperations._trigger_backups_worker,
-                daemon=True,
-                name="backup-trigger-worker"
-            )
-            thread.start()
-
-            logger.info(f"Triggered background thread to start {services_count} backup services")
-
-            return {
-                'success': True,
-                'output': f"Backup trigger started for {services_count} services. Check status for progress."
-            }
-
-        except Exception as e:
-            logger.error(f"Error triggering backups: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+        return BackupOperations._trigger_backups("local", JobKind.BACKUP)
 
     @staticmethod
-    def trigger_backblaze_sync() -> Dict[str, Any]:
-        """Trigger Backblaze sync service to sync local backups to Backblaze B2."""
-        try:
-            # Check if the sync service exists
-            check_result = subprocess.run(
-                ['systemctl', 'list-units', '--all', 'restic-backblaze-rsync.service', '--no-pager', '--no-legend'],
-                capture_output=True, text=True, timeout=10
-            )
+    def trigger_backblaze_backup() -> Dict[str, Any]:
+        """Run all BACKBLAZE B2 backups now. Non-blocking; returns a job id.
 
-            if not check_result.stdout.strip():
-                return {
-                    'success': False,
-                    'error': 'Backblaze sync service (restic-backblaze-rsync.service) not found. Ensure Backblaze backups are enabled.'
-                }
+        With native restic-to-B2 there is no "sync" step - this simply
+        starts the per-service B2 restic backup units on demand (they
+        otherwise run on their own timer).
 
-            # Trigger the sync service
-            subprocess.run(
-                ['systemctl', 'start', 'restic-backblaze-rsync.service'],
-                timeout=5,
-                check=True
-            )
+        Raises BackupBusy if the subsystem is already in use.
+        """
+        return BackupOperations._trigger_backups("backblaze", JobKind.SYNC)
 
-            return {
-                'success': True,
-                'output': 'Successfully triggered Backblaze sync service'
-            }
-
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'error': 'Operation timed out while triggering Backblaze sync'
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                'success': False,
-                'error': f'Failed to start Backblaze sync service: {e.stderr if e.stderr else str(e)}'
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
+    # ----------------------------------------------------- status (compat)
 
     @staticmethod
     def get_backup_status() -> Dict[str, Any]:
-        """Get current status of backup and sync operations."""
+        """Backwards-compatible status shim built on the job model."""
         try:
-            # Check for active local backup services
-            backup_result = subprocess.run(
-                ['systemctl', 'list-units', 'restic-backups-local-*.service', '--state=active,activating', '--no-pager', '--no-legend'],
-                capture_output=True, text=True, timeout=10
-            )
+            current = BackupOperations.get_current_job().get("job")
+            backup_running = sync_running = restore_running = False
+            active_backups: List[str] = []
+            active_restore = restore_type = None
 
-            active_backups = []
-            if backup_result.stdout.strip():
-                for line in backup_result.stdout.strip().split('\n'):
-                    if line.strip():
-                        parts = line.split()
-                        if parts and parts[0].endswith('.service'):
-                            # Extract service name from unit name
-                            # restic-backups-local-nextcloud.service -> nextcloud
-                            service_name = parts[0].replace('restic-backups-local-', '').replace('.service', '')
-                            active_backups.append(service_name)
-
-            # Check Backblaze sync status
-            sync_result = subprocess.run(
-                ['systemctl', 'is-active', 'restic-backblaze-rsync.service'],
-                capture_output=True, text=True, timeout=5
-            )
-            sync_running = sync_result.stdout.strip() in ['active', 'activating']
-
-            # Check restore status from status file
-            restore_running = False
-            active_restore = None
-            restore_type = None
-
-            # Check if restore process is still actually running
-            if BackupOperations._current_restore_process is not None:
-                returncode = BackupOperations._current_restore_process.poll()
-                if returncode is not None:
-                    # Process finished - clear status
-                    logger.info(f"Restore process finished with exit code {returncode}, clearing status")
-                    BackupOperations._clear_restore_status()
-                    BackupOperations._current_restore_process = None
-                    BackupOperations._current_restore_output_file = None
-
-            try:
-                if BackupOperations.RESTORE_STATUS_FILE.exists():
-                    with open(BackupOperations.RESTORE_STATUS_FILE, 'r') as f:
-                        restore_status = json.load(f)
-                        restore_running = restore_status.get('running', False)
-                        active_restore = restore_status.get('service')
-                        restore_type = restore_status.get('type')
-
-                        # Check for stale status (from before service restart)
-                        # If status file exists but we have no tracked process, it's likely stale
-                        if restore_running and BackupOperations._current_restore_process is None:
-                            started_at_str = restore_status.get('started_at')
-                            if started_at_str:
-                                try:
-                                    # Parse ISO format timestamp: 2025-11-21T14:28:38.391937
-                                    started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
-                                    age = (datetime.now() - started_at.replace(tzinfo=None)).total_seconds()
-
-                                    # If status is older than 30 minutes and we have no tracked process,
-                                    # assume it's stale (likely from before service restart)
-                                    if age > 1800:  # 30 minutes
-                                        logger.info(f"Clearing stale restore status (age: {age:.0f}s, no tracked process)")
-                                        BackupOperations._clear_restore_status()
-                                        restore_running = False
-                                        active_restore = None
-                                        restore_type = None
-                                except Exception as e:
-                                    logger.warning(f"Error checking restore status age: {e}")
-            except Exception as e:
-                logger.warning(f"Error reading restore status file: {e}")
+            if current and current.get("state") in (
+                    JobState.QUEUED.value, JobState.RUNNING.value):
+                kind = current.get("kind")
+                if kind == JobKind.BACKUP.value:
+                    backup_running = True
+                    active_backups = [r["name"] for r in current["repos"]
+                                      if r["state"] == "running"]
+                elif kind == JobKind.SYNC.value:
+                    sync_running = True
+                elif kind in (JobKind.RESTORE.value,
+                              JobKind.RESTORE_ALL.value):
+                    restore_running = True
+                    active_restore = current.get("current_repo")
+                    restore_type = ("all" if kind == JobKind.RESTORE_ALL.value
+                                    else "service")
 
             return {
-                'success': True,
-                'backup_running': len(active_backups) > 0,
-                'active_backups': active_backups,
-                'sync_running': sync_running,
-                'restore_running': restore_running,
-                'active_restore': active_restore,
-                'restore_type': restore_type
-            }
-
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'error': 'Operation timed out while checking backup status'
+                "success": True,
+                "backup_running": backup_running,
+                "active_backups": active_backups,
+                "sync_running": sync_running,
+                "restore_running": restore_running,
+                "active_restore": active_restore,
+                "restore_type": restore_type,
             }
         except Exception as e:
             logger.error(f"Error getting backup status: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            return {"success": False, "error": str(e)}
+
+    # ------------------------------------------------------ canary self-test
+
+    CANARY_RESULT_FILE = Path("/var/lib/backup-canary/selftest-result.json")
+    CANARY_SELFTEST_UNIT = "backup-canary-selftest.service"
+
+    @staticmethod
+    def _canary_enabled() -> bool:
+        """True if the backup-canary self-test unit is installed."""
+        try:
+            result = subprocess.run(
+                ["systemctl", "list-unit-files",
+                 BackupOperations.CANARY_SELFTEST_UNIT, "--no-legend"],
+                capture_output=True, text=True, timeout=10)
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def get_canary_status() -> Dict[str, Any]:
+        """Return the backup canary's latest self-test result.
+
+        {enabled, running, result: {result, source, started_at,
+         finished_at, detail} | None}
+        `enabled` is False when the canary service is not deployed.
+        """
+        enabled = BackupOperations._canary_enabled()
+        if not enabled:
+            return {"success": True, "enabled": False,
+                    "running": False, "result": None}
+
+        # Is a self-test currently running?
+        running = False
+        try:
+            active = subprocess.run(
+                ["systemctl", "is-active",
+                 BackupOperations.CANARY_SELFTEST_UNIT],
+                capture_output=True, text=True, timeout=5)
+            running = active.stdout.strip() in ("active", "activating")
+        except Exception:
+            pass
+
+        result = None
+        try:
+            if BackupOperations.CANARY_RESULT_FILE.exists():
+                result = json.loads(
+                    BackupOperations.CANARY_RESULT_FILE.read_text())
+        except Exception as e:
+            logger.warning(f"Could not read canary result: {e}")
+
+        return {"success": True, "enabled": True,
+                "running": running, "result": result}
+
+    @staticmethod
+    def trigger_canary_selftest() -> Dict[str, Any]:
+        """Start an on-demand backup self-test.
+
+        Fire-and-forget: the self-test unit runs in the background and
+        takes the backup lock itself (so it serialises against real
+        backups). The UI polls get_canary_status() for the result.
+        """
+        if not BackupOperations._canary_enabled():
+            return {"success": False,
+                    "error": "Backup canary is not enabled on this system."}
+        try:
+            active = subprocess.run(
+                ["systemctl", "is-active",
+                 BackupOperations.CANARY_SELFTEST_UNIT],
+                capture_output=True, text=True, timeout=5)
+            if active.stdout.strip() in ("active", "activating"):
+                return {"success": False,
+                        "error": "A backup self-test is already running."}
+            # --no-block: return immediately; the self-test runs on its own.
+            subprocess.run(
+                ["systemctl", "start", "--no-block",
+                 BackupOperations.CANARY_SELFTEST_UNIT],
+                capture_output=True, text=True, timeout=10, check=True)
+            return {"success": True,
+                    "output": "Backup self-test started."}
+        except subprocess.CalledProcessError as e:
+            return {"success": False,
+                    "error": e.stderr or "Failed to start self-test"}
+        except Exception as e:
+            logger.error(f"Error triggering canary self-test: {e}")
+            return {"success": False, "error": str(e)}

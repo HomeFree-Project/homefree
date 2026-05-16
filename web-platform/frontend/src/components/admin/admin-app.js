@@ -2007,6 +2007,8 @@ class AdminApp extends LitElement {
             .config=${this.config}
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @config-change=${this.handleConfigChange}
+            @service-toggle=${this.handleServiceToggle}
+            @service-option-changed=${this.handleServiceOptionChanged}
           ></backups-module>
         `;
 

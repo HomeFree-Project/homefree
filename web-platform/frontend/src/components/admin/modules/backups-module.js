@@ -6,8 +6,15 @@ import '../../shared/progress-modal.js';
 import '../secrets-input.js';
 
 /**
- * Backups configuration module
- * Handles: Local backups, Backblaze B2 cloud backups, and restore operations
+ * Backups configuration module.
+ *
+ * Handles local backups, Backblaze B2 cloud backups, and restore
+ * operations. Long-running operations (restore, restore-all, trigger,
+ * sync) are modelled as backend "jobs": the module kicks one off, then
+ * a single poller watches /api/backups/jobs/current and tails the job
+ * log, rendering a live progress overlay with a per-repository
+ * checklist. The Restore tab renders its repository list immediately;
+ * per-repository paths and snapshots load lazily on demand.
  */
 class BackupsModule extends LitElement {
   static properties = {
@@ -16,74 +23,56 @@ class BackupsModule extends LitElement {
     activeTab: { type: String },
     secretsStatus: { type: Object },
     backupConfigStatus: { type: Object },
-    backupStatus: { type: Object },
-    services: { type: Array },
-    systemConfig: { type: Array },
-    extraPaths: { type: Array },
+    hasAuthorizedKeys: { type: Boolean },
+
+    // Backup canary self-test status
+    canaryStatus: { type: Object },
+    canaryStarting: { type: Boolean },
+
+    // Restore tab repository lists
     localServices: { type: Array },
     localSystemConfig: { type: Array },
     localExtraPaths: { type: Array },
     backblazeServices: { type: Array },
     backblazeSystemConfig: { type: Array },
     backblazeExtraPaths: { type: Array },
-    repositoryPaths: { type: Object }, // Map of repository name to paths
-    selectedService: { type: String },
-    selectedSource: { type: String }, // 'local' or 'backblaze'
-    selectedCategory: { type: String }, // 'service', 'system-config', or 'extra-path'
+    repoListLoading: { type: Boolean },
+    repoListError: { type: String },
+    lastServicesRefresh: { type: Number },
+
+    // Per-repository backup-root paths, keyed "source:repo".
+    // Filled progressively by a background warm; pathsReady flips true
+    // when every repo is resolved. pathsProgress drives a progress bar.
+    repositoryPaths: { type: Object },
+    pathsReady: { type: Boolean },
+    pathsProgress: { type: Object },
+
+    // Snapshot picker (expanded repo)
+    expandedRepo: { type: String },     // "source:repo" currently expanded
     snapshots: { type: Array },
+    snapshotsLoading: { type: Boolean },
     selectedSnapshot: { type: String },
-    loading: { type: Boolean },
-    restoreServiceInProgress: { type: String }, // Stores snapshot ID being restored: "latest", snapshot ID, or null
-    restoreAllInProgress: { type: Boolean },
-    includeSystemConfig: { type: Boolean }, // Whether to include system-config in restore-all
-    triggerInProgress: { type: Boolean },
-    syncInProgress: { type: Boolean },
-    hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
-    lastServicesRefresh: { type: Number } // When services were last loaded (for display only)
+
+    includeSystemConfig: { type: Boolean },
+
+    // The single active backend job, polled live
+    currentJob: { type: Object },
+    jobLog: { type: String },
+    jobOverlayOpen: { type: Boolean }
   };
 
   static styles = css`
-    :host {
-      display: block;
-    }
+    :host { display: block; }
 
-    .module-container {
-      width: 100%;
-    }
+    .module-container { width: 100%; }
 
-    .field-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-    }
-
-    @media (max-width: 768px) {
-      .field-row {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .info-box {
-      background: var(--hf-accent-soft);
-      border-left: 4px solid var(--hf-accent);
-      padding: 16px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      color: var(--hf-accent);
-    }
-
-    .info-box strong {
-      display: block;
-      margin-bottom: 8px;
-    }
-
+    /* ---- tabs ---- */
     .tabs {
       display: flex;
       gap: 8px;
       margin-bottom: 24px;
       border-bottom: 2px solid var(--hf-border);
     }
-
     .tab {
       padding: 12px 24px;
       background: none;
@@ -93,152 +82,382 @@ class BackupsModule extends LitElement {
       font-size: 15px;
       font-weight: 500;
       color: var(--hf-text-muted);
-      transition: all 0.2s;
+      transition: color 0.2s, border-color 0.2s;
       margin-bottom: -2px;
     }
-
-    .tab:hover {
-      color: var(--hf-text);
-    }
-
+    .tab:hover { color: var(--hf-text); }
     .tab.active {
       color: var(--hf-accent);
       border-bottom-color: var(--hf-accent);
     }
 
-    .restore-container {
-      width: 100%;
-    }
-
-    .status-indicator {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
+    /* ---- generic boxes ---- */
+    .info-box {
+      background: var(--hf-accent-soft);
+      border-left: 4px solid var(--hf-accent);
+      padding: 16px;
       border-radius: 8px;
+      margin-bottom: 20px;
+      color: var(--hf-accent);
       font-size: 14px;
-      margin-bottom: 16px;
     }
+    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box ul { margin: 8px 0 0 20px; padding: 0; }
 
-    .status-indicator.ready {
-      background: rgba(16, 185, 129, 0.12);
-      color: var(--hf-ok);
-    }
-
-    .status-indicator.not-ready {
-      background: rgba(239, 68, 68, 0.1);
-      color: var(--hf-err);
-    }
-
-    .status-indicator.warning {
+    .warn-box {
       background: rgba(245, 158, 11, 0.1);
+      border-left: 4px solid var(--hf-warn);
       color: var(--hf-warn);
     }
 
-    select {
-      width: 100%;
-      padding: 12px;
-      font-size: 14px;
-      border: 1px solid var(--hf-border-2);
-      border-radius: 8px;
-      background: var(--hf-surface);
-      margin-bottom: 16px;
-    }
-
-    .snapshots-list {
-      border: 1px solid var(--hf-border-2);
-      border-radius: 8px;
-      max-height: 400px;
-      overflow-y: auto;
-      margin-bottom: 16px;
-    }
-
-    .snapshot-item {
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--hf-border);
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .snapshot-item:last-child {
-      border-bottom: none;
-    }
-
-    .snapshot-item:hover {
-      background: var(--hf-surface-2);
-    }
-
-    .snapshot-item.selected {
-      background: var(--hf-accent-soft);
-      border-left: 4px solid var(--hf-accent);
-    }
-
-    .snapshot-id {
-      font-family: monospace;
-      font-size: 12px;
-      color: var(--hf-text-muted);
-    }
-
-    .snapshot-time {
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--hf-text);
-      margin-bottom: 4px;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .btn-group {
+    .status-line {
       display: flex;
-      gap: 12px;
-      margin-top: 16px;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    .status-line.ok  { background: rgba(16,185,129,.12); color: var(--hf-ok); }
+    .status-line.err { background: rgba(239,68,68,.10);  color: var(--hf-err); }
+    .status-line.muted {
+      background: var(--hf-surface-2); color: var(--hf-text-muted);
     }
 
+    /* Self-test status row: fixed minimum height and an always-present
+       detail line, so the section does not jump as state changes. */
+    .selftest-status {
+      min-height: 54px;
+      box-sizing: border-box;
+    }
+    .selftest-detail {
+      font-size: 13px;
+      margin-top: 2px;
+      min-height: 1.2em;   /* reserve space even when empty */
+    }
+
+    /* ---- buttons ---- */
     .btn {
-      padding: 12px 24px;
+      padding: 10px 20px;
       border-radius: 8px;
       border: none;
       font-size: 14px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.15s, opacity 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
     }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-primary {
-      background: var(--hf-accent);
-      color: var(--hf-text);
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: var(--hf-accent-hover);
-    }
-
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary   { background: var(--hf-accent); color: var(--hf-text); }
+    .btn-primary:hover:not(:disabled) { background: var(--hf-accent-hover); }
     .btn-secondary {
       background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
     }
+    .btn-secondary:hover:not(:disabled) { background: var(--hf-surface-3); }
+    .btn-danger  { background: var(--hf-err); color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
 
-    .btn-secondary:hover:not(:disabled) {
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+    .spinner.lg { width: 18px; height: 18px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---- active-job banner ---- */
+    .job-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      cursor: pointer;
+      border-left: 4px solid var(--hf-accent);
+      background: var(--hf-accent-soft);
+      color: var(--hf-accent);
+    }
+    .job-banner.restore { border-left-color: var(--hf-warn);
+      background: rgba(245,158,11,.1); color: var(--hf-warn); }
+    .job-banner.done { border-left-color: var(--hf-ok);
+      background: rgba(16,185,129,.12); color: var(--hf-ok); }
+    .job-banner.failed { border-left-color: var(--hf-err);
+      background: rgba(239,68,68,.10); color: var(--hf-err); }
+    .job-banner .grow { flex: 1; }
+    .job-banner .title { font-weight: 600; }
+    .job-banner .sub { font-size: 13px; opacity: 0.9; }
+    .job-banner .view { font-size: 13px; text-decoration: underline; }
+
+    /* ---- repository list ---- */
+    .repo-group {
+      margin-bottom: 24px;
+      padding: 16px;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+    }
+    .repo-group.system {
+      border: 2px solid var(--hf-warn);
+      background: rgba(245,158,11,.06);
+    }
+    .repo-group h4 {
+      font-size: 15px; font-weight: 600; margin: 0 0 4px 0;
+    }
+    .repo-group .desc {
+      font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;
+    }
+    .repo-list { display: grid; gap: 8px; }
+
+    .repo-row {
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .repo-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      background: var(--hf-surface-2);
+      transition: background 0.15s;
+    }
+    .repo-head:hover { background: var(--hf-surface-3); }
+    .repo-head.disabled { cursor: not-allowed; opacity: 0.6; }
+    .repo-head .grow { flex: 1; min-width: 0; }
+    .repo-name { font-weight: 600; word-break: break-all; }
+
+    /* skeleton placeholders shown while the batch path load resolves */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--hf-surface-3) 25%,
+        var(--hf-border-2) 37%,
+        var(--hf-surface-3) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      vertical-align: middle;
+    }
+    .skeleton-title { width: 180px; height: 15px; }
+    .skeleton-sub   { width: 110px; height: 11px; margin-top: 6px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to   { background-position: 0 0; }
+    }
+    .repo-tag {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
       background: var(--hf-surface-3);
+      color: var(--hf-text-muted);
+    }
+    .repo-tag.bb { background: var(--hf-accent-soft); color: var(--hf-accent); }
+    .repo-paths {
+      font-size: 12px;
+      color: var(--hf-text-muted);
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .chevron { transition: transform 0.15s; color: var(--hf-text-muted); }
+    .chevron.open { transform: rotate(90deg); }
+
+    .repo-body {
+      padding: 14px;
+      border-top: 1px solid var(--hf-border);
+      background: var(--hf-surface);
     }
 
-    .btn-danger {
-      background: var(--hf-err);
+    /* ---- snapshot list ---- */
+    .snapshots {
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      max-height: 320px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+    }
+    .snapshot {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--hf-border);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .snapshot:last-child { border-bottom: none; }
+    .snapshot:hover { background: var(--hf-surface-2); }
+    .snapshot.selected {
+      background: var(--hf-accent-soft);
+      border-left: 4px solid var(--hf-accent);
+    }
+    .snapshot .time { font-size: 14px; font-weight: 500; }
+    .snapshot .meta {
+      font-family: monospace; font-size: 12px; color: var(--hf-text-muted);
+    }
+
+    .restore-targets {
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid var(--hf-warn);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+    }
+    .restore-targets-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hf-warn);
+      margin-bottom: 6px;
+    }
+    .restore-targets ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .restore-targets li {
+      font-size: 13px;
+      color: var(--hf-text);
+      word-break: break-all;
+    }
+
+    /* ---- job progress overlay ---- */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    }
+    .job-panel {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 680px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--hf-shadow-lg);
       color: var(--hf-text);
     }
+    .job-panel-head {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--hf-border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .job-panel-head .title { font-size: 18px; font-weight: 600; flex: 1; }
+    .job-panel-body { padding: 20px 24px; overflow-y: auto; }
+    .job-panel-foot {
+      padding: 16px 24px;
+      border-top: 1px solid var(--hf-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .job-summary { font-size: 14px; color: var(--hf-text-muted); }
 
-    .btn-danger:hover:not(:disabled) {
-      background: #dc2626;
+    .repo-progress { display: grid; gap: 4px; margin-bottom: 16px; }
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 4px 0;
+    }
+    .progress-row .ico { width: 16px; text-align: center; flex-shrink: 0; }
+    .progress-row.pending { color: var(--hf-text-subtle); }
+    .progress-row.running { color: var(--hf-accent); font-weight: 600; }
+    .progress-row.done    { color: var(--hf-ok); }
+    .progress-row.failed  { color: var(--hf-err); }
+    .progress-row .err {
+      font-size: 12px; color: var(--hf-err); margin-left: auto;
+    }
+
+    .log-view {
+      background: #0b0e14;
+      color: #c9d1d9;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 12px;
+      border-radius: 8px;
+      max-height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .progress-bar {
+      height: 6px;
+      background: var(--hf-surface-3);
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0 16px;
+    }
+    .progress-bar > div {
+      height: 100%;
+      background: var(--hf-accent);
+      transition: width 0.3s;
+    }
+
+    /* path-warm progress indicator above the repository list */
+    .paths-progress {
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+    }
+    .paths-progress-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--hf-text-muted);
+    }
+    .paths-progress-head strong { color: var(--hf-text); }
+    .paths-progress-pct {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      color: var(--hf-accent);
+    }
+    .paths-progress .progress-bar { margin: 10px 0 0; }
+
+    /* ---- type-to-confirm ---- */
+    .confirm-input {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: monospace;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      background: var(--hf-surface);
+      color: var(--hf-text);
+      margin-top: 8px;
+      box-sizing: border-box;
+    }
+
+    @media (max-width: 768px) {
+      .tab { padding: 10px 14px; font-size: 14px; }
+      .job-panel { width: 96%; }
     }
   `;
+
+  /** Repos the restore worker stops backup timers for; sentinel for "type to confirm". */
+  static RESTORE_ALL_CONFIRM = 'RESTORE';
 
   constructor() {
     super();
@@ -255,653 +474,464 @@ class BackupsModule extends LitElement {
     this.activeTab = 'configuration';
     this.secretsStatus = null;
     this.backupConfigStatus = null;
-    this.backupStatus = null;
-    this.services = [];
-    this.systemConfig = [];
-    this.extraPaths = [];
+    this.hasAuthorizedKeys = false;
+    this.canaryStatus = null;
+    this.canaryStarting = false;
+
     this.localServices = [];
     this.localSystemConfig = [];
     this.localExtraPaths = [];
     this.backblazeServices = [];
     this.backblazeSystemConfig = [];
     this.backblazeExtraPaths = [];
+    this.repoListLoading = false;
+    this.repoListError = '';
+    this.lastServicesRefresh = null;
+
     this.repositoryPaths = {};
-    this.selectedService = null;
-    this.selectedSource = null;
-    this.selectedCategory = null;
+    this.pathsReady = false;
+    this.pathsProgress = { done: 0, total: 0, state: 'idle' };
+
+    this.expandedRepo = null;
     this.snapshots = [];
-    this.loading = false;
-    this.restoreServiceInProgress = null; // Stores snapshot ID being restored: "latest", snapshot ID, or null
-    this.restoreAllInProgress = false;
-    this.includeSystemConfig = false; // Default: don't include system-config in restore-all
-    this.triggerInProgress = false;
-    this.syncInProgress = false;
-    this.statusPollingInterval = null;
-    this.abortController = null;
-    this.lastServicesRefresh = null; // Track when services were last loaded
+    this.snapshotsLoading = false;
+    this.selectedSnapshot = null;
+
+    this.includeSystemConfig = false;
+
+    this.currentJob = null;
+    this.jobLog = '';
+    this.jobOverlayOpen = false;
+
+    // internal (non-reactive)
+    this._jobPollTimer = null;
+    this._pathsPollTimer = null;
+    this._canaryPollTimer = null;
+    this._jobLogOffset = 0;
+    this._restoreAllConfirmText = '';
+    this._servicesLoadedOnce = false;
   }
+
+  // ----------------------------------------------------------- lifecycle
 
   async connectedCallback() {
     super.connectedCallback();
+    // Stop polling before navigation to avoid leaking connections.
+    this._beforeUnload = () => this.stopJobPolling();
+    window.addEventListener('beforeunload', this._beforeUnload);
 
-    // CRITICAL: Stop polling before page unload to prevent connection limit race condition
-    // disconnectedCallback fires too late (after new page starts loading)
-    this.beforeUnloadHandler = () => {
-      this.stopStatusPolling();
-    };
-    window.addEventListener('beforeunload', this.beforeUnloadHandler);
-
-    await this.loadSecretsStatus();
-    await this.loadBackupConfigStatus();
-    await this.pollBackupStatus();
-
-    // Start polling if operations are active
-    if (this.backupStatus?.backup_running || this.backupStatus?.sync_running || this.backupStatus?.restore_running) {
-      this.startStatusPolling();
+    await Promise.all([
+      this.loadSecretsStatus(),
+      this.loadBackupConfigStatus(),
+      this.loadCanaryStatus(),
+      this.refreshCurrentJob()
+    ]);
+    // If a job is already running, attach the live poller.
+    if (this.isJobActive(this.currentJob)) {
+      this.startJobPolling();
+    }
+    // If a self-test is running, poll until it finishes.
+    if (this.canaryStatus?.running) {
+      this.startCanaryPolling();
     }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-
-    // Remove beforeunload listener
-    if (this.beforeUnloadHandler) {
-      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    if (this._beforeUnload) {
+      window.removeEventListener('beforeunload', this._beforeUnload);
     }
-
-    this.stopStatusPolling();
+    this.stopJobPolling();
+    this.stopCanaryPolling();
+    if (this._pathsPollTimer) {
+      clearTimeout(this._pathsPollTimer);
+      this._pathsPollTimer = null;
+    }
   }
 
-  handleFieldChange(field, value) {
-    // Update config
-    const newConfig = { ...this.config };
-    const path = field.split('.');
+  // ----------------------------------------------------------- job model
 
-    let current = newConfig;
-    for (let i = 0; i < path.length - 1; i++) {
-      current = current[path[i]];
-    }
-    current[path[path.length - 1]] = value;
-
-    this.config = newConfig;
-    this.modified = true;
-
-    // Emit change event to parent
-    this.dispatchEvent(new CustomEvent('config-change', {
-      detail: { config: newConfig },
-      bubbles: true,
-      composed: true
-    }));
+  isJobActive(job) {
+    return !!job && (job.state === 'queued' || job.state === 'running');
   }
+
+  async refreshCurrentJob() {
+    try {
+      const res = await fetch('/api/backups/jobs/current');
+      if (!res.ok) return;
+      const data = await res.json();
+      const prev = this.currentJob;
+      this.currentJob = data.job || null;
+
+      // A new job appeared or the tracked job changed: reset the log tail.
+      if (this.currentJob && (!prev || prev.id !== this.currentJob.id)) {
+        this._jobLogOffset = 0;
+        this.jobLog = '';
+      }
+      if (this.currentJob) {
+        await this.fetchJobLog(this.currentJob.id);
+      }
+
+      // Job just finished: stop polling, refresh derived data.
+      if (prev && this.isJobActive(prev) && !this.isJobActive(this.currentJob)) {
+        this.onJobFinished(this.currentJob || prev);
+      }
+    } catch (e) {
+      console.error('Error refreshing current job:', e);
+    }
+  }
+
+  async fetchJobLog(jobId) {
+    try {
+      const res = await fetch(
+        `/api/backups/jobs/${encodeURIComponent(jobId)}/log` +
+        `?offset=${this._jobLogOffset}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.lines) {
+        this.jobLog += data.lines;
+        this._jobLogOffset = data.offset;
+        // Keep the log panel scrolled to the newest output.
+        this.updateComplete.then(() => {
+          const el = this.renderRoot.querySelector('.log-view');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching job log:', e);
+    }
+  }
+
+  startJobPolling() {
+    if (this._jobPollTimer) return;
+    this._jobPollTimer = setInterval(() => {
+      this.refreshCurrentJob().then(() => {
+        if (!this.isJobActive(this.currentJob)) this.stopJobPolling();
+      });
+    }, 2000);
+  }
+
+  stopJobPolling() {
+    if (this._jobPollTimer) {
+      clearInterval(this._jobPollTimer);
+      this._jobPollTimer = null;
+    }
+  }
+
+  onJobFinished(job) {
+    this.stopJobPolling();
+    const kind = job?.kind;
+    if (job?.state === 'failed') {
+      this.showNotification(
+        `${this.jobKindLabel(kind)} failed: ${job.error || 'see log'}`,
+        'error');
+    } else {
+      this.showNotification(
+        `${this.jobKindLabel(kind)} completed successfully`, 'success');
+    }
+    // A restore changed on-disk data; refresh repo lists/paths.
+    if (kind === 'restore' || kind === 'restore-all') {
+      this.loadServices(true);
+    }
+  }
+
+  jobKindLabel(kind) {
+    return {
+      'restore': 'Restore',
+      'restore-all': 'Full-system restore',
+      'backup': 'Local backup',
+      'sync': 'Backblaze backup'
+    }[kind] || 'Operation';
+  }
+
+  /**
+   * POST a job-starting endpoint, handling the 409 "busy" response.
+   * Returns the job object on success, or null (notification shown).
+   */
+  async startJob(url, body) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        const detail = data.detail || {};
+        this.showNotification(
+          detail.message ||
+          'The backup subsystem is busy. Try again once it is idle.',
+          'error');
+        // Refresh so the banner reflects whatever is actually running.
+        await this.refreshCurrentJob();
+        if (this.isJobActive(this.currentJob)) this.startJobPolling();
+        return null;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        this.showNotification(
+          `Failed to start: ${this.describeError(data.detail)}`, 'error');
+        return null;
+      }
+      const data = await res.json();
+      this.currentJob = data.job || null;
+      this._jobLogOffset = 0;
+      this.jobLog = '';
+      this.jobOverlayOpen = true;
+      this.startJobPolling();
+      return data.job;
+    } catch (e) {
+      console.error('Error starting job:', e);
+      this.showNotification(`Error: ${e.message}`, 'error');
+      return null;
+    }
+  }
+
+  describeError(detail) {
+    if (!detail) return 'Unknown error';
+    if (typeof detail === 'string') return detail;
+    return detail.message || detail.error || JSON.stringify(detail);
+  }
+
+  // -------------------------------------------------------- data loading
 
   async loadSecretsStatus() {
     try {
-      const response = await fetch('/api/secrets/status');
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch('/api/secrets/status');
+      if (res.ok) {
+        const data = await res.json();
         this.secretsStatus = data.secrets?.backup || {};
       }
-    } catch (error) {
-      console.error('Error loading secrets status:', error);
+    } catch (e) {
+      console.error('Error loading secrets status:', e);
     }
   }
 
   async loadBackupConfigStatus() {
     try {
-      const response = await fetch('/api/backups/config/status');
-      if (response.ok) {
-        this.backupConfigStatus = await response.json();
-      }
-    } catch (error) {
-      console.error('Error loading backup config status:', error);
+      const res = await fetch('/api/backups/config/status');
+      if (res.ok) this.backupConfigStatus = await res.json();
+    } catch (e) {
+      console.error('Error loading backup config status:', e);
     }
   }
 
-  async pollBackupStatus() {
+  async loadCanaryStatus() {
     try {
-      const response = await fetch('/api/backups/status', {
-        signal: this.abortController?.signal
-      });
-      if (response.ok) {
-        this.backupStatus = await response.json();
-
-        // Stop polling if no operations are active
-        if (!this.backupStatus.backup_running && !this.backupStatus.sync_running && !this.backupStatus.restore_running) {
-          this.stopStatusPolling();
-        }
-      }
-    } catch (error) {
-      // Ignore abort errors - these are expected when component disconnects
-      if (error.name === 'AbortError') {
-        return;
-      }
-      console.error('Error polling backup status:', error);
+      const res = await fetch('/api/backups/canary');
+      if (res.ok) this.canaryStatus = await res.json();
+    } catch (e) {
+      console.error('Error loading canary status:', e);
     }
   }
 
-  startStatusPolling() {
-    if (this.statusPollingInterval) {
-      return; // Already polling
-    }
-
-    // Create new AbortController for this polling session
-    this.abortController = new AbortController();
-
-    // Poll every 3 seconds
-    this.statusPollingInterval = setInterval(() => {
-      this.pollBackupStatus();
+  startCanaryPolling() {
+    if (this._canaryPollTimer) return;
+    this._canaryPollTimer = setInterval(async () => {
+      await this.loadCanaryStatus();
+      if (!this.canaryStatus?.running) this.stopCanaryPolling();
     }, 3000);
   }
 
-  stopStatusPolling() {
-    // Abort any in-flight requests
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
-
-    // Clear the polling interval
-    if (this.statusPollingInterval) {
-      clearInterval(this.statusPollingInterval);
-      this.statusPollingInterval = null;
+  stopCanaryPolling() {
+    if (this._canaryPollTimer) {
+      clearInterval(this._canaryPollTimer);
+      this._canaryPollTimer = null;
     }
   }
 
-  async loadServices(force = false) {
-    this.loading = true;
+  /** Start an on-demand backup self-test via the canary. */
+  async handleRunCanary() {
+    this.canaryStarting = true;
     try {
-      // Build query string with force and include_paths parameters
-      const forceParam = force ? '&force=true' : '';
+      const res = await fetch('/api/backups/canary/run', { method: 'POST' });
+      if (res.ok) {
+        this.showNotification(
+          'Backup self-test started — this runs a real backup and '
+          + 'restore of the test data and may take a few minutes.', 'info');
+        await this.loadCanaryStatus();
+        this.startCanaryPolling();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        this.showNotification(
+          `Could not start self-test: ${this.describeError(data.detail)}`,
+          'error');
+      }
+    } catch (e) {
+      console.error('Error running self-test:', e);
+      this.showNotification(`Error: ${e.message}`, 'error');
+    } finally {
+      this.canaryStarting = false;
+    }
+  }
 
-      // Fetch from both local and Backblaze sources WITH paths included
-      const [localResponse, backblazeResponse] = await Promise.all([
-        fetch(`/api/backups/services?source=local&include_paths=true${forceParam}`),
-        fetch(`/api/backups/services?source=backblaze&include_paths=true${forceParam}`)
+  /**
+   * Load the repository list for the Restore tab. This is cheap (no
+   * restic): paths are NOT fetched here - they load lazily per repo.
+   */
+  async loadServices(force = false) {
+    this.repoListLoading = true;
+    this.repoListError = '';
+    try {
+      const forceParam = force ? '&force=true' : '';
+      const [localRes, bbRes] = await Promise.all([
+        fetch(`/api/backups/services?source=local${forceParam}`),
+        fetch(`/api/backups/services?source=backblaze${forceParam}`)
       ]);
 
-      // Process local backups
-      let localData = { services: [], system_config: [], extra_paths: [], paths: {} };
-      if (localResponse.ok) {
-        localData = await localResponse.json();
-        this.localServices = localData.services || [];
-        this.localSystemConfig = localData.system_config || [];
-        this.localExtraPaths = localData.extra_paths || [];
-
-        // Extract paths from response and store with source prefix
-        if (localData.paths) {
-          for (const [repo, paths] of Object.entries(localData.paths)) {
-            const key = `local:${repo}`;
-            this.repositoryPaths = {
-              ...this.repositoryPaths,
-              [key]: paths
-            };
-          }
-        }
+      if (localRes.ok) {
+        const d = await localRes.json();
+        this.localServices = d.services || [];
+        this.localSystemConfig = d.system_config || [];
+        this.localExtraPaths = d.extra_paths || [];
       } else {
         this.localServices = [];
         this.localSystemConfig = [];
         this.localExtraPaths = [];
       }
 
-      // Process Backblaze backups
-      let backblazeData = { services: [], system_config: [], extra_paths: [], paths: {} };
-      if (backblazeResponse.ok) {
-        backblazeData = await backblazeResponse.json();
-        this.backblazeServices = backblazeData.services || [];
-        this.backblazeSystemConfig = backblazeData.system_config || [];
-        this.backblazeExtraPaths = backblazeData.extra_paths || [];
-
-        // Extract paths from response and store with source prefix
-        if (backblazeData.paths) {
-          for (const [repo, paths] of Object.entries(backblazeData.paths)) {
-            const key = `backblaze:${repo}`;
-            this.repositoryPaths = {
-              ...this.repositoryPaths,
-              [key]: paths
-            };
-          }
-        }
+      if (bbRes.ok) {
+        const d = await bbRes.json();
+        this.backblazeServices = d.services || [];
+        this.backblazeSystemConfig = d.system_config || [];
+        this.backblazeExtraPaths = d.extra_paths || [];
       } else {
         this.backblazeServices = [];
         this.backblazeSystemConfig = [];
         this.backblazeExtraPaths = [];
       }
 
-      // For backward compatibility, keep services as union of both
-      this.services = [...new Set([...this.localServices, ...this.backblazeServices])];
-      this.systemConfig = [...new Set([...this.localSystemConfig, ...this.backblazeSystemConfig])];
-      this.extraPaths = [...new Set([...this.localExtraPaths, ...this.backblazeExtraPaths])];
-
-      // Paths are now loaded directly in the services response above
-      // No need for separate loadRepositoryPaths calls
-
-      // Track when services were loaded for display
-      this.lastServicesRefresh = Date.now();
-    } catch (error) {
-      console.error('Error loading services:', error);
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async loadRepositoryPaths(repo, source = 'auto', force = false) {
-    try {
-      const forceParam = force ? '&force=true' : '';
-      const response = await fetch(`/api/backups/services/${encodeURIComponent(repo)}/paths?source=${source}${forceParam}`);
-      if (response.ok) {
-        const data = await response.json();
-        // Store paths with source-prefixed key
-        const key = `${source}:${repo}`;
-        this.repositoryPaths = {
-          ...this.repositoryPaths,
-          [key]: data.paths || []
-        };
-        this.requestUpdate();
+      if (force) {
+        // A forced refresh invalidates cached path summaries too.
+        this.repositoryPaths = {};
+        this.pathsReady = false;
       }
-    } catch (error) {
-      console.error(`Error loading paths for ${repo} from ${source}:`, error);
+      this.lastServicesRefresh = Date.now();
+      this._servicesLoadedOnce = true;
+      // Fill every repo's path summary in one batch call (skeletons
+      // show until it resolves). Fire-and-forget.
+      this.loadAllPaths(force);
+    } catch (e) {
+      console.error('Error loading services:', e);
+      this.repoListError = e.message || 'Failed to load repositories';
+    } finally {
+      this.repoListLoading = false;
     }
   }
 
-  async loadSnapshots(service, source = 'local') {
-    if (!service) return;
-
-    this.loading = true;
+  /**
+   * Fetch backup-root paths for ALL repositories in one request. On a
+   * cold cache the backend replies `ready:false` and warms in the
+   * background; we poll until it's ready. Repo rows show skeletons
+   * meanwhile - never a stale/guessed path.
+   */
+  async loadAllPaths(force = false, sources = ['local', 'backblaze']) {
+    if (this._pathsPollTimer) {
+      clearTimeout(this._pathsPollTimer);
+      this._pathsPollTimer = null;
+    }
+    let allReady = true;
+    let anyError = false;
+    // Aggregate progress across sources, for a single progress bar.
+    let aggDone = 0, aggTotal = 0;
     try {
-      const response = await fetch(`/api/backups/services/${encodeURIComponent(service)}/snapshots?source=${source}`);
-      if (response.ok) {
-        const data = await response.json();
-        // Reverse to show newest snapshots first (restic returns oldest first)
-        this.snapshots = (data.snapshots || []).reverse();
-        // Auto-select the latest (first) snapshot
+      for (const source of sources) {
+        const forceParam = force ? '&force=true' : '';
+        const res = await fetch(
+          `/api/backups/paths?source=${source}${forceParam}`);
+        if (!res.ok) { allReady = false; anyError = true; continue; }
+        const data = await res.json();
+
+        // Merge whatever paths are resolved so far - rows fill in
+        // progressively as the warm streams repos in.
+        if (data.paths) {
+          const merged = { ...this.repositoryPaths };
+          for (const [repo, paths] of Object.entries(data.paths)) {
+            merged[`${source}:${repo}`] = paths || [];
+          }
+          this.repositoryPaths = merged;
+        }
+
+        const p = data.progress || {};
+        aggDone += p.done || 0;
+        aggTotal += p.total || 0;
+        if (p.state === 'error') anyError = true;
+        if (!data.ready) allReady = false;
+      }
+    } catch (e) {
+      console.error('Error loading all paths:', e);
+      allReady = false;
+      anyError = true;
+    }
+
+    this.pathsReady = allReady;
+    this.pathsProgress = {
+      done: aggDone,
+      total: aggTotal,
+      state: anyError ? 'error' : (allReady ? 'ready' : 'running')
+    };
+
+    if (!allReady && !anyError) {
+      // Keep polling while the warm streams; 1.5s keeps the bar lively.
+      this._pathsPollTimer = setTimeout(
+        () => this.loadAllPaths(false, sources), 1500);
+    }
+  }
+
+  async loadSnapshots(repo, source) {
+    this.snapshotsLoading = true;
+    this.snapshots = [];
+    this.selectedSnapshot = null;
+    try {
+      const res = await fetch(
+        `/api/backups/services/${encodeURIComponent(repo)}` +
+        `/snapshots?source=${source}`);
+      if (res.ok) {
+        const data = await res.json();
+        // restic returns oldest-first; show newest first.
+        this.snapshots = (data.snapshots || []).slice().reverse();
         if (this.snapshots.length > 0) {
           this.selectedSnapshot = this.snapshots[0].id;
         }
       }
-    } catch (error) {
-      console.error('Error loading snapshots:', error);
+    } catch (e) {
+      console.error('Error loading snapshots:', e);
     } finally {
-      this.loading = false;
+      this.snapshotsLoading = false;
     }
   }
+
+  // --------------------------------------------------------- interaction
 
   async handleTabChange(tab) {
     this.activeTab = tab;
-    if (tab === 'restore') {
-      await this.loadServices();
+    if (tab === 'restore' && !this._servicesLoadedOnce) {
+      // Fire-and-forget: the tab renders immediately, the list fills in.
+      this.loadServices();
     }
   }
 
-  async handleServiceChange(service, source = 'local') {
-    this.selectedService = service;
-    this.selectedSource = source;
-    if (this.selectedService) {
-      await this.loadSnapshots(this.selectedService, this.selectedSource);
-    } else {
-      this.snapshots = [];
+  async toggleRepo(repo, source) {
+    const key = `${source}:${repo}`;
+    if (this.expandedRepo === key) {
+      this.expandedRepo = null;
+      return;
     }
+    this.expandedRepo = key;
+    await this.loadSnapshots(repo, source);
   }
 
-  async handleRestore(service, snapshotId = null) {
-    const snapshotDesc = snapshotId ? `snapshot ${snapshotId.substring(0, 8)}` : 'latest snapshot';
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    // Show confirmation modal
-    modal.show(
-      'Confirm Restore',
-      `Are you sure you want to restore ${service} from ${snapshotDesc}?`,
-      'confirm',
-      {
-        confirmText: 'Restore',
-        cancelText: 'Cancel',
-        confirmVariant: 'danger',
-        details: [
-          { message: 'This will overwrite current data', type: 'warning' }
-        ],
-        confirmCallback: async () => {
-          await this.performRestore(service, snapshotId);
-        }
-      }
-    );
-  }
-
-  async performRestore(service, snapshotId = null) {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    // Store which snapshot is being restored: "latest" or the specific snapshot ID
-    this.restoreServiceInProgress = snapshotId || "latest";
-
-    // Show progress modal
-    modal.show(
-      'Restoring Repository',
-      `Restoring ${service}...`,
-      'progress'
-    );
-
-    try {
-      const response = await fetch(`/api/backups/services/${encodeURIComponent(service)}/restore`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          snapshot_id: snapshotId,
-          source: 'auto',
-          dry_run: false,
-          create_snapshot: false
-        })
-      });
-
-      if (response.ok) {
-        modal.updateStatus('success', `Successfully restored ${service}`);
-        this.showNotification(`Successfully restored ${service}`, 'success');
-      } else {
-        const error = await response.json();
-        modal.updateStatus('error', `Failed to restore ${service}`, [
-          { message: error.detail || 'Unknown error', type: 'error' }
-        ]);
-        this.showNotification(`Failed to restore ${service}: ${error.detail || 'Unknown error'}`, 'error');
-      }
-    } catch (error) {
-      console.error('Error restoring repository:', error);
-      modal.updateStatus('error', `Error restoring ${service}`, [
-        { message: error.message, type: 'error' }
-      ]);
-      this.showNotification(`Error restoring ${service}: ${error.message}`, 'error');
-    } finally {
-      this.restoreServiceInProgress = null;
-    }
-  }
-
-  async handleRestoreAll() {
-    const repoCount = this.services.length + this.systemConfig.length + this.extraPaths.length;
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    // Show confirmation modal
-    modal.show(
-      'Restore Entire System',
-      `This will restore ALL ${repoCount} backup repositories from their latest snapshots, including services, databases, and system configuration.`,
-      'confirm',
-      {
-        confirmText: 'Restore Entire System',
-        cancelText: 'Cancel',
-        confirmVariant: 'danger',
-        details: [
-          { message: 'This will overwrite all current data', type: 'warning' },
-          { message: `${repoCount} repositories will be restored`, type: 'warning' },
-          { message: 'This operation may take several minutes', type: 'warning' }
-        ],
-        confirmCallback: async () => {
-          await this.performRestoreAll(repoCount);
-        }
-      }
-    );
-  }
-
-  async performRestoreAll(serviceCount) {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    this.restoreAllInProgress = true;
-
-    // Show progress modal
-    modal.show(
-      'Restoring Entire System',
-      `Restoring ${serviceCount} repositories...`,
-      'progress'
-    );
-
-    try {
-      const response = await fetch('/api/backups/restore-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          snapshot_id: null,
-          source: 'auto',
-          dry_run: false,
-          include_system_config: this.includeSystemConfig
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-
-        // Wait for restore to actually start (with timeout)
-        modal.updateStatus('progress', 'Waiting for restore to start...');
-
-        let restoreStarted = false;
-        const maxWaitTime = 3000; // 3 seconds max
-        const pollInterval = 300; // Check every 300ms
-        const maxAttempts = Math.floor(maxWaitTime / pollInterval);
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await this.pollBackupStatus();
-
-          if (this.backupStatus?.restore_running) {
-            restoreStarted = true;
-            break;
-          }
-
-          // Wait before next poll
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-        }
-
-        if (restoreStarted) {
-          modal.updateStatus('progress', `Restore in progress...`);
-          this.showNotification(`Restore started for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`, 'success');
-
-          // Poll restore status until completion
-          await this.waitForRestoreCompletion(modal, serviceCount);
-        } else {
-          // Restore may start later, still show success
-          modal.updateStatus('success', `Restore initiated for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`);
-          this.showNotification(`Restore initiated for ${serviceCount} repository${serviceCount !== 1 ? 's' : ''}`, 'success');
-        }
-
-        // Continue polling to keep status updated
-        this.startStatusPolling();
-
-        await this.loadServices(); // Refresh the list
-      } else {
-        const error = await response.json();
-        modal.updateStatus('error', `Failed to restore entire system`, [
-          { message: error.detail || 'Unknown error', type: 'error' }
-        ]);
-        this.showNotification(`Failed to restore entire system: ${error.detail || 'Unknown error'}`, 'error');
-      }
-    } catch (error) {
-      console.error('Error restoring entire system:', error);
-      modal.updateStatus('error', `Error restoring entire system`, [
-        { message: error.message, type: 'error' }
-      ]);
-      this.showNotification(`Error restoring entire system: ${error.message}`, 'error');
-    } finally {
-      this.restoreAllInProgress = false;
-    }
-  }
-
-  async waitForRestoreCompletion(modal, serviceCount) {
-    return new Promise((resolve) => {
-      const pollInterval = 2000; // Check every 2 seconds
-      const checkRestore = async () => {
-        await this.pollBackupStatus();
-
-        if (this.backupStatus?.restore_running) {
-          // Update progress with current service being restored
-          const currentService = this.backupStatus.active_restore || 'system';
-          modal.updateStatus('progress', `Restoring: ${currentService}...`);
-
-          // Continue polling
-          setTimeout(checkRestore, pollInterval);
-        } else {
-          // Restore completed
-          modal.updateStatus('success', `Successfully restored entire system (${serviceCount} repository${serviceCount !== 1 ? 's' : ''})!`);
-          this.showNotification(`Successfully restored entire system (${serviceCount} repository${serviceCount !== 1 ? 's' : ''})!`, 'success');
-          resolve();
-        }
-      };
-
-      checkRestore();
-    });
-  }
-
-  async handleTriggerBackups() {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    // Show confirmation modal
-    modal.show(
-      'Trigger Backups',
-      'This will immediately start backup jobs for all enabled services.',
-      'confirm',
-      {
-        confirmText: 'Run Backup Now',
-        cancelText: 'Cancel',
-        confirmVariant: 'primary',
-        details: [
-          { message: 'All enabled backup services will be triggered', type: 'info' },
-          { message: 'Backups will run in the background', type: 'info' }
-        ],
-        confirmCallback: async () => {
-          await this.performTriggerBackups();
-        }
-      }
-    );
-  }
-
-  async performTriggerBackups() {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    this.triggerInProgress = true;
-
-    // Show progress modal
-    modal.show(
-      'Triggering Backups',
-      'Starting backup services...',
-      'progress'
-    );
-
-    try {
-      const response = await fetch('/api/backups/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-
-        // Wait for backup to actually start (with timeout)
-        // The API returns immediately now (async), but we need to wait for backup_running to become true
-        modal.updateStatus('progress', 'Waiting for backups to start...');
-
-        let backupStarted = false;
-        const maxWaitTime = 3000; // 3 seconds max
-        const pollInterval = 300; // Check every 300ms
-        const maxAttempts = Math.floor(maxWaitTime / pollInterval);
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await this.pollBackupStatus();
-
-          if (this.backupStatus?.backup_running) {
-            backupStarted = true;
-            break;
-          }
-
-          // Wait before next poll
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-        }
-
-        // Show success and start polling
-        const count = result.output?.match(/(\d+) services/)?.[1] || 'backup';
-        if (backupStarted) {
-          modal.updateStatus('success', `Backups running for ${count} service${count !== '1' ? 's' : ''}`);
-          this.showNotification(`Backups started for ${count} service${count !== '1' ? 's' : ''}`, 'success');
-        } else {
-          // Backup may start later, still show success
-          modal.updateStatus('success', `Backup trigger sent for ${count} service${count !== '1' ? 's' : ''}`);
-          this.showNotification(`Backup trigger sent for ${count} service${count !== '1' ? 's' : ''}`, 'success');
-        }
-
-        // Continue polling
-        this.startStatusPolling();
-      } else {
-        const error = await response.json();
-        modal.updateStatus('error', 'Failed to trigger backups', [
-          { message: error.detail || 'Unknown error', type: 'error' }
-        ]);
-        this.showNotification(`Failed to trigger backups: ${error.detail || 'Unknown error'}`, 'error');
-      }
-    } catch (error) {
-      console.error('Error triggering backups:', error);
-      modal.updateStatus('error', 'Error triggering backups', [
-        { message: error.message, type: 'error' }
-      ]);
-      this.showNotification(`Error triggering backups: ${error.message}`, 'error');
-    } finally {
-      this.triggerInProgress = false;
-    }
-  }
-
-  async handleSyncBackblaze() {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    // Show confirmation modal
-    modal.show(
-      'Sync to Backblaze',
-      'This will sync all local backups to Backblaze B2 cloud storage.',
-      'confirm',
-      {
-        confirmText: 'Sync to Backblaze',
-        cancelText: 'Cancel',
-        confirmVariant: 'primary',
-        details: [
-          { message: 'Local backups will be copied to Backblaze', type: 'info' },
-          { message: 'This may take some time depending on data size', type: 'info' }
-        ],
-        confirmCallback: async () => {
-          await this.performSyncBackblaze();
-        }
-      }
-    );
-  }
-
-  async performSyncBackblaze() {
-    const modal = this.renderRoot.querySelector('progress-modal');
-
-    this.syncInProgress = true;
-
-    // Show progress modal
-    modal.show(
-      'Syncing to Backblaze',
-      'Syncing local backups to Backblaze...',
-      'progress'
-    );
-
-    try {
-      const response = await fetch('/api/backups/sync-backblaze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (response.ok) {
-        modal.updateStatus('success', 'Successfully triggered Backblaze sync');
-        this.showNotification('Backblaze sync started', 'success');
-
-        // Start polling for backup status
-        await this.pollBackupStatus();
-        this.startStatusPolling();
-      } else {
-        const error = await response.json();
-        modal.updateStatus('error', 'Failed to trigger Backblaze sync', [
-          { message: error.detail || 'Unknown error', type: 'error' }
-        ]);
-        this.showNotification(`Failed to sync to Backblaze: ${error.detail || 'Unknown error'}`, 'error');
-      }
-    } catch (error) {
-      console.error('Error syncing to Backblaze:', error);
-      modal.updateStatus('error', 'Error syncing to Backblaze', [
-        { message: error.message, type: 'error' }
-      ]);
-      this.showNotification(`Error syncing to Backblaze: ${error.message}`, 'error');
-    } finally {
-      this.syncInProgress = false;
-    }
+  handleFieldChange(field, value) {
+    const newConfig = { ...this.config };
+    const path = field.split('.');
+    let cur = newConfig;
+    for (let i = 0; i < path.length - 1; i++) cur = cur[path[i]];
+    cur[path[path.length - 1]] = value;
+    this.config = newConfig;
+    this.modified = true;
+    this.dispatchEvent(new CustomEvent('config-change', {
+      detail: { config: newConfig }, bubbles: true, composed: true
+    }));
   }
 
   handleSecretUpdated() {
@@ -910,47 +940,314 @@ class BackupsModule extends LitElement {
   }
 
   showNotification(message, type = 'info') {
-    // Dispatch event to parent component (admin-app) to show toast
     this.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message, type },
-      bubbles: true,
-      composed: true
+      detail: { message, type }, bubbles: true, composed: true
     }));
   }
 
-  formatTimestamp(timestamp) {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
+  // ------------------------------------------------------ restore actions
 
-    // If less than a minute ago
-    if (diffMins < 1) return 'just now';
-    // If less than an hour ago
-    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-    // If less than a day ago
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-    // Otherwise show full date
+  confirmModal() {
+    return this.renderRoot.querySelector('progress-modal');
+  }
+
+  /** Single-repository restore: plain confirm, then start the job. */
+  handleRestore(repo, source, snapshotId) {
+    const snapDesc = snapshotId
+      ? `snapshot ${snapshotId.substring(0, 8)}` : 'the latest snapshot';
+    this.confirmModal().show(
+      'Confirm Restore',
+      `Restore ${repo} from ${snapDesc}?`,
+      'confirm',
+      {
+        confirmText: 'Restore',
+        cancelText: 'Cancel',
+        confirmVariant: 'danger',
+        details: [
+          { message: `${repo}'s service will be stopped during the restore`,
+            type: 'warning' },
+          { message: 'Current data and database contents will be OVERWRITTEN '
+              + 'with the backup', type: 'warning' },
+          { message: 'The service is restarted automatically when done',
+            type: 'warning' }
+        ],
+        confirmCallback: () => this.performRestore(repo, source, snapshotId)
+      }
+    );
+  }
+
+  async performRestore(repo, source, snapshotId) {
+    await this.startJob(
+      `/api/backups/services/${encodeURIComponent(repo)}/restore`,
+      {
+        snapshot_id: snapshotId || null,
+        source: source || 'auto',
+        dry_run: false,
+        create_snapshot: false
+      });
+  }
+
+  /** Full-system restore: type-to-confirm because it is wide and destructive. */
+  handleRestoreAll() {
+    const count = this.repoCount();
+    this._restoreAllConfirmText = '';
+    this.confirmModal().show(
+      'Restore Entire System',
+      `This restores ALL ${count} backup repositories from their latest ` +
+      `snapshots. To confirm, type ${BackupsModule.RESTORE_ALL_CONFIRM} below.`,
+      'confirm',
+      {
+        confirmText: `Restore ${count} Repositories`,
+        cancelText: 'Cancel',
+        confirmVariant: 'danger',
+        details: [
+          { message: 'ALL current service data and databases will be '
+              + 'OVERWRITTEN', type: 'warning' },
+          { message: this.includeSystemConfig
+              ? 'System configuration (/etc/nixos) IS included'
+              : 'System configuration (/etc/nixos) is NOT included',
+            type: 'warning' },
+          { message: 'Scheduled backups are paused while the restore runs',
+            type: 'warning' },
+          { message: 'This may take several minutes', type: 'warning' }
+        ],
+        confirmCallback: () => {
+          // The shared modal has no input; gate on a window.prompt instead
+          // so the confirm action is deliberate.
+          const typed = window.prompt(
+            `Type ${BackupsModule.RESTORE_ALL_CONFIRM} to confirm a ` +
+            `full-system restore of ${count} repositories:`);
+          if (typed !== BackupsModule.RESTORE_ALL_CONFIRM) {
+            this.showNotification('Full-system restore cancelled', 'info');
+            return;
+          }
+          this.performRestoreAll();
+        }
+      }
+    );
+  }
+
+  async performRestoreAll() {
+    await this.startJob('/api/backups/restore-all', {
+      snapshot_id: null,
+      source: 'auto',
+      dry_run: false,
+      include_system_config: this.includeSystemConfig
+    });
+  }
+
+  // ------------------------------------------------------ backup actions
+
+  handleTriggerBackups() {
+    this.confirmModal().show(
+      'Run Backups Now',
+      'Immediately start backup jobs for all enabled services.',
+      'confirm',
+      {
+        confirmText: 'Run Backup Now',
+        cancelText: 'Cancel',
+        confirmVariant: 'primary',
+        details: [
+          { message: 'All enabled backup repositories will be backed up',
+            type: 'info' },
+          { message: 'Backups run in the background; you can leave this page',
+            type: 'info' }
+        ],
+        confirmCallback: () => this.startJob('/api/backups/trigger', null)
+      }
+    );
+  }
+
+  handleBackupBackblaze() {
+    this.confirmModal().show(
+      'Back Up to Backblaze',
+      'Run the offsite Backblaze B2 backups now.',
+      'confirm',
+      {
+        confirmText: 'Back Up to Backblaze',
+        cancelText: 'Cancel',
+        confirmVariant: 'primary',
+        details: [
+          { message: 'Each service is backed up directly to its B2 '
+              + 'repository', type: 'info' },
+          { message: 'B2 backups also run automatically on a daily timer',
+            type: 'info' },
+          { message: 'Duration depends on how much data changed',
+            type: 'info' }
+        ],
+        confirmCallback: () => this.startJob('/api/backups/backup-backblaze',
+          null)
+      }
+    );
+  }
+
+  // -------------------------------------------------------------- helpers
+
+  repoCount() {
+    return new Set([
+      ...this.localServices, ...this.backblazeServices,
+      ...this.localSystemConfig, ...this.backblazeSystemConfig,
+      ...this.localExtraPaths, ...this.backblazeExtraPaths
+    ]).size;
+  }
+
+  formatTimestamp(ts) {
+    if (!ts) return '';
+    const date = new Date(ts);
+    const mins = Math.floor((Date.now() - date) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} minute${mins !== 1 ? 's' : ''} ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs !== 1 ? 's' : ''} ago`;
     return date.toLocaleString();
   }
 
-  renderConfigurationTab() {
-    const { backups } = this.config;
+  /** Is a repository action blocked because a job is running? */
+  get actionsLocked() {
+    return this.isJobActive(this.currentJob);
+  }
+
+  // --------------------------------------------------------- render: job
+
+  renderJobBanner() {
+    const job = this.currentJob;
+    if (!job) return '';
+    const active = this.isJobActive(job);
+    const isRestore = job.kind === 'restore' || job.kind === 'restore-all';
+    let cls = 'job-banner';
+    if (active && isRestore) cls += ' restore';
+    else if (!active) cls += (job.state === 'failed' ? ' failed' : ' done');
+
+    const done = job.repos.filter(r => r.state === 'done').length;
+    const failed = job.repos.filter(r => r.state === 'failed').length;
+    const total = job.repos.length;
+
+    let sub;
+    if (active) {
+      sub = job.current_repo
+        ? `Working on ${job.current_repo} — ${done}/${total} done`
+        : `${done}/${total} done`;
+    } else if (job.state === 'failed') {
+      sub = job.error || `${failed} repositor${failed === 1 ? 'y' : 'ies'} failed`;
+    } else {
+      sub = `${done}/${total} repositories completed`;
+    }
 
     return html`
-      <!-- Local Backups -->
+      <div class=${cls} @click=${() => { this.jobOverlayOpen = true; }}>
+        ${active ? html`<span class="spinner lg"></span>`
+                 : html`<span>${job.state === 'failed' ? '✕' : '✓'}</span>`}
+        <div class="grow">
+          <div class="title">${this.jobKindLabel(job.kind)}
+            ${active ? 'in progress' : (job.state === 'failed'
+              ? 'failed' : 'complete')}</div>
+          <div class="sub">${sub}</div>
+        </div>
+        <span class="view">View details</span>
+      </div>
+    `;
+  }
+
+  renderJobOverlay() {
+    if (!this.jobOverlayOpen || !this.currentJob) return '';
+    const job = this.currentJob;
+    const active = this.isJobActive(job);
+    const done = job.repos.filter(r => r.state === 'done').length;
+    const failed = job.repos.filter(r => r.state === 'failed').length;
+    const total = job.repos.length;
+    const pct = total ? Math.round((done + failed) / total * 100) : 0;
+    const showChecklist = total > 1;
+
+    return html`
+      <div class="overlay" @click=${() => this.closeOverlayIfDone()}>
+        <div class="job-panel" @click=${(e) => e.stopPropagation()}>
+          <div class="job-panel-head">
+            ${active ? html`<span class="spinner lg"></span>`
+                     : html`<span style="font-size:20px;">
+                         ${job.state === 'failed' ? '✕' : '✓'}</span>`}
+            <span class="title">
+              ${this.jobKindLabel(job.kind)}
+              ${active ? 'in progress'
+                       : (job.state === 'failed' ? '— failed' : '— complete')}
+            </span>
+          </div>
+
+          <div class="job-panel-body">
+            ${showChecklist ? html`
+              <div class="progress-bar"><div style="width:${pct}%"></div></div>
+              <div class="repo-progress">
+                ${job.repos.map(r => html`
+                  <div class="progress-row ${r.state}">
+                    <span class="ico">${this.repoStateIcon(r.state)}</span>
+                    <span>${r.name}</span>
+                    ${r.error ? html`<span class="err">${r.error}</span>` : ''}
+                  </div>
+                `)}
+              </div>
+            ` : ''}
+
+            <div style="font-size:13px;color:var(--hf-text-muted);
+                        margin-bottom:6px;">Live log</div>
+            <div class="log-view">${this.jobLog ||
+              (active ? 'Waiting for output…' : '(no output)')}</div>
+
+            ${job.state === 'failed' && job.error ? html`
+              <div class="status-line err" style="margin-top:16px;">
+                ${job.error}
+              </div>` : ''}
+          </div>
+
+          <div class="job-panel-foot">
+            <span class="job-summary">
+              ${active
+                ? `${done}/${total} done${failed ? `, ${failed} failed` : ''}`
+                : (job.state === 'failed'
+                    ? `${failed} failed, ${done} succeeded`
+                    : `All ${total} completed`)}
+            </span>
+            <button class="btn ${active ? 'btn-secondary' : 'btn-primary'}"
+                    @click=${() => { this.jobOverlayOpen = false; }}>
+              ${active ? 'Run in background' : 'Close'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  closeOverlayIfDone() {
+    if (!this.isJobActive(this.currentJob)) this.jobOverlayOpen = false;
+  }
+
+  repoStateIcon(state) {
+    return { pending: '·', running: '⟳', done: '✓', failed: '✕' }[state]
+      || '·';
+  }
+
+  // ----------------------------------------------------- render: config
+
+  renderConfigurationTab() {
+    const { backups } = this.config;
+    // Single source of truth for "is restic configured", shared with the
+    // Restore tab: the backend actually stats the password file.
+    const resticReady = !!this.backupConfigStatus?.restic_password_configured;
+
+    return html`
+      ${this.renderJobBanner()}
+
+      ${this.renderCanarySection()}
+
       <config-section
         title="Local Backups"
-        description="Automatic backups to a local storage device using Restic"
+        description="Automatic encrypted backups to a local storage device using Restic"
       >
         <form-field
           label="Enable Local Backups"
           type="boolean"
           .value=${backups.enable}
           help="Enable automatic backups of service data"
-          @field-change=${(e) => this.handleFieldChange('backups.enable', e.detail.value)}
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.enable', e.detail.value)}
         ></form-field>
 
         <form-field
@@ -959,104 +1256,73 @@ class BackupsModule extends LitElement {
           .value=${backups['to-path']}
           placeholder="/var/lib/backups"
           help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
-          @field-change=${(e) => this.handleFieldChange('backups.to-path', e.detail.value)}
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.to-path', e.detail.value)}
         ></form-field>
 
         <list-input
           label="Extra Backup Paths"
           itemType="path"
           .value=${backups['extra-from-paths'] || []}
-          description="Additional directories to include in backups (one per line). HomeFree service data is backed up automatically; use this for user files (Documents, Photos, etc.) — often paths under a mounted NAS share."
+          description="Additional directories to include in backups. HomeFree service data is backed up automatically; use this for user files (Documents, Photos, etc.)."
           placeholder="/mnt/ellis/Documents"
-          @list-changed=${(e) => this.handleFieldChange('backups.extra-from-paths', e.detail.value)}
+          @list-changed=${(e) =>
+            this.handleFieldChange('backups.extra-from-paths', e.detail.value)}
         ></list-input>
 
         ${backups.enable ? html`
           <div class="info-box">
             <strong>ℹ️ Backup Information</strong>
-            <div style="font-size: 14px;">
-              HomeFree uses Restic for encrypted, deduplicated backups. Backups run automatically at 2 AM daily and include all enabled service data.
-            </div>
+            <div>HomeFree uses Restic for encrypted, deduplicated backups.
+              Local backups run automatically after 2 AM daily (staggered);
+              ${backups['backblaze-enable']
+                ? 'offsite Backblaze B2 backups run after 4 AM. '
+                : ''}each service is a separate restic repository with
+              7-daily / 5-weekly / 10-yearly retention.</div>
           </div>
 
-          <div style="margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+          <div class="btn-row">
             <button
               class="btn btn-primary"
               @click=${() => this.handleTriggerBackups()}
-              ?disabled=${this.triggerInProgress || !this.secretsStatus?.['restic-password']}
-            >
-              ${this.triggerInProgress ? html`
-                <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
-                Triggering Backups...
-              ` : '▶️ Run Backup Now'}
-            </button>
+              ?disabled=${this.actionsLocked || !resticReady}
+            >▶️ Run Backup Now</button>
 
             ${backups['backblaze-enable'] ? html`
               <button
                 class="btn btn-primary"
-                @click=${() => this.handleSyncBackblaze()}
-                ?disabled=${this.syncInProgress || !this.secretsStatus?.['restic-password']}
-              >
-                ${this.syncInProgress ? html`
-                  <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
-                  Syncing...
-                ` : '☁️ Sync to Backblaze'}
-              </button>
-            ` : ''}
-
-            ${!this.secretsStatus?.['restic-password'] ? html`
-              <p style="font-size: 13px; color: var(--hf-text-muted); margin-top: 8px; width: 100%;">
-                ⚠️ Configure Restic password below before running backups
-              </p>
+                @click=${() => this.handleBackupBackblaze()}
+                ?disabled=${this.actionsLocked || !resticReady}
+              >☁️ Back Up to Backblaze</button>
             ` : ''}
           </div>
 
-          <!-- Backup Status Display -->
-          ${this.backupStatus?.backup_running || this.backupStatus?.sync_running ? html`
-            <div style="margin-top: 16px; padding: 16px; background: var(--hf-accent-soft); border-left: 4px solid var(--hf-accent); border-radius: 8px;">
-              <div style="font-weight: 600; margin-bottom: 8px; color: var(--hf-accent); display: flex; align-items: center; gap: 8px;">
-                <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid var(--hf-accent); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
-                Active Operations
-              </div>
-
-              ${this.backupStatus.backup_running ? html`
-                <div style="margin-bottom: 12px;">
-                  <div style="font-size: 14px; color: var(--hf-accent); margin-bottom: 4px;">
-                    <strong>Backing up:</strong>
-                  </div>
-                  <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                    ${this.backupStatus.active_backups.map(service => html`
-                      <span style="display: inline-block; padding: 4px 8px; background: var(--hf-accent); color: var(--hf-text); border-radius: 4px; font-size: 12px;">
-                        ${service}
-                      </span>
-                    `)}
-                  </div>
-                </div>
-              ` : ''}
-
-              ${this.backupStatus.sync_running ? html`
-                <div style="font-size: 14px; color: var(--hf-accent);">
-                  ☁️ Syncing to Backblaze...
-                </div>
-              ` : ''}
-            </div>
-          ` : ''}
+          ${!resticReady ? html`
+            <p style="font-size:13px;color:var(--hf-text-muted);
+                      margin-top:8px;">
+              ⚠️ Configure the Restic password below before running backups
+            </p>` : ''}
+          ${this.actionsLocked ? html`
+            <p style="font-size:13px;color:var(--hf-text-muted);
+                      margin-top:8px;">
+              A ${this.jobKindLabel(this.currentJob.kind).toLowerCase()} is
+              currently running — see the banner above.
+            </p>` : ''}
         ` : ''}
       </config-section>
 
-      <!-- Backup Secrets -->
       <config-section
         title="Backup Secrets"
         description="Encryption password and cloud storage credentials"
       >
         ${!this.hasAuthorizedKeys ? html`
-          <div class="info-box" style="background: rgba(245, 158, 11, 0.1); border-left-color: var(--hf-warn); color: var(--hf-warn);">
+          <div class="info-box warn-box">
             <strong>⚠️ SSH Key Required</strong>
-            <div style="font-size: 14px; margin-top: 8px;">
-              Before you can manage secrets, you need to add an SSH authorized key in the <a href="#/system" style="color: var(--hf-warn); text-decoration: underline;">System settings</a>.
-            </div>
-          </div>
-        ` : ''}
+            <div>Before you can manage secrets, add an SSH authorized key in
+              the <a href="#/system"
+                style="color:var(--hf-warn);text-decoration:underline;">
+                System settings</a>.</div>
+          </div>` : ''}
 
         <secrets-input
           serviceLabel="backup"
@@ -1078,7 +1344,6 @@ class BackupsModule extends LitElement {
             ?disabled=${!this.hasAuthorizedKeys}
             @secret-updated=${() => this.handleSecretUpdated()}
           ></secrets-input>
-
           <secrets-input
             serviceLabel="backup"
             secretKey="backblaze-key"
@@ -1091,7 +1356,6 @@ class BackupsModule extends LitElement {
         ` : ''}
       </config-section>
 
-      <!-- Backblaze B2 Cloud Backups -->
       <config-section
         title="Backblaze B2 Cloud Backups"
         description="Off-site encrypted backups to Backblaze B2 cloud storage"
@@ -1101,396 +1365,607 @@ class BackupsModule extends LitElement {
           type="boolean"
           .value=${backups['backblaze-enable']}
           help="Send encrypted backups to Backblaze B2 cloud storage"
-          @field-change=${(e) => this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
         ></form-field>
-
         <form-field
           label="Backblaze Bucket Name"
           type="text"
           .value=${backups['backblaze-bucket']}
           placeholder="my-homefree-backups"
-          help="B2 bucket name for storing backups (shown for restore even if Backblaze disabled)"
-          @field-change=${(e) => this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
+          help="B2 bucket name for storing backups"
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
         ></form-field>
 
         ${backups['backblaze-enable'] ? html`
           <div class="info-box">
             <strong>ℹ️ Backblaze Configuration</strong>
-            <div style="font-size: 14px; margin-top: 8px;">
-              To use Backblaze B2:
-              <ul style="margin: 8px 0 0 20px; padding: 0;">
+            <div>To use Backblaze B2:
+              <ul>
                 <li>Create a B2 account at backblaze.com</li>
                 <li>Create a bucket for your backups</li>
                 <li>Generate application keys with read/write access</li>
                 <li>Configure credentials above in Backup Secrets</li>
               </ul>
             </div>
-          </div>
-        ` : ''}
-      </config-section>
-
-      <!-- Future: Backup Schedule -->
-      <config-section
-        title="Backup Schedule"
-        description="Configure backup timing and retention (Coming Soon)"
-      >
-        <p style="color: var(--hf-text-muted); font-size: 14px;">
-          Custom backup schedules and retention policies will be available in a future update. Currently, backups run daily at 2 AM with automatic retention management.
-        </p>
+          </div>` : ''}
       </config-section>
     `;
   }
 
-  renderRestoreTab() {
-    const isReady = this.backupConfigStatus?.restic_password_configured;
-    const hasLocalBackups = this.backupConfigStatus?.local_backups_available;
-    const hasBackblaze = this.backupConfigStatus?.backblaze_configured;
-    const backblazeMounted = this.backupConfigStatus?.backblaze_mounted;
+  /**
+   * Pending (config) enabled state of the Backup Self-Test - i.e. what
+   * the toggle reflects. This is the merged config value, which may
+   * differ from what is actually deployed until the user applies.
+   */
+  get selfTestEnabledPending() {
+    return !!this.config?.services?.['backup-canary']?.enable;
+  }
+
+  /** Deployed state - whether the self-test service actually exists. */
+  get selfTestEnabledDeployed() {
+    return !!this.canaryStatus?.enabled;
+  }
+
+  /**
+   * Toggle the Backup Self-Test on/off. Writes the pending value into
+   * config via the same service-toggle event the Services module uses;
+   * it does NOT take effect until the user applies (rebuilds). The
+   * toggle itself reflects the pending value, so the UI stays consistent
+   * before apply.
+   */
+  handleSelfTestToggle(enabled) {
+    this.dispatchEvent(new CustomEvent('service-toggle', {
+      detail: { serviceLabel: 'backup-canary', enabled },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  /** Pending value of which backup source the self-test exercises. */
+  get selfTestSourcePending() {
+    return this.config?.services?.['backup-canary']?.['selftest-source']
+      || 'local';
+  }
+
+  /**
+   * Change which backup source the self-test verifies (local / backblaze
+   * / both). Writes to pending config via service-option-changed; takes
+   * effect on apply.
+   */
+  handleSelfTestSourceChange(value) {
+    this.dispatchEvent(new CustomEvent('service-option-changed', {
+      detail: {
+        serviceLabel: 'backup-canary',
+        optionKey: 'selftest-source',
+        value
+      },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
+  /**
+   * Backup Self-Test section. The self-test is a small service that
+   * backs up, changes and restores its own throwaway data on a
+   * schedule, proving the backup/restore pipeline actually works.
+   * "Backup Self-Test" is the user-facing name; the underlying service
+   * is `backup-canary`.
+   */
+  renderCanarySection() {
+    const pending = this.selfTestEnabledPending;
+    const deployed = this.selfTestEnabledDeployed;
+    // Config changed but not yet applied.
+    const dirty = pending !== deployed;
+
+    const c = this.canaryStatus;
+    const r = c?.result;
+    const running = !!c?.running;
+
+    // Layout-stable: the structure below never changes between renders -
+    // the status row and the action row are always present, only their
+    // content/state changes. This avoids the section jumping around as
+    // a self-test progresses.
+    const { cls, text, detail } = this._selfTestStatusParts(
+      { dirty, pending, deployed, result: r, running });
 
     return html`
-      <div class="restore-container">
-        <config-section
-          title="Restore from Backup"
-          description="Restore data from backup repositories"
-        >
-          ${!isReady ? html`
-            <div class="status-indicator not-ready">
-              ⚠️ Restic password not configured. Please configure it in the Configuration tab before restoring.
-            </div>
-          ` : this.loading ? html`
-            <div class="status-indicator" style="background: var(--hf-surface-2); border-color: var(--hf-border-2);">
-              <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="display: block; width: 16px; height: 16px; border: 2px solid var(--hf-text-muted); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0; margin-top: 2px;"></span>
-                <div style="color: var(--hf-text-muted);">
-                  <div style="font-weight: 600; margin-bottom: 4px;">Loading backup information...</div>
-                  <div style="font-size: 14px;">Checking available backup repositories</div>
-                </div>
-              </div>
-            </div>
-          ` : html`
-            <div class="status-indicator ready">
-              <div style="font-weight: 600; margin-bottom: 8px;">✓ Restore is ready</div>
-              <div style="font-size: 14px;">
-                <strong>Available backup sources:</strong>
-                <ul style="margin: 4px 0 0 20px; padding: 0;">
-                  ${hasLocalBackups ? html`
-                    <li>Local backups (${this.backupConfigStatus?.local_backup_path})</li>
-                  ` : ''}
-                  ${backblazeMounted ? html`
-                    <li>Backblaze B2 cloud backups (${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories found)</li>
-                  ` : hasBackblaze ? html`
-                    <li>Backblaze configured but not mounted (enable in Configuration to restore)</li>
-                  ` : ''}
-                  ${!hasLocalBackups && !backblazeMounted ? html`
-                    <li style="color: var(--hf-warn);">⚠️ No backup sources found. Configure Backblaze or check local backup path.</li>
-                  ` : ''}
-                </ul>
-              </div>
-            </div>
+      <config-section
+        title="Backup Self-Test"
+        description="Ongoing proof that your backups can actually be restored"
+      >
+        <p style="font-size:14px;color:var(--hf-text-muted);
+                  margin-top:0;">
+          When enabled, the system automatically backs up a small piece
+          of test data every day, changes it, restores it from the
+          backup, and confirms it came back correctly — giving you
+          ongoing proof that your backups can actually be restored. It
+          never touches any real data.
+        </p>
 
-            <!-- Last Refreshed Timestamp and Refresh Button -->
-            <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; padding: 12px; background: var(--hf-surface-2); border-radius: 8px;">
-              <div style="font-size: 13px; color: var(--hf-text-muted);">
-                ${this.lastServicesRefresh ? html`
-                  <strong>Last refreshed:</strong> ${this.formatTimestamp(this.lastServicesRefresh)}
-                ` : html`
-                  <strong>Repository list not loaded</strong>
-                `}
-              </div>
-              <button
-                class="btn btn-secondary"
-                @click=${() => this.loadServices(true)}
-                ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                style="padding: 8px 16px; font-size: 13px;"
-              >
-                🔄 Refresh List
-              </button>
-            </div>
+        <form-field
+          label="Enable Backup Self-Test"
+          type="boolean"
+          .value=${pending}
+          help="Adds a small test service that verifies backups daily"
+          @field-change=${(e) =>
+            this.handleSelfTestToggle(e.detail.value)}
+        ></form-field>
 
-            <!-- Restore Status Display -->
-            ${this.backupStatus?.restore_running ? html`
-              <div style="margin-top: 16px; padding: 16px; background: rgba(245, 158, 11, 0.1); border-left: 4px solid var(--hf-warn); border-radius: 8px;">
-                <div style="font-weight: 600; margin-bottom: 8px; color: var(--hf-warn); display: flex; align-items: center; gap: 8px;">
-                  <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid var(--hf-warn); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></span>
-                  Restore in Progress
-                </div>
-                <div style="font-size: 14px; color: var(--hf-warn);">
-                  ${this.backupStatus.restore_type === 'all' ? html`
-                    <strong>🔄 Restoring entire system...</strong>
-                  ` : html`
-                    <strong>📦 Restoring:</strong> ${this.backupStatus.active_restore}
-                  `}
-                </div>
-              </div>
-            ` : ''}
+        ${pending ? this.renderSelfTestSource() : ''}
 
-            ${this.loading ? html`
-              <div style="padding: 40px; text-align: center; color: var(--hf-text-muted);">
-                <div style="font-size: 16px; margin-bottom: 8px;">Loading available repositories...</div>
-                <div style="font-size: 14px;">Checking backup repositories</div>
-              </div>
-            ` : html`
-              <!-- Restore All Button -->
-              <div style="margin-bottom: 32px; padding: 20px; background: rgba(245, 158, 11, 0.1); border: 2px solid var(--hf-warn); border-radius: 8px;">
-                <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; color: var(--hf-warn);">
-                  🔄 Restore Entire System
-                </div>
-                <div style="font-size: 14px; color: var(--hf-warn); margin-bottom: 12px;">
-                  Restore all backup repositories from their latest snapshots. This includes ${this.services.length + this.systemConfig.length + this.extraPaths.length} repositories: services, databases, system configuration, and arbitrary paths. This is useful when setting up a new machine or performing disaster recovery.
-                </div>
-                <div style="margin-bottom: 12px;">
-                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: var(--hf-warn);">
-                    <input
-                      type="checkbox"
-                      ?checked=${this.includeSystemConfig}
-                      @change=${(e) => { this.includeSystemConfig = e.target.checked; this.requestUpdate(); }}
-                      style="width: 16px; height: 16px; cursor: pointer;"
-                    />
-                    <span>Include system configuration (/etc/nixos)</span>
-                  </label>
-                </div>
-                <button
-                  class="btn btn-danger"
-                  @click=${() => this.handleRestoreAll()}
-                  ?disabled=${this.restoreAllInProgress || this.restoreServiceInProgress || (this.services.length + this.systemConfig.length + this.extraPaths.length) === 0}
-                >
-                  ${this.restoreAllInProgress ? 'Restoring Entire System...' : 'Restore Entire System from Latest Backups'}
-                </button>
-              </div>
+        <!-- Always-present status row; only its content changes. -->
+        <div class="status-line ${cls} selftest-status">
+          ${running ? html`<span class="spinner"></span>` : ''}
+          <div>
+            <div style="font-weight:600;">${text}</div>
+            <div class="selftest-detail">${detail}</div>
+          </div>
+        </div>
 
-              <div style="margin-bottom: 32px;">
-                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">
-                  Restore individual repositories:
-                </h3>
+        <!-- Always-present action row; the button is just disabled when
+             a run is not possible, rather than removed. -->
+        <div class="btn-row">
+          <button
+            class="btn btn-secondary"
+            @click=${() => this.handleRunCanary()}
+            ?disabled=${!deployed || dirty || running
+              || this.canaryStarting}
+          >${running
+            ? html`<span class="spinner"></span> Running…`
+            : (this.canaryStarting ? 'Starting…' : '🔬 Run Check Now')}
+          </button>
+        </div>
+      </config-section>
+    `;
+  }
 
-                <!-- Services Section -->
-                ${this.services.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid var(--hf-border-2); border-radius: 8px;">
-                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
-                      📦 Services
-                    </h4>
-                    <p style="font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;">
-                      Service data, databases, and application configurations
-                    </p>
-                    <div style="display: grid; gap: 8px;">
-                      ${this.localServices.map(service => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(service, 'local')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span></div>
-                            ${this.repositoryPaths[`local:${service}`] ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                ${this.repositoryPaths[`local:${service}`].slice(0, 2).join(', ')}${this.repositoryPaths[`local:${service}`].length > 2 ? ` +${this.repositoryPaths[`local:${service}`].length - 2} more` : ''}
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                      ${this.backblazeServices.map(service => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(service, 'backblaze')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${service} <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span></div>
-                            ${this.repositoryPaths[`backblaze:${service}`] ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                ${this.repositoryPaths[`backblaze:${service}`].slice(0, 2).join(', ')}${this.repositoryPaths[`backblaze:${service}`].length > 2 ? ` +${this.repositoryPaths[`backblaze:${service}`].length - 2} more` : ''}
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                    </div>
-                  </div>
-                ` : ''}
+  /**
+   * Compute the self-test status row's class / text / detail for the
+   * current state. Always returns all three (detail may be '') so the
+   * rendered structure stays constant - no layout shift.
+   */
+  _selfTestStatusParts({ dirty, pending, deployed, result, running }) {
+    if (dirty) {
+      return {
+        cls: 'muted',
+        text: `⏳ Backup Self-Test will be ${pending
+          ? 'enabled' : 'disabled'} when you apply your changes.`,
+        detail: '',
+      };
+    }
+    if (!deployed) {
+      return {
+        cls: 'muted',
+        text: 'Backup Self-Test is off.',
+        detail: 'Turn it on above to start automatic daily backup checks.',
+      };
+    }
+    if (running) {
+      return {
+        cls: 'muted',
+        text: 'Backup self-test in progress…',
+        detail: 'Backing up, changing and restoring the test data.',
+      };
+    }
+    if (!result) {
+      return {
+        cls: 'muted',
+        text: 'No self-test has run yet.',
+        detail: 'It runs automatically each day, or run one now below.',
+      };
+    }
+    if (result.result === 'pass') {
+      return {
+        cls: 'ok',
+        text: `Last check: PASSED — ${result.finished_at || ''}`,
+        detail: `Backup and restore verified (${result.source}).`,
+      };
+    }
+    return {
+      cls: 'err',
+      text: `Last check: FAILED — ${result.finished_at || ''}`,
+      detail: result.detail || 'Open the test page for details.',
+    };
+  }
 
-                <!-- Extra Paths Section -->
-                ${this.extraPaths.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 1px solid var(--hf-border-2); border-radius: 8px;">
-                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 12px 0;">
-                      📁 Extra Paths
-                    </h4>
-                    <p style="font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;">
-                      User-defined custom paths
-                    </p>
-                    <div style="display: grid; gap: 8px;">
-                      ${this.localExtraPaths.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'local')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span></div>
-                            ${this.repositoryPaths[`local:${repo}`] && this.repositoryPaths[`local:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                📂 ${this.repositoryPaths[`local:${repo}`][0]}
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                      ${this.backblazeExtraPaths.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'backblaze')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">${repo} <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span></div>
-                            ${this.repositoryPaths[`backblaze:${repo}`] && this.repositoryPaths[`backblaze:${repo}`].length > 0 ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                📂 ${this.repositoryPaths[`backblaze:${repo}`][0]}
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                    </div>
-                  </div>
-                ` : ''}
+  /**
+   * The "which source does the self-test verify" selector. Backblaze
+   * options require B2 to be configured; if it is not, only Local is
+   * offered and a hint explains why.
+   */
+  renderSelfTestSource() {
+    const b2Ready = !!this.backupConfigStatus?.backblaze_available;
+    const current = this.selfTestSourcePending;
 
-                <!-- System Configuration Section -->
-                ${this.systemConfig.length > 0 ? html`
-                  <div style="margin-bottom: 24px; padding: 16px; border: 2px solid var(--hf-warn); border-radius: 8px; background: rgba(245, 158, 11, 0.1);">
-                    <h4 style="font-size: 15px; font-weight: 600; margin: 0 0 8px 0; color: var(--hf-warn);">
-                      ⚙️ System Configuration
-                    </h4>
-                    <div style="padding: 8px 12px; background: rgba(245, 158, 11, 0.1); border-left: 3px solid var(--hf-warn); margin-bottom: 12px;">
-                      <strong>⚠️ Warning:</strong> Restoring system configuration will overwrite /etc/nixos. This may affect network settings, service configurations, and system behavior.
-                    </div>
-                    <div style="display: grid; gap: 8px;">
-                      ${this.localSystemConfig.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'local')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">
-                              /etc/nixos <span style="font-size: 11px; color: var(--hf-text-muted);">(Local)</span>
-                            </div>
-                            ${this.repositoryPaths[`local:${repo}`] ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                ${this.repositoryPaths[`local:${repo}`].length} files
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                      ${this.backblazeSystemConfig.map(repo => html`
-                        <button
-                          class="btn btn-secondary"
-                          style="text-align: left; padding: 12px; justify-content: flex-start;"
-                          @click=${() => this.handleServiceChange(repo, 'backblaze')}
-                          ?disabled=${this.loading || this.restoreServiceInProgress || this.restoreAllInProgress}
-                        >
-                          <div>
-                            <div style="font-weight: 600;">
-                              /etc/nixos <span style="font-size: 11px; color: var(--hf-accent);">☁️ Backblaze</span>
-                            </div>
-                            ${this.repositoryPaths[`backblaze:${repo}`] ? html`
-                              <div style="font-size: 12px; color: var(--hf-text-muted); margin-top: 4px;">
-                                ${this.repositoryPaths[`backblaze:${repo}`].length} files
-                              </div>
-                            ` : ''}
-                          </div>
-                        </button>
-                      `)}
-                    </div>
-                  </div>
-                ` : ''}
-              </div>
-            `}
+    const options = [
+      { value: 'local',
+        label: 'Local backups only' },
+      { value: 'backblaze',
+        label: 'Backblaze (offsite) only' },
+      { value: 'both',
+        label: 'Both local and Backblaze' },
+    ];
 
-            ${this.selectedService ? html`
-              <div style="margin-bottom: 16px;">
-                <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px;">
-                  Available Snapshots for ${this.selectedService}
-                </label>
+    return html`
+      <form-field
+        label="What the self-test verifies"
+        type="select"
+        .value=${current}
+        .options=${b2Ready ? options : options.slice(0, 1)}
+        help="Which backup source the daily self-test backs up and restores"
+        @field-change=${(e) =>
+          this.handleSelfTestSourceChange(e.detail.value)}
+      ></form-field>
+      ${!b2Ready ? html`
+        <p style="font-size:13px;color:var(--hf-text-muted);
+                  margin-top:-8px;">
+          Configure Backblaze B2 above to also verify offsite backups.
+        </p>` : ''}
+      ${b2Ready && current !== 'local' ? html`
+        <p style="font-size:13px;color:var(--hf-text-muted);
+                  margin-top:-8px;">
+          Verifying Backblaze runs a real backup and restore against B2 —
+          it uses some B2 transactions and takes a little longer.
+        </p>` : ''}
+    `;
+  }
 
-                ${this.loading ? html`
-                  <p style="color: var(--hf-text-muted);">Loading snapshots...</p>
-                ` : this.snapshots.length === 0 ? html`
-                  <p style="color: var(--hf-text-muted);">No snapshots found for this repository.</p>
-                ` : html`
-                  <div class="snapshots-list">
-                    ${this.snapshots.map((snapshot, index) => html`
-                      <div
-                        class="snapshot-item ${this.selectedSnapshot === snapshot.id ? 'selected' : ''}"
-                        @click=${() => { this.selectedSnapshot = snapshot.id; this.requestUpdate(); }}
-                      >
-                        <div class="snapshot-time">${snapshot.time}</div>
-                        <div class="snapshot-id">ID: ${snapshot.id?.substring(0, 8)}... ${index === 0 ? '(latest)' : ''}</div>
-                        ${snapshot.hostname ? html`<div class="snapshot-id">Host: ${snapshot.hostname}</div>` : ''}
-                      </div>
-                    `)}
-                  </div>
+  // ---------------------------------------------------- render: restore
 
-                  <div class="btn-group">
-                    <button
-                      class="btn btn-primary"
-                      @click=${() => this.handleRestore(this.selectedService, this.selectedSnapshot)}
-                      ?disabled=${this.restoreServiceInProgress || this.restoreAllInProgress || !this.selectedSnapshot}
-                    >
-                      ${this.restoreServiceInProgress === this.selectedSnapshot ? html`
-                        <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid var(--hf-text); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; vertical-align: middle;"></span>
-                        Restoring...
-                      ` : 'Restore Snapshot'}
-                    </button>
-                  </div>
-                `}
-              </div>
-            ` : ''}
-
-            <div class="info-box" style="margin-top: 24px;">
-              <strong>⚠️ Important Notes</strong>
-              <div style="font-size: 14px; margin-top: 8px;">
-                <ul style="margin: 8px 0 0 20px; padding: 0;">
-                  <li>Restoring will stop the service and overwrite its current data</li>
-                  <li>Database contents will be replaced with backup data</li>
-                  <li>The service will be automatically restarted after restore</li>
-                  <li>Consider creating a manual backup before restoring if needed</li>
-                </ul>
-              </div>
-            </div>
-          `}
+  renderRestoreTab() {
+    const ready = this.backupConfigStatus?.restic_password_configured;
+    if (!ready) {
+      return html`
+        ${this.renderJobBanner()}
+        <config-section title="Restore from Backup"
+          description="Restore data from backup repositories">
+          <div class="status-line err">
+            ⚠️ Restic password not configured. Configure it in the
+            Configuration tab before restoring.
+          </div>
         </config-section>
+      `;
+    }
+
+    return html`
+      ${this.renderJobBanner()}
+      <config-section
+        title="Restore from Backup"
+        description="Restore data from backup repositories"
+      >
+        ${this.renderRestoreSources()}
+        ${this.renderRefreshRow()}
+        ${this.renderRestoreAllCard()}
+
+        <h3 style="font-size:16px;font-weight:600;margin:24px 0 12px;">
+          Restore individual repositories
+        </h3>
+        ${this.repoListLoading && !this._servicesLoadedOnce ? html`
+          <div class="status-line muted">
+            <span class="spinner"></span>
+            Loading backup repositories…
+          </div>
+        ` : this.repoListError ? html`
+          <div class="status-line err">${this.repoListError}</div>
+        ` : html`
+          ${this.renderPathsProgress()}
+          ${this.renderRepoGroup('📦 Services',
+              'Service data, databases, and application configuration',
+              this.localServices, this.backblazeServices, false)}
+          ${this.renderRepoGroup('📁 Extra Paths',
+              'User-defined custom paths (e.g. NAS folders)',
+              this.localExtraPaths, this.backblazeExtraPaths, false)}
+          ${this.renderRepoGroup('⚙️ System Configuration',
+              'Restoring this overwrites /etc/nixos — network and service '
+              + 'configuration.',
+              this.localSystemConfig, this.backblazeSystemConfig, true)}
+          ${this.repoCount() === 0 ? html`
+            <div class="status-line muted">
+              No backup repositories found.
+            </div>` : ''}
+        `}
+
+        <div class="info-box warn-box" style="margin-top:24px;">
+          <strong>⚠️ What happens during a restore</strong>
+          <ul>
+            <li>The target service is stopped, its data overwritten, then
+              restarted automatically</li>
+            <li>Database contents are replaced with the backup's contents</li>
+            <li>Scheduled backups for affected repositories are paused for
+              the duration, so a backup cannot collide with the restore</li>
+            <li>Only one restore, backup, or sync runs at a time</li>
+          </ul>
+        </div>
+      </config-section>
+    `;
+  }
+
+  renderRestoreSources() {
+    const s = this.backupConfigStatus || {};
+    return html`
+      <div class="status-line ok">
+        <div>
+          <strong>✓ Restore is ready.</strong>
+          ${s.local_backups_available
+            ? html` Local backups available at
+                <code>${s.local_backup_path}</code>.` : ''}
+          ${s.backblaze_available
+            ? html` Backblaze B2 is configured (offsite restore available).`
+            : ''}
+          ${!s.local_backups_available && !s.backblaze_available
+            ? html` <span style="color:var(--hf-warn);">No backup sources
+                found.</span>` : ''}
+        </div>
       </div>
     `;
   }
+
+  renderRefreshRow() {
+    return html`
+      <div style="display:flex;align-items:center;justify-content:space-between;
+                  padding:12px;background:var(--hf-surface-2);
+                  border-radius:8px;margin-bottom:16px;">
+        <span style="font-size:13px;color:var(--hf-text-muted);">
+          ${this.lastServicesRefresh
+            ? html`<strong>Last refreshed:</strong>
+                ${this.formatTimestamp(this.lastServicesRefresh)}`
+            : html`<strong>Loading repository list…</strong>`}
+        </span>
+        <button class="btn btn-secondary" style="padding:8px 16px;
+            font-size:13px;"
+          @click=${() => this.loadServices(true)}
+          ?disabled=${this.repoListLoading || this.actionsLocked}
+        >${this.repoListLoading
+          ? html`<span class="spinner"></span> Refreshing`
+          : '🔄 Refresh'}</button>
+      </div>
+    `;
+  }
+
+  renderRestoreAllCard() {
+    const count = this.repoCount();
+    return html`
+      <div style="padding:20px;background:rgba(245,158,11,.1);
+                  border:2px solid var(--hf-warn);border-radius:8px;
+                  margin-bottom:24px;">
+        <div style="font-size:16px;font-weight:600;color:var(--hf-warn);
+                    margin-bottom:8px;">🔄 Restore Entire System</div>
+        <div style="font-size:14px;color:var(--hf-warn);margin-bottom:12px;">
+          Restore all ${count} backup repositories from their latest
+          snapshots — services, databases, and optionally system
+          configuration. Use this for disaster recovery or migrating to a
+          new machine.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;
+                      font-size:14px;color:var(--hf-warn);cursor:pointer;
+                      margin-bottom:12px;">
+          <input type="checkbox"
+            .checked=${this.includeSystemConfig}
+            @change=${(e) => { this.includeSystemConfig = e.target.checked; }}
+            style="width:16px;height:16px;cursor:pointer;" />
+          <span>Include system configuration (/etc/nixos)</span>
+        </label>
+        <button class="btn btn-danger"
+          @click=${() => this.handleRestoreAll()}
+          ?disabled=${this.actionsLocked || count === 0}
+        >Restore Entire System from Latest Backups</button>
+      </div>
+    `;
+  }
+
+  /**
+   * Progress indicator for the background "resolve every repo's backup
+   * paths" warm. Shows a real progress bar (done/total) instead of an
+   * indefinite skeleton, so the page never looks broken/stuck.
+   */
+  renderPathsProgress() {
+    const p = this.pathsProgress || {};
+    if (p.state === 'ready') return '';
+
+    if (p.state === 'error') {
+      return html`
+        <div class="status-line err" style="margin-bottom:16px;">
+          <span>⚠️ Couldn't resolve backup paths.</span>
+          <button class="btn btn-secondary"
+            style="padding:6px 12px;font-size:13px;margin-left:auto;"
+            @click=${() => this.loadAllPaths(true)}>Retry</button>
+        </div>`;
+    }
+
+    const { done = 0, total = 0 } = p;
+    // Before the backend reports a total it's still enumerating repos.
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    return html`
+      <div class="paths-progress">
+        <div class="paths-progress-head">
+          <span class="spinner"></span>
+          <span>${total > 0
+            ? html`Reading backup details — <strong>${done} of
+                ${total}</strong> repositories`
+            : 'Preparing backup repository list…'}</span>
+          ${total > 0 ? html`<span class="paths-progress-pct">${pct}%</span>`
+            : ''}
+        </div>
+        <div class="progress-bar">
+          <div style="width:${total > 0 ? pct : 0}%"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderRepoGroup(title, desc, localRepos, bbRepos, isSystem) {
+    if (localRepos.length === 0 && bbRepos.length === 0) return '';
+    return html`
+      <div class="repo-group ${isSystem ? 'system' : ''}">
+        <h4 style=${isSystem ? 'color:var(--hf-warn);' : ''}>${title}</h4>
+        <p class="desc">${desc}</p>
+        ${isSystem ? html`
+          <div class="status-line err" style="margin-bottom:12px;">
+            ⚠️ Restoring system configuration overwrites /etc/nixos. The
+            restored config does NOT take effect until you run a
+            <code>nixos-rebuild</code> afterwards.
+          </div>` : ''}
+        <div class="repo-list">
+          ${localRepos.map(r => this.renderRepoRow(r, 'local'))}
+          ${bbRepos.map(r => this.renderRepoRow(r, 'backblaze'))}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Is this an extra-path repository (current `extra-path-N` or the
+   * legacy combined `extra-paths`)? Those are identified by a directory
+   * path, not a service name, so the row shows the path as the title.
+   */
+  isExtraPathRepo(repo) {
+    return repo.startsWith('extra-path-') || repo === 'extra-paths';
+  }
+
+  renderRepoRow(repo, source) {
+    const key = `${source}:${repo}`;
+    const expanded = this.expandedRepo === key;
+    const paths = this.repositoryPaths[key];
+    const isExtra = this.isExtraPathRepo(repo);
+
+    // Paths arrive in one batch (loadAllPaths). Until the batch resolves
+    // we show a skeleton - never the opaque "extra-path-N" id, which is
+    // meaningless to a user, and never a guessed path.
+    const pathsKnown = paths !== undefined;
+
+    // Title:
+    //  - service repos      -> the service name
+    //  - extra-path repos   -> the actual backed-up directory; while the
+    //                          batch is loading, a skeleton (no id shown)
+    let title = null;          // null => render a skeleton bar instead
+    if (isExtra) {
+      if (pathsKnown) {
+        title = paths.length > 0 ? paths[0] : repo;  // fall back only if
+                                                     // the repo truly has
+                                                     // no snapshot
+      }
+    } else {
+      title = repo;
+    }
+
+    // Secondary line under the title.
+    //  - extra-path: any *additional* roots beyond the title (no id)
+    //  - service:    the backup root(s)
+    let summary = null;        // null => skeleton (extra) or nothing
+    if (pathsKnown) {
+      if (isExtra) {
+        summary = paths.length > 1
+          ? `+${paths.length - 1} more path${
+              paths.length - 1 !== 1 ? 's' : ''}`
+          : '';
+      } else if (paths.length === 0) {
+        summary = '';
+      } else {
+        const head = paths.slice(0, 2).join(', ');
+        summary = paths.length > 2
+          ? `${head} +${paths.length - 2} more` : head;
+      }
+    }
+
+    return html`
+      <div class="repo-row">
+        <div class="repo-head ${this.actionsLocked ? 'disabled' : ''}"
+          @click=${() => { if (!this.actionsLocked)
+            this.toggleRepo(repo, source); }}>
+          <span class="chevron ${expanded ? 'open' : ''}">▶</span>
+          <div class="grow">
+            <div>
+              ${title !== null
+                ? html`<span class="repo-name" title=${title}>${title}</span>`
+                : html`<span class="skeleton skeleton-title"></span>`}
+              <span class="repo-tag ${source === 'backblaze' ? 'bb' : ''}">
+                ${source === 'backblaze' ? '☁️ Backblaze' : 'Local'}</span>
+            </div>
+            ${summary === null
+              ? html`<span class="skeleton skeleton-sub"></span>`
+              : (summary
+                  ? html`<div class="repo-paths">${summary}</div>` : '')}
+          </div>
+        </div>
+        ${expanded ? html`
+          <div class="repo-body">${this.renderSnapshotPicker(repo, source)}</div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  renderSnapshotPicker(repo, source) {
+    if (this.snapshotsLoading) {
+      return html`<div class="status-line muted">
+        <span class="spinner"></span> Loading snapshots…</div>`;
+    }
+    if (this.snapshots.length === 0) {
+      return html`<p style="color:var(--hf-text-muted);font-size:14px;">
+        No snapshots found for this repository.</p>`;
+    }
+    const selected = this.snapshots.find(
+      s => s.id === this.selectedSnapshot);
+    // restic snapshot JSON records `paths` (the backup roots).
+    const selectedPaths = (selected && Array.isArray(selected.paths))
+      ? selected.paths : [];
+
+    return html`
+      <div class="snapshots">
+        ${this.snapshots.map((snap, i) => html`
+          <div class="snapshot
+            ${this.selectedSnapshot === snap.id ? 'selected' : ''}"
+            @click=${() => { this.selectedSnapshot = snap.id; }}>
+            <div class="time">${snap.time}
+              ${i === 0 ? html`<span style="color:var(--hf-accent);
+                font-size:12px;"> (latest)</span>` : ''}</div>
+            <div class="meta">ID: ${snap.id?.substring(0, 8)}
+              ${snap.hostname ? `· ${snap.hostname}` : ''}</div>
+          </div>
+        `)}
+      </div>
+
+      ${selectedPaths.length > 0 ? html`
+        <div class="restore-targets">
+          <div class="restore-targets-label">
+            This restore will overwrite:
+          </div>
+          <ul>
+            ${selectedPaths.map(p => html`<li><code>${p}</code></li>`)}
+          </ul>
+        </div>
+      ` : ''}
+
+      <button class="btn btn-danger"
+        @click=${() => this.handleRestore(repo, source,
+          this.selectedSnapshot)}
+        ?disabled=${this.actionsLocked || !this.selectedSnapshot}
+      >Restore Selected Snapshot</button>
+    `;
+  }
+
+  // ----------------------------------------------------------- render
 
   render() {
     return html`
       <div class="module-container">
         <div class="tabs">
-          <button
-            class="tab ${this.activeTab === 'configuration' ? 'active' : ''}"
+          <button class="tab ${this.activeTab === 'configuration'
+            ? 'active' : ''}"
             @click=${() => this.handleTabChange('configuration')}
-          >
-            Configuration
-          </button>
-          <button
-            class="tab ${this.activeTab === 'restore' ? 'active' : ''}"
+          >Configuration</button>
+          <button class="tab ${this.activeTab === 'restore' ? 'active' : ''}"
             @click=${() => this.handleTabChange('restore')}
-          >
-            Restore
-          </button>
+          >Restore</button>
         </div>
 
-        ${this.activeTab === 'configuration' ? this.renderConfigurationTab() : this.renderRestoreTab()}
+        ${this.activeTab === 'configuration'
+          ? this.renderConfigurationTab()
+          : this.renderRestoreTab()}
       </div>
 
+      ${this.renderJobOverlay()}
       <progress-modal></progress-modal>
     `;
   }
