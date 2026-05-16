@@ -162,8 +162,13 @@ in
         paths = entry.paths;
         # the name of the repository
         repository = backup-to-path + "/${entry.label}";
+        # Run after 02:00, staggered across a 45-minute window so the ~40
+        # restic jobs don't all contend for disk/CPU at once. Stays clear of
+        # the 03:00 Backblaze rsync. Persistent so a missed run catches up.
         timerConfig = {
-          OnCalendar = "daily";
+          OnCalendar = "02:00";
+          RandomizedDelaySec = "45m";
+          Persistent = true;
         };
 
         # Keep 7 daily, 5 weekly, and 10 annual backups
