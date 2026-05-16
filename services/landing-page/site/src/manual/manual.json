@@ -1,0 +1,8 @@
+{
+  "layout": "manual.html",
+  "tags": "manual",
+  "permalink": "/manual/{{ page.fileSlug }}/index.html",
+  "eleventyComputed": {
+    "sectionTitle": "Manual"
+  }
+}

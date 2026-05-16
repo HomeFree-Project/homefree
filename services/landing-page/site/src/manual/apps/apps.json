@@ -1,0 +1,4 @@
+{
+  "permalink": "/manual/apps/{{ page.fileSlug }}/index.html",
+  "section": "apps"
+}
