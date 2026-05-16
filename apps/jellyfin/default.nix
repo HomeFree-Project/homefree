@@ -11,7 +11,7 @@ let
   '';
 
   port = 8096;
-  version = "10.11.4";
+  version = "10.11.8";
 in
 {
   options.homefree.service-options.jellyfin = {
