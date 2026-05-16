@@ -114,6 +114,21 @@ class WiringStep extends LitElement {
       color: #888;
       font-style: italic;
     }
+
+    /* Marks a step / diagram element that is optional. */
+    .optional-tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #667eea;
+      background: #eef0ff;
+      border-radius: 4px;
+      padding: 2px 7px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
   `;
 
   /**
@@ -146,6 +161,13 @@ class WiringStep extends LitElement {
 
       <div class="diagram">${this.routerSvg()}</div>
 
+      <p class="note">
+        The switch in the dashed box is optional. If you only use Wi-Fi,
+        plug your Wi-Fi access point straight into HomeFree's LAN port. Add
+        a switch when you have wired devices, or more things to plug in than
+        HomeFree's single LAN port allows.
+      </p>
+
       <ol class="steps">
         <li>
           Put your <strong>modem</strong> into bridge / passthrough mode
@@ -156,17 +178,20 @@ class WiringStep extends LitElement {
           <strong>WAN</strong> port (the interface you selected as WAN).
         </li>
         <li>
-          Connect HomeFree's <strong>LAN</strong> port to an unmanaged
-          Ethernet switch.
-        </li>
-        <li>
-          Connect your Wi-Fi access point to the switch and set it to
+          Connect your <strong>Wi-Fi access point</strong> to HomeFree's
+          <strong>LAN</strong> port and set it to
           <strong>bridge / access-point mode</strong> (its own routing and
           DHCP turned off — HomeFree provides those).
         </li>
         <li>
-          Plug any wired devices into the switch. Power on the modem first,
-          wait ~2 minutes, then power on HomeFree.
+          <span class="optional-tag">Optional</span>
+          To connect wired devices, or more than one thing, put an
+          <strong>unmanaged Ethernet switch</strong> on HomeFree's LAN port
+          and plug the access point and wired devices into the switch
+          instead.
+        </li>
+        <li>
+          Power on the modem first, wait ~2 minutes, then power on HomeFree.
         </li>
       </ol>
 
@@ -235,10 +260,18 @@ class WiringStep extends LitElement {
 
   // --- SVG diagrams --------------------------------------------------------
   routerSvg() {
-    // modem -> WAN -> HomeFree -> LAN -> switch -> {Wi-Fi AP, wired device}
+    // modem -> WAN -> HomeFree -> LAN -> Wi-Fi AP, with an OPTIONAL switch
+    // (drawn in a dashed "optional" box) that can sit on the LAN port to
+    // fan out to the AP plus wired devices. The straight modem->HomeFree->AP
+    // path reads on its own for a Wi-Fi-only home; the dashed group teaches
+    // the switch option without forcing a choice.
     return html`
-      <svg viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg"
-           role="img" aria-label="Router-mode wiring diagram">
+      <svg viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg"
+           role="img"
+           aria-label="Router-mode wiring diagram. Modem connects to
+             HomeFree's WAN port; HomeFree's LAN port connects to a Wi-Fi
+             access point. An optional Ethernet switch can sit on the LAN
+             port to also connect wired devices.">
         <defs>
           <style>
             .box { fill: #ffffff; stroke: #667eea; stroke-width: 2; }
@@ -247,42 +280,60 @@ class WiringStep extends LitElement {
             .sub { font: 11px sans-serif; fill: #888; }
             .wire { stroke: #4c51bf; stroke-width: 2.5; fill: none; }
             .port { font: 700 10px sans-serif; fill: #4c51bf; }
+            /* Optional elements: dashed, slightly muted. */
+            .opt-box  { fill: #fafbff; stroke: #9aa3e8; stroke-width: 2;
+                        stroke-dasharray: 5 4; }
+            .opt-wire { stroke: #9aa3e8; stroke-width: 2;
+                        stroke-dasharray: 5 4; fill: none; }
+            .opt-lbl  { font: 700 10px sans-serif; fill: #667eea;
+                        letter-spacing: 0.04em; }
           </style>
         </defs>
 
         <!-- Modem -->
-        <rect class="box" x="20" y="100" width="110" height="56" rx="8"/>
-        <text class="lbl" x="75" y="125" text-anchor="middle">Modem</text>
-        <text class="sub" x="75" y="142" text-anchor="middle">bridge mode</text>
+        <rect class="box" x="20" y="36" width="110" height="56" rx="8"/>
+        <text class="lbl" x="75" y="61" text-anchor="middle">Modem</text>
+        <text class="sub" x="75" y="78" text-anchor="middle">bridge mode</text>
 
         <!-- wire modem -> HomeFree WAN -->
-        <path class="wire" d="M130 128 H 230"/>
-        <text class="port" x="180" y="120" text-anchor="middle">WAN</text>
+        <path class="wire" d="M130 64 H 230"/>
+        <text class="port" x="180" y="56" text-anchor="middle">WAN</text>
 
         <!-- HomeFree -->
-        <rect class="hf" x="230" y="92" width="150" height="72" rx="10"/>
-        <text class="lbl" x="305" y="122" text-anchor="middle">HomeFree</text>
-        <text class="sub" x="305" y="140" text-anchor="middle">router + firewall</text>
+        <rect class="hf" x="230" y="28" width="150" height="72" rx="10"/>
+        <text class="lbl" x="305" y="58" text-anchor="middle">HomeFree</text>
+        <text class="sub" x="305" y="76" text-anchor="middle">router + firewall</text>
 
-        <!-- wire HomeFree LAN -> switch -->
-        <path class="wire" d="M380 128 H 470"/>
-        <text class="port" x="425" y="120" text-anchor="middle">LAN</text>
+        <!-- wire HomeFree LAN -> Wi-Fi AP (the basic, Wi-Fi-only path) -->
+        <path class="wire" d="M380 64 H 510"/>
+        <text class="port" x="445" y="56" text-anchor="middle">LAN</text>
+
+        <!-- Wi-Fi AP -->
+        <rect class="box" x="510" y="36" width="150" height="56" rx="8"/>
+        <text class="lbl" x="585" y="61" text-anchor="middle">Wi-Fi access point</text>
+        <text class="sub" x="585" y="78" text-anchor="middle">bridge / AP mode</text>
+
+        <!-- ===== Optional switch group (dashed) ===== -->
+        <!-- Dashed enclosure -->
+        <rect class="opt-box" x="250" y="150" width="430" height="126" rx="10"/>
+        <text class="opt-lbl" x="266" y="170">OPTIONAL — ADD A SWITCH FOR WIRED DEVICES</text>
+
+        <!-- branch down from the LAN wire into the optional group -->
+        <path class="opt-wire" d="M445 64 V 210 H 300"/>
 
         <!-- Switch -->
-        <rect class="box" x="470" y="100" width="110" height="56" rx="8"/>
-        <text class="lbl" x="525" y="132" text-anchor="middle">Switch</text>
+        <rect class="opt-box" x="270" y="184" width="110" height="56" rx="8"/>
+        <text class="lbl" x="325" y="216" text-anchor="middle">Switch</text>
 
-        <!-- wire switch -> Wi-Fi AP -->
-        <path class="wire" d="M525 100 V 56 H 600"/>
-        <rect class="box" x="600" y="30" width="70" height="52" rx="8"/>
-        <text class="lbl" x="635" y="52" text-anchor="middle">Wi-Fi</text>
-        <text class="sub" x="635" y="68" text-anchor="middle">AP / bridge</text>
+        <!-- switch -> Wi-Fi AP (alternative AP path, via switch) -->
+        <path class="opt-wire" d="M380 200 H 470"/>
+        <rect class="opt-box" x="470" y="176" width="90" height="48" rx="8"/>
+        <text class="lbl" x="515" y="204" text-anchor="middle">Wi-Fi AP</text>
 
-        <!-- wire switch -> wired device -->
-        <path class="wire" d="M525 156 V 210 H 600"/>
-        <rect class="box" x="600" y="184" width="70" height="52" rx="8"/>
-        <text class="lbl" x="635" y="206" text-anchor="middle">Wired</text>
-        <text class="sub" x="635" y="222" text-anchor="middle">devices</text>
+        <!-- switch -> wired devices -->
+        <path class="opt-wire" d="M380 224 H 470"/>
+        <rect class="opt-box" x="470" y="232" width="90" height="36" rx="8"/>
+        <text class="lbl" x="515" y="254" text-anchor="middle">Wired</text>
       </svg>
     `;
   }
