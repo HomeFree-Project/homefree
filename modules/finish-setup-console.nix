@@ -57,7 +57,11 @@ let
     cleanup() { printf '%s' "$show_cursor"; }
     trap cleanup EXIT INT TERM
 
-    ## Clear once on entry; subsequent redraws overwrite in place.
+    ## Full reset + clear on entry: wipes any boot-log text still on the
+    ## console and resets scroll/attributes before the first draw. `tput
+    ## reset` does the heavy lifting; the explicit clear/home guarantees a
+    ## known cursor position. Subsequent redraws just overwrite in place.
+    tput reset 2>/dev/null || true
     printf '%s%s%s' "$hide_cursor" "$ESC[2J" "$home"
 
     while true; do
@@ -151,14 +155,33 @@ EOF
   '';
 in
 {
-  ## Run the status screen on tty1 while setup is pending. Conflicts with
-  ## getty@tty1 — systemd's `Conflicts` stops getty so the screen owns the
-  ## console; when this unit exits (setup complete), getty@tty1 comes back.
+  ## Run the status screen on tty1 while setup is pending.
+  ##
+  ## Console-ownership notes — getting this wrong scribbles the boot log
+  ## over the screen, so the unit is modelled directly on getty@tty1:
+  ##
+  ##  - `conflicts`/`before` getty@tty1: this unit OWNS tty1 instead of
+  ##    getty while it runs; getty comes back when it exits (setup done).
+  ##  - Ordered `after` getty-pre and the console-settling targets so it
+  ##    does not start while early-boot units are still logging to the
+  ##    console.
+  ##  - `Type = "idle"`: systemd holds the ExecStart until pending job
+  ##    output has drained — the same mechanism getty uses so its prompt
+  ##    is not overprinted by boot messages. Without this the screen and
+  ##    the boot log shred each other.
+  ##  - `Restart = "always"`: if the script ever dies it is relaunched
+  ##    cleanly rather than leaving tty1 half-owned; a fresh instance also
+  ##    re-clears the screen, so stale frames cannot accumulate.
   systemd.services.homefree-finish-setup-console = {
     description = "HomeFree finish-setup console status screen (tty1)";
-    after = [ "homefree-setup-state.service" ];
+    after = [
+      "homefree-setup-state.service"
+      "systemd-user-sessions.service"
+      "getty-pre.target"
+    ];
     wantedBy = [ "multi-user.target" ];
     conflicts = [ "getty@tty1.service" ];
+    before = [ "getty@tty1.service" ];
 
     unitConfig = {
       ## Only take over the console while setup is genuinely pending.
@@ -166,13 +189,16 @@ in
     };
 
     serviceConfig = {
+      Type = "idle";
       ExecStart = "${consoleScript}";
       StandardInput = "tty";
       StandardOutput = "tty";
+      StandardError = "journal";
       TTYPath = "/dev/tty1";
       TTYReset = true;
       TTYVHangup = true;
-      Restart = "no";
+      Restart = "always";
+      RestartSec = 1;
     };
   };
 
