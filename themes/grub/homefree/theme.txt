@@ -1,0 +1,64 @@
+# HomeFree GRUB Theme
+# Minimal dark/monochrome text-based theme
+
+# Screen resolution (auto-detect)
+# GRUB will use the best available resolution
+
+# Boot menu colors (simple white on black)
+title-color: "#ffffff"
+title-font: "DejaVuSans Regular 16"
+
+# Menu colors - white text on black background
++ boot_menu {
+  left = 15%
+  top = 20%
+  width = 70%
+  height = 60%
+
+  item_color = "#cccccc"
+  item_font = "DejaVuSansMono Regular 14"
+  item_height = 24
+  item_padding = 8
+  item_spacing = 4
+
+  # Selected item: white text on gray background
+  selected_item_color = "#ffffff"
+  selected_item_font = "DejaVuSansMono-Bold Bold 14"
+
+  # Menu box border
+  menu_pixmap_style = "menu_*.png"
+  selected_item_pixmap_style = "select_*.png"
+}
+
+# Progress bar (if shown during boot)
++ progress_bar {
+  id = "__timeout__"
+  left = 15%
+  top = 82%
+  width = 70%
+  height = 24
+
+  text_color = "#ffffff"
+  fg_color = "#cccccc"
+  bg_color = "#333333"
+  border_color = "#666666"
+
+  font = "DejaVuSansMono Regular 12"
+  text = ""
+}
+
+# Simple title at top
++ label {
+  top = 10%
+  left = 0
+  width = 100%
+  height = 32
+  align = "center"
+  id = "__title__"
+  text = "HomeFree"
+  color = "#ffffff"
+  font = "DejaVuSans-Bold Bold 24"
+}
+
+# Desktop background - solid black, no image
+desktop-color: "#000000"
