@@ -169,25 +169,41 @@ class SummaryStep extends LitElement {
         </div>
 
         <div class="summary-section">
-          <h3>Disk Partitioning</h3>
+          <h3>Disk Setup</h3>
           <div class="summary-item">
-            <span class="summary-label">Target Disk:</span>
-            <span class="summary-value">${s.partitioning?.device || 'Not set'}</span>
+            <span class="summary-label">Target Disk(s):</span>
+            <span class="summary-value">
+              ${(s.partitioning?.disks && s.partitioning.disks.length)
+                ? s.partitioning.disks.join(', ')
+                : (s.partitioning?.device || 'Not set')}
+            </span>
           </div>
+          ${s.partitioning?.raid && s.partitioning.raid !== 'none' ? html`
+            <div class="summary-item">
+              <span class="summary-label">RAID Layout:</span>
+              <span class="summary-value">
+                ${s.partitioning.raid === 'raid1' ? 'Mirror (RAID1)' : 'Stripe (RAID0)'}
+              </span>
+            </div>
+          ` : ''}
           <div class="summary-item">
             <span class="summary-label">Filesystem:</span>
             <span class="summary-value">Btrfs with subvolumes</span>
           </div>
-          ${s.partitioning?.encryption ? html`
-            <div class="summary-item">
-              <span class="summary-label">Encryption:</span>
-              <span class="summary-value">LUKS (enabled)</span>
-            </div>
-          ` : ''}
-          ${s.partitioning?.swap !== false ? html`
+          <div class="summary-item">
+            <span class="summary-label">Encryption:</span>
+            <span class="summary-value">
+              ${s.partitioning?.use_encryption
+                ? (s.partitioning?.use_lanzaboote
+                    ? 'LUKS + Secure Boot (TPM2 auto-unlock)'
+                    : 'LUKS (TPM2 auto-unlock when available)')
+                : 'Disabled'}
+            </span>
+          </div>
+          ${s.partitioning?.use_swap !== false ? html`
             <div class="summary-item">
               <span class="summary-label">Swap:</span>
-              <span class="summary-value">Enabled (with hibernation)</span>
+              <span class="summary-value">Enabled</span>
             </div>
           ` : ''}
         </div>

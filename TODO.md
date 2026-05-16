@@ -11,6 +11,63 @@ Notes:
 
 ## Critical
 
+- **Eliminate the first-boot LUKS passphrase prompt (TPM2 enrollment timing).**
+  HIGHEST PRIORITY. Today an encrypted install prompts for the disk passphrase
+  **once on the first boot** of the installed system, then is unattended on every
+  boot after. This is a consequence of *when* TPM2 enrollment happens, not a bug —
+  but it's a rough edge for an unattended-server product and should be removed.
+
+  Why the prompt exists today:
+  - TPM2 auto-unlock works by sealing the LUKS key to the TPM, released only when
+    boot measurements (we bind PCR 7 = Secure Boot state) match.
+  - `systemd-cryptenroll` must run against the **real installed system's TPM and
+    its final PCR values**. During installation we are in the installer ISO — its
+    PCRs reflect the ISO's boot, not the installed system. Enrolling there (even
+    via `nixos-enter`) would seal to the wrong measurements and never unlock.
+  - So enrollment is deferred to `homefree-tpm2-enroll.service`, a oneshot that
+    runs on first boot of the installed system. But the disk must already be
+    unlocked for the initrd to reach the point where that service runs — and on
+    boot 1 no TPM keyslot exists yet. Hence: boot 1 prompts for the passphrase,
+    the service enrolls the TPM slot, boot 2+ is unattended.
+  - We deliberately do NOT bake the keyfile into the initrd: the initrd lives on
+    the unencrypted ESP, so a keyfile there is readable by anyone with the disk —
+    that would defeat encryption.
+
+  How other systems avoid any prompt (and the tradeoff each makes):
+  - **Windows BitLocker** (TPM, default): never prompts — but the drive starts
+    encrypted with a plaintext "clear key" on disk, TPM enrollment happens in the
+    background, then the clear key is removed. There is a real window where the
+    disk is not actually protected; Windows just hides it from the user.
+  - **Ubuntu experimental TPM-FDE / systemd `bootctl` installs**: enroll the TPM
+    *during installation* with no first-boot prompt — but only because they use
+    **signed PCR policies** (`systemd-pcrlock` / signed `.pcrs`) so a seal made in
+    the installer stays valid on the installed system. This needs a predictable /
+    signed measured-boot chain.
+
+  Options to fix (pick when revisiting):
+  - **Option A — BitLocker model.** Keep the install-time keyfile in the initrd
+    for the first boot only; boot unattended; the enroll service seals to the TPM;
+    a follow-up removes the keyfile-in-initrd and rebuilds. Accepts a brief
+    plaintext-key window (install → first successful TPM boot). Moderate change.
+  - **Option B — signed PCR policy (Ubuntu/systemd model).** Enroll during install
+    using a signed PCR policy so it stays valid on the installed system. The
+    cleanest result (zero prompts, no plaintext window) but significantly more
+    complex, and really only sound *with* a signed measured-boot chain — i.e. it
+    wants lanzaboote/Secure Boot, which is currently an opt-in, not the default.
+
+  Constraint from the original design decision: we chose TPM2-only (no lanzaboote)
+  as the default, which rules out Option B's clean path unless Secure Boot becomes
+  default too. So the realistic near-term choice is Option A (brief plaintext-key
+  window) vs. keeping the single first-boot prompt (never exposes a plaintext
+  key). For a server installed once by an admin who is physically present at first
+  boot, the one-time prompt is arguably the safer default — but capture this so
+  it's a deliberate, revisited decision rather than an accident.
+
+  Relevant code: `ENCRYPTION_MODULE_TEMPLATE` /
+  `homefree-tpm2-enroll.service` in `web-platform/backend/services/install.py`;
+  `DiskoConfigBuilder` LUKS `passwordFile` handling in
+  `web-platform/backend/services/disko_builder.py`.
+
 - **Refactor — services in one place.** `web-platform/backend/services/install.py`
   still references mediawiki due to image paths (`install.py:281-312`). Make this
   generic so any service needing image-path conversion is handled uniformly.

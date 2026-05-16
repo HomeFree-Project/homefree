@@ -8,13 +8,17 @@ import logging
 from pathlib import Path
 from typing import List
 
-from models import SystemInfo, DiskInfo, MutationResult
+from models import SystemInfo, DiskInfo, SystemCapabilities, MutationResult
 from utils.privileged import run_privileged
 
 logger = logging.getLogger(__name__)
 
 
 class SystemResolver:
+    # Firmware/TPM capabilities are immutable per boot; probed once and
+    # cached so GET /api/system doesn't hit the filesystem every call.
+    _capabilities_cache: SystemCapabilities = None
+
     @staticmethod
     def get_system_info() -> SystemInfo:
         """Get system information including hostname, CPU, memory, and disks"""
@@ -43,12 +47,54 @@ class SystemResolver:
         # Get disks
         disks = SystemResolver._get_disks()
 
+        # Probe hardware capabilities for the partitioning UI
+        capabilities = SystemResolver._get_capabilities()
+
         return SystemInfo(
             hostname=hostname,
             cpu_info=cpu_info,
             memory_total=memory_total,
-            disks=disks
+            disks=disks,
+            capabilities=capabilities
         )
+
+    @staticmethod
+    def _get_capabilities() -> SystemCapabilities:
+        """Probe firmware/TPM capabilities (cached after first call).
+
+        - UEFI: presence of /sys/firmware/efi (same check the installer
+          uses to pick a bootloader).
+        - TPM2: a TPM2 resource-manager device node. /dev/tpmrm0 is the
+          in-kernel RM device; /dev/tpm0 is the raw device. Either is
+          enough for systemd-cryptenroll --tpm2-device=auto to work.
+        """
+        if SystemResolver._capabilities_cache is not None:
+            return SystemResolver._capabilities_cache
+
+        uefi = Path("/sys/firmware/efi").exists()
+
+        tpm2_available = False
+        try:
+            tpm2_available = (
+                Path("/dev/tpmrm0").exists() or Path("/dev/tpm0").exists()
+            )
+            # A TPM1.2 device also exposes /dev/tpm0; confirm version 2
+            # via sysfs when the class entry is present.
+            if tpm2_available:
+                ver = Path("/sys/class/tpm/tpm0/tpm_version_major")
+                if ver.exists():
+                    tpm2_available = ver.read_text().strip() == "2"
+        except Exception as e:
+            logger.warning(f"TPM probe failed, assuming no TPM2: {e}")
+            tpm2_available = False
+
+        logger.info(
+            f"Capabilities probed: uefi={uefi} tpm2={tpm2_available}"
+        )
+        SystemResolver._capabilities_cache = SystemCapabilities(
+            uefi=uefi, tpm2_available=tpm2_available
+        )
+        return SystemResolver._capabilities_cache
 
     @staticmethod
     def _get_disks() -> List[DiskInfo]:

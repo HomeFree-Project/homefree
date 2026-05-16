@@ -17,12 +17,25 @@ class DiskInfo:
 
 
 @dataclass
+class SystemCapabilities:
+    """Hardware capabilities relevant to disk setup and encryption.
+
+    Probed in the installer ISO so the partitioning UI can decide what
+    encryption modes are viable (TPM2 auto-unlock vs. passphrase) and
+    whether the Secure Boot opt-in can be offered.
+    """
+    uefi: bool = False
+    tpm2_available: bool = False
+
+
+@dataclass
 class SystemInfo:
     """System information"""
     hostname: str
     cpu_info: str
     memory_total: int
     disks: List[DiskInfo]
+    capabilities: Optional["SystemCapabilities"] = None
 
 
 @dataclass
@@ -51,11 +64,21 @@ class KeyboardLayout:
 
 @dataclass
 class PartitioningConfig:
-    """Disk partitioning configuration"""
-    device: str
-    mode: str
-    encryption: bool = False
-    swap: bool = True
+    """Disk partitioning configuration.
+
+    The installer accepts a list of disks plus a RAID level so a
+    mirror/stripe can be set up across multiple disks. LUKS encryption
+    is on by default; `use_lanzaboote` is an advanced opt-in that
+    enables Secure Boot (requires a one-time BIOS Setup-Mode step).
+    """
+    disks: List[str]
+    raid: str = "none"          # none | raid0 | raid1
+    use_encryption: bool = True
+    use_swap: bool = True
+    use_lanzaboote: bool = False
+    # Legacy single-disk field, kept so older summary code still renders.
+    device: str = ""
+    mode: str = "automatic"
 
 
 @dataclass
@@ -80,6 +103,9 @@ class InstallProgress:
     message: str
     completed: bool
     error: Optional[str] = None
+    # LUKS recovery passphrase, surfaced once disk encryption secrets
+    # have been generated so the UI can show it on the completion screen.
+    recovery_passphrase: Optional[str] = None
 
 
 @dataclass

@@ -235,11 +235,24 @@ class ConfigResolver:
         partitioning = None
         if config.get('partitioning'):
             part_config = config['partitioning']
+            # New multi-disk shape ({disks: [...]}) with a fallback to
+            # the legacy single-disk shape ({disk: "..."}).
+            disks = part_config.get('disks')
+            if not disks:
+                single = part_config.get('disk') or part_config.get('device')
+                disks = [single] if single else []
             partitioning = PartitioningConfig(
-                device=part_config.get('disk', part_config.get('device', '')),  # Frontend sends 'disk', fallback to 'device'
-                mode=part_config.get('mode', 'auto'),
-                encryption=part_config.get('use_encryption', part_config.get('encryption', False)),  # Frontend sends 'use_encryption'
-                swap=part_config.get('use_swap', part_config.get('swap', True)),  # Frontend sends 'use_swap'
+                disks=disks,
+                raid=part_config.get('raid', 'none'),
+                use_encryption=part_config.get(
+                    'use_encryption', part_config.get('encryption', True)
+                ),
+                use_swap=part_config.get(
+                    'use_swap', part_config.get('swap', True)
+                ),
+                use_lanzaboote=part_config.get('use_lanzaboote', False),
+                device=disks[0] if disks else '',
+                mode=part_config.get('mode', 'automatic'),
             )
 
         return InstallSummary(

@@ -159,7 +159,7 @@ class LocationStep extends LitElement {
     this.elevation = null;
     this.latitude = null;
     this.longitude = null;
-    this.advancedOpen = false;
+    this.advancedOpen = true;
     this.elevationLookupBusy = false;
     this.elevationLookupError = '';
     this.loading = false;
