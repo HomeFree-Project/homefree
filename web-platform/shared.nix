@@ -66,6 +66,11 @@
       btrfs-progs     # mkfs.btrfs, btrfs commands
       polkit          # pkexec for privilege escalation
       mkpasswd        # password hashing for user creation
+      disko           # declarative disk partitioning (LUKS, RAID, btrfs)
+      cryptsetup      # LUKS formatting / systemd-cryptenroll
+      tpm2-tools      # TPM2 probing and key sealing
+      sbctl           # Secure Boot key management (lanzaboote opt-in)
+      coreutils       # dd, cp for keyfile generation
     ];
 
     serviceConfig = {

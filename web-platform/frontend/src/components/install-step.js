@@ -10,6 +10,7 @@ class InstallStep extends LitElement {
     completed: { type: Boolean },
     error: { type: String },
     logs: { type: Array },
+    recoveryPassphrase: { type: String },
   };
 
   static styles = css`
@@ -137,6 +138,31 @@ class InstallStep extends LitElement {
       border-radius: 6px;
       margin-top: 24px;
     }
+
+    .recovery-box {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      color: #856404;
+      padding: 16px;
+      border-radius: 6px;
+      margin-top: 16px;
+    }
+    .recovery-box p { margin: 8px 0; font-size: 14px; }
+    .recovery-code {
+      display: block;
+      margin-top: 8px;
+      padding: 12px;
+      background: #fff;
+      border: 1px dashed #856404;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 16px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      color: #333;
+      user-select: all;
+      word-break: break-all;
+    }
   `;
 
   constructor() {
@@ -147,6 +173,7 @@ class InstallStep extends LitElement {
     this.completed = false;
     this.error = '';
     this.logs = [];
+    this.recoveryPassphrase = '';
     this.stopPolling = null;
   }
 
@@ -183,14 +210,21 @@ class InstallStep extends LitElement {
       this.message = status.message || '';
       this.completed = status.completed || false;
       this.error = status.error || '';
+      // Surfaced once disk encryption secrets are generated.
+      if (status.recovery_passphrase) {
+        this.recoveryPassphrase = status.recovery_passphrase;
+      }
 
-      // Add log if message changed
+      // Add log if message changed. Cap the list so a long install
+      // (30 min @ 1s polling) doesn't grow an unbounded array that the
+      // log container re-renders in full on every tick.
       if (status.message && !this.logs.find(l => l.message === status.message)) {
-        this.logs = [...this.logs, {
+        const entry = {
           type: status.error ? 'error' : 'info',
           message: status.message,
           timestamp: new Date().toISOString(),
-        }];
+        };
+        this.logs = [...this.logs, entry].slice(-200);
       }
 
       if (this.completed || this.error) {
@@ -234,6 +268,17 @@ class InstallStep extends LitElement {
             <strong>✓ Installation Complete!</strong>
             <p>HomeFree has been successfully installed. Click Next to finish.</p>
           </div>
+          ${this.recoveryPassphrase ? html`
+            <div class="recovery-box">
+              <strong>🔑 Disk encryption recovery passphrase</strong>
+              <p>
+                Write this down and keep it somewhere safe. It is the only
+                way to unlock the disk if the TPM is cleared or the drive
+                is moved to another machine. It is not shown again.
+              </p>
+              <code class="recovery-code">${this.recoveryPassphrase}</code>
+            </div>
+          ` : ''}
         ` : ''}
 
         ${this.error ? html`

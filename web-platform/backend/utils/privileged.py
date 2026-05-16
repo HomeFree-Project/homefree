@@ -12,7 +12,10 @@ from typing import List, Union, Optional
 PRIVILEGED_COMMANDS = {
     'umount', 'wipefs', 'parted', 'mkfs.vfat', 'mkfs.btrfs',
     'mkswap', 'swapon', 'mount', 'btrfs', 'nixos-generate-config',
-    'nixos-install', 'nixos-enter', 'cat', 'chown', 'chmod', 'mkdir', 'ln', 'git'
+    'nixos-install', 'nixos-enter', 'cat', 'chown', 'chmod', 'mkdir', 'ln', 'git',
+    # Disk-encryption / disko / Secure Boot tooling
+    'disko', 'cryptsetup', 'cryptsetup-reencrypt', 'systemd-cryptenroll',
+    'sbctl', 'dd', 'cp',
 }
 
 PKEXEC_WRAPPER = "/etc/homefree-installer/pkexec-wrapper.sh"
