@@ -371,6 +371,64 @@ in
                      (lib.length http-urls + lib.length http-urls-root-domain) > 0 &&
                      (lib.length https-urls + lib.length https-urls-root-domain) > 0;
 
+        ## Canonical HTTPS host for this service — the first https:// URL,
+        ## stripped of scheme (e.g. "admin.example.com"). Used to (a) detect
+        ## when Caddy has issued the cert and (b) build the HTTP->HTTPS
+        ## redirect target. Empty when the service has no HTTPS URL.
+        allHttpsUrls = https-urls ++ https-urls-root-domain;
+        canonicalHttpsUrl = if allHttpsUrls != [] then lib.head allHttpsUrls else "";
+        canonicalHttpsHost = lib.removePrefix "https://" canonicalHttpsUrl;
+
+        ## HTTP-until-cert behaviour: while this service has no issued TLS
+        ## cert, its http:// URLs serve the app directly (so a fresh box is
+        ## reachable on the LAN before DNS-01 runs). Once Caddy has written
+        ## the cert, http:// requests 301 to the canonical https:// host.
+        ## The cert file is detected at REQUEST time via a `file` matcher
+        ## with a glob over Caddy's ACME storage, so no rebuild is needed to
+        ## flip the behaviour — the redirect activates the moment the cert
+        ## lands. Only meaningful in production for a service that has both
+        ## http:// and https:// URLs.
+        certRedirectEnabled = !config.homefree.development
+                              && canonicalHttpsHost != ""
+                              && (http-urls ++ http-urls-root-domain ++ extra-http-urls) != [];
+        certRedirectConfig = lib.optionalString certRedirectEnabled ''
+          ## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+          ## Three conditions, all required (AND):
+          ##
+          ## 1. scheme is http:// — never redirect an https:// request onto
+          ##    itself (that would loop).
+          ##
+          ## 2. .setup-complete exists — the finish-setup wizard has
+          ##    finished. The wizard is served over plain HTTP on the LAN
+          ##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+          ##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+          ##    issued (which happens DURING that rebuild's activation), the
+          ##    wizard's in-flight poll would be 301'd to https://<host> — a
+          ##    host the laptop may not resolve and a cert it may not yet
+          ##    trust — and the wizard would freeze on "Starting…" never
+          ##    seeing the terminal status. Gating on .setup-complete keeps
+          ##    the HTTP origin stable for the whole wizard lifetime; the
+          ##    wizard's final step writes that sentinel, so the redirect
+          ##    goes live on the very next request — exactly when it's safe.
+          ##
+          ## 3. the cert file exists — Caddy has issued the cert for the
+          ##    canonical host. The glob covers any ACME CA directory name
+          ##    (LE prod/staging, ZeroSSL).
+          ##
+          ## All three conditions live in ONE `expression` matcher so they
+          ## are AND-ed and the `redir` stays a top-level directive — it
+          ## simply does nothing when the matcher is false and the request
+          ## falls through to file_server / reverse_proxy as normal. (A
+          ## `handle`/`route` wrapper would instead SWALLOW non-matching
+          ## requests and return an empty 200.) CEL's `file()` function
+          ## does request-time existence checks, so no rebuild flips the
+          ## gate. `file()` returns true if ANY listed path exists; we call
+          ## it twice and AND the results, and the cert path uses a glob to
+          ## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+          @http_redirect_https expression {http.request.scheme} == "http" && file({"try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})
+          redir @http_redirect_https https://${canonicalHttpsHost}{uri} 301
+        '';
+
         # Helper function to create virtualhost value
         makeVirtualHostValue = includeHttps:
           let
@@ -405,6 +463,10 @@ in
               X-XSS-Protection "1; mode=block"
             }
           ''
+          ## Redirect http:// to https:// once the service's cert exists.
+          ## Inert (empty string) until then, so a fresh box stays reachable
+          ## over plain HTTP on the LAN. See certRedirectConfig above.
+          + certRedirectConfig
           + (if reverse-proxy-config.public == false && !config.homefree.development then ''
             bind ${lan-address}
           '' else "")
@@ -487,58 +549,42 @@ in
             # enough — Firefox will still bfcache no-cache responses).
             # See:
             # https://developer.mozilla.org/docs/Web/API/Window/pageshow_event#firefox_bfcache
-            @html {
-              path *.html / */
-            }
-            header @html {
-              # no-store prevents disk cache AND bfcache. The latter
-              # matters because after a sign-out, the browser would
-              # otherwise restore the cached admin page DOM and then
-              # try to bootstrap its JS — which 302s to auth/, and
-              # module-script CORS rejects that, leaving the user on
-              # a permanent loading spinner.
-              Cache-Control "no-store, no-cache, must-revalidate"
-              Pragma "no-cache"
-              # Add ETag for conditional requests
-              ETag
-              # Add Last-Modified header
-              +Last-Modified
-            }
-
-            # CSS files - No aggressive caching for development/admin UIs
-            @css {
-              file
-              path *.css
-            }
-            header @css {
-              # No caching - always revalidate
-              Cache-Control "no-cache, must-revalidate"
-              ETag
-              +Last-Modified
-              Vary Accept-Encoding
-            }
-
-            # Assets (CSS, JS, images)
-            @assets {
-              file
-              path *.js *.png *.jpg *.jpeg *.gif *.svg *.woff *.woff2
-            }
-            header @assets {
-              # No aggressive caching - always revalidate for JS
-              Cache-Control "no-cache, must-revalidate"
-              # Add ETag for conditional requests
-              ETag
-              # Add Last-Modified header
-              +Last-Modified
-              # Add Vary header to handle different client capabilities
-              Vary Accept-Encoding
-            }
-
-            # General headers
+            # Caching: DISABLE IT ENTIRELY for every file this site
+            # serves. These are HomeFree's admin / app surfaces — the
+            # HTML and JS are live code, not static content.
+            #
+            # CRITICAL — why no-store and NOT no-cache:
+            #   `no-cache` means "store it, but revalidate before use".
+            #   The frontend is served from /nix/store, where every file
+            #   has mtime = epoch. Caddy's file_server derives ETag and
+            #   Last-Modified from that mtime, so they are IDENTICAL
+            #   across rebuilds. With no-cache + ETag, the browser keeps
+            #   the old file, sends If-None-Match, Caddy answers 304
+            #   Not Modified, and the browser serves the STALE JS — even
+            #   after a rebuild, even on shift-reload. The only thing
+            #   that worked around it was DevTools "Disable cache".
+            #
+            #   `no-store` forbids storing the response at all, so there
+            #   is no cached copy to revalidate and no 304 path. We also
+            #   strip ETag / Last-Modified so the validators that drive
+            #   304s don't exist. This is the ONLY correct setting for
+            #   an app surface, and it also blocks bfcache (matters for
+            #   the post-sign-out restored-DOM case).
+            #
+            # One unmatched `header` covers EVERY response — no
+            # per-extension matchers to leave a file type uncovered.
+            # Cache headers + security headers are merged into this
+            # single block: two separate unmatched `header` directives
+            # in one site is ambiguous (Caddy may keep only one), so
+            # everything goes here.
             header {
-              # Remove Server header for security
+              # --- Caching: disabled entirely (see rationale above) ---
+              Cache-Control "no-store"
+              -ETag
+              -Last-Modified
+              -Pragma
+              # --- Security headers ---
               -Server
-              # Add general security headers
               Strict-Transport-Security "max-age=31536000; includeSubdomains"
               X-Content-Type-Options "nosniff"
               X-Frame-Options "SAMEORIGIN"

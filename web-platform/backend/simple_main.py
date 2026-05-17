@@ -66,33 +66,11 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     ADMIN_USERNAME_FILE = Path("/var/lib/homefree-admin/admin-username")
     ADMIN_ROLE = "homefree-admin"
 
-    ## Finish-setup sentinel (maintained by modules/setup-state.nix).
-    ## Absent => post-install setup is still pending.
+    ## Finish-setup sentinel (maintained by modules/setup-state.nix and the
+    ## wizard's POST /api/finish-setup/complete). Absent => post-install
+    ## setup is still pending, and the dispatch() bypass below admits the
+    ## whole admin UI + API without a session.
     SETUP_COMPLETE_SENTINEL = Path("/var/lib/homefree-secrets/.setup-complete")
-    ## Endpoints the first-boot finish-setup wizard must reach BEFORE the
-    ## admin has any working credentials. The wizard runs on a box where
-    ## the admin can't yet sign in (no SSH key, no finished SSO) — so these
-    ## are admitted without a session, but ONLY while .setup-complete is
-    ## absent. Once setup finishes the bypass closes and the normal
-    ## admin-role gate applies. The trust model matches the installer
-    ## itself: anyone on the LAN of an unfinished box already has
-    ## physical-equivalent control.
-    FINISH_SETUP_PATHS = {
-        "/api/system/closure-id",   # frontend staleness check
-    }
-    ## Prefix-matched. While setup is pending the wizard legitimately needs
-    ## the whole secrets + config surface (read config, write SSH key /
-    ## DNS-01 / ddclient secrets, save+apply, poll rebuild status) and the
-    ## finish-setup completion endpoint. Admitting the prefixes — rather
-    ## than enumerating every path and missing one — is deliberate: the
-    ## trust model already accepts that anyone on an unfinished box's LAN
-    ## has physical-equivalent control, and the whole bypass evaporates the
-    ## moment the wizard writes .setup-complete.
-    FINISH_SETUP_PREFIXES = (
-        "/api/secrets/",
-        "/api/config/",
-        "/api/finish-setup/",
-    )
     PUBLIC_PATHS = {
         "/health",
         "/api/service-state",
@@ -204,15 +182,17 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Finish-setup bypass. While post-install setup is still pending
-        # (.setup-complete absent), the first-boot wizard's endpoints are
-        # admitted without a session — the admin has no working
-        # credentials yet, so requiring one would deadlock setup. The
-        # bypass closes automatically once setup completes.
+        # (.setup-complete absent), the ENTIRE admin UI and API are open
+        # without a session. Rationale: a freshly-installed box has no
+        # SSH key and no working SSO yet, so the admin cannot sign in at
+        # all — requiring a session would lock them out of the very UI
+        # they need to finish setup. The admin UI is LAN-only over HTTP
+        # in this window anyway. The bypass closes automatically the
+        # moment .setup-complete is written (wizard's final step), after
+        # which every request goes through the normal SSO + admin-role
+        # gate below.
         if not self.SETUP_COMPLETE_SENTINEL.exists():
-            path = request.url.path
-            if path in self.FINISH_SETUP_PATHS \
-                    or any(path.startswith(p) for p in self.FINISH_SETUP_PREFIXES):
-                return await call_next(request)
+            return await call_next(request)
 
         user = request.headers.get(self.USER_HEADER) \
             or request.headers.get(self.USER_HEADER_FALLBACK)

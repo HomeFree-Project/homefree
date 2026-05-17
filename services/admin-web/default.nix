@@ -655,29 +655,11 @@ in
               }
             }
 
-            # Disable caching entirely for the admin surface — EVERY
-            # response, no exceptions.
-            #
-            # The admin UI is an app, not a static site: its JS/HTML is
-            # live code and its /api/* responses are live state (config,
-            # rebuild status, mode). Nothing here should ever be cached.
-            #
-            # Why not an extension allowlist: it was `path *.js *.css
-            # *.html ...`, which left anything else uncovered — notably the
-            # bare app route `/` (request path has no `.html`), so the app
-            # shell itself could cache. file_server also generates ETags
-            # from /nix/store mtimes (all epoch), so `no-cache` alone lets
-            # the browser 304 against a stale copy after a rebuild.
-            #
-            # `no-store` on every response forces a fresh fetch every time
-            # and strips the validators that enable 304s. Cost is trivial
-            # on a LAN; the benefit is the app can never serve stale code
-            # or stale state.
-            header {
-              Cache-Control "no-store"
-              -ETag
-              -Last-Modified
-            }
+            # NOTE: cache headers (no-store, strip ETag/Last-Modified) are
+            # set centrally in services/caddy/default.nix's static-path
+            # block — one unmatched `header` for the whole site. Do not add
+            # another `header` block here: two unmatched `header` directives
+            # in one site is ambiguous in Caddy.
           '';
         };
       }
@@ -770,15 +752,9 @@ in
               }
             }
 
-            # Same blanket no-store policy as the admin vhost above:
-            # the home dashboard is a live app, every response (code and
-            # /api state) must never cache. See the admin block for the
-            # full rationale.
-            header {
-              Cache-Control "no-store"
-              -ETag
-              -Last-Modified
-            }
+            # NOTE: cache headers are set centrally in
+            # services/caddy/default.nix's static-path block. Do not add a
+            # `header` block here — see the admin vhost note above.
           '';
         };
       }

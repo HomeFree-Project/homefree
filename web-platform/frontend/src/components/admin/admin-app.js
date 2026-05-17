@@ -487,6 +487,40 @@ class AdminApp extends LitElement {
       background: rgba(255, 255, 255, 0.3);
     }
 
+    /* Setup-incomplete warning banner. Same geometry as .update-banner
+       so .with-banner's height math (100% - 40px) holds for either. */
+    .setup-banner {
+      height: 40px;
+      background: #b7791f;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      flex-shrink: 0;
+    }
+
+    .setup-banner-icon { font-size: 15px; }
+
+    .setup-banner-btn {
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .setup-banner-btn:hover {
+      background: rgba(255, 255, 255, 0.32);
+    }
+
     .app-container.with-banner {
       height: calc(100% - 40px);
     }
@@ -577,6 +611,15 @@ class AdminApp extends LitElement {
         id: 'dashboard',
         title: 'Dashboard',
         icon: '📊',
+        section: 'System'
+      },
+      {
+        // Post-install finish-setup. Listed in the nav ONLY while setup is
+        // incomplete (filtered by getVisibleModules); the warning banner
+        // also links here. Renders the finish-setup-wizard component.
+        id: 'finish-setup',
+        title: 'Finish Setup',
+        icon: '🚀',
         section: 'System'
       },
       {
@@ -1108,6 +1151,14 @@ class AdminApp extends LitElement {
   getCurrentModuleTitle() {
     const module = this.modules.find(m => m.id === this.currentModule);
     return module ? module.title : 'HomeFree Admin';
+  }
+
+  // Modules shown in the nav. The 'finish-setup' module only appears while
+  // post-install setup is incomplete; once done it drops out of the nav.
+  getVisibleModules() {
+    return this.modules.filter(
+      m => m.id !== 'finish-setup' || this.setupIncomplete
+    );
   }
 
   renderSaveIndicator() {
@@ -1957,6 +2008,13 @@ class AdminApp extends LitElement {
           <dashboard-module></dashboard-module>
         `;
 
+      case 'finish-setup':
+        return html`
+          <finish-setup-wizard
+            .pendingItems=${this.pendingSetupItems}
+          ></finish-setup-wizard>
+        `;
+
       case 'lan-clients':
         return html`
           <lan-clients-module
@@ -2135,22 +2193,15 @@ class AdminApp extends LitElement {
       `;
     }
 
-    // Post-install: until the finish-setup wizard has explicitly completed,
-    // take over the screen with the wizard before the dashboard is reachable.
-    // Gated on `setupIncomplete` (the backend .setup-complete marker) — NOT
-    // on pendingSetupItems, which empties out mid-wizard.
-    // (See finish-setup-wizard.js — runs over plain-HTTP LAN, no cert needed.)
-    if (this.setupIncomplete) {
-      return html`
-        <finish-setup-wizard
-          .pendingItems=${this.pendingSetupItems}
-        ></finish-setup-wizard>
-      `;
-    }
+    // Post-install: the finish-setup wizard is NOT a blocking takeover.
+    // The admin dashboard is always reachable; while setup is incomplete a
+    // warning banner links to the "Finish setup" page (a normal nav module).
+    // `setupIncomplete` is the backend .setup-complete marker.
 
-    // Group modules by section
+    // Group modules by section. The finish-setup module is only listed
+    // while setup is incomplete (see getVisibleModules()).
     const sections = {};
-    this.modules.forEach(module => {
+    this.getVisibleModules().forEach(module => {
       if (!sections[module.section]) {
         sections[module.section] = [];
       }
@@ -2169,7 +2220,22 @@ class AdminApp extends LitElement {
           </button>
         </div>
       ` : ''}
-      <div class="app-container ${this.updateAvailable ? 'with-banner' : ''}">
+      ${this.setupIncomplete ? html`
+        <div class="setup-banner" role="status">
+          <span class="setup-banner-icon">⚠</span>
+          <span class="setup-banner-text">
+            HomeFree isn't fully set up yet — finish setup to secure the box
+            and enable HTTPS.
+          </span>
+          <button
+            class="setup-banner-btn"
+            @click=${() => this.handleModuleClick('finish-setup')}
+          >
+            Finish setup
+          </button>
+        </div>
+      ` : ''}
+      <div class="app-container ${this.updateAvailable || this.setupIncomplete ? 'with-banner' : ''}">
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">

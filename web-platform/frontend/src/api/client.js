@@ -286,12 +286,21 @@ export const saveConfigChanges = (config) => post('/api/config/save', config);
 export const applyConfigChanges = (config) => post('/api/config/apply', config);
 export const getConfigDirty = () => get('/api/config/dirty');
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
+// Same, but returns the FULL log so far (not just incremental output since
+// the last poll). Used when reattaching to a rebuild after a page reload so
+// the log history isn't lost.
+export const getRebuildStatusWithHistory = () =>
+  get('/api/config/rebuild-status?include_history=1');
 
 // Secrets — used by the finish-setup wizard and the DNS module.
 export const getSecretsStatus = () => get('/api/secrets/status');
 // Add an SSH authorized key (bootstraps SOPS recipients on a fresh box).
 export const addAuthorizedKey = (publicKey) =>
   post('/api/secrets/keys/user', { public_key: publicKey });
+// Set a single SOPS-managed secret value (service/key -> value).
+export const setSecret = (serviceLabel, secretKey, value) =>
+  post(`/api/secrets/${encodeURIComponent(serviceLabel)}/${encodeURIComponent(secretKey)}`,
+       { value });
 // Mark post-install setup complete — called by the finish-setup wizard's
 // final step. Writes the .setup-complete sentinel, closing the auth bypass
 // and the captive portal.
@@ -406,5 +415,6 @@ export default {
   rebootSystem,
   getSecretsStatus,
   addAuthorizedKey,
+  setSecret,
   markFinishSetupComplete,
 };

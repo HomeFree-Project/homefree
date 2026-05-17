@@ -3,13 +3,14 @@ import { themeVars } from '../../shared/theme.js';
 import {
   addAuthorizedKey,
   getSecretsStatus,
+  setSecret,
   saveConfigChanges,
   applyConfigChanges,
   getRebuildStatus,
+  getRebuildStatusWithHistory,
   getCurrentConfig,
   markFinishSetupComplete,
 } from '../../api/client.js';
-import './secrets-input.js';
 
 // SOPS service labels — must match dns-module.js and the backend's
 // write_secret_files() output paths under /var/lib/homefree-secrets/.
@@ -30,9 +31,10 @@ const DDNS_SECRET_LABEL = 'ddclient';
  *   2. DNS-01 provider     — unblocks the wildcard cert for admin.<domain>.
  *   3. ddclient zones      — optional; only needed for public pages.
  *
- * The wizard collects them in that order, then applies a rebuild. It reuses
- * <secrets-input> (which talks to /api/secrets directly) so there is no
- * duplicated secret-handling logic.
+ * The wizard collects them in that order, then applies a rebuild. Each step
+ * uses plain input fields: the wizard holds the values in memory and saves
+ * everything for that step (SSH key, DNS token, ddclient passwords) when the
+ * user clicks Continue — there is no per-field Save button.
  */
 class FinishSetupWizard extends LitElement {
   static properties = {
@@ -42,31 +44,31 @@ class FinishSetupWizard extends LitElement {
     sshKeyInput: { type: String, state: true },
     sshKeySaved: { type: Boolean, state: true },
     dnsProvider: { type: String, state: true },
+    dnsToken: { type: String, state: true },     // collected in memory, saved on Next
     dnsTokenSet: { type: Boolean, state: true },
-    ddnsZones: { type: Array, state: true },     // [{zone,protocol,username,domains,key}]
+    // [{zone,protocol,username,domains,key,password}] — password collected in
+    // memory, saved on Next.
+    ddnsZones: { type: Array, state: true },
     secretsStatus: { type: Object, state: true },
     busy: { type: Boolean, state: true },
     error: { type: String, state: true },
     applyState: { type: String, state: true },   // 'idle'|'running'|'done'|'failed'
+    rebuildOutput: { type: String, state: true },
+    reconnecting: { type: Boolean, state: true }, // poll lost the backend, retrying
   };
 
   static styles = [themeVars, css`
+    /* Rendered inline as an admin module (not a full-screen overlay).
+       The admin shell provides the page chrome and scrolling. */
     :host {
-      position: fixed;
-      inset: 0;
-      z-index: 1000;
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      background: var(--hf-bg);
-      overflow-y: auto;
+      display: block;
       color: var(--hf-text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
     .wizard {
       width: 100%;
       max-width: 720px;
-      padding: 48px 32px 64px;
+      padding: 8px 0 32px;
     }
     h1 { font-size: 24px; margin: 0 0 6px; }
     .subtitle { color: var(--hf-text-muted); font-size: 14px; margin: 0 0 28px; }
@@ -149,6 +151,25 @@ class FinishSetupWizard extends LitElement {
       color: var(--hf-text-subtle);
       font-size: 12px;
     }
+    /* Per-platform collapsible sub-sections inside the help body. */
+    details.platform {
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      margin: 8px 0;
+      background: var(--hf-surface-3, var(--hf-surface));
+    }
+    details.platform summary {
+      cursor: pointer;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hf-text);
+      list-style: none;
+    }
+    details.platform summary::-webkit-details-marker { display: none; }
+    details.platform summary::before { content: "▸ "; color: var(--hf-accent); }
+    details.platform[open] summary::before { content: "▾ "; color: var(--hf-accent); }
+    details.platform .platform-body { padding: 0 12px 10px; }
     label { display: block; font-size: 13px; font-weight: 500; margin: 14px 0 6px; }
     textarea, input[type=text] {
       width: 100%;
@@ -230,12 +251,15 @@ class FinishSetupWizard extends LitElement {
     this.sshKeyInput = '';
     this.sshKeySaved = false;
     this.dnsProvider = 'hetzner';
+    this.dnsToken = '';
     this.dnsTokenSet = false;
     this.ddnsZones = [];
     this.secretsStatus = {};
     this.busy = false;
     this.error = '';
     this.applyState = 'idle';
+    this.rebuildOutput = '';
+    this.reconnecting = false;
   }
 
   async connectedCallback() {
@@ -248,6 +272,33 @@ class FinishSetupWizard extends LitElement {
     }
     await this.refreshSecretsStatus();
     await this.seedZonesFromConfig();
+    // Recover an in-flight (or just-finished) rebuild. The finish-setup
+    // rebuild restarts admin-api, so the user may have reloaded — or the
+    // poll lost contact — while it was still running. The backend tracks
+    // the transient rebuild unit independently and persists its last
+    // status, so on mount we can reattach instead of restarting at step 0
+    // and stranding a rebuild whose result nobody is watching.
+    await this.recoverRebuildIfAny();
+  }
+
+  // If a rebuild is running, jump to the apply step and reattach the
+  // poller. (We only do this for a *running* rebuild — a stale finished
+  // status from some earlier rebuild must not auto-complete setup.)
+  async recoverRebuildIfAny() {
+    try {
+      // include_history so we get the WHOLE log so far, not just the
+      // increment — the user reloaded mid-build and has no prior log.
+      const s = await getRebuildStatusWithHistory();
+      if (s && s.running) {
+        this.step = 3;
+        this.applyState = 'running';
+        this.rebuildOutput = s.output || '';
+        this.pollRebuild({ preserveLog: true });
+      }
+    } catch (e) {
+      // Backend unreachable on mount — nothing to recover; the normal
+      // wizard flow still works.
+    }
   }
 
   // Pre-populate the ddclient step with one zone for the box's own domain
@@ -268,6 +319,7 @@ class FinishSetupWizard extends LitElement {
           username: z.username || '',
           domains: Array.isArray(z.domains) ? z.domains.join(' ') : '@ *',
           key: z['password-secret-key'] || 'password',
+          password: '',
         }));
         return;
       }
@@ -276,7 +328,7 @@ class FinishSetupWizard extends LitElement {
       if (domain) {
         this.ddnsZones = [
           { zone: domain, protocol: 'hetzner', username: '',
-            domains: '@ *', key: 'password' },
+            domains: '@ *', key: 'password', password: '' },
         ];
       }
     } catch (e) {
@@ -321,9 +373,10 @@ class FinishSetupWizard extends LitElement {
   }
 
   // --- Step 2: DNS-01 ------------------------------------------------------
-  async saveDnsProvider() {
-    // Persist the provider into homefree-config.json. The token itself is
-    // saved by the <secrets-input> below straight to /api/secrets.
+  // Persist the provider into homefree-config.json AND store the API token as
+  // a SOPS secret in one go. Called when the user clicks Continue. Returns
+  // true on success so the caller can advance the step.
+  async saveDnsStep() {
     this.error = '';
     this.busy = true;
     try {
@@ -335,8 +388,14 @@ class FinishSetupWizard extends LitElement {
           },
         },
       });
+      const token = this.dnsToken.trim();
+      if (token) {
+        await setSecret(DNS_CERT_SECRET_LABEL, DNS_CERT_SECRET_KEY, token);
+      }
+      return true;
     } catch (e) {
-      this.error = e.message || 'Failed to save the DNS provider.';
+      this.error = e.message || 'Failed to save the DNS-01 settings.';
+      return false;
     } finally {
       this.busy = false;
     }
@@ -346,7 +405,8 @@ class FinishSetupWizard extends LitElement {
   addZone() {
     this.ddnsZones = [
       ...this.ddnsZones,
-      { zone: '', protocol: 'hetzner', username: '', domains: '@ *', key: 'password' },
+      { zone: '', protocol: 'hetzner', username: '', domains: '@ *',
+        key: 'password', password: '' },
     ];
   }
 
@@ -360,9 +420,9 @@ class FinishSetupWizard extends LitElement {
     this.ddnsZones = this.ddnsZones.filter((_, idx) => idx !== i);
   }
 
+  // Write zone metadata into config AND store each zone's password as a SOPS
+  // secret under the ddclient label. Called when the user clicks Continue.
   async saveZones() {
-    // Write the non-secret zone metadata into config; per-zone passwords are
-    // entered through <secrets-input> against the ddclient SOPS label.
     this.error = '';
     if (this.ddnsZones.length === 0) return true;
     this.busy = true;
@@ -381,6 +441,12 @@ class FinishSetupWizard extends LitElement {
           },
         },
       });
+      for (const z of this.ddnsZones) {
+        const pw = (z.password || '').trim();
+        if (pw) {
+          await setSecret(DDNS_SECRET_LABEL, z.key.trim() || 'password', pw);
+        }
+      }
       return true;
     } catch (e) {
       this.error = e.message || 'Failed to save ddclient zones.';
@@ -388,6 +454,13 @@ class FinishSetupWizard extends LitElement {
     } finally {
       this.busy = false;
     }
+  }
+
+  // True when the ddclient step has enough to save: at least one zone whose
+  // required fields and password are filled in. Used to enable Continue.
+  ddnsStepReady() {
+    return this.ddnsZones.some(
+      (z) => z.zone.trim() && (z.password || '').trim());
   }
 
   // --- Step 4: Apply -------------------------------------------------------
@@ -406,42 +479,90 @@ class FinishSetupWizard extends LitElement {
     }
   }
 
-  pollRebuild() {
-    if (this._rebuildPoll) clearInterval(this._rebuildPoll);
-    this._rebuildPoll = setInterval(async () => {
+  // Poll the rebuild to completion. A rebuild ROUTINELY restarts admin-api
+  // (the very process answering this poll), so the fetch fails for a few
+  // seconds every time — that is expected, NOT an error. We therefore:
+  //   - retry FAST (1s) while failing, so we reattach the instant admin-api
+  //     is back, and only give up after a sustained outage no restart can
+  //     explain (MAX_RECONNECT_FAILURES);
+  //   - show a "Reconnecting…" message during the outage instead of a
+  //     frozen "Starting…", so the user knows it's still working;
+  //   - ACCUMULATE log output — getRebuildStatus() returns only the NEW
+  //     output since the last call, so overwriting would blank the log;
+  //   - judge success on `exit_code` (0 = success), since the status
+  //     payload has no `success` field.
+  pollRebuild(opts = {}) {
+    if (this._rebuildPoll) clearTimeout(this._rebuildPoll);
+    this._rebuildFailures = 0;
+    // On reattach (recoverRebuildIfAny) the caller has already loaded the
+    // full log so far — don't wipe it.
+    if (!opts.preserveLog) this.rebuildOutput = '';
+
+    const MAX_RECONNECT_FAILURES = 90;  // ~90s of sustained outage
+    const tick = async () => {
+      let s;
       try {
-        const s = await getRebuildStatus();
-        this.rebuildOutput = s.output || '';
-        this.requestUpdate();
-        if (!s.running) {
-          clearInterval(this._rebuildPoll);
-          this._rebuildPoll = null;
-          if (s.success) {
-            // Mark setup complete ONLY now — after a successful rebuild.
-            // This writes the .setup-complete sentinel, which closes the
-            // auth bypass and the captive portal. Must finish before the
-            // user reloads into the dashboard. A failure here is non-fatal
-            // (the box still works); log and continue.
-            try {
-              await markFinishSetupComplete();
-            } catch (e) {
-              console.warn('Failed to mark setup complete:', e);
-            }
-            this.applyState = 'done';
-          } else {
-            this.applyState = 'failed';
-            this.error = "Setup didn't complete successfully. Details are below.";
-          }
-        }
+        s = await getRebuildStatus();
       } catch (e) {
-        // Backend may briefly restart mid-rebuild — keep polling.
+        // Transient — admin-api is most likely mid-restart. Keep the
+        // spinner up, tell the user we're reconnecting, retry fast.
+        this._rebuildFailures += 1;
+        if (this._rebuildFailures <= MAX_RECONNECT_FAILURES) {
+          this.reconnecting = true;
+          this.requestUpdate();
+          this._rebuildPoll = setTimeout(tick, 1000);
+          return;
+        }
+        // Sustained outage — surface it instead of spinning forever.
+        this.applyState = 'failed';
+        this.error = 'Lost the connection to HomeFree while finishing setup. '
+          + 'The rebuild may still be running on the box — wait a minute, '
+          + 'then reload this page to check.';
+        this._rebuildPoll = null;
+        return;
       }
-    }, 3000);
+
+      this._rebuildFailures = 0;
+      this.reconnecting = false;
+      if (s.output) {
+        // Incremental — append, never replace.
+        this.rebuildOutput = (this.rebuildOutput || '') + s.output;
+      }
+      this.requestUpdate();
+
+      if (s.running) {
+        this._rebuildPoll = setTimeout(tick, 3000);
+        return;
+      }
+
+      // Rebuild finished.
+      this._rebuildPoll = null;
+      const succeeded = s.exit_code === 0 || s.partial_success === true;
+      if (succeeded) {
+        // Mark setup complete ONLY now — after a successful rebuild. This
+        // writes the .setup-complete sentinel, which closes the auth bypass
+        // and the captive portal, and arms the HTTP->HTTPS redirect. A
+        // failure here is non-fatal (the box still works); log and continue.
+        try {
+          await markFinishSetupComplete();
+        } catch (e) {
+          console.warn('Failed to mark setup complete:', e);
+        }
+        this.applyState = 'done';
+      } else {
+        this.applyState = 'failed';
+        this.error = s.exit_code == null
+          ? "The rebuild finished but HomeFree couldn't read its result. "
+            + 'Check the log below.'
+          : "Setup didn't complete successfully. Details are below.";
+      }
+    };
+    tick();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._rebuildPoll) clearInterval(this._rebuildPoll);
+    if (this._rebuildPoll) clearTimeout(this._rebuildPoll);
   }
 
   finishWizard() {
@@ -491,64 +612,74 @@ class FinishSetupWizard extends LitElement {
               <strong>public</strong> key below. HomeFree uses it to encrypt
               your settings and to let you log in to the box securely.
             </p>
-
-            <h4>Already have one? Reuse it.</h4>
             <p>
-              If you use GitHub, GitLab, a work server, or have ever set up
-              SSH before, you probably already have a key — use it, no need
-              to make a new one. Find your public key:
-            </p>
-            <p><strong>Mac or Linux</strong> — open the Terminal app and run:</p>
-            <pre>cat ~/.ssh/id_ed25519.pub</pre>
-            <p>
-              If that says "No such file", try
-              <code>cat ~/.ssh/id_rsa.pub</code>. If both fail, you don't
-              have one yet — make one below.
-            </p>
-            <p>
-              <strong>Windows</strong> — open PowerShell and run:
-            </p>
-            <pre>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</pre>
-            <p>
-              Whatever it prints — one line starting with
-              <code>ssh-ed25519</code> or <code>ssh-rsa</code> — is your
-              public key. Copy the whole line and paste it below.
-            </p>
-            <p>
-              On GitHub you can also see your public keys at:<br/>
+              If you use GitHub, GitLab, a work server, or have set up SSH
+              before, you probably <strong>already have a key</strong> — reuse
+              it, no need to make a new one. On GitHub you can see your public
+              keys at:<br/>
               <a href="https://github.com/settings/keys" target="_blank"
                  rel="noopener">github.com/settings/keys</a>
               <span class="url">(https://github.com/settings/keys)</span>
             </p>
+            <p>Open the section for your computer:</p>
 
-            <h4>Don't have one? Create one.</h4>
-            <p>
-              <strong>Mac or Linux</strong> — in the Terminal, run (replace
-              the email with your own — it's just a label):
-            </p>
-            <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
-            <p>
-              Press Enter to accept the default location. You'll be asked for
-              a passphrase — setting one is recommended (it protects the key
-              if your computer is stolen). Then run
-              <code>cat ~/.ssh/id_ed25519.pub</code> and copy the line it
-              prints.
-            </p>
-            <p>
-              <strong>Windows</strong> — open PowerShell and run the same
-              command:
-            </p>
-            <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
-            <p>
-              Then <code>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</code>
-              to print the public key.
-            </p>
-            <p>
-              Step-by-step guide with screenshots (works for all three
-              systems):<br/>
+            <details class="platform">
+              <summary>🍎 macOS / Linux</summary>
+              <div class="platform-body">
+                <p><strong>Check for an existing key first.</strong> Open the
+                  Terminal app and run:</p>
+                <pre>cat ~/.ssh/id_ed25519.pub</pre>
+                <p>
+                  If that says "No such file", try the older RSA name many
+                  people have:
+                </p>
+                <pre>cat ~/.ssh/id_rsa.pub</pre>
+                <p>
+                  If either prints a line starting with
+                  <code>ssh-ed25519</code> or <code>ssh-rsa</code>, that's
+                  your public key — copy the whole line and paste it below.
+                </p>
+                <p><strong>No key yet?</strong> Create one (replace the email
+                  with your own — it's just a label):</p>
+                <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
+                <p>
+                  Press Enter to accept the default location. Setting a
+                  passphrase when asked is recommended — it protects the key
+                  if your computer is lost or stolen. Then run
+                  <code>cat ~/.ssh/id_ed25519.pub</code> and copy the line.
+                </p>
+              </div>
+            </details>
+
+            <details class="platform">
+              <summary>🪟 Windows</summary>
+              <div class="platform-body">
+                <p><strong>Check for an existing key first.</strong> Open
+                  PowerShell and run:</p>
+                <pre>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</pre>
+                <p>If that errors, try the older RSA name:</p>
+                <pre>type $env:USERPROFILE\\.ssh\\id_rsa.pub</pre>
+                <p>
+                  If either prints a line starting with
+                  <code>ssh-ed25519</code> or <code>ssh-rsa</code>, that's
+                  your public key — copy the whole line and paste it below.
+                </p>
+                <p><strong>No key yet?</strong> Create one in PowerShell:</p>
+                <pre>ssh-keygen -t ed25519 -C "you@example.com"</pre>
+                <p>
+                  Press Enter for the default location; set a passphrase when
+                  asked. Then run
+                  <code>type $env:USERPROFILE\\.ssh\\id_ed25519.pub</code>
+                  to print the public key.
+                </p>
+              </div>
+            </details>
+
+            <p style="margin-top:12px;">
+              Prefer screenshots? GitHub's guide works for all systems:<br/>
               <a href="https://docs.github.com/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent"
                  target="_blank" rel="noopener">
-                GitHub's "Generating a new SSH key" guide</a>
+                GitHub — "Generating a new SSH key"</a>
               <span class="url">(https://docs.github.com/en/authentication/
               connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)</span>
             </p>
@@ -556,20 +687,20 @@ class FinishSetupWizard extends LitElement {
             <h4>Don't lose your key</h4>
             <p>
               The <strong>private</strong> key — the file
-              <em>without</em> <code>.pub</code>, e.g.
-              <code>~/.ssh/id_ed25519</code> — is the one that matters. If you
-              lose it you lose access to this box.
+              <em>without</em> <code>.pub</code> (e.g.
+              <code>id_ed25519</code> or <code>id_rsa</code>) — is the one
+              that matters. If you lose it you lose secure access to this box.
             </p>
             <ul>
-              <li>Keep it in <code>~/.ssh/</code> on a computer you control —
-                don't delete that folder.</li>
-              <li>Back up <code>id_ed25519</code> <em>and</em>
-                <code>id_ed25519.pub</code> somewhere safe — a password
-                manager (1Password, Bitwarden) stores files, or an encrypted
-                USB drive.</li>
-              <li><strong>Never</strong> paste the private key anywhere
-                online or share it. Only the <code>.pub</code> file is shared
-                — that's what goes in the box below.</li>
+              <li>Keep it in <code>~/.ssh/</code> (or
+                <code>%USERPROFILE%\\.ssh\\</code> on Windows) on a computer
+                you control — don't delete that folder.</li>
+              <li>Back up the private key <em>and</em> its <code>.pub</code>
+                somewhere safe — a password manager (1Password, Bitwarden)
+                stores files, or an encrypted USB drive.</li>
+              <li><strong>Never</strong> paste the private key anywhere online
+                or share it. Only the <code>.pub</code> file is shared — that's
+                what goes in the box below.</li>
             </ul>
           </div>
         </details>
@@ -583,8 +714,10 @@ class FinishSetupWizard extends LitElement {
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="actions">
           <span></span>
-          <button class="primary" ?disabled=${this.busy} @click=${this.saveSshKey}>
-            ${this.busy ? 'Saving…' : 'Add key & continue'}
+          <button class="primary"
+            ?disabled=${this.busy || !this.sshKeyInput.trim()}
+            @click=${this.saveSshKey}>
+            ${this.busy ? 'Saving…' : 'Continue'}
           </button>
         </div>
       </div>
@@ -592,6 +725,11 @@ class FinishSetupWizard extends LitElement {
   }
 
   renderDnsStep() {
+    const tokenEntered = !!this.dnsToken.trim();
+    const tokenAlreadySet = this.secretExists(DNS_CERT_SECRET_LABEL, DNS_CERT_SECRET_KEY);
+    // Continue is enabled once there's something to save: a token typed now,
+    // or one already stored on a previous visit.
+    const canContinue = tokenEntered || tokenAlreadySet;
     return html`
       <div class="card">
         <h2>2. Wildcard certificate (DNS-01)</h2>
@@ -607,32 +745,51 @@ class FinishSetupWizard extends LitElement {
           placeholder="hetzner"
           .value=${this.dnsProvider}
           @input=${(e) => { this.dnsProvider = e.target.value; }}
-          @change=${this.saveDnsProvider}
         />
-        <secrets-input
-          .serviceLabel=${DNS_CERT_SECRET_LABEL}
-          .secretKey=${DNS_CERT_SECRET_KEY}
-          .label=${'DNS provider API token'}
-          .description=${'Used for the ACME DNS-01 challenge that issues *.<domain> certificates.'}
-          .required=${true}
-          .exists=${this.secretExists(DNS_CERT_SECRET_LABEL, DNS_CERT_SECRET_KEY)}
-          @secret-updated=${() => this.refreshSecretsStatus()}
-        ></secrets-input>
+        <label>DNS provider API token${tokenAlreadySet
+          ? html` <span class="ok" style="font-weight:400;">(already saved — leave blank to keep)</span>`
+          : ''}</label>
+        <input
+          type="password"
+          autocomplete="off"
+          placeholder=${tokenAlreadySet ? '••••••••' : 'paste your API token'}
+          .value=${this.dnsToken}
+          @input=${(e) => { this.dnsToken = e.target.value; }}
+        />
+        <p style="font-size:12px;color:var(--hf-text-subtle);margin:6px 0 0;">
+          Used for the ACME DNS-01 challenge that issues
+          <code>*.&lt;domain&gt;</code> certificates.
+        </p>
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="actions">
           <button class="link" @click=${() => { this.step = 0; }}>Back</button>
           <div>
-            <button @click=${async () => { await this.saveDnsProvider(); this.step = 2; }}>
+            <button ?disabled=${this.busy} @click=${this.skipDnsStep}>
               Skip for now
             </button>
-            <button class="primary" ?disabled=${this.busy}
-              @click=${async () => { await this.saveDnsProvider(); this.step = 2; }}>
-              Continue
+            <button class="primary" ?disabled=${this.busy || !canContinue}
+              @click=${async () => { if (await this.saveDnsStep()) this.step = 2; }}>
+              ${this.busy ? 'Saving…' : 'Continue'}
             </button>
           </div>
         </div>
       </div>
     `;
+  }
+
+  // Skipping DNS-01 leaves admin.<domain> HTTPS-unreachable — confirm before
+  // moving on. Nothing is saved.
+  skipDnsStep() {
+    const ok = window.confirm(
+      'Skip the wildcard certificate?\n\n'
+      + 'Without DNS-01, HomeFree cannot issue an HTTPS certificate for '
+      + 'admin.<domain>. The admin page will stay reachable only over plain '
+      + 'HTTP on your LAN. You can finish this later from the Finish setup '
+      + 'page.');
+    if (ok) {
+      this.error = '';
+      this.step = 2;
+    }
   }
 
   renderDdnsStep() {
@@ -672,29 +829,50 @@ class FinishSetupWizard extends LitElement {
             <label>Password file key</label>
             <input type="text" placeholder="password" .value=${z.key}
               @input=${(e) => this.updateZone(i, 'key', e.target.value)} />
-            <secrets-input
-              .serviceLabel=${DDNS_SECRET_LABEL}
-              .secretKey=${z.key || 'password'}
-              .label=${`Password / API token (key: ${z.key || 'password'})`}
-              .description=${'Credential ddclient uses to update this zone.'}
-              .required=${true}
-              .exists=${this.secretExists(DDNS_SECRET_LABEL, z.key || 'password')}
-              @secret-updated=${() => this.refreshSecretsStatus()}
-            ></secrets-input>
-            <button class="link" @click=${() => this.removeZone(i)}>Remove zone</button>
+            <label>Password / API token${
+              this.secretExists(DDNS_SECRET_LABEL, z.key || 'password')
+                ? html` <span class="ok" style="font-weight:400;">(already saved — leave blank to keep)</span>`
+                : ''}</label>
+            <input type="password" autocomplete="off"
+              placeholder=${this.secretExists(DDNS_SECRET_LABEL, z.key || 'password')
+                ? '••••••••' : 'paste the credential ddclient uses for this zone'}
+              .value=${z.password || ''}
+              @input=${(e) => this.updateZone(i, 'password', e.target.value)} />
+            <div style="margin-top:10px;">
+              <button class="link" @click=${() => this.removeZone(i)}>Remove zone</button>
+            </div>
           </div>
         `)}
         <button @click=${this.addZone}>+ Add zone</button>
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="actions">
           <button class="link" @click=${() => { this.step = 1; }}>Back</button>
-          <button class="primary" ?disabled=${this.busy}
-            @click=${async () => { if (await this.saveZones()) this.step = 3; }}>
-            Continue
-          </button>
+          <div>
+            <button ?disabled=${this.busy} @click=${this.skipDdnsStep}>
+              Skip for now
+            </button>
+            <button class="primary" ?disabled=${this.busy || !this.ddnsStepReady()}
+              @click=${async () => { if (await this.saveZones()) this.step = 3; }}>
+              ${this.busy ? 'Saving…' : 'Continue'}
+            </button>
+          </div>
         </div>
       </div>
     `;
+  }
+
+  // Skipping ddclient leaves public pages unresolvable from the internet —
+  // confirm before moving on. Nothing is saved.
+  skipDdnsStep() {
+    const ok = window.confirm(
+      'Skip dynamic DNS?\n\n'
+      + 'Without ddclient, any pages you want reachable from the public '
+      + 'internet won\'t resolve to this box. Your LAN and internal DNS are '
+      + 'unaffected. You can add this later from the Finish setup page.');
+    if (ok) {
+      this.error = '';
+      this.step = 3;
+    }
   }
 
   renderApplyStep() {
@@ -715,7 +893,19 @@ class FinishSetupWizard extends LitElement {
           </div>
         ` : ''}
         ${this.applyState === 'running' ? html`
-          <div class="ok">Setting things up — this can take a few minutes…</div>
+          ${this.reconnecting ? html`
+            <div class="ok" style="color:#f5bf42;">
+              Reconnecting… HomeFree restarts itself partway through setup,
+              so this page briefly loses contact — that's normal. Keep this
+              page open; it will pick back up on its own.
+            </div>
+          ` : html`
+            <div class="ok">Setting things up — this can take a few minutes…</div>
+          `}
+          <p style="font-size:12px;color:var(--hf-text-subtle);margin:8px 0 0;">
+            Don't close this page. If contact is lost for good, just reload
+            it once HomeFree is back to see the result.
+          </p>
           <div class="log">${this.rebuildOutput || 'Starting…'}</div>
         ` : ''}
         ${this.applyState === 'done' ? html`
