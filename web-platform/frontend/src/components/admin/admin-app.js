@@ -40,7 +40,8 @@ class AdminApp extends LitElement {
     statusFlashing: { type: Boolean }, // Status nav item flash animation
     statusNeedsAttention: { type: Boolean }, // Persistent flash until user clicks Status
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
-    pendingSetupItems: { type: Array, state: true }, // Post-install finish-setup items still missing
+    setupIncomplete: { type: Boolean, state: true }, // Finish-setup wizard not yet completed (authoritative gate)
+    pendingSetupItems: { type: Array, state: true }, // Hint: which finish-setup steps remain (for wizard start step)
     serviceReloading: { type: Boolean }, // Whether admin-api is restarting
     serviceReloadMessage: { type: String }, // Message to show during reload
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
@@ -536,6 +537,7 @@ class AdminApp extends LitElement {
     this.statusNeedsAttention = false;
     this._toastIdCounter = 0;
     this.hasAuthorizedKeys = false;
+    this.setupIncomplete = false;
     this.pendingSetupItems = [];
     this.serviceReloading = false;
     this.currentUser = null;
@@ -725,10 +727,18 @@ class AdminApp extends LitElement {
     // Check whether post-install setup is still incomplete. A fresh box
     // installed from the ISO ships without an SSH key / DNS-01 provider; the
     // finish-setup wizard overlay handles those before the dashboard is used.
+    //
+    // `setupIncomplete` is the AUTHORITATIVE gate — it comes from the backend's
+    // .setup-complete marker, which only flips when the wizard explicitly
+    // finishes. `pendingSetupItems` is just a hint for which step the wizard
+    // opens on; it must NOT gate wizard-vs-dashboard because it empties out
+    // mid-wizard (the wizard writes the SSH key / DNS-01 on its early pages).
     try {
       const mode = await getMode();
+      this.setupIncomplete = !!mode.setup_incomplete;
       this.pendingSetupItems = mode.pending_setup_items || [];
     } catch (e) {
+      this.setupIncomplete = false;
       this.pendingSetupItems = [];
     }
 
@@ -737,7 +747,7 @@ class AdminApp extends LitElement {
     // endpoints outside the finish-setup auth bypass (config/dirty,
     // closure-id, rebuild-status) and would 401 every few seconds, spamming
     // the console. The wizard does its own rebuild-status polling.
-    if (this.pendingSetupItems && this.pendingSetupItems.length > 0) {
+    if (this.setupIncomplete) {
       return;
     }
 
@@ -2125,10 +2135,12 @@ class AdminApp extends LitElement {
       `;
     }
 
-    // Post-install: if required finish-setup items are still missing, take
-    // over the screen with the wizard before the dashboard is reachable.
+    // Post-install: until the finish-setup wizard has explicitly completed,
+    // take over the screen with the wizard before the dashboard is reachable.
+    // Gated on `setupIncomplete` (the backend .setup-complete marker) — NOT
+    // on pendingSetupItems, which empties out mid-wizard.
     // (See finish-setup-wizard.js — runs over plain-HTTP LAN, no cert needed.)
-    if (this.pendingSetupItems && this.pendingSetupItems.length > 0) {
+    if (this.setupIncomplete) {
       return html`
         <finish-setup-wizard
           .pendingItems=${this.pendingSetupItems}

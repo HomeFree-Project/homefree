@@ -22,6 +22,16 @@ class ModeService:
     FLAKE_FILE = Path("/etc/nixos/flake.nix")
     HOMEFREE_CONFIG = Path("/etc/nixos/homefree-config.json")
 
+    # Explicit "post-install setup is finished" marker. Written ONLY by the
+    # finish-setup wizard's final step (POST /api/finish-setup/complete),
+    # after the finishing rebuild succeeds. This is the single source of
+    # truth for "is the wizard done" — it is NEVER inferred from config
+    # state. Inferring it (authorizedKeys + DNS-01 both present) is wrong:
+    # the wizard writes those on its EARLY pages, so the inference flips to
+    # "done" while the user is still mid-wizard, and the admin UI wrongly
+    # swaps the wizard for the full dashboard.
+    SETUP_COMPLETE_MARKER = Path("/var/lib/homefree-secrets/.setup-complete")
+
     @staticmethod
     def get_mode() -> Mode:
         """
@@ -46,23 +56,42 @@ class ModeService:
         return ModeService.get_mode() == Mode.ADMIN
 
     @staticmethod
+    def is_setup_complete() -> bool:
+        """
+        True once the finish-setup wizard has explicitly completed.
+
+        This is the ONLY thing that decides wizard-vs-dashboard. It is the
+        presence of the .setup-complete marker — never an inference from
+        config. The marker is written solely by POST /api/finish-setup/complete
+        on the wizard's final step.
+        """
+        return ModeService.SETUP_COMPLETE_MARKER.exists()
+
+    @staticmethod
+    def is_setup_incomplete() -> bool:
+        """
+        True when the box is installed but the finish-setup wizard has not
+        been completed. Drives whether the admin UI shows the wizard.
+        """
+        return ModeService.is_admin() and not ModeService.is_setup_complete()
+
+    @staticmethod
     def get_pending_setup_items() -> List[str]:
         """
-        Return the list of post-install setup items that are still missing.
+        Return which finish-setup items still need attention.
 
-        The ISO installer cannot collect secret-bearing config (the kiosk has
-        no way to paste keys/tokens), so a freshly-installed box ships without:
-          - "ssh-key": an SSH authorized key. Required before ANY secret can be
-            saved, since SOPS encrypts to the system host key plus the first
-            user authorized key.
-          - "dns-01": a DNS-01 wildcard-cert provider. Without it Caddy cannot
-            issue a cert for admin.<domain>, so the admin UI is HTTPS-unreachable.
+        IMPORTANT: this is NOT the wizard-vs-dashboard gate — that is
+        is_setup_incomplete() / the .setup-complete marker. This list is
+        only a hint the wizard uses to decide which step to open on (e.g.
+        skip the SSH-key page if a key is already present). It is derived
+        from config and so will go empty mid-wizard — which is exactly why
+        it must not gate whether the wizard shows.
 
-        ddclient is intentionally NOT treated as required — HomeFree runs its
-        own internal DNS and ddclient only matters for public pages.
-
-        Returns an empty list once setup is complete, or in installer mode.
+        Returns [] if setup is already complete or we are in installer mode.
         """
+        # Setup explicitly finished — nothing pending.
+        if ModeService.is_setup_complete():
+            return []
         if not ModeService.is_admin():
             return []
 
@@ -72,8 +101,9 @@ class ModeService:
             with open(ModeService.HOMEFREE_CONFIG, "r") as f:
                 config = json.load(f)
         except (OSError, json.JSONDecodeError):
-            # Can't read config — don't claim setup is incomplete on a guess.
-            return []
+            # Can't read config — fall back to "everything pending" so the
+            # wizard at least starts at the beginning.
+            return ["ssh-key", "dns-01"]
 
         authorized_keys = config.get("system", {}).get("authorizedKeys", [])
         if not authorized_keys:
@@ -85,8 +115,3 @@ class ModeService:
             items.append("dns-01")
 
         return items
-
-    @staticmethod
-    def is_setup_incomplete() -> bool:
-        """True when post-install setup still has required items pending."""
-        return len(ModeService.get_pending_setup_items()) > 0

@@ -2589,15 +2589,22 @@ async def get_mode():
     try:
         from services.mode import ModeService
         mode = ModeService.get_mode()
-        pending = ModeService.get_pending_setup_items()
         return JSONResponse(content={
             "mode": mode.value,
             "is_installer": ModeService.is_installer(),
             "is_admin": ModeService.is_admin(),
-            # Post-install finish-setup state. The admin UI surfaces a
-            # "finish setup" wizard while setup_incomplete is true.
-            "setup_incomplete": len(pending) > 0,
-            "pending_setup_items": pending,
+            # Post-install finish-setup state. The admin UI shows the
+            # finish-setup wizard while setup_incomplete is true.
+            #
+            # setup_incomplete is the .setup-complete MARKER check — NOT
+            # len(pending_setup_items). The pending list is derived from
+            # config and goes empty mid-wizard (the wizard writes the SSH
+            # key / DNS-01 provider on its early pages); gating on it would
+            # swap the wizard for the full dashboard before the user is
+            # actually done. pending_setup_items is only a hint for which
+            # step the wizard opens on.
+            "setup_incomplete": ModeService.is_setup_incomplete(),
+            "pending_setup_items": ModeService.get_pending_setup_items(),
         })
     except Exception as e:
         logger.error(f"Error detecting mode: {e}")
