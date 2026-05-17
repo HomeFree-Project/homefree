@@ -156,7 +156,7 @@ let
 
     ## ── 3. SSO config via direct SQL ────────────────────────────
     if [ ! -s ${immichSecretsDir}/oidc-client-id ] \
-       || [ ! -s ${immichSecretsDir}/oidc-client-secret ]; then
+       || [ ! -f ${immichSecretsDir}/oidc-client-secret ]; then
       echo "immich postStart: no OIDC secrets yet, skipping SSO config" >&2
       exit 0
     fi

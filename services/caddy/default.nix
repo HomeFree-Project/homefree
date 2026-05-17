@@ -343,9 +343,11 @@ in
 
     # Global configuration for DNS-01 challenge
     globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
-      ## NOTE: No global acme_dns - let non-wildcard domains use HTTP-01 (default)
-      ## Wildcard domains have per-virtualhost tls blocks with DNS-01
-      # acme_dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+      cert_issuer acme {
+        dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {$DNS_API_TOKEN}
+        resolvers ${lib.concatStringsSep " " config.homefree.dns.remote.cert-management.dns-01.resolvers}
+        propagation_delay 180s
+      }
     ''
     + lib.optionalString config.homefree.development ''
       # Development mode: disable ACME and use only self-signed certificates
@@ -855,7 +857,7 @@ in
               + (if config.homefree.development then ''
                 internal
               '' else lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null) ''
-                dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {env.DNS_API_TOKEN}
+                dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {$DNS_API_TOKEN}
                 resolvers ${lib.concatStringsSep " " config.homefree.dns.remote.cert-management.dns-01.resolvers}
                 propagation_delay 180s
               '')
