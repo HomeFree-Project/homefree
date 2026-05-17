@@ -48,17 +48,22 @@ class InstallationService:
     _disko_builder: Optional[Any] = None
 
     # Templates for configuration files
+    #
+    # Note: the disko *module* is NOT imported here - the HomeFree base
+    # flake already imports `disko.nixosModules.disko` (see its
+    # default.nix). Importing it again would define `_module.args.diskoLib`
+    # twice and fail evaluation. We only import the generated ./disko.nix
+    # config file (in configuration.nix), which sets `disko.devices` on
+    # the module HomeFree base already provides.
     FLAKE_TEMPLATE = """{
   description = "HomeFree NixOS Configuration";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git?ref=build-image-admin-ui";
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";@@lanzaboote_input@@@@dev_input@@
+    homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git?ref=build-image-admin-ui";@@lanzaboote_input@@@@dev_input@@
   };
 
-  outputs = { self, nixpkgs, homefree-base, disko@@lanzaboote_output_arg@@@@dev_output_arg@@, ... }@inputs:
+  outputs = { self, nixpkgs, homefree-base@@lanzaboote_output_arg@@@@dev_output_arg@@, ... }@inputs:
   let
     system = "x86_64-linux";@@dev_let@@
   in {
@@ -66,8 +71,7 @@ class InstallationService:
       @@hostname@@ = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
-          @@homefree_module@@
-          disko.nixosModules.disko@@lanzaboote_module@@
+          @@homefree_module@@@@lanzaboote_module@@
           ./configuration.nix
           ./homefree-configuration.nix
         ];
