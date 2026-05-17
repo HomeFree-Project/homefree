@@ -655,23 +655,25 @@ in
               }
             }
 
-            # Disable caching entirely for the admin UI's static files.
-            # The frontend is served straight from /nix/store, where every
-            # file has mtime=epoch (1970-01-01) and Caddy's file_server
-            # generates an empty/identical ETag. Combined with
-            # `Cache-Control: no-cache` (which only requires revalidation,
-            # not skipping the cache), the browser sends `If-None-Match: ""`
-            # + `If-Modified-Since: epoch`, Caddy returns 304, and the
-            # browser serves the OLD cached file even after a rebuild —
-            # nothing short of shift+reload picks up new JS.
+            # Disable caching entirely for the admin surface — EVERY
+            # response, no exceptions.
             #
-            # `no-store` forces a fresh fetch every time and side-steps
-            # the validation entirely. Cost is trivial on a LAN; benefit
-            # is "Refresh" actually works.
-            @adminstatic {
-              path *.js *.css *.html *.svg *.png *.woff *.woff2
-            }
-            header @adminstatic {
+            # The admin UI is an app, not a static site: its JS/HTML is
+            # live code and its /api/* responses are live state (config,
+            # rebuild status, mode). Nothing here should ever be cached.
+            #
+            # Why not an extension allowlist: it was `path *.js *.css
+            # *.html ...`, which left anything else uncovered — notably the
+            # bare app route `/` (request path has no `.html`), so the app
+            # shell itself could cache. file_server also generates ETags
+            # from /nix/store mtimes (all epoch), so `no-cache` alone lets
+            # the browser 304 against a stale copy after a rebuild.
+            #
+            # `no-store` on every response forces a fresh fetch every time
+            # and strips the validators that enable 304s. Cost is trivial
+            # on a LAN; the benefit is the app can never serve stale code
+            # or stale state.
+            header {
               Cache-Control "no-store"
               -ETag
               -Last-Modified
@@ -768,13 +770,11 @@ in
               }
             }
 
-            # Same no-store caching policy as admin: /nix/store mtimes
-            # are epoch, ETags collide across rebuilds; no-store forces
-            # a fresh fetch each time so refresh actually works.
-            @userstatic {
-              path *.js *.css *.html *.svg *.png *.woff *.woff2
-            }
-            header @userstatic {
+            # Same blanket no-store policy as the admin vhost above:
+            # the home dashboard is a live app, every response (code and
+            # /api state) must never cache. See the admin block for the
+            # full rationale.
+            header {
               Cache-Control "no-store"
               -ETag
               -Last-Modified
