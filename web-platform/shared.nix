@@ -41,6 +41,13 @@
         pkgs.bash
       ]}:/run/current-system/sw/bin:$PATH"
 
+      # pkexec also drops NIX_PATH. disko's cli.nix needs <nixpkgs> to
+      # resolve; point it at the ISO's own nixpkgs. nix-command/flakes
+      # are enabled system-wide via nix.settings, but export them too so
+      # disko's `nix` invocations work even with a reset environment.
+      export NIX_PATH="nixpkgs=${pkgs.path}"
+      export NIX_CONFIG="experimental-features = nix-command flakes"
+
       # Special handling for file writes to /mnt
       if [ "$1" = "write-file" ]; then
         # write-file <path> <content from stdin>
@@ -107,6 +114,16 @@
       RestartSec = 5;
     };
   };
+
+  # disko's CLI shells out to `nix` and uses nix-command/flakes; the
+  # installer ISO must have those experimental features enabled (the
+  # installed system already gets them via profiles/common.nix).
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+  # disko's standalone cli.nix defaults `pkgs ? import <nixpkgs> {}`, so
+  # the `<nixpkgs>` search-path entry must resolve. Pin it to the same
+  # nixpkgs the ISO was built from (channels are absent on a flake ISO).
+  nix.nixPath = [ "nixpkgs=${pkgs.path}" ];
 
   # Enable polkit for pkexec
   security.polkit.enable = true;
