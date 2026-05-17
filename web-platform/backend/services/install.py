@@ -834,6 +834,36 @@ in
         logger.info("Copied LUKS secrets into target /etc/nixos/secrets")
 
     @staticmethod
+    def _release_target_disks(root_mount_point: str):
+        """Free up disks/devices left active by a previous install run.
+
+        disko's `destroy` step fails if a target disk still has a mounted
+        partition, an open LUKS mapper, or active swap. After a failed or
+        repeated install, those linger. Every step here is best-effort:
+        a non-zero exit just means there was nothing to release.
+
+        Each cleanup runs as a single `bash -c` script invoked through
+        the pkexec wrapper. `umount`/`mount` is a privileged command so
+        needs_privilege() escalates the whole shell string.
+        """
+        # umount is in PRIVILEGED_COMMANDS, so leading the script with it
+        # makes needs_privilege() escalate the entire shell command.
+        cleanup_script = (
+            # Unmount anything under the target mount point, deepest first.
+            f"umount -R {root_mount_point} 2>/dev/null || true; "
+            f"mount | awk '{{print $3}}' | grep '^{root_mount_point}' "
+            f"| sort -r | xargs -r umount -l 2>/dev/null || true; "
+            # Disable swap that lives on the disks about to be wiped.
+            "swapoff -a 2>/dev/null || true; "
+            # Close LUKS mappers the installer may have opened.
+            "for m in /dev/mapper/crypt*; do "
+            "[ -e \"$m\" ] && cryptsetup close \"$(basename \"$m\")\" "
+            "2>/dev/null || true; done"
+        )
+        run_privileged(cleanup_script, shell=True, check=False)
+        logger.info("Released stale mounts / swap / LUKS mappers")
+
+    @staticmethod
     def _partition_disks(root_mount_point: str):
         """Partition, encrypt, format and mount the target disks via disko.
 
@@ -882,6 +912,12 @@ in
             f.write(disko_nix)
         logger.info(f"Wrote disko config to {live_disko_path}")
 
+        # Release stale state from a previous install attempt: an active
+        # LUKS mapper, mounted target, or enabled swap on the disks would
+        # make disko's `destroy` step fail with the disk busy. Each step
+        # is best-effort - it is normal for there to be nothing to clean.
+        InstallationService._release_target_disks(root_mount_point)
+
         # Run disko: destroy,format,mount against the standalone file.
         # --yes-wipe-all-disks skips the interactive confirmation.
         try:
@@ -897,12 +933,19 @@ in
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
             )
+            disko_output = []
             for line in process.stdout:
+                disko_output.append(line.rstrip())
                 logger.info(f"disko: {line.rstrip()}")
             process.wait()
             if process.returncode != 0:
+                # Surface the tail of disko's own output in the error so
+                # the failure cause is visible in the UI, not just the
+                # backend journal.
+                tail = "\n".join(disko_output[-15:]) or "(no output)"
                 raise Exception(
-                    f"disko failed with exit code {process.returncode}"
+                    f"disko failed with exit code {process.returncode}.\n"
+                    f"Last output:\n{tail}"
                 )
         except FileNotFoundError:
             raise Exception(

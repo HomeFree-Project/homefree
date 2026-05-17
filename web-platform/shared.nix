@@ -36,6 +36,9 @@
         pkgs.git
         pkgs.gnused
         pkgs.gnugrep
+        pkgs.gawk
+        pkgs.findutils
+        pkgs.bash
       ]}:/run/current-system/sw/bin:$PATH"
 
       # Special handling for file writes to /mnt
