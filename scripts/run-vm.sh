@@ -590,15 +590,33 @@ cmd_run() {
 
     # Emulated TPM2 via swtpm: start the daemon on a unix socket and
     # attach it as a tpm-tis device so the guest sees /dev/tpmrm0.
+    #
+    # The daemon must persist across guest *reboots* - QEMU drops and
+    # re-opens the chardev each boot. So NO --terminate (that would make
+    # swtpm exit on the first disconnect, breaking the second boot and
+    # producing a TPM self-test error). swtpm keeps its state under
+    # SWTPM_DIR, which is also what makes a TPM2-enrolled LUKS volume
+    # still unlock after a reboot.
     if [[ "$USE_TPM" == "true" ]]; then
         local SWTPM_DIR="$VM_STATE_DIR/swtpm"
         local SWTPM_SOCK="$SWTPM_DIR/swtpm-sock"
         mkdir -p "$SWTPM_DIR"
         rm -f "$SWTPM_SOCK"
+
+        # Initialise the TPM state on first use (idempotent: skipped if
+        # state already exists from an earlier run, so enrolled keys
+        # survive). swtpm_setup creates the EK/SRK and platform certs.
+        if [[ ! -e "$SWTPM_DIR/tpm2-00.permall" ]]; then
+            log_info "Initialising swtpm state..."
+            swtpm_setup --tpmstate "$SWTPM_DIR" --tpm2 \
+                --create-ek-cert --create-platform-cert --lock-nvram \
+                2>/dev/null || log_warning "swtpm_setup reported issues (continuing)"
+        fi
+
         log_info "Starting swtpm (emulated TPM2)..."
         swtpm socket --tpmstate "dir=$SWTPM_DIR" \
             --ctrl "type=unixio,path=$SWTPM_SOCK" \
-            --tpm2 --terminate &
+            --tpm2 &
         SWTPM_PID=$!
         for _ in {1..30}; do
             [[ -S "$SWTPM_SOCK" ]] && break
