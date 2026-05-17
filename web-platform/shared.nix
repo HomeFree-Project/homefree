@@ -46,8 +46,9 @@
         exit 0
       fi
 
-      # Special handling for mkdir on /mnt
-      if [ "$1" = "mkdir" ] && [[ "$2" == /mnt/* ]]; then
+      # Special handling for mkdir on /mnt (install target) and /etc
+      # (the live installer's config, e.g. /etc/nixos/secrets).
+      if [ "$1" = "mkdir" ] && { [[ "$2" == /mnt/* ]] || [[ "$2" == /etc/* ]]; }; then
         mkdir -p "$2"
         exit 0
       fi

@@ -128,6 +128,19 @@ def popen_privileged(command: List[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen(wrapped_cmd, **kwargs)
 
 
+# Path prefixes the unprivileged `nixos` user cannot write directly, so
+# file/dir operations there must go through the pkexec wrapper:
+#   /mnt   - the installation target
+#   /etc   - the live installer's own config (e.g. the LUKS keyfile at
+#            /etc/nixos/secrets/ that disko reads at format time)
+_PRIVILEGED_PATH_PREFIXES = ('/mnt/', '/etc/')
+
+
+def _path_needs_privilege(path: str) -> bool:
+    """True if writing/creating `path` requires root."""
+    return path.startswith(_PRIVILEGED_PATH_PREFIXES)
+
+
 def write_file_privileged(file_path: str, content: str) -> None:
     """
     Write a file with privilege escalation if needed.
@@ -136,8 +149,7 @@ def write_file_privileged(file_path: str, content: str) -> None:
         file_path: Path to file to write
         content: Content to write to file
     """
-    # Check if file path requires privileges (e.g., /mnt/*)
-    if file_path.startswith('/mnt/'):
+    if _path_needs_privilege(file_path):
         # Use pkexec wrapper to write file as root
         proc = subprocess.Popen(
             [PKEXEC_BIN, PKEXEC_WRAPPER, "write-file", file_path],
@@ -160,8 +172,7 @@ def mkdir_privileged(dir_path: str) -> None:
     Args:
         dir_path: Path to directory to create
     """
-    # Check if directory path requires privileges (e.g., /mnt/*)
-    if dir_path.startswith('/mnt/'):
+    if _path_needs_privilege(dir_path):
         # Use pkexec wrapper to create directory as root
         result = subprocess.run(
             [PKEXEC_BIN, PKEXEC_WRAPPER, "mkdir", dir_path],
