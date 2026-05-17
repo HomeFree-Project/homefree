@@ -17,11 +17,12 @@ USE_VIRTVIEWER="${USE_VIRTVIEWER:-false}"
 USE_HEADLESS="${USE_HEADLESS:-false}"
 USE_UEFI="${USE_UEFI:-true}"
 # Number of data disks to attach. 1 = single-disk install; 2+ lets the
-# installer set up a btrfs RAID. Override with --disks N.
-VM_DISKS="${VM_DISKS:-1}"
-# Emulated TPM2 (swtpm). Needed to test unattended LUKS auto-unlock;
-# without it the installer falls back to passphrase-at-boot. --tpm to enable.
-USE_TPM="${USE_TPM:-false}"
+# installer set up a btrfs RAID. Defaults to 2 so RAID is testable out
+# of the box; override with --disks N (or -n 1 for a single-disk test).
+VM_DISKS="${VM_DISKS:-2}"
+# Emulated TPM2 (swtpm). Needed to test unattended LUKS auto-unlock.
+# Enabled by default; pass --no-tpm to test the passphrase-at-boot path.
+USE_TPM="${USE_TPM:-true}"
 
 # Script-scope state for the cleanup trap (see note below).
 SWTPM_PID=""
@@ -117,21 +118,21 @@ Source-tree sharing (development mode):
                   non-dev installation.
 
 Disk encryption testing:
-  --tpm:          Attach an emulated TPM2 (swtpm). Required to test the
-                  installer's unattended LUKS auto-unlock — without it
-                  the installed system falls back to a passphrase prompt
-                  at every boot. Needs UEFI (the default) and the
-                  'swtpm' binary in PATH.
-  --disks N:      Attach N data disks instead of 1. With 2+ disks the
-                  installer can set up a btrfs RAID (mirror/stripe).
+  Default:        2 data disks + an emulated TPM2 (swtpm), so btrfs RAID
+                  and unattended LUKS auto-unlock are testable out of the
+                  box. Needs UEFI (the default) and 'swtpm' in PATH.
+  --no-tpm:       Skip the emulated TPM2 — exercises the passphrase-at-
+                  boot path (LUKS defaults off in the wizard with no TPM).
+  --disks N:      Attach N data disks (default 2). Use -n 1 for a
+                  single-disk install test.
 
 Options:
   -i, --iso PATH            Path to ISO (default: auto-detect in build/).
   -m, --memory MB           VM memory (default: 8192).
   -c, --cores N             CPU cores (default: 4).
   -d, --disk-size SIZE      Disk size for fresh installs (default: 50G).
-  -n, --disks N             Number of data disks to attach (default: 1).
-      --tpm                 Attach an emulated TPM2 via swtpm.
+  -n, --disks N             Number of data disks to attach (default: 2).
+      --tpm / --no-tpm      Emulated TPM2 on/off (default: on).
       --bridge              Use bridge networking instead of user-mode.
       --no-dev              Disable the virtiofs source share.
   -v, --virtviewer          QXL/SPICE + remote-viewer (clipboard).
@@ -147,10 +148,10 @@ Environment variables: FLAKE_DIR, VM_MEMORY, VM_CORES, VM_DISK_SIZE,
 VM_DISKS, USE_TPM, BUILD_DIR, VM_STATE_DIR.
 
 Examples:
-  $SCRIPT_NAME run                        # user-mode + dev (default)
-  $SCRIPT_NAME run --no-dev               # user-mode, no source share
-  $SCRIPT_NAME run --tpm                  # single disk + TPM2 auto-unlock
-  $SCRIPT_NAME run --tpm --disks 2        # 2-disk RAID + encryption test
+  $SCRIPT_NAME run                        # 2 disks + TPM2 + dev (default)
+  $SCRIPT_NAME run -n 1                   # single-disk install test
+  $SCRIPT_NAME run --no-tpm               # passphrase-at-boot path
+  $SCRIPT_NAME run --no-dev               # no source share
   $SCRIPT_NAME run --bridge               # router topology + dev share
   $SCRIPT_NAME run -l                     # bridge + lan-client VM
 EOF
@@ -287,6 +288,10 @@ cmd_run() {
                 ;;
             --tpm)
                 USE_TPM=true
+                shift
+                ;;
+            --no-tpm)
+                USE_TPM=false
                 shift
                 ;;
             --bridge)

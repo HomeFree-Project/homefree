@@ -17,6 +17,27 @@
 
       set -e
 
+      # pkexec resets the environment, so the backend service's PATH is
+      # not inherited. Re-establish a PATH that includes the disk tools
+      # (parted, btrfs-progs, disko, cryptsetup, tpm2-tools, ...) and the
+      # NixOS install tools the privileged commands rely on.
+      export PATH="${lib.makeBinPath [
+        pkgs.util-linux
+        pkgs.coreutils
+        pkgs.parted
+        pkgs.dosfstools
+        pkgs.btrfs-progs
+        pkgs.disko
+        pkgs.cryptsetup
+        pkgs.tpm2-tools
+        pkgs.sbctl
+        pkgs.nixos-install-tools
+        pkgs.nix
+        pkgs.git
+        pkgs.gnused
+        pkgs.gnugrep
+      ]}:/run/current-system/sw/bin:$PATH"
+
       # Special handling for file writes to /mnt
       if [ "$1" = "write-file" ]; then
         # write-file <path> <content from stdin>

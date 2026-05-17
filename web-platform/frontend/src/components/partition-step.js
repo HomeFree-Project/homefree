@@ -112,7 +112,10 @@ class PartitionStep extends LitElement {
     super();
     this.selectedDisks = [];
     this.raid = 'none';
-    this.useEncryption = true;        // encryption is on by default
+    // Default is decided from the probe in connectedCallback: on with a
+    // TPM2 (unattended auto-unlock), off without one (a server must not
+    // require a passphrase at every boot).
+    this.useEncryption = false;
     this.useSwap = true;
     this.useLanzaboote = false;
     this.disks = [];
@@ -132,6 +135,10 @@ class PartitionStep extends LitElement {
       this.capabilities = { uefi: false, tpm2_available: false };
     } finally {
       this.loading = false;
+      // Enable encryption by default only when the disk can unlock
+      // itself unattended: TPM2 present on a UEFI system. Otherwise it
+      // stays off (the user can still opt in, accepting boot prompts).
+      this.useEncryption = this.tpm2 && this.uefi;
       // Push the default config up so the step is valid immediately
       // once a disk is chosen.
       this.notifyParent();
@@ -362,7 +369,9 @@ class PartitionStep extends LitElement {
             <input type="checkbox" id="encryption"
               .checked=${this.useEncryption}
               @change=${this.handleEncryptionChange} />
-            <label for="encryption">Encrypt disk with LUKS (recommended)</label>
+            <label for="encryption">
+              Encrypt disk with LUKS${(this.tpm2 && this.uefi) ? ' (recommended)' : ''}
+            </label>
           </div>
           ${this.renderEncryptionBanner()}
 
