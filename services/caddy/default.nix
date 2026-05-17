@@ -501,12 +501,20 @@ in
               ##    onto the inbound request, then control falls
               ##    through to whatever handler matches downstream
               ##    (file_server, the @api reverse_proxy, etc.).
-              @sso_gate {
-                file {
-                  root /
-                  try_files /var/lib/homefree-secrets/.sso-provisioned
-                }
-              }
+              ##  - The gate ALSO requires .setup-complete to exist.
+              ##    The finish-setup wizard runs over plain HTTP on the
+              ##    LAN and polls /api/config/rebuild-status across its
+              ##    own rebuild — the rebuild that provisions SSO and
+              ##    creates .sso-provisioned. If the gate activated the
+              ##    instant .sso-provisioned appeared, that poll would
+              ##    be 302'd to auth.<domain> and the wizard would hang
+              ##    forever, never seeing the build finish. Gating on
+              ##    .setup-complete keeps the WHOLE admin UI open over
+              ##    HTTP until the wizard's final step writes that
+              ##    sentinel — which is also the SSO-bypass contract in
+              ##    admin-api's middleware. Both files are checked at
+              ##    REQUEST time via CEL file(), so no rebuild flips it.
+              @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})`
               forward_auth @sso_gate http://${lan-address}:4180 {
                 uri /oauth2/auth
                 copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups

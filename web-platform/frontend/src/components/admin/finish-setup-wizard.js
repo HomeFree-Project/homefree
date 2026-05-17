@@ -40,6 +40,10 @@ class FinishSetupWizard extends LitElement {
   static properties = {
     // ['ssh-key', 'dns-01'] — which required items the backend still wants.
     pendingItems: { type: Array },
+    // Step to start on, supplied by admin-app so navigating away from and
+    // back to the wizard restores where the user left off. -1 = let the
+    // wizard pick its own start step (first mount).
+    initialStep: { type: Number },
     step: { type: Number, state: true },        // 0=ssh 1=dns01 2=ddclient 3=apply
     sshKeyInput: { type: String, state: true },
     sshKeySaved: { type: Boolean, state: true },
@@ -171,7 +175,7 @@ class FinishSetupWizard extends LitElement {
     details.platform[open] summary::before { content: "▾ "; color: var(--hf-accent); }
     details.platform .platform-body { padding: 0 12px 10px; }
     label { display: block; font-size: 13px; font-weight: 500; margin: 14px 0 6px; }
-    textarea, input[type=text] {
+    textarea, input[type=text], input[type=password] {
       width: 100%;
       box-sizing: border-box;
       background: var(--hf-surface-2);
@@ -247,6 +251,7 @@ class FinishSetupWizard extends LitElement {
   constructor() {
     super();
     this.pendingItems = [];
+    this.initialStep = -1;
     this.step = 0;
     this.sshKeyInput = '';
     this.sshKeySaved = false;
@@ -264,9 +269,15 @@ class FinishSetupWizard extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
-    // If the box already has an authorized key (e.g. only DNS-01 is pending),
-    // skip straight past the SSH step.
-    if (!this.pendingItems.includes('ssh-key')) {
+    // The wizard component is destroyed and recreated whenever the user
+    // navigates away from and back to the Finish-setup page. admin-app
+    // holds the last step in `initialStep` so we can resume there instead
+    // of snapping back to step 0.
+    if (this.initialStep >= 0) {
+      this.step = this.initialStep;
+    } else if (!this.pendingItems.includes('ssh-key')) {
+      // First mount, and the box already has an authorized key (e.g. only
+      // DNS-01 is pending) — skip straight past the SSH step.
       this.sshKeySaved = true;
       this.step = 1;
     }
@@ -279,6 +290,18 @@ class FinishSetupWizard extends LitElement {
     // status, so on mount we can reattach instead of restarting at step 0
     // and stranding a rebuild whose result nobody is watching.
     await this.recoverRebuildIfAny();
+  }
+
+  // Whenever the step changes, report it up to admin-app so it survives a
+  // nav-away / nav-back cycle (which destroys and recreates this component).
+  updated(changed) {
+    if (changed.has('step')) {
+      this.dispatchEvent(new CustomEvent('wizard-step-change', {
+        detail: { step: this.step },
+        bubbles: true,
+        composed: true,
+      }));
+    }
   }
 
   // If a rebuild is running, jump to the apply step and reattach the

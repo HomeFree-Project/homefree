@@ -146,6 +146,27 @@ export const shellStyles = css`
   .nav-item.active .nav-item-icon {
     filter: none;
   }
+  /* Finish-setup nav item — pinned at the top of the menu while post-
+     install setup is incomplete. A distinct amber tint marks it as a
+     TEMPORARY item that will disappear once setup is done. */
+  .nav-item-finish-setup {
+    background: rgba(245, 191, 66, 0.12);
+    border-left-color: #f5bf42;
+    color: var(--hf-text);
+    font-weight: 600;
+    margin: 0 0 8px 0;
+  }
+  .nav-item-finish-setup .nav-item-icon {
+    filter: none;
+  }
+  .nav-item-finish-setup:hover {
+    background: rgba(245, 191, 66, 0.2);
+    color: var(--hf-text);
+  }
+  .nav-item-finish-setup.active {
+    background: rgba(245, 191, 66, 0.22);
+    border-left-color: #f5bf42;
+  }
   .sidebar.collapsed .nav-item-text {
     display: none;
   }

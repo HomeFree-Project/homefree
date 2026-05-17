@@ -42,6 +42,10 @@ class AdminApp extends LitElement {
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured for secrets management
     setupIncomplete: { type: Boolean, state: true }, // Finish-setup wizard not yet completed (authoritative gate)
     pendingSetupItems: { type: Array, state: true }, // Hint: which finish-setup steps remain (for wizard start step)
+    // Finish-setup wizard's current step, lifted up here so navigating
+    // away from and back to the wizard doesn't reset it to step 0 (the
+    // wizard component is destroyed and recreated on each nav change).
+    wizardStep: { type: Number, state: true },
     serviceReloading: { type: Boolean }, // Whether admin-api is restarting
     serviceReloadMessage: { type: String }, // Message to show during reload
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
@@ -573,6 +577,7 @@ class AdminApp extends LitElement {
     this.hasAuthorizedKeys = false;
     this.setupIncomplete = false;
     this.pendingSetupItems = [];
+    this.wizardStep = -1;  // -1 = not yet initialised; wizard picks its start step
     this.serviceReloading = false;
     this.currentUser = null;
     this.userMenuOpen = false;
@@ -2012,6 +2017,8 @@ class AdminApp extends LitElement {
         return html`
           <finish-setup-wizard
             .pendingItems=${this.pendingSetupItems}
+            .initialStep=${this.wizardStep}
+            @wizard-step-change=${(e) => { this.wizardStep = e.detail.step; }}
           ></finish-setup-wizard>
         `;
 
@@ -2198,15 +2205,21 @@ class AdminApp extends LitElement {
     // warning banner links to the "Finish setup" page (a normal nav module).
     // `setupIncomplete` is the backend .setup-complete marker.
 
-    // Group modules by section. The finish-setup module is only listed
-    // while setup is incomplete (see getVisibleModules()).
+    // Group modules by section. The finish-setup module is pinned at the
+    // TOP of the nav as its own highlighted item (not inside a section), so
+    // it is excluded from the section grouping here.
     const sections = {};
-    this.getVisibleModules().forEach(module => {
-      if (!sections[module.section]) {
-        sections[module.section] = [];
-      }
-      sections[module.section].push(module);
-    });
+    this.getVisibleModules()
+      .filter(module => module.id !== 'finish-setup')
+      .forEach(module => {
+        if (!sections[module.section]) {
+          sections[module.section] = [];
+        }
+        sections[module.section].push(module);
+      });
+    const finishSetupModule = this.setupIncomplete
+      ? this.modules.find(m => m.id === 'finish-setup')
+      : null;
 
     return html`
       ${this.updateAvailable ? html`
@@ -2246,6 +2259,15 @@ class AdminApp extends LitElement {
           </div>
 
           <nav class="nav-menu">
+            ${finishSetupModule ? html`
+              <div
+                class="nav-item nav-item-finish-setup ${this.currentModule === 'finish-setup' ? 'active' : ''}"
+                @click=${() => this.handleModuleClick('finish-setup')}
+              >
+                <span class="nav-item-icon">${finishSetupModule.icon}</span>
+                <span class="nav-item-text">${finishSetupModule.title}</span>
+              </div>
+            ` : ''}
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`
