@@ -466,19 +466,32 @@ cmd_run() {
         # actually realises the store path so the firmware is on disk before
         # QEMU references it. Falls back to system paths only if the flake
         # build fails (e.g. no network and not yet cached).
+        #
+        # IMPORTANT: when --tpm is used we need a TPM2-capable OVMF build
+        # (`OVMFFull`, which sets tpmSupport=true). Plain `OVMF` is built
+        # WITHOUT TPM support, so its firmware never issues TPM2_Startup
+        # and the guest kernel's TPM self-test fails with error 256
+        # (TPM_RC_INITIALIZE). The non-Full system fallbacks are skipped
+        # when --tpm is on for the same reason.
         local OVMF_FD=""
+        local ovmf_attr='nixpkgs#OVMF.fd'
+        [[ "$USE_TPM" == "true" ]] && ovmf_attr='nixpkgs#OVMFFull.fd'
         if command -v nix &> /dev/null; then
             OVMF_FD=$(nix build --no-link --print-out-paths \
                 --inputs-from "$FLAKE_DIR" \
-                'nixpkgs#OVMF.fd' 2>/dev/null || true)
+                "$ovmf_attr" 2>/dev/null || true)
         fi
 
         local -a OVMF_CANDIDATES=()
         [[ -n "$OVMF_FD" ]] && OVMF_CANDIDATES+=("$OVMF_FD/FV/OVMF_CODE.fd")
-        OVMF_CANDIDATES+=(
-            "/run/current-system/sw/share/OVMF/OVMF_CODE.fd"
-            "/usr/share/OVMF/OVMF_CODE.fd"
-        )
+        # System-path OVMF builds are typically NOT TPM-capable; only use
+        # them as a fallback when the TPM is not in play.
+        if [[ "$USE_TPM" != "true" ]]; then
+            OVMF_CANDIDATES+=(
+                "/run/current-system/sw/share/OVMF/OVMF_CODE.fd"
+                "/usr/share/OVMF/OVMF_CODE.fd"
+            )
+        fi
 
         for code_path in "${OVMF_CANDIDATES[@]}"; do
             if [[ -f "$code_path" ]]; then
@@ -489,6 +502,15 @@ cmd_run() {
         done
 
         if [[ -z "$OVMF_CODE" ]]; then
+            # With --tpm, UEFI is mandatory (the TPM needs OVMF to issue
+            # TPM2_Startup), so a missing firmware is a hard error rather
+            # than a silent downgrade.
+            if [[ "$USE_TPM" == "true" ]]; then
+                log_error "TPM-capable OVMF firmware (OVMFFull) not found."
+                log_error "Build it with 'nix build nixpkgs#OVMFFull.fd', or"
+                log_error "pass --no-tpm to run without an emulated TPM."
+                exit 1
+            fi
             log_warning "OVMF firmware not found, disabling UEFI boot"
             USE_UEFI=false
         else
