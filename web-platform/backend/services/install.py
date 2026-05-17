@@ -1005,31 +1005,50 @@ in
         keyfile = f"{root_mount_point}{LUKS_KEYFILE}"
         for part in InstallationService._luks_partition_paths(builder):
             try:
+                # No trailing "-": with `-` cryptsetup reads the new key
+                # as a *keyfile* (raw bytes to EOF), which produces a
+                # slot that an interactively-typed boot passphrase cannot
+                # unlock. Omitting it makes cryptsetup read the new key
+                # from stdin with *passphrase* semantics - one line, the
+                # trailing newline stripped - exactly matching what
+                # systemd-cryptsetup receives at the boot prompt.
+                # `-q` suppresses confirmation prompts for the
+                # non-interactive run. `--key-file` authorizes via the
+                # existing install-time keyfile.
                 proc = popen_privileged(
                     [
-                        "cryptsetup", "luksAddKey",
+                        "cryptsetup", "luksAddKey", "-q",
                         "--key-file", keyfile,
-                        part, "-",
+                        part,
                     ],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                 )
-                # No trailing newline: cryptsetup reads the new key from
-                # stdin until EOF, so a '\n' would become part of the
-                # key and fail to match an interactive TTY prompt later.
-                out, _ = proc.communicate(input=recovery_passphrase)
+                # Trailing newline terminates the passphrase read and is
+                # stripped - matches the user pressing Enter at boot.
+                out, _ = proc.communicate(input=recovery_passphrase + "\n")
                 if proc.returncode != 0:
-                    logger.warning(
-                        f"luksAddKey on {part} failed (non-fatal): {out}"
+                    # A RAID member without the recovery passphrase slot
+                    # produces an unbootable system - fail hard, do not
+                    # let the install "succeed" into a broken state.
+                    raise Exception(
+                        f"cryptsetup luksAddKey failed on {part} "
+                        f"(exit {proc.returncode}): {out}"
                     )
-                else:
-                    logger.info(f"Added recovery keyslot on {part}")
+                logger.info(f"Added recovery keyslot on {part}")
             except Exception as e:
-                logger.warning(
+                # Abort the install: a LUKS container the user cannot
+                # unlock with the recovery passphrase means an
+                # unbootable system. Better to fail the install loudly.
+                logger.error(
                     f"Could not add recovery keyslot on {part}: {e}"
                 )
+                raise Exception(
+                    f"Failed to add recovery passphrase to {part}; "
+                    f"aborting install to avoid an unbootable system: {e}"
+                ) from e
 
     @staticmethod
     def _generate_hardware_config(root_mount_point: str):
