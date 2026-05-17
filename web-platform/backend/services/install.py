@@ -801,9 +801,15 @@ in
         live_secrets_dir = Path(LUKS_KEYFILE).parent
         run_privileged(["mkdir", "-p", str(live_secrets_dir)], check=True)
 
-        # 512-bit random keyfile, base64 text (cryptsetup treats the
-        # file bytes as the key, so any content works).
-        keyfile_content = base64.b64encode(secrets.token_bytes(64)).decode() + "\n"
+        # 512-bit random keyfile, base64 text. NO trailing newline:
+        # disko's `passwordFile` is read with *passphrase* semantics
+        # (newline-stripped) at luksFormat time, while
+        # `cryptsetup luksAddKey --key-file` reads it as a *keyfile*
+        # (raw bytes to EOF, newline included). A trailing '\n' would
+        # therefore make the two see different keys and luksAddKey would
+        # fail to authorize (cryptsetup exit 2). With no newline both
+        # paths see identical bytes.
+        keyfile_content = base64.b64encode(secrets.token_bytes(64)).decode()
         write_file_privileged(LUKS_KEYFILE, keyfile_content)
         run_privileged(["chmod", "600", LUKS_KEYFILE], check=True)
 
