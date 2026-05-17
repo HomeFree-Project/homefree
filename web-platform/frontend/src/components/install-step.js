@@ -270,11 +270,19 @@ class InstallStep extends LitElement {
           </div>
           ${this.recoveryPassphrase ? html`
             <div class="recovery-box">
-              <strong>🔑 Disk encryption recovery passphrase</strong>
+              <strong>🔑 Write down this disk passphrase before continuing</strong>
               <p>
-                Write this down and keep it somewhere safe. It is the only
+                <strong>You will need to type this passphrase at the next
+                boot.</strong> The encrypted disk does not unlock itself
+                until the system has booted once and registered with the
+                TPM &mdash; so on the first reboot you must enter it at the
+                console. After that, reboots are automatic.
+              </p>
+              <p>
+                Keep it somewhere safe long-term too: it is also the only
                 way to unlock the disk if the TPM is cleared or the drive
-                is moved to another machine. It is not shown again.
+                is moved to another machine. <strong>It is not shown
+                again.</strong>
               </p>
               <code class="recovery-code">${this.recoveryPassphrase}</code>
             </div>
