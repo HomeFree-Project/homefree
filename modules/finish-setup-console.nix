@@ -169,9 +169,16 @@ in
   ##    output has drained — the same mechanism getty uses so its prompt
   ##    is not overprinted by boot messages. Without this the screen and
   ##    the boot log shred each other.
-  ##  - `Restart = "always"`: if the script ever dies it is relaunched
-  ##    cleanly rather than leaving tty1 half-owned; a fresh instance also
-  ##    re-clears the screen, so stale frames cannot accumulate.
+  ##  - `Restart = "on-failure"`: relaunch only on a genuine crash. A
+  ##    CLEAN exit means the script saw `.setup-complete` appear and is
+  ##    handing tty1 back on purpose — restarting then (as `Restart =
+  ##    "always"` did) just exits again immediately, hits the start
+  ##    limit, and leaves the unit failed with tty1 a bare blinking
+  ##    cursor and getty never returning.
+  ##  - `ExecStopPost` explicitly (re)starts getty@tty1 when this unit
+  ##    stops. Because this unit `conflicts` getty, getty does NOT come
+  ##    back on its own — without this, finishing setup leaves the
+  ##    physical console unusable (no login prompt).
   systemd.services.homefree-finish-setup-console = {
     description = "HomeFree finish-setup console status screen (tty1)";
     after = [
@@ -191,13 +198,20 @@ in
     serviceConfig = {
       Type = "idle";
       ExecStart = "${consoleScript}";
+      ## Hand tty1 back to a normal login when the TUI exits. getty does
+      ## not return on its own (this unit `conflicts` it), so without
+      ## this the console is left a bare blinking cursor. --no-block so
+      ## stopping this unit does not deadlock waiting on the conflict.
+      ExecStopPost = "${pkgs.systemd}/bin/systemctl --no-block start getty@tty1.service";
       StandardInput = "tty";
       StandardOutput = "tty";
       StandardError = "journal";
       TTYPath = "/dev/tty1";
       TTYReset = true;
       TTYVHangup = true;
-      Restart = "always";
+      ## on-failure (not always): a clean exit is the script handing
+      ## tty1 back after setup completed — see the comment block above.
+      Restart = "on-failure";
       RestartSec = 1;
     };
   };

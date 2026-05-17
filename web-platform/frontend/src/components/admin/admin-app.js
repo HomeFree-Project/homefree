@@ -790,21 +790,32 @@ class AdminApp extends LitElement {
       this.pendingSetupItems = [];
     }
 
-    // When the finish-setup wizard is showing, the normal admin dashboard
-    // is not active — so skip its background pollers entirely. They hit
-    // endpoints outside the finish-setup auth bypass (config/dirty,
-    // closure-id, rebuild-status) and would 401 every few seconds, spamming
-    // the console. The wizard does its own rebuild-status polling.
+    // On a fresh load with no explicit route in the URL, land on the
+    // Finish Setup page while setup is incomplete — that is the thing the
+    // user needs to do next, not the dashboard. loadRouteFromHash() ran
+    // earlier (before setup status was known) and defaulted to
+    // 'dashboard'; correct it here. An explicit hash (the user navigated
+    // somewhere on purpose) is always respected.
+    if (this.setupIncomplete && !window.location.hash.slice(2)) {
+      this.currentModule = 'finish-setup';
+    }
+
+    // The rebuild-status poller ALWAYS runs — including during finish-setup.
+    // The Status page must show the wizard's rebuild just as it shows a
+    // normal Apply: same backend path (/api/config/apply ->
+    // homefree-rebuild.service), same /api/config/rebuild-status endpoint.
+    // The endpoint is stateless and returns the full log, so the Status
+    // page and the finish-setup wizard can both watch the same rebuild
+    // with no interference.
+    await this.checkRebuildStatus();
+    this.statusPollInterval = setInterval(() => this.checkRebuildStatus(), 3000);
+
+    // The remaining pollers are dashboard-only (Apply-button dirty state,
+    // closure-id refresh banner) and pointless while the wizard is the
+    // active surface — skip them until setup is complete.
     if (this.setupIncomplete) {
       return;
     }
-
-    // Check if a rebuild is already in progress
-    await this.checkRebuildStatus();
-
-    // Start continuous polling to keep status icon up-to-date
-    // This ensures the icon updates even after backend restarts or external rebuilds
-    this.statusPollInterval = setInterval(() => this.checkRebuildStatus(), 3000);
 
     // Initial dirty check + periodic refresh for the Apply button enabled state
     this.checkConfigDirty();
@@ -1847,9 +1858,13 @@ class AdminApp extends LitElement {
         const status = await response.json();
 
         if (status.output) {
-          // Accumulate output (trim to remove leading/trailing whitespace)
+          // The backend returns the COMPLETE log every poll, so REPLACE
+          // the buffer wholesale — never append. This is what makes the
+          // log gapless across an admin-api/Caddy restart: the first
+          // successful poll after a reconnect carries the entire log so
+          // far, with nothing missed in the disconnected window.
           const newLines = status.output.trim().split('\n').filter(l => l.trim());
-          this.buildLogs = [...this.buildLogs, ...newLines];
+          this.buildLogs = newLines;
 
           // Update header status with last line
           const lastLine = newLines[newLines.length - 1] || 'Building...';

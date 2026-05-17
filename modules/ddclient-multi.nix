@@ -247,7 +247,18 @@ with lib;
   config = mkIf config.services.ddclient-multi.enable {
     systemd.services.ddclient-multi = {
       description = "Dynamic DNS Client";
-      wantedBy = [ "multi-user.target" ];
+      ## NOT `wantedBy multi-user.target`. This is a Type=oneshot unit;
+      ## a oneshot pulled into a target makes that target's activation
+      ## job BLOCK until the oneshot finishes. ddclient can take minutes
+      ## per run — its web-based IP detection (usev4/usev6) does a curl
+      ## to a remote server, and on a box with no IPv6 route the usev6
+      ## probe burns a full curl timeout for every zone. Gating
+      ## multi-user.target on that means every `nixos-rebuild switch`
+      ## hangs in `switch-to-configuration` for minutes with the build
+      ## log frozen, looking stuck. A periodic DNS updater has no
+      ## business in the activation critical path — the timer below
+      ## (OnBootSec for the boot run, OnUnitInactiveSec for the period)
+      ## drives it entirely, asynchronously.
       after = [ "network.target" ];
       restartTriggers = optional (cfg.configFile != null) cfg.configFile;
       path = lib.optional (lib.hasPrefix "if," cfg.use) pkgs.iproute2;
@@ -288,7 +299,10 @@ with lib;
       description = "Run ddclient";
       wantedBy = [ "timers.target" ];
       timerConfig = {
-        OnBootSec = cfg.interval;
+        ## Boot run shortly after boot — fixed and short, NOT cfg.interval,
+        ## so a fresh box updates DNS promptly without the service being
+        ## in the activation critical path (see the service comment).
+        OnBootSec = "1min";
         OnUnitInactiveSec = cfg.interval;
       };
     };

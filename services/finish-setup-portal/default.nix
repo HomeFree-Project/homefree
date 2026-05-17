@@ -86,6 +86,35 @@ let
   ## wizard (= the admin UI frontend) inline for every host, with /api
   ## proxied to the admin backend. No redirect — see `devMode` above.
   devInlineConfig = ''
+    ## Caching — DISABLE IT, exactly as the real admin vhost does.
+    ## This is the bug that made "I rebuilt and still see old code"
+    ## survive even a shift-reload on a dev/VM box: the frontend is
+    ## served from /nix/store, where every file's mtime is the Unix
+    ## epoch. file_server derives ETag / Last-Modified from that mtime,
+    ## so they are identical across every rebuild. A browser that cached
+    ## a file once keeps sending If-Modified-Since, and file_server —
+    ## seeing the request date is newer than the 1970 mtime — answers
+    ## 304 Not Modified, serving the STALE module forever.
+    ##
+    ## Two-part fix, mirroring services/caddy/default.nix's static vhost:
+    ##  1. request_header strips the conditional-request headers BEFORE
+    ##     file_server sees them, so it can never return a 304 — every
+    ##     response is a full 200.
+    ##  2. the no-store header (with ETag / Last-Modified stripped) stops
+    ##     the browser storing anything in the first place.
+    ## A dev/VM box is reached through THIS :80 catch-all (Host is
+    ## `localhost`, a bare IP, etc. — never a named admin vhost), so
+    ## without this block none of the admin vhost's caching fixes apply
+    ## and the dev box caches forever.
+    request_header -If-Modified-Since
+    request_header -If-None-Match
+    header {
+      Cache-Control "no-store"
+      -ETag
+      -Last-Modified
+      -Pragma
+    }
+
     ## /api/service-state is served by Caddy as a FILE in the real admin
     ## vhost (it must work even when the backend is down). The backend has
     ## no such route, so without this handler the frontend's poll 404s and

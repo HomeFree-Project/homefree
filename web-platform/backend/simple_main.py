@@ -130,6 +130,19 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
     USER_HEADER_FALLBACK = "x-auth-request-user"
     GROUPS_HEADER = "x-auth-request-groups"
 
+    ## Development-mode flag, cached. The admin-web Nix module sets
+    ## HOMEFREE_DEVELOPMENT=1 on the admin-api service when
+    ## config.homefree.development is true. It is fixed for the life of
+    ## this process (toggling dev mode requires a rebuild, which restarts
+    ## admin-api), so reading the env var once is sufficient.
+    _dev_mode_cache = None
+
+    @classmethod
+    def _is_dev_mode(cls) -> bool:
+        if cls._dev_mode_cache is None:
+            cls._dev_mode_cache = os.environ.get("HOMEFREE_DEVELOPMENT") == "1"
+        return cls._dev_mode_cache
+
     @staticmethod
     def _parse_groups(raw: str) -> set[str]:
         """Extract a flat set of role/group names from the
@@ -192,6 +205,17 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         # which every request goes through the normal SSO + admin-role
         # gate below.
         if not self.SETUP_COMPLETE_SENTINEL.exists():
+            return await call_next(request)
+
+        # Development-mode bypass. A dev box (Caddy internal CA, typically
+        # a port-forwarded test VM) cannot complete a real SSO login:
+        # oauth2-proxy's redirect URLs are port-less, so the OIDC
+        # round-trip never finishes behind a :8443 port-forward, and the
+        # developer would be permanently locked out of their own test box
+        # the moment setup completes. Production boxes are never in dev
+        # mode, so this never relaxes a real deployment — and admin-api
+        # listens on loopback only regardless.
+        if self._is_dev_mode():
             return await call_next(request)
 
         user = request.headers.get(self.USER_HEADER) \
@@ -2922,22 +2946,25 @@ async def get_config_dirty():
 async def get_rebuild_status(request: Request):
     """Get status of current rebuild operation.
 
-    Supports `?include_history=1` for the page-load case: when a fresh
-    frontend reattaches to an in-progress rebuild, it needs the full log
-    so far, not just incremental output since the last poll.
+    `output` is ALWAYS the complete rebuild log, never an incremental
+    slice. The log is small (tens of KB) and the frontend replaces its
+    buffer wholesale each poll, so the log is gapless by construction:
+    the first poll after any admin-api/Caddy restart returns everything,
+    with no missed lines to stitch back. It is also stateless and safe
+    for multiple concurrent pollers (the Status page and the finish-setup
+    wizard can both watch the same rebuild) — there is no shared read
+    offset to race. `?include_history=1` is still accepted but is now a
+    no-op, since every response already carries the full history.
     """
     try:
         from services.nix_operations import NixOperations
 
         status = NixOperations.get_rebuild_status()
 
-        # Optionally include the full log file (not just incremental output).
-        # Used by the frontend on first connect so reload doesn't lose history.
-        include_history = request.query_params.get("include_history") in ("1", "true")
-        if include_history:
-            full = NixOperations.get_full_log()
-            if full:
-                status = {**status, "output": full}
+        # Always return the COMPLETE log (see docstring).
+        full = NixOperations.get_full_log()
+        if full:
+            status = {**status, "output": full}
 
         from models import RebuildStatus
         result = RebuildStatus(

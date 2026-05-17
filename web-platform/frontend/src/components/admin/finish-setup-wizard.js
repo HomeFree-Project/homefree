@@ -510,16 +510,15 @@ class FinishSetupWizard extends LitElement {
   //     explain (MAX_RECONNECT_FAILURES);
   //   - show a "Reconnecting…" message during the outage instead of a
   //     frozen "Starting…", so the user knows it's still working;
-  //   - ACCUMULATE log output — getRebuildStatus() returns only the NEW
-  //     output since the last call, so overwriting would blank the log;
+  //   - REPLACE the log buffer each poll — the backend returns the
+  //     complete log every time, so the log is gapless across a restart
+  //     (the first poll after reconnect carries everything);
   //   - judge success on `exit_code` (0 = success), since the status
   //     payload has no `success` field.
   pollRebuild(opts = {}) {
     if (this._rebuildPoll) clearTimeout(this._rebuildPoll);
     this._rebuildFailures = 0;
-    // On reattach (recoverRebuildIfAny) the caller has already loaded the
-    // full log so far — don't wipe it.
-    if (!opts.preserveLog) this.rebuildOutput = '';
+    this.rebuildOutput = '';
 
     const MAX_RECONNECT_FAILURES = 90;  // ~90s of sustained outage
     const tick = async () => {
@@ -548,8 +547,9 @@ class FinishSetupWizard extends LitElement {
       this._rebuildFailures = 0;
       this.reconnecting = false;
       if (s.output) {
-        // Incremental — append, never replace.
-        this.rebuildOutput = (this.rebuildOutput || '') + s.output;
+        // Backend returns the COMPLETE log every poll — replace, never
+        // append. Gapless across an admin-api/Caddy restart.
+        this.rebuildOutput = s.output;
       }
       this.requestUpdate();
 

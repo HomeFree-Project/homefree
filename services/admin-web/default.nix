@@ -547,6 +547,14 @@ in
           # endpoint. Embeds the nix-store hash, so it changes IFF the
           # frontend itself changed (not on every unrelated rebuild).
           "HOMEFREE_FRONTEND_PATH=${installerWebPath}/frontend"
+          # Development-mode flag. A dev box uses Caddy's internal CA and
+          # is typically a port-forwarded test VM where a real SSO login
+          # can never complete (oauth2-proxy's redirect URLs are
+          # port-less). admin-api's auth middleware reads this to relax
+          # the SSO-header requirement in dev mode only — production
+          # boxes are never in dev mode, so the gate stays fully enforced
+          # there. See TrustedHeaderAuthMiddleware._is_dev_mode().
+          "HOMEFREE_DEVELOPMENT=${if config.homefree.development then "1" else "0"}"
         ];
       };
     };

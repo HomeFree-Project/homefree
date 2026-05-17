@@ -453,7 +453,13 @@ in
             tls internal
 
           '' else "")
-          + ''
+          ## Security headers for reverse-proxy (non-static) sites only.
+          ## static-path sites get their security headers merged into the
+          ## single no-store `header` block further down — emitting this
+          ## block too would put TWO unmatched `header` directives in one
+          ## site, which Caddy resolves ambiguously (it may keep only one,
+          ## and if it keeps THIS one the no-store/cache headers are lost).
+          + (if reverse-proxy-config.static-path == null then ''
             header {
               # Add general security headers
               Strict-Transport-Security "max-age=31536000; includeSubdomains"
@@ -462,7 +468,7 @@ in
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
             }
-          ''
+          '' else "")
           ## Redirect http:// to https:// once the service's cert exists.
           ## Inert (empty string) until then, so a fresh box stays reachable
           ## over plain HTTP on the LAN. See certRedirectConfig above.
@@ -545,6 +551,29 @@ in
               '' else ""}
             '' else ""}
             root * ${reverse-proxy-config.static-path}
+
+            ## THE stale-cache fix. The frontend is served from /nix/store,
+            ## where every file's mtime is the Unix epoch. Caddy's
+            ## file_server derives its ETag and Last-Modified from that
+            ## mtime, so a browser that cached a file under an OLDER config
+            ## (one that sent validators) keeps sending conditional requests
+            ## — If-Modified-Since / If-None-Match — and file_server, seeing
+            ## the request's date is newer than the epoch mtime, answers
+            ## `304 Not Modified`. The browser then serves its STALE copy,
+            ## even after a rebuild, even on shift-reload (which does not
+            ## reliably re-fetch transitively-imported ES modules — i.e.
+            ## the entire admin UI). The `no-store` header below cannot
+            ## help: file_server decides the 304 before headers are applied,
+            ## and no-store only blocks FUTURE storage, it can't evict the
+            ## already-poisoned entry.
+            ##
+            ## Stripping the conditional-request headers BEFORE file_server
+            ## sees them forces a full `200` with a body every time. That
+            ## lets the no-store response actually land and the browser
+            ## drops the poisoned entry. request_header is ordered before
+            ## file_server by Caddy regardless of where it sits textually.
+            request_header -If-Modified-Since
+            request_header -If-None-Match
             file_server
 
             # Enable Gzip compression

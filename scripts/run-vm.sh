@@ -440,10 +440,32 @@ cmd_run() {
             if [[ ! -f "$OVMF_VARS_TEMPLATE" ]]; then
                 log_warning "OVMF_VARS.fd not found next to $OVMF_CODE, disabling UEFI boot"
                 USE_UEFI=false
-            elif [[ ! -f "$ROUTER_OVMF_VARS" ]]; then
-                cp --reflink=never "$OVMF_VARS_TEMPLATE" "$ROUTER_OVMF_VARS"
-                chmod 644 "$ROUTER_OVMF_VARS"
-                log_info "Created UEFI VARS file for router: $ROUTER_OVMF_VARS"
+            else
+                # Stamp recording which OVMF build the VARS file was seeded
+                # from. A persisted VARS file from one OVMF release fed to a
+                # different OVMF_CODE.fd hangs the firmware at the TianoCore
+                # splash, so if the host's OVMF changed (e.g. after a NixOS
+                # rebuild) we must re-seed VARS from the matching template.
+                # The stamp is a content hash of OVMF_CODE.fd so it catches
+                # changes behind stable paths (/usr/share, /run/current-system)
+                # as well as nix store path churn.
+                local OVMF_STAMP="$ROUTER_OVMF_VARS.ovmf-code"
+                local OVMF_CODE_HASH
+                OVMF_CODE_HASH=$(sha256sum "$OVMF_CODE" | cut -d' ' -f1)
+
+                if [[ ! -f "$ROUTER_OVMF_VARS" ]]; then
+                    cp --reflink=never "$OVMF_VARS_TEMPLATE" "$ROUTER_OVMF_VARS"
+                    chmod 644 "$ROUTER_OVMF_VARS"
+                    printf '%s\n' "$OVMF_CODE_HASH" > "$OVMF_STAMP"
+                    log_info "Created UEFI VARS file for router: $ROUTER_OVMF_VARS"
+                elif [[ "$(cat "$OVMF_STAMP" 2>/dev/null || true)" != "$OVMF_CODE_HASH" ]]; then
+                    log_warning "OVMF firmware changed since the VARS file was created."
+                    log_warning "Re-seeding $ROUTER_OVMF_VARS from the matching template"
+                    log_warning "to avoid a TianoCore boot hang (NVRAM boot entries reset)."
+                    cp --reflink=never "$OVMF_VARS_TEMPLATE" "$ROUTER_OVMF_VARS"
+                    chmod 644 "$ROUTER_OVMF_VARS"
+                    printf '%s\n' "$OVMF_CODE_HASH" > "$OVMF_STAMP"
+                fi
             fi
         fi
     fi
