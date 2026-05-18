@@ -2221,25 +2221,29 @@ class AdminApp extends LitElement {
 
   /** Top-right user menu. Delegates to the shared renderer so
    *  admin.<domain> and home.<domain> show the same shape.
-   *  Extra items are cross-SITE links (Home dashboard, Manual)
-   *  so an admin can hop between surfaces without going to the
-   *  URL bar. Profile & password lives below the separator and
-   *  routes to home.<domain>/#/profile (the single source of
-   *  truth for self-service settings). */
+   *  Account-only now (Profile & password, Sign out) — cross-site
+   *  links live in the left nav. Profile & password routes to
+   *  home.<domain>/#/profile (the single source of truth for
+   *  self-service settings). */
   _renderUserMenu() {
-    const host = window.location.hostname;
-    const apex = host.replace(/^(admin|home|manual)\./, '');
-    const proto = window.location.protocol;
     return renderUserMenu({
       currentUser: this.currentUser,
       open: this.userMenuOpen,
       onToggle: () => this.toggleUserMenu(),
       profileUrl: profileUrlForCurrentBox(),
-      extraItems: [
-        { label: 'Home',   href: `${proto}//home.${apex}/` },
-        { label: 'Manual', href: `${proto}//manual.${apex}/`, target: '_blank' },
-      ],
     });
+  }
+
+  /** Cross-SITE links for the left nav (Home dashboard, Manual).
+   *  Real external navigations to sibling subdomains — kept out of
+   *  the section/route machinery so active-state logic is untouched. */
+  _homeUrl() {
+    const apex = window.location.hostname.replace(/^(admin|home|manual)\./, '');
+    return `${window.location.protocol}//home.${apex}/`;
+  }
+  _manualUrl() {
+    const apex = window.location.hostname.replace(/^(admin|home|manual)\./, '');
+    return `${window.location.protocol}//manual.${apex}/`;
   }
 
   render() {
@@ -2321,6 +2325,12 @@ class AdminApp extends LitElement {
                 <span class="nav-item-text">${finishSetupModule.title}</span>
               </div>
             ` : ''}
+            <!-- Cross-site link to the per-user portal. External
+                 navigation, so no active state / handleModuleClick. -->
+            <a class="nav-item" href="${this._homeUrl()}">
+              <span class="nav-item-icon">🏠</span>
+              <span class="nav-item-text">Home</span>
+            </a>
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`
@@ -2338,6 +2348,15 @@ class AdminApp extends LitElement {
                 </div>
               `)}
             `)}
+            <!-- Manual in its own "More" section, mirroring the Home
+                 portal. External link, opens in a new tab since the
+                 manual site has no nav to get back here. -->
+            <div class="nav-section-title">More</div>
+            <a class="nav-item" href="${this._manualUrl()}"
+               target="_blank" rel="noopener">
+              <span class="nav-item-icon">📖</span>
+              <span class="nav-item-text">Manual</span>
+            </a>
           </nav>
 
           <!-- Apply button pinned to the sidebar bottom. nav-menu has

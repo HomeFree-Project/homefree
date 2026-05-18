@@ -366,15 +366,6 @@ class UserApp extends LitElement {
       (sections[m.section] ||= []).push(m);
     }
 
-    // Cross-site links live in the user-menu (right side of topbar).
-    // Admin shows up only if the caller has the homefree-admin role.
-    const crossSiteItems = [
-      ...(this.user?.is_admin_role ? [
-        { label: 'Admin', href: this._adminUrl() },
-      ] : []),
-      { label: 'Manual', href: this._manualUrl(), target: '_blank' },
-    ];
-
     return html`
       <div class="app-container">
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
@@ -395,6 +386,24 @@ class UserApp extends LitElement {
                 </a>
               `)}
             `)}
+            <!-- Cross-site links to the other HomeFree surfaces, in
+                 their own "More" section so they read as navigation
+                 rather than account settings. Real external
+                 navigations, so no hash route / active state. Admin
+                 only for admin-role users; Manual opens in a new tab
+                 since it has no nav to get back. -->
+            <div class="nav-section-title">More</div>
+            ${this.user?.is_admin_role ? html`
+              <a class="nav-item" href="${this._adminUrl()}">
+                <span class="nav-item-icon">🛠️</span>
+                <span class="nav-item-text">Admin</span>
+              </a>
+            ` : ''}
+            <a class="nav-item" href="${this._manualUrl()}"
+               target="_blank" rel="noopener">
+              <span class="nav-item-icon">📖</span>
+              <span class="nav-item-text">Manual</span>
+            </a>
           </nav>
         </div>
         <div class="sidebar-backdrop"
@@ -414,7 +423,6 @@ class UserApp extends LitElement {
                 open: this.userMenuOpen,
                 onToggle: () => this.toggleUserMenu(),
                 profileUrl: '#/profile',
-                extraItems: crossSiteItems,
               })}
             </div>
           </div>

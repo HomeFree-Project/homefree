@@ -558,7 +558,9 @@ class AbuseBlockingResolver:
               "internal_suppressed": N,       # how many we hid (0 if include_internal)
               "geo_available": bool,          # False if the GeoIP DB is missing
               "sources": [
-                {"ip": "1.2.3.4", "count": N, "sample_uri": "...",
+                {"ip": "1.2.3.4", "count": N,
+                 "sample_uri": "https://host/path" (full URL; bare
+                               path only for hostless raw-IP probes),
                  "internal": bool, "rdns": "host"|None,
                  "country": "..."|None, "country_code": "US"|None,
                  "city": "..."|None,
@@ -613,7 +615,13 @@ class AbuseBlockingResolver:
                     counts[ip] = counts.get(ip, 0) + 1
                     if ip not in samples:
                         uri = req.get("uri") or ""
-                        samples[ip] = uri[:200]
+                        ## HomeFree is HTTPS-only behind Caddy; the box
+                        ## serves many subdomains, so the bare path is
+                        ## ambiguous. Build the full URL from request.host.
+                        ## Hostless raw-IP probes fall back to the path.
+                        host = req.get("host") or ""
+                        sample = f"https://{host}{uri}" if host else uri
+                        samples[ip] = sample[:300]
                     total += 1
             except OSError as e:
                 logger.debug("skipping unreadable %s: %s", log_path, e)

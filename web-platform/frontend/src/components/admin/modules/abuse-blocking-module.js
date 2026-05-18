@@ -36,6 +36,7 @@ class AbuseBlockingModule extends LitElement {
     topTraffic: { type: Object, state: true },
     topFilter: { type: String, state: true },
     includeInternal: { type: Boolean, state: true },
+    expandedUris: { state: true },  // Set of source IPs whose URL cell is expanded
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
     pendingUnban: { type: Object, state: true },  // {ip: true} while in-flight
@@ -134,6 +135,19 @@ class AbuseBlockingModule extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      cursor: pointer;
+    }
+    td.uri:hover { color: var(--hf-text) !important; }
+    td.uri-expanded {
+      white-space: normal;
+      overflow-wrap: anywhere;   /* break long unbroken query strings */
+      text-overflow: clip;
+    }
+    .uri-caret {
+      margin-left: 6px;
+      opacity: 0.6;
+      font-size: 11px;
+      user-select: none;
     }
     .row-empty {
       color: var(--hf-text-muted);
@@ -351,6 +365,7 @@ class AbuseBlockingModule extends LitElement {
     this.topTraffic = null;
     this.topFilter = 'all';
     this.includeInternal = false;
+    this.expandedUris = new Set();
     this.loading = true;
     this.error = null;
     this.pendingUnban = {};
@@ -417,6 +432,8 @@ class AbuseBlockingModule extends LitElement {
       this.topTraffic = await getAbuseBlockingTopTrafficSources(
         3600, this.topFilter, 20, this.includeInternal,
       );
+      // Drop expansion state — the ranked IP list may have changed.
+      this.expandedUris = new Set();
     } catch (err) {
       console.error('[abuse-blocking] top-traffic-sources refresh failed:', err);
     }
@@ -442,6 +459,12 @@ class AbuseBlockingModule extends LitElement {
   _handleFilterChange(e) {
     this.topFilter = e.target.value;
     this._refreshTop();
+  }
+
+  _toggleUri(ip) {
+    const next = new Set(this.expandedUris);
+    next.has(ip) ? next.delete(ip) : next.add(ip);
+    this.expandedUris = next;  // new Set ref so Lit re-renders
   }
 
   _handleIncludeInternalChange(e) {
@@ -921,7 +944,7 @@ class AbuseBlockingModule extends LitElement {
                 <th class="nowrap">Domain</th>
                 ${showGeo ? html`<th class="nowrap">Location</th>` : ''}
                 <th>Hits</th>
-                <th>Sample URI</th>
+                <th>Sample URL</th>
               </tr>
             </thead>
             <tbody>
@@ -942,10 +965,21 @@ class AbuseBlockingModule extends LitElement {
                     </td>
                   ` : ''}
                   <td>${_fmtNum(s.count)}</td>
-                  <td class="mono uri" style="color: var(--hf-text-muted); font-size: 12px;"
-                      title=${s.sample_uri || ''}>
-                    ${s.sample_uri || '—'}
-                  </td>
+                  ${(() => {
+                    const uri = s.sample_uri || '';
+                    if (!uri) {
+                      return html`<td class="mono uri" style="color: var(--hf-text-muted); font-size: 12px; cursor: default;">—</td>`;
+                    }
+                    const expanded = this.expandedUris.has(s.ip);
+                    return html`
+                      <td class="mono uri ${expanded ? 'uri-expanded' : ''}"
+                          style="color: var(--hf-text-muted); font-size: 12px;"
+                          title=${expanded ? '' : uri}
+                          @click=${() => this._toggleUri(s.ip)}>
+                        <span class="uri-text">${uri}</span>
+                        <span class="uri-caret">${expanded ? '▾' : '▸'}</span>
+                      </td>`;
+                  })()}
                 </tr>
               `)}
             </tbody>

@@ -93,35 +93,16 @@ export const userMenuStyles = css`
     background: var(--hf-border);
     margin: 4px 0;
   }
-  /* Items marked mobileOnly only appear when the inline topbar nav
-     has been collapsed — i.e. on small viewports. Matching breakpoint
-     (720px) lives in each calling component's topbar styles. */
-  @media (min-width: 721px) {
-    .user-menu-item.mobile-only { display: none; }
-    /* Hide the separator on desktop too if every preceding item is
-       mobile-only — otherwise we'd leave a floating divider above
-       Profile/Sign-out. CSS can't condition on "all previous siblings
-       hidden", so just hide the separator when its *immediately
-       preceding* sibling is mobile-only. This works because the
-       calling code groups all extraItems together and separators
-       follow immediately. */
-    .user-menu-item.mobile-only + .user-menu-sep { display: none; }
-  }
 `;
 
-// `extraItems` is an array of { label, href, target?, mobileOnly? }.
-// They render above the standard "Profile & password" / "Sign out"
-// entries inside the popover. `mobileOnly: true` hides the item at
-// viewports wider than the mobile breakpoint (matches the same
-// breakpoint as the inline topbar nav on the calling page) — used
-// to collapse top-bar nav into the user-menu on small screens
-// without duplicating links on desktop.
+// The popover is account-only: "Profile & password" and "Sign out".
+// Cross-site navigation (Home / Admin / Manual) lives in each
+// surface's left nav, not here.
 export function renderUserMenu({
   currentUser,
   open,
   onToggle,
   profileUrl,
-  extraItems = [],
 }) {
   const u = currentUser || {};
   const username = u.username || '';
@@ -149,15 +130,6 @@ export function renderUserMenu({
             <div class="user-name">${username || 'Account'}</div>
             <div class="user-role">${role}</div>
           </div>
-          ${extraItems.map(it => html`
-            <a class="user-menu-item ${it.mobileOnly ? 'mobile-only' : ''}"
-               href="${it.href}"
-               target="${it.target || '_self'}"
-               rel="${it.target === '_blank' ? 'noopener' : ''}">
-              ${it.label}
-            </a>
-          `)}
-          ${extraItems.length > 0 ? html`<div class="user-menu-sep"></div>` : ''}
           ${profileUrl ? html`
             <a class="user-menu-item" href="${profileUrl}">
               Profile &amp; password
