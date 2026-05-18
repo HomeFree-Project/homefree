@@ -19,6 +19,7 @@ import './modules/users-module.js';
 import './modules/status-module.js';
 import './modules/updates-module.js';
 import './modules/abuse-blocking-module.js';
+import './modules/developers-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
 import './finish-setup-wizard.js';
@@ -717,6 +718,14 @@ class AdminApp extends LitElement {
         title: 'SSO',
         icon: '🔐',
         section: 'Identity'
+      },
+      {
+        // Register custom Nix flakes that extend the system with the
+        // user's own apps/modules. Last section — a power-user feature.
+        id: 'developers',
+        title: 'Custom Flakes',
+        icon: '🧩',
+        section: 'Developers'
       }
     ];
   }
@@ -2174,6 +2183,13 @@ class AdminApp extends LitElement {
           <updates-module
             @updates-applied=${this.checkConfigDirty}
           ></updates-module>
+        `;
+
+      case 'developers':
+        return html`
+          <developers-module
+            @updates-applied=${this.checkConfigDirty}
+          ></developers-module>
         `;
 
       case 'abuse-blocking':

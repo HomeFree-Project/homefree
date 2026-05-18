@@ -61,18 +61,46 @@ in
     };
   };
 
-  systemd.services.dns-ready = {
+  ## dns-ready is the gate every container app orders itself after, so it
+  ## can pull its image. It must re-prove DNS *every time DNS restarts* —
+  ## not just once at boot. unbound (and adguardhome, when enabled) get
+  ## restarted on most rebuilds (e.g. enabling any service rewrites the
+  ## proxied-host zone), and there is a window during that restart where
+  ## name resolution fails. A oneshot+RemainAfterExit gate proven once at
+  ## boot stays green through that window, so podman units ordered after
+  ## it start mid-outage and fail their image pull with "no such host".
+  ##
+  ## partOf + after on the DNS units makes a *restart* of a DNS unit
+  ## propagate to dns-ready: when unbound or podman-adguardhome restarts,
+  ## systemd restarts dns-ready too, re-executing the wait loop. Any
+  ## podman unit started in the same rebuild transaction is then ordered
+  ## after the *re-run*, so it only starts once resolution genuinely
+  ## works again.
+  ##
+  ## partOf, not bindsTo: bindsTo would also tear dns-ready down (and
+  ## cascade-stop every container ordered `requires dns-ready`) the
+  ## instant the adguard *container* merely failed. partOf propagates
+  ## restarts/stops without coupling dns-ready to a DNS unit's failure,
+  ## which is the behaviour we want — re-arm on restart, don't collapse
+  ## the whole app stack on a transient container crash.
+  systemd.services.dns-ready =
+  let
+    ## The real LAN resolver container is `podman-adguardhome.service`
+    ## (there is no `adguardhome.service` — the old commented-out code
+    ## referenced a unit that never existed). podman-adguardhome carries
+    ## a restartTrigger on unbound's settings, so it restarts on every
+    ## rebuild that changes the proxied zone (i.e. enabling any service)
+    ## — exactly the window this gate must cover.
+    dnsUnits = [ "unbound.service" ]
+      ++ lib.optional (config.homefree.services.adguard.enable) "podman-adguardhome.service";
+  in {
     description = "Wait for DNS services to be ready";
-    # bindsTo = [ "unbound.service" ]
-    # ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome.service" ] else []);
-    # after = [ "network.target" "network-online.target" "unbound.service" ]
-    # ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome.service" ] else []);
-    # requires = [ "network-online.target" "unbound.service" ]
-    # ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome.service" ] else []);
-    after = [ "network.target" "network-online.target" "unbound.service" ]
-    ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome.service" ] else []);
-    wants = [ "network-online.target" "unbound.service" ]
-    ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome.service" ] else []);
+    after = [ "network.target" "network-online.target" ] ++ dnsUnits;
+    wants = [ "network-online.target" ] ++ dnsUnits;
+    ## partOf: a restart of a DNS unit propagates a restart to dns-ready,
+    ## re-running the wait loop. See the comment block above for why this
+    ## is partOf and not bindsTo.
+    partOf = dnsUnits;
     wantedBy = [ "multi-user.target" ];
 
     serviceConfig = {
@@ -82,13 +110,35 @@ in
         until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet ${lan-address}/"; do
           ${pkgs.coreutils}/bin/sleep 1
         done
-        # Wait for DNS resolution to work
+        # Wait for LOCAL DNS (our own zone resolves via unbound/adguard).
+        # Unbounded: the local resolver is on-box and must come up.
         until ${pkgs.dnsutils}/bin/dig +short ${config.homefree.system.domain} >/dev/null 2>&1; do
           ${pkgs.coreutils}/bin/sleep 1
         done
+        # Wait for EXTERNAL recursion. Container apps pull images from
+        # public registries, so the gate should prove the recursive path
+        # is up — resolving only the local zone can succeed while upstream
+        # recursion is still coming back from a restart.
+        #
+        # BOUNDED (~45s), then fall through regardless: if WAN is genuinely
+        # down, a rebuild must still succeed and container apps must still
+        # start (podman's own pull-retry handles a still-down WAN). This
+        # check closes the common restart-window race without making an
+        # offline rebuild fail. A well-known, highly-available name is the
+        # probe target; an A-record answer (not just exit 0) is required.
+        for i in $(${pkgs.coreutils}/bin/seq 1 22); do
+          if [ -n "$(${pkgs.dnsutils}/bin/dig +short +time=2 +tries=1 cloudflare.com 2>/dev/null)" ]; then
+            break
+          fi
+          if [ "$i" = 22 ]; then
+            echo "wait-for-dns: external DNS still unresolved after ~45s;" \
+                 "proceeding anyway (WAN may be down)." >&2
+          fi
+          ${pkgs.coreutils}/bin/sleep 2
+        done
       ''}";
       RemainAfterExit = true;
-      TimeoutStartSec = 60;
+      TimeoutStartSec = 120;
     };
   };
 

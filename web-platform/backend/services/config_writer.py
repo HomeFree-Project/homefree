@@ -108,6 +108,13 @@ class ConfigWriter:
             if 'backups' in config:
                 current_config['backups'].update(config['backups'])
 
+            # Developers section holds the registered custom-flake list.
+            # Unlike the other sections this is replaced wholesale (not
+            # deep-merged) so that deleting a flake actually drops it —
+            # a merge would leave stale entries behind.
+            if 'developers' in config:
+                current_config['developers'] = config['developers']
+
             # Write SOPS-managed secrets from plaintext values to SOPS
             success, error = ConfigWriter._write_sops_managed_secrets(current_config)
             if not success:

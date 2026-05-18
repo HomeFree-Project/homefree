@@ -295,6 +295,15 @@ export const applySystemUpdate = () => post('/api/system/updates/apply', {});
 export const getRebuildStatusWithHistory = () =>
   get('/api/config/rebuild-status?include_history=1');
 
+// Developers — register custom Nix flakes that extend the system. Writing
+// a flake rewrites /etc/nixos/flake.nix; the user then clicks Apply Changes.
+export const getDeveloperFlakes = () => get('/api/developers/flakes');
+export const saveDeveloperFlake = (entry) => post('/api/developers/flakes', entry);
+export const deleteDeveloperFlake = (id) =>
+  fetchAPI(`/api/developers/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const validateDeveloperFlake = (probe) =>
+  post('/api/developers/flakes/validate', probe);
+
 // Secrets — used by the finish-setup wizard and the DNS module.
 export const getSecretsStatus = () => get('/api/secrets/status');
 // Add an SSH authorized key (bootstraps SOPS recipients on a fresh box).
@@ -404,6 +413,10 @@ export default {
   changeOwnPassword,
   updateOwnProfile,
   getVisibleServices,
+  getDeveloperFlakes,
+  saveDeveloperFlake,
+  deleteDeveloperFlake,
+  validateDeveloperFlake,
   setHostname,
   setLocation,
   setKeyboard,

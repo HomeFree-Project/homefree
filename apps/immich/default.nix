@@ -369,6 +369,25 @@ in
 
       autoStart = true;
 
+      ## immich-server reaches its database, cache and ML service by
+      ## container name (DB_HOSTNAME=postgres-vectorchord,
+      ## REDIS_HOSTNAME=immich-redis, IMMICH_MACHINE_LEARNING_URL=
+      ## http://immich-machine-learning). Those names only resolve via
+      ## podman's internal DNS once the target container is running and
+      ## registered on the shared network. Without an ordering
+      ## dependency, immich-server starts first, Node crashes with
+      ## `getaddrinfo ENOTFOUND postgres-vectorchord`, and the unit then
+      ## limps through its 120s API-poll postStart before failing.
+      ##
+      ## dependsOn makes NixOS's oci-containers generate After=/Requires=
+      ## podman-<dep>.service on the unit, so immich-server only starts
+      ## once its dependencies' containers are up.
+      dependsOn = [
+        "postgres-vectorchord"
+        "immich-redis"
+        "immich-machine-learning"
+      ];
+
       extraOptions = [
         # "--pull=always"
       ];

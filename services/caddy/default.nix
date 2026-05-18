@@ -661,6 +661,18 @@ in
                 not header Authorization "Basic *"
                 not method PROPFIND PROPPATCH REPORT MKCALENDAR MKCOL COPY MOVE LOCK UNLOCK
               '' else ""}
+              ${lib.optionalString (reverse-proxy-config.sso-bypass-paths or [] != []) ''
+                ## SSO-gate path bypass. The service declared these
+                ## path patterns in reverse-proxy.sso-bypass-paths —
+                ## typically API paths used by non-browser clients that
+                ## cannot complete an interactive OAuth login. Such
+                ## requests skip the gate and reach the upstream
+                ## directly (to use its native credentials); browser
+                ## traffic to other paths still falls through the gate.
+                ${lib.concatMapStringsSep "\n                "
+                  (p: "not path ${p}")
+                  reverse-proxy-config.sso-bypass-paths}
+              ''}
             }
             forward_auth @sso_gate http://${lan-address}:4180 {
               uri /oauth2/auth
