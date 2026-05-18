@@ -47,14 +47,14 @@ in
 
     name = lib.mkOption {
       type = lib.types.str;
-      default = "Unifi Controller";
+      default = "UniFi OS";
       internal = true;
       description = "Service display name";
     };
 
     project-name = lib.mkOption {
       type = lib.types.str;
-      default = "Unifi Controller";
+      default = "UniFi OS Server";
       internal = true;
       description = "Project name";
     };
@@ -140,7 +140,7 @@ in
 
   homefree.service-config = if config.homefree.services.unifi.enable == true then [
     {
-      label = "unifi-os";
+      label = "unifi";
       name = "UniFi OS";
       project-name = "UniFi OS Server";
       systemd-service-names = [
