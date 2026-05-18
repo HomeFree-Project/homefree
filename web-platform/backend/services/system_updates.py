@@ -33,6 +33,24 @@ class SystemUpdates:
     INPUT_NAME = "homefree-base"
 
     @staticmethod
+    def base_override_active() -> bool:
+        """
+        True when an alternate HomeFree base repo is enabled (Developers →
+        Custom Flakes). While active, the build runs from that repo, not
+        from `homefree-base` — so update checks against `homefree-base` are
+        informational only, and the updates page shows a warning.
+        """
+        try:
+            from services.config_reader import ConfigReader
+            config = ConfigReader.read_config()
+            developers = config.get("developers") or {}
+            override = developers.get("homefree-base") or {}
+            return bool(override.get("enabled", False))
+        except Exception as e:
+            logger.warning(f"Could not read alternate-base setting: {e}")
+            return False
+
+    @staticmethod
     def _load_lock() -> Optional[dict]:
         """Parse /etc/nixos/flake.lock, or return None if unreadable."""
         try:

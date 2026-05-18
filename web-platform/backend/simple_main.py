@@ -3009,7 +3009,18 @@ async def check_system_updates():
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        return JSONResponse(content=SystemUpdates.check_for_update())
+        result = SystemUpdates.check_for_update()
+        # When an alternate HomeFree base repo is enabled, the build runs
+        # from THAT repo — the homefree-base check below is informational.
+        # The updates page renders a warning when baseOverrideActive is set.
+        if isinstance(result, dict):
+            result["baseOverrideActive"] = SystemUpdates.base_override_active()
+            if result["baseOverrideActive"]:
+                from services.developers import DevelopersService
+                result["baseOverrideUrl"] = (
+                    DevelopersService.get_base_override().get("url", "")
+                )
+        return JSONResponse(content=result)
 
     except HTTPException:
         raise
@@ -3150,6 +3161,93 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
         raise
     except Exception as e:
         logger.error(f"Error validating developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class HomefreeBaseOverrideRequest(BaseModel):
+    """Set the alternate HomeFree base repository."""
+    enabled: bool
+    type: str  # "local" | "remote"
+    url: Optional[str] = ""
+
+
+class HomefreeBaseProbeRequest(BaseModel):
+    """Deep-probe an alternate HomeFree base repo before enabling it."""
+    type: str
+    url: str
+
+
+@app.get("/api/developers/homefree-base")
+async def get_homefree_base():
+    """
+    Return the alternate-HomeFree-base setting plus the official repo URL.
+    Shape: { enabled, type, url, officialUrl }.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        return JSONResponse(content=DevelopersService.get_base_override())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading alternate HomeFree base: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/homefree-base")
+async def save_homefree_base(req: HomefreeBaseOverrideRequest):
+    """
+    Set the alternate HomeFree base repository. Rewrites /etc/nixos/flake.nix
+    (the managed homefree-base-override + homefree-base-binding regions);
+    does NOT rebuild — the user applies via the global Apply Changes flow.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.set_base_override(req.dict())
+        status = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving alternate HomeFree base: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/homefree-base/validate")
+async def validate_homefree_base(req: HomefreeBaseProbeRequest):
+    """
+    Deep-probe an alternate HomeFree base repo: confirm it is reachable and
+    exposes `nixosModules.homefree`. Best-effort — offline boxes get
+    warnings, not hard errors.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        url = (req.url or "").strip()
+        if req.type == "local" and url and not url.startswith("git+file://"):
+            url = "git+file://" + url
+
+        return JSONResponse(content=DevelopersService.probe_base_override(url))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating alternate HomeFree base: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

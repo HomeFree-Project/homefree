@@ -304,6 +304,14 @@ export const deleteDeveloperFlake = (id) =>
 export const validateDeveloperFlake = (probe) =>
   post('/api/developers/flakes/validate', probe);
 
+// Alternate HomeFree base repo — build this system from a fork or a local
+// working copy instead of the official homefree-base. Saving rewrites
+// /etc/nixos/flake.nix; the user then clicks Apply Changes.
+export const getHomefreeBase = () => get('/api/developers/homefree-base');
+export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
+export const validateHomefreeBase = (probe) =>
+  post('/api/developers/homefree-base/validate', probe);
+
 // Secrets — used by the finish-setup wizard and the DNS module.
 export const getSecretsStatus = () => get('/api/secrets/status');
 // Add an SSH authorized key (bootstraps SOPS recipients on a fresh box).

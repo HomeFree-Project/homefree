@@ -43,6 +43,26 @@ class UpdatesModule extends LitElement {
     }
     .notice strong { color: #4ade80; }
 
+    .warn-box {
+      background: rgba(250,204,21,0.1);
+      border: 1px solid rgba(250,204,21,0.35);
+      color: #facc15;
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    .warn-box strong { display: block; margin-bottom: 10px; color: #facc15; }
+    .warn-box p { margin: 10px 0 4px; }
+    .warn-box .ref {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      word-break: break-all;
+      margin-left: 14px;
+    }
+    .warn-box a.ref { color: #facc15; text-decoration: underline; }
+    .warn-box a.ref:hover { color: #fde047; }
+
     .status-row {
       display: flex;
       align-items: center;
@@ -187,6 +207,17 @@ class UpdatesModule extends LitElement {
     const busy = this.loading || this.applying;
 
     return html`
+      ${info.baseOverrideActive ? html`
+        <div class="warn-box">
+          <strong>⚠️ Warning: using an alternate HomeFree repository</strong>
+          <p>An alternate HomeFree repository is activated:</p>
+          <span class="ref">${info.baseOverrideUrl || 'unknown'}</span>
+          <p>Updates here won't apply unless the official repository is
+            re-enabled:</p>
+          <a class="ref" href="#/developers">Developers → Custom Flakes</a>
+        </div>
+      ` : ''}
+
       ${this.updateDone ? html`
         <div class="notice">
           <strong>System version updated</strong>

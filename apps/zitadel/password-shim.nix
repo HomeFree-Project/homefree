@@ -42,10 +42,10 @@ let
       ZITADEL_HOST_HEADER -- e.g. sso.example.com
       ZITADEL_PAT_FILE    -- path to a file containing the bearer PAT
     """
-    import logging, os, secrets, sys, time
+    import base64, binascii, logging, os, secrets, sys, time
     import httpx
-    from fastapi import FastAPI, Form, HTTPException
-    from fastapi.responses import JSONResponse
+    from fastapi import FastAPI, Form, Header, HTTPException
+    from fastapi.responses import JSONResponse, Response
 
     LISTEN_HOST = os.environ.get("LISTEN_HOST", "127.0.0.1")
     LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9988"))
@@ -73,36 +73,25 @@ let
         }
 
 
-    @app.post("/token")
-    async def token(
-        grant_type: str = Form(...),
-        username:   str = Form(...),
-        password:   str = Form(...),
-        client_id:     str = Form(None),
-        client_secret: str = Form(None),
-        scope:         str = Form(None),
-    ):
-        # We only implement the password grant. Other grants get 400 per RFC6749.
-        if grant_type != "password":
-            return JSONResponse(
-                status_code=400,
-                content={"error": "unsupported_grant_type",
-                         "error_description": f"grant_type={grant_type!r} not supported"},
-            )
+    class IdpUnavailable(Exception):
+        """Raised when Zitadel itself could not be reached / answered
+        malformed — distinct from 'credentials are wrong'."""
 
-        if not username or not password:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "invalid_request",
-                         "error_description": "username and password required"},
-            )
 
-        # Per the Zitadel v2 session API:
-        #   POST /v2/sessions   creates a session keyed to a loginName
-        #   PATCH /v2/sessions/<id>  attaches a password check
-        # If the password check returns 200, the credentials are valid.
-        # We immediately DELETE the session afterward — we don't need it.
-        session_id = None
+    async def _verify(username: str, password: str) -> bool:
+        """Validate username+password against Zitadel's Session V2 API.
+
+        Returns True on valid credentials, False on bad credentials.
+        Raises IdpUnavailable if Zitadel is unreachable or its response
+        is malformed (caller should surface 503, not 401).
+
+        Per the Zitadel v2 session API:
+          POST /v2/sessions        creates a session keyed to a loginName
+          PATCH /v2/sessions/<id>  attaches a password check
+        If the password check returns 2xx, the credentials are valid.
+        We immediately DELETE the session afterward — single-use, we
+        don't need it.
+        """
         async with httpx.AsyncClient(timeout=10.0) as cx:
             try:
                 create = await cx.post(
@@ -112,29 +101,20 @@ let
                 )
             except httpx.RequestError as e:
                 log.error("zitadel session create transport error: %s", e)
-                raise HTTPException(status_code=503,
-                    detail="upstream identity provider unavailable")
+                raise IdpUnavailable()
 
             if not (200 <= create.status_code < 300):
-                # User not found / org-level lockout / etc. — treat as auth failure.
+                # User not found / org-level lockout / etc. — auth failure.
                 log.info("session create failed for %r: %s %s",
                          username, create.status_code, create.text[:200])
-                return JSONResponse(
-                    status_code=401,
-                    content={"error": "invalid_grant",
-                             "error_description": "bad credentials"},
-                )
+                return False
 
             create_body = create.json()
             session_id = create_body.get("sessionId")
             session_token = create_body.get("sessionToken")
             if not session_id or not session_token:
                 log.error("session create missing id/token in response: %s", create_body)
-                return JSONResponse(
-                    status_code=502,
-                    content={"error": "server_error",
-                             "error_description": "malformed idp response"},
-                )
+                raise IdpUnavailable()
 
             # PATCH attaches the password challenge. Auth is the PAT
             # (NOT the per-session sessionToken — Zitadel docs note
@@ -154,8 +134,7 @@ let
                     f"{ZITADEL_URL}/v2/sessions/{session_id}",
                     headers=_zit_headers(),
                 )
-                raise HTTPException(status_code=503,
-                    detail="upstream identity provider unavailable")
+                raise IdpUnavailable()
 
             ok = 200 <= check.status_code < 300
             # Log non-2xx details so a future "bad password" vs
@@ -174,23 +153,132 @@ let
                 # Leaked session — Zitadel will eventually time it out.
                 log.warning("session delete failed for %s: %s", session_id, e)
 
-            if not ok:
-                return JSONResponse(
-                    status_code=401,
-                    content={"error": "invalid_grant",
-                             "error_description": "bad credentials"},
-                )
+            return ok
+
+
+    @app.post("/token")
+    async def token(
+        grant_type: str = Form(...),
+        username:   str = Form(...),
+        password:   str = Form(...),
+        client_id:     str = Form(None),
+        client_secret: str = Form(None),
+        scope:         str = Form(None),
+    ):
+        """RFC6749 password-grant endpoint. Used by Radicale's built-in
+        `oauth2` auth type (form POST: grant_type=password&username&password)."""
+        # We only implement the password grant. Other grants get 400 per RFC6749.
+        if grant_type != "password":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "unsupported_grant_type",
+                         "error_description": f"grant_type={grant_type!r} not supported"},
+            )
+
+        if not username or not password:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_request",
+                         "error_description": "username and password required"},
+            )
+
+        try:
+            ok = await _verify(username, password)
+        except IdpUnavailable:
+            raise HTTPException(status_code=503,
+                detail="upstream identity provider unavailable")
+
+        if not ok:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "invalid_grant",
+                         "error_description": "bad credentials"},
+            )
 
         # Issue an opaque token. Radicale's oauth2 auth doesn't use the
         # token for anything beyond "did we get one"; we don't bother
         # building a JWT.
         access_token = secrets.token_urlsafe(32)
-        log.info("authenticated %r", username)
+        log.info("authenticated %r (token grant)", username)
         return {
             "access_token": access_token,
             "token_type": "Bearer",
             "expires_in": 3600,
         }
+
+
+    ## HTTP Basic Auth verification endpoint.
+    ##
+    ## Designed to sit behind a Caddy `forward_auth`: Caddy replays a
+    ## non-browser API client's original request (carrying an
+    ## `Authorization: Basic ...` header) to this endpoint. We decode
+    ## the credentials, validate them against Zitadel, and on success
+    ## echo the username back as `X-Auth-Request-Preferred-Username` so
+    ## Caddy's `copy_headers` can lift it onto the upstream request —
+    ## the upstream then authenticates the request from that header.
+    ##
+    ## `forward_auth` replays the client's original METHOD, so this is
+    ## registered for both GET (Subsonic clients) and POST. A 401
+    ## carries `WWW-Authenticate: Basic` so a client knows to send (or
+    ## re-prompt for) credentials.
+    _BASIC_REALM = "homefree-sso"
+
+
+    async def _verify_basic(authorization: str) -> Response:
+        if not authorization or not authorization.lower().startswith("basic "):
+            return Response(
+                status_code=401, content="missing basic credentials",
+                headers={"WWW-Authenticate": f'Basic realm="{_BASIC_REALM}"'},
+            )
+        b64 = authorization[len("basic "):].strip()
+        try:
+            decoded = base64.b64decode(b64, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return Response(
+                status_code=401, content="malformed basic credentials",
+                headers={"WWW-Authenticate": f'Basic realm="{_BASIC_REALM}"'},
+            )
+        if ":" not in decoded:
+            return Response(
+                status_code=401, content="malformed basic credentials",
+                headers={"WWW-Authenticate": f'Basic realm="{_BASIC_REALM}"'},
+            )
+        username, password = decoded.split(":", 1)
+        if not username or not password:
+            return Response(
+                status_code=401, content="empty username or password",
+                headers={"WWW-Authenticate": f'Basic realm="{_BASIC_REALM}"'},
+            )
+
+        try:
+            ok = await _verify(username, password)
+        except IdpUnavailable:
+            return Response(status_code=503,
+                            content="upstream identity provider unavailable")
+
+        if not ok:
+            return Response(
+                status_code=401, content="bad credentials",
+                headers={"WWW-Authenticate": f'Basic realm="{_BASIC_REALM}"'},
+            )
+
+        log.info("authenticated %r (basic verify)", username)
+        # 200 + the SSO username as a header. Caddy lifts this onto the
+        # upstream request via `copy_headers X-Auth-Request-Preferred-Username`.
+        return Response(
+            status_code=200, content="ok",
+            headers={"X-Auth-Request-Preferred-Username": username},
+        )
+
+
+    @app.get("/verify-basic")
+    async def verify_basic_get(authorization: str = Header(None)):
+        return await _verify_basic(authorization)
+
+
+    @app.post("/verify-basic")
+    async def verify_basic_post(authorization: str = Header(None)):
+        return await _verify_basic(authorization)
 
 
     @app.get("/healthz")
@@ -207,10 +295,13 @@ in
 {
   ## The shim is internal infrastructure — it has no user-facing
   ## surface. It runs whenever any service that depends on it is on
-  ## (currently just Radicale's oauth2 auth). No `enable` option on
-  ## purpose: services with an `enable` option get picked up by the
-  ## admin-web catalog scan and appear on the Services page, which
-  ## is wrong for a runtime bridge that the user doesn't control.
+  ## (Radicale's oauth2 auth; any service using
+  ## `reverse-proxy.basic-auth-sso-paths`, e.g. the Navidrome flake's
+  ## Subsonic API). Activation is driven by the internal `consumers`
+  ## list below — no `enable` option on purpose: services with an
+  ## `enable` option get picked up by the admin-web catalog scan and
+  ## appear on the Services page, which is wrong for a runtime bridge
+  ## that the user doesn't control.
   options.homefree.service-options.zitadel-password-shim = {
     listen-port = lib.mkOption {
       type = lib.types.int;
@@ -221,9 +312,26 @@ in
         address; firewall rules keep it off the WAN.
       '';
     };
+
+    consumers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      internal = true;
+      description = ''
+        Services that require the password shim to run. The shim's
+        systemd unit activates iff this list is non-empty.
+
+        A service that needs the shim (Radicale's `oauth2` auth, or
+        a service using `reverse-proxy.basic-auth-sso-paths`) adds
+        its own name here from its `config` block. This keeps the
+        shim's activation decoupled from any single service — an
+        in-repo app or an external custom flake can both turn it on,
+        and the lists merge.
+      '';
+    };
   };
 
-  config = lib.mkIf (config.homefree.service-options.radicale.enable or false) {
+  config = lib.mkIf (config.homefree.service-options.zitadel-password-shim.consumers != []) {
     ## The shim needs a PAT scoped to call Zitadel's Session V2 API
     ## (POST /v2/sessions, PATCH /v2/sessions/<id>, DELETE
     ## /v2/sessions/<id>). That endpoint requires the

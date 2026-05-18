@@ -140,6 +140,12 @@ in
     };
   };
 
+  ## Radicale's `auth.type = oauth2` validates DAV-client credentials
+  ## against the zitadel-password-shim. Register as a shim consumer so
+  ## the shim's systemd unit runs whenever Radicale is enabled.
+  homefree.service-options.zitadel-password-shim.consumers =
+    lib.optionals config.homefree.service-options.radicale.enable [ "radicale" ];
+
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicale) label name project-name;
       systemd-service-names = [

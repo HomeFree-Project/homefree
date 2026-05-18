@@ -44,11 +44,27 @@ logger = logging.getLogger(__name__)
 INPUTS_BEGIN = "    # >>> homefree-developers-inputs (managed - do not edit by hand) >>>"
 INPUTS_END = "    # <<< homefree-developers-inputs <<<"
 
+# Sentinel lines for the "alternate HomeFree base repo" feature. Two managed
+# regions: the input declaration (inside `inputs = { ... }`, 4-space indent)
+# and the binding line (inside the `outputs` `let`, 2-space indent) that
+# selects which input the build uses for `homefree`.
+BASE_OVERRIDE_BEGIN = "    # >>> homefree-base-override (managed - do not edit by hand) >>>"
+BASE_OVERRIDE_END = "    # <<< homefree-base-override <<<"
+BASE_BINDING_BEGIN = "    # >>> homefree-base-binding (managed - do not edit by hand) >>>"
+BASE_BINDING_END = "    # <<< homefree-base-binding <<<"
+
+# The input name a registered alternate HomeFree repo is declared under.
+ALT_INPUT_NAME = "homefree-alt"
+
+# The official HomeFree repository — what `homefree-base` always points at,
+# and what the build uses when no alternate base is enabled.
+OFFICIAL_HOMEFREE_URL = "git+https://git.homefree.host/homefree/homefree.git"
+
 # Input names already used by the generated flake.nix / its outputs args /
 # its let-block. Registering a custom flake under one of these would shadow
 # a real input and break the build, so they are rejected at validation.
 RESERVED_INPUT_NAMES = {
-    "nixpkgs", "homefree-base", "homefree-local", "homefree",
+    "nixpkgs", "homefree-base", "homefree-local", "homefree", "homefree-alt",
     "lanzaboote", "disko", "self",
 }
 
@@ -81,6 +97,27 @@ class DevelopersService:
         developers = config.get("developers") or {}
         flakes = developers.get("flakes")
         return flakes if isinstance(flakes, list) else []
+
+    @staticmethod
+    def get_base_override() -> Dict[str, Any]:
+        """
+        Return the alternate-HomeFree-base setting, always including the
+        official URL for the UI to show when the override is disabled.
+
+        Shape: { enabled, type, url, officialUrl }. Defaults to a disabled
+        local override when nothing has been configured.
+        """
+        config = ConfigReader.read_config()
+        developers = config.get("developers") or {}
+        override = developers.get("homefree-base")
+        if not isinstance(override, dict):
+            override = {}
+        return {
+            "enabled": bool(override.get("enabled", False)),
+            "type": override.get("type") or "local",
+            "url": override.get("url") or "",
+            "officialUrl": OFFICIAL_HOMEFREE_URL,
+        }
 
     # ---- validation --------------------------------------------------
 
@@ -246,6 +283,49 @@ class DevelopersService:
 
         return result
 
+    # ---- alternate HomeFree base — validation -----------------------
+
+    @staticmethod
+    def validate_base_override(entry: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """
+        Tier-1 (cheap, synchronous) validation of an alternate-base entry.
+        A disabled override is always valid — its URL is not used. When
+        enabled, the URL is checked the same way a custom flake's is.
+        """
+        errors: List[str] = []
+
+        ftype = entry.get("type")
+        if ftype not in ("local", "remote"):
+            errors.append('Type must be "local" or "remote".')
+
+        if not entry.get("enabled"):
+            # Disabled: the build uses the official homefree-base; the URL
+            # is irrelevant and need not be valid.
+            return (len(errors) == 0, errors)
+
+        url = (entry.get("url") or "").strip()
+        if not url:
+            errors.append("A repository path or URL is required when enabled.")
+        elif ftype == "local":
+            errors.extend(DevelopersService._validate_local_url(url))
+        elif ftype == "remote":
+            if not url.startswith(_REMOTE_PREFIXES):
+                errors.append(
+                    "Remote repository URL must be a flake reference "
+                    "(e.g. github:owner/repo, git+https://..., gitlab:...)."
+                )
+
+        return (len(errors) == 0, errors)
+
+    @staticmethod
+    def probe_base_override(url: str) -> Dict[str, Any]:
+        """
+        Tier-2 deep probe of an alternate HomeFree base repo: confirm it is
+        reachable and exposes `nixosModules.homefree` (the attribute the
+        build composes). Best-effort — network failure yields warnings.
+        """
+        return DevelopersService.probe_flake(url, module_attr="homefree")
+
     # ---- text generators (pure) -------------------------------------
 
     @staticmethod
@@ -276,6 +356,34 @@ class DevelopersService:
             + ("\n".join(body) + "\n" if body else "")
             + "]\n"
         )
+
+    @staticmethod
+    def _render_base_override_region(entry: Dict[str, Any]) -> str:
+        """
+        The text between (and including) the homefree-base-override
+        sentinels. When the override is enabled this declares the
+        `homefree-alt` input; when disabled it is just the two markers
+        (no extra input is fetched).
+        """
+        lines = [BASE_OVERRIDE_BEGIN]
+        if entry.get("enabled") and (entry.get("url") or "").strip():
+            lines.append(f'    {ALT_INPUT_NAME}.url = "{entry["url"].strip()}";')
+        lines.append(BASE_OVERRIDE_END)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_base_binding(entry: Dict[str, Any]) -> str:
+        """
+        The text between (and including) the homefree-base-binding
+        sentinels: the single `homefree = inputs.<name>;` line in the
+        `outputs` let-block that selects which input the build uses.
+        """
+        target = ALT_INPUT_NAME if entry.get("enabled") else "homefree-base"
+        return "\n".join([
+            BASE_BINDING_BEGIN,
+            f"    homefree = inputs.{target};",
+            BASE_BINDING_END,
+        ])
 
     # ---- flake.nix scaffolding --------------------------------------
 
@@ -355,6 +463,74 @@ class DevelopersService:
             insert_at = list_close + 1
             text = text[:insert_at] + " ++ customFlakeModules" + text[insert_at:]
 
+        # --- 3. homefree-base-override input region ---
+        # An empty (markers-only) region inside `inputs = { ... }`; the
+        # alternate-base feature splices an `homefree-alt.url = ...;` line
+        # in when an override is enabled.
+        if BASE_OVERRIDE_BEGIN not in text:
+            m = re.search(r"\binputs\s*=\s*\{", text)
+            if not m:
+                raise ValueError("Could not locate the `inputs = { ... }` block.")
+            open_idx = text.index("{", m.start())
+            close_idx = DevelopersService._find_block_end(text, open_idx)
+            line_start = text.rfind("\n", 0, close_idx) + 1
+            region = f"{BASE_OVERRIDE_BEGIN}\n{BASE_OVERRIDE_END}\n"
+            text = text[:line_start] + region + text[line_start:]
+
+        # --- 4. homefree-base-binding region (`homefree = inputs.<x>;`) ---
+        # This single line in the `outputs` let-block selects which input
+        # the build uses. Older / hand-edited flakes carry a bare
+        # `homefree = homefree-base;` (or `homefree-local`) line, possibly
+        # with a commented alternative; replace any such line(s) with the
+        # managed region. A fresh installer flake has no `homefree =` line
+        # and uses `homefree-base.*` directly — handled below.
+        if BASE_BINDING_BEGIN not in text:
+            lm = re.search(r"\blet\b", text)
+            if not lm:
+                raise ValueError("Could not locate the `let` block in `outputs`.")
+            # Find the matching `in` for this `let` so we only touch
+            # binding lines inside the let-block.
+            in_m = re.search(r"\bin\b", text[lm.end():])
+            if not in_m:
+                raise ValueError("Could not locate the `in` of the `outputs` let-block.")
+            let_start, let_end = lm.end(), lm.end() + in_m.start()
+            let_body = text[let_start:let_end]
+
+            # `let_body` runs right up to `in`, so it ends with the
+            # whitespace that indents `in` (e.g. "\n  "). Split that off
+            # so it survives — re-prepended before `in` after the rewrite.
+            stripped = let_body.rstrip(" \t")
+            in_indent = let_body[len(stripped):]
+
+            # Strip any existing `homefree = ...;` assignment and an
+            # immediately adjacent commented `# homefree = ...;` line.
+            binding_re = re.compile(
+                r"[ \t]*#?[ \t]*homefree\s*=\s*[^;\n]+;[ \t]*\n", re.M
+            )
+            cleaned_body = binding_re.sub("", stripped)
+
+            # Scaffold inserts the binding pointing at the official
+            # `homefree-base`; write_base_override later splices the real
+            # selection in. Built via the shared renderer (which carries
+            # its own 4-space indentation) so it stays consistent.
+            region = DevelopersService._render_base_binding(
+                {"enabled": False}
+            )
+            # Insert the region at the end of the let-block, just before
+            # `in`, restoring `in`'s original indentation.
+            cleaned_body = cleaned_body.rstrip("\n") + "\n" + region + "\n" + in_indent
+            text = text[:let_start] + cleaned_body + text[let_end:]
+
+            # A fresh installer flake references `homefree-base.nixosModules`
+            # and `homefree-base.inputs` directly. Now that the let defines
+            # `homefree`, point those at the bare binding so the override
+            # actually takes effect.
+            text = text.replace(
+                "homefree-base.nixosModules.homefree",
+                "homefree.nixosModules.homefree",
+            )
+            text = text.replace("homefree-base.inputs", "homefree.inputs")
+
         return text
 
     @staticmethod
@@ -418,6 +594,33 @@ class DevelopersService:
         DevelopersService.FLAKE_FILE.write_text(text[:begin] + region + text[end:])
 
     @staticmethod
+    def _splice_base_override(entry: Dict[str, Any]) -> None:
+        """
+        Rewrite both managed regions for the alternate-base feature: the
+        `homefree-base-override` input region and the `homefree-base-binding`
+        line, from a single `{enabled, type, url}` entry.
+        """
+        text = DevelopersService.FLAKE_FILE.read_text()
+
+        begin = text.index(BASE_OVERRIDE_BEGIN)
+        end = text.index(BASE_OVERRIDE_END) + len(BASE_OVERRIDE_END)
+        text = (
+            text[:begin]
+            + DevelopersService._render_base_override_region(entry)
+            + text[end:]
+        )
+
+        begin = text.index(BASE_BINDING_BEGIN)
+        end = text.index(BASE_BINDING_END) + len(BASE_BINDING_END)
+        text = (
+            text[:begin]
+            + DevelopersService._render_base_binding(entry)
+            + text[end:]
+        )
+
+        DevelopersService.FLAKE_FILE.write_text(text)
+
+    @staticmethod
     def _git_add() -> None:
         """Best-effort `git add` so a committed flake build sees the files."""
         try:
@@ -467,21 +670,30 @@ class DevelopersService:
                 )
 
     @staticmethod
-    def _persist_developers(flakes: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
+    def _persist_developers(updates: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """
-        Write the `developers.flakes` list into homefree-config.json.
+        Merge `updates` into the `developers` section of homefree-config.json.
+
+        `updates` carries only the keys to change (e.g. {"flakes": [...]} or
+        {"homefree-base": {...}}); other keys of the `developers` section are
+        preserved. This matters because `flakes` and `homefree-base` are
+        written by separate code paths and must not clobber each other.
 
         DevelopersService owns the `developers` section outright — it does
         NOT route through ConfigWriter.write_config, because that path is
         also fed the frontend's whole-config blob by /api/config/apply and
         would clobber this section with a stale snapshot. We read the file
-        fresh, set only `developers`, and write it back, so a concurrent
+        fresh, merge only the given keys, and write it back, so a concurrent
         edit to any other section is preserved.
         """
         try:
             ConfigWriter._backup_config()
             current = json.loads(ConfigWriter.CONFIG_FILE.read_text())
-            current["developers"] = {"flakes": flakes}
+            developers = current.get("developers")
+            if not isinstance(developers, dict):
+                developers = {}
+            developers.update(updates)
+            current["developers"] = developers
             ConfigWriter.CONFIG_FILE.write_text(
                 json.dumps(current, indent=2, sort_keys=False) + "\n"
             )
@@ -509,7 +721,7 @@ class DevelopersService:
             logger.error(f"Failed to write flake files: {e}")
             return False, f"Failed to write flake files: {e}"
 
-        ok, err = DevelopersService._persist_developers(flakes)
+        ok, err = DevelopersService._persist_developers({"flakes": flakes})
         if not ok:
             return False, err
 
@@ -519,7 +731,114 @@ class DevelopersService:
         DevelopersService._git_add()
         return True, None
 
+    @staticmethod
+    def write_base_override(
+        stored: Dict[str, Any], effective: Dict[str, Any]
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Persist the alternate-HomeFree-base setting.
+
+        `stored`   — the {enabled, type, url} dict saved to
+                     homefree-config.json (what the admin entered, kept
+                     verbatim so the UI shows it back).
+        `effective` — the {enabled, type, url} dict spliced into
+                     flake.nix. When the stored URL is invalid this is
+                     forced to `enabled: false`, so a bad URL is never
+                     written into the build — the system keeps building
+                     from the official homefree-base until the URL is
+                     corrected.
+
+        Scaffolds flake.nix, rewrites its two managed regions from
+        `effective`, stores `stored` in homefree-config.json, and
+        allow-lists a local repo for the root-run rebuild.
+        """
+        ok, err = DevelopersService.ensure_scaffold()
+        if not ok:
+            return False, err
+
+        try:
+            DevelopersService._splice_base_override(effective)
+        except Exception as e:
+            logger.error(f"Failed to write the alternate-base flake regions: {e}")
+            return False, f"Failed to write flake.nix: {e}"
+
+        ok, err = DevelopersService._persist_developers({"homefree-base": stored})
+        if not ok:
+            return False, err
+
+        # An enabled local override repo is usually owned by the admin's
+        # user, not root; allow-list it so the root-run rebuild can open it.
+        # Only the effective (actually-applied) override needs this.
+        # _register_safe_directories reads only type/url/enabled.
+        DevelopersService._register_safe_directories([effective])
+        DevelopersService._git_add()
+        return True, None
+
     # ---- high-level operations --------------------------------------
+
+    @staticmethod
+    def set_base_override(entry: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Persist the alternate-HomeFree-base setting.
+
+        The setting is ALWAYS saved to homefree-config.json (so the UI
+        keeps the admin's input). An invalid path/URL does NOT block the
+        save and does NOT break the build: it is reported as a warning
+        and the build keeps using the official homefree-base until the
+        URL is corrected. A genuine write failure (e.g. an unparseable
+        flake.nix) is still a hard error.
+
+        Returns { success, message, override?, warnings?, errors? }.
+        """
+        ftype = entry.get("type") or "local"
+        url = (entry.get("url") or "").strip()
+        # For a local override the frontend sends a bare filesystem path;
+        # store it as a git+file:// flake reference, mirroring custom flakes.
+        if ftype == "local" and url and not url.startswith("git+file://"):
+            url = "git+file://" + url
+
+        # `stored` is kept verbatim in homefree-config.json so the UI
+        # always shows the admin exactly what they entered.
+        stored = {
+            "enabled": bool(entry.get("enabled", False)),
+            "type": ftype,
+            "url": url,
+        }
+
+        # Validate. Failures become warnings, not blockers.
+        ok, problems = DevelopersService.validate_base_override(stored)
+
+        # `effective` is what actually gets written into flake.nix. If the
+        # override is enabled but its URL did not validate, fall back to
+        # disabled so a broken URL never reaches the build.
+        if stored["enabled"] and not ok:
+            effective = {"enabled": False, "type": ftype, "url": url}
+        else:
+            effective = dict(stored)
+
+        write_ok, err = DevelopersService.write_base_override(stored, effective)
+        if not write_ok:
+            return {"success": False, "message": err, "errors": [err]}
+
+        warnings: List[str] = []
+        if stored["enabled"] and not ok:
+            warnings = problems + [
+                "The repository was saved but NOT applied — the system is "
+                "still building from the official HomeFree repository. Fix "
+                "the path/URL above to apply it."
+            ]
+            msg = "Alternate HomeFree repository saved, but not applied (see warnings)."
+        elif stored["enabled"]:
+            msg = ("Alternate HomeFree repository saved. Click Apply Changes "
+                   "to rebuild from it.")
+        else:
+            msg = ("Reverted to the official HomeFree repository. Click Apply "
+                   "Changes to rebuild.")
+
+        result = {"success": True, "message": msg, "override": stored}
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     @staticmethod
     def register_or_update(entry: Dict[str, Any]) -> Dict[str, Any]:
