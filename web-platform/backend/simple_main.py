@@ -2933,6 +2933,24 @@ async def get_config_dirty():
             except Exception as e:
                 logger.warning(f"Could not parse latest-status.json: {e}")
 
+        # Also dirty if a system version update (a homefree-base flake.lock
+        # bump) is pending but hasn't been applied yet. This lets the Apply
+        # button light up after the user pulls in a new version on the
+        # System Updates page, even though homefree-config.json is unchanged.
+        try:
+            from services.system_updates import SystemUpdates
+            current = SystemUpdates.get_current()
+            applied_rev_path = SystemUpdates.APPLIED_FLAKE_REV_FILE
+            if current and applied_rev_path.exists():
+                applied_rev = applied_rev_path.read_text().strip()
+                if applied_rev and applied_rev != current["rev"]:
+                    return JSONResponse(content={
+                        "dirty": True,
+                        "reason": "system update pending",
+                    })
+        except Exception as e:
+            logger.warning(f"Could not check flake rev dirty state: {e}")
+
         return JSONResponse(content={"dirty": False, "reason": "in sync"})
 
     except HTTPException:
@@ -2980,6 +2998,48 @@ async def get_rebuild_status(request: Request):
     except Exception as e:
         logger.error(f"Error getting rebuild status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/system/updates/check")
+async def check_system_updates():
+    """Check whether a newer homefree-base commit is available upstream."""
+    try:
+        from services.mode import ModeService
+        from services.system_updates import SystemUpdates
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        return JSONResponse(content=SystemUpdates.check_for_update())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking for system updates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/updates/apply")
+async def apply_system_update():
+    """
+    Bump the homefree-base flake input to the latest commit on its tracked
+    branch. This only rewrites flake.lock — the user still has to click Apply
+    Changes to rebuild the system onto the new version.
+    """
+    try:
+        from services.mode import ModeService
+        from services.system_updates import SystemUpdates
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        return JSONResponse(content=SystemUpdates.apply_update())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error applying system update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Serve frontend static files
 frontend_dir = Path("/etc/homefree-installer/frontend")

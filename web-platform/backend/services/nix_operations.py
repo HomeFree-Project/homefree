@@ -973,6 +973,21 @@ class NixOperations:
         except Exception as e:
             logger.error(f"Error marking config applied: {e}")
 
+        # Also snapshot the homefree-base flake revision the system was just
+        # built against, so the System Updates page / dirty-state endpoint can
+        # tell whether a pending version update has actually been applied.
+        try:
+            from services.system_updates import SystemUpdates
+            current = SystemUpdates.get_current()
+            if current and current.get("rev"):
+                SystemUpdates.APPLIED_FLAKE_REV_FILE.parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                SystemUpdates.APPLIED_FLAKE_REV_FILE.write_text(current["rev"])
+                logger.info(f"Marked flake revision {current['rev']} as applied")
+        except Exception as e:
+            logger.error(f"Error marking flake revision applied: {e}")
+
 
     @staticmethod
     def _sync_config() -> Dict[str, Any]:

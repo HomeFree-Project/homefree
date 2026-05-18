@@ -286,6 +286,9 @@ export const saveConfigChanges = (config) => post('/api/config/save', config);
 export const applyConfigChanges = (config) => post('/api/config/apply', config);
 export const getConfigDirty = () => get('/api/config/dirty');
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
+// System updates — check for and pull in a newer homefree-base commit.
+export const checkSystemUpdates = () => get('/api/system/updates/check');
+export const applySystemUpdate = () => post('/api/system/updates/apply', {});
 // Same, but returns the FULL log so far (not just incremental output since
 // the last poll). Used when reattaching to a rebuild after a page reload so
 // the log history isn't lost.
