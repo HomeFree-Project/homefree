@@ -1654,6 +1654,19 @@ class AdminApp extends LitElement {
       };
     }
 
+    // Merge the network section. The abuse-blocking module edits
+    // network.abuseBlockCidrs via the config-change event; without
+    // this merge those edits live only in pendingConfig and are
+    // dropped on save (getMergedConfig is what save/Apply submit).
+    // Shallow per-key override is enough — modules replace whole
+    // network.* keys, they don't deep-patch nested objects.
+    if (this.pendingConfig.network) {
+      merged.network = {
+        ...(this.serverConfig.network || {}),
+        ...this.pendingConfig.network,
+      };
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
