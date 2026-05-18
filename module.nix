@@ -331,10 +331,11 @@
       abuseBlockCidrs = lib.mkOption {
         default = [];
         description = ''
-          IPv4 CIDR ranges to drop at the firewall (the abusive_nets4
-          nftables set). Each entry can be individually enabled or
-          disabled and carries a free-text comment explaining why it
-          is blocked.
+          IPv4 or IPv6 CIDR ranges to drop at the firewall. Entries
+          are routed by address family to the abusive_nets4 /
+          abusive_nets6 nftables sets. Each entry can be individually
+          enabled or disabled and carries a free-text comment
+          explaining why it is blocked.
 
           This list is fully user-owned. On a fresh install it is
           seeded once with known abusive scraper networks (Alibaba
@@ -349,7 +350,11 @@
           options = {
             cidr = lib.mkOption {
               type = lib.types.str;
-              description = "IPv4 CIDR range to block, e.g. 47.74.0.0/15.";
+              description = ''
+                IPv4 or IPv6 CIDR range to block, e.g. 47.74.0.0/15
+                or 2001:db8::/32. A single host is /32 (IPv4) or /128
+                (IPv6).
+              '';
             };
             enabled = lib.mkOption {
               type = lib.types.bool;

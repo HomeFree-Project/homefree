@@ -17,15 +17,21 @@ let
     iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
 
-  ## Static abuse blocklist for the abusive_nets4 nftables set.
-  ## Fully driven by config.homefree.network.abuseBlockCidrs — a
-  ## user-owned list (seeded once with Alibaba Cloud scraper ranges
-  ## by modules/abuse-blocking.nix, then editable in the admin UI).
-  ## Only entries with enabled == true are enforced; a disabled
-  ## entry stays in config for reference but is left out of the set.
+  ## Static abuse blocklist for the abusive_nets4 / abusive_nets6
+  ## nftables sets. Fully driven by config.homefree.network.
+  ## abuseBlockCidrs — a user-owned list (seeded once with Alibaba
+  ## Cloud scraper ranges by modules/abuse-blocking.nix, then editable
+  ## in the admin UI). Only entries with enabled == true are enforced;
+  ## a disabled entry stays in config for reference but is left out of
+  ## the set. The combined list carries both IPv4 and IPv6 CIDRs; each
+  ## entry is routed to the matching set by address family (an IPv6
+  ## CIDR contains a ":").
   enabled-abuse-cidrs = lib.map (e: e.cidr)
     (lib.filter (e: e.enabled) config.homefree.network.abuseBlockCidrs);
-  abuse-cidrs-str = lib.concatStringsSep ", " enabled-abuse-cidrs;
+  enabled-abuse-cidrs4 = lib.filter (c: !(lib.hasInfix ":" c)) enabled-abuse-cidrs;
+  enabled-abuse-cidrs6 = lib.filter (c:  (lib.hasInfix ":" c)) enabled-abuse-cidrs;
+  abuse-cidrs4-str = lib.concatStringsSep ", " enabled-abuse-cidrs4;
+  abuse-cidrs6-str = lib.concatStringsSep ", " enabled-abuse-cidrs6;
 
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
@@ -225,7 +231,16 @@ in
           ## and the @abusive_nets4 lookups below simply never match.
           set abusive_nets4 {
             type ipv4_addr
-            flags interval${lib.optionalString (enabled-abuse-cidrs != []) "\n            elements = { ${abuse-cidrs-str} }"}
+            flags interval${lib.optionalString (enabled-abuse-cidrs4 != []) "\n            elements = { ${abuse-cidrs4-str} }"}
+          }
+
+          ## IPv6 counterpart of abusive_nets4. Same user-owned list,
+          ## IPv6 entries routed here. Elements line emitted only when
+          ## the enabled v6 list is non-empty (nftables rejects an
+          ## empty initializer).
+          set abusive_nets6 {
+            type ipv6_addr
+            flags interval${lib.optionalString (enabled-abuse-cidrs6 != []) "\n            elements = { ${abuse-cidrs6-str} }"}
           }
 
           ## Dynamic ban set populated by fail2ban via the
@@ -262,6 +277,7 @@ in
             ## helps quantify abuse pressure via `nft list
             ## ruleset`.
             iifname "${wan-interface}" ip saddr @abusive_nets4 counter drop comment "Static abuse block"
+            iifname "${wan-interface}" ip6 saddr @abusive_nets6 counter drop comment "Static abuse block v6"
             iifname "${wan-interface}" ip saddr @f2b_banned4 counter drop comment "fail2ban v4"
             iifname "${wan-interface}" ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6"
 
@@ -314,6 +330,7 @@ in
             ## dropped early. Without this, the input-chain block
             ## above only protects services bound to the host.
             iifname "${wan-interface}" ip saddr @abusive_nets4 counter drop comment "Static abuse block (fwd)"
+            iifname "${wan-interface}" ip6 saddr @abusive_nets6 counter drop comment "Static abuse block v6 (fwd)"
             iifname "${wan-interface}" ip saddr @f2b_banned4 counter drop comment "fail2ban v4 (fwd)"
             iifname "${wan-interface}" ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6 (fwd)"
 

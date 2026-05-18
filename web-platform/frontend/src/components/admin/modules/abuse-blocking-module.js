@@ -130,8 +130,13 @@ class AbuseBlockingModule extends LitElement {
        and wrapping them looks broken. The Sample URI column is the
        flexible one that absorbs leftover width and truncates. */
     td.nowrap, th.nowrap { white-space: nowrap; }
+    /* The URI column is the flexible one: it takes all leftover width
+       (width: 100% on a table cell = "as wide as possible") and
+       truncates with an ellipsis, so adding fixed columns like Action
+       shrinks the URI rather than widening the whole table. */
     td.uri {
-      max-width: 320px;
+      width: 100%;
+      max-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -353,6 +358,30 @@ class AbuseBlockingModule extends LitElement {
       font-style: italic;
       padding-top: 2px;
     }
+
+    /* Skeleton placeholders shown on first load while each section's
+       data is still null. Shimmer copied from backups-module.js so
+       all admin skeletons look identical. */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--hf-surface-3) 25%,
+        var(--hf-border-2) 37%,
+        var(--hf-surface-3) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      vertical-align: middle;
+    }
+    .skeleton-title { width: 180px; height: 15px; }
+    .skeleton-sub   { width: 110px; height: 11px; margin-top: 6px; }
+    .skeleton-badge { width: 70px; height: 16px; border-radius: 999px; }
+    .skeleton-cell  { width: 60px; height: 13px; }
+    .skeleton-card-value { width: 48px; height: 26px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to   { background-position: 0 0; }
+    }
   `;
 
   constructor() {
@@ -535,6 +564,45 @@ class AbuseBlockingModule extends LitElement {
     this._emitCidrUpdate(this._getCidrList().filter(e => e.cidr !== cidr));
   }
 
+  // Host CIDR for a single traffic-source IP: /32 for IPv4, /128 for
+  // IPv6 (an IPv6 literal contains a colon).
+  _hostCidr(ip) {
+    return ip.includes(':') ? `${ip}/128` : `${ip}/32`;
+  }
+
+  // Add a traffic-source IP to the static block list as a host CIDR.
+  // Reuses the same _emitCidrUpdate / config-change flow as the manual
+  // "Add" in the CIDR editor — the Save/Apply bar then persists it.
+  _blockIp(ip) {
+    const cidr = this._hostCidr(ip);
+    const list = this._getCidrList();
+    if (list.some(e => e.cidr === cidr)) return;  // already blocked
+    this._emitCidrUpdate([
+      ...list,
+      { cidr, enabled: true, comment: 'Blocked from traffic view' },
+    ]);
+  }
+
+  // Block button for a traffic row. Disabled with a "Blocked" label
+  // once the host CIDR is already in the static list, so the click
+  // visibly takes effect.
+  _renderBlockButton(ip) {
+    const cidr = this._hostCidr(ip);
+    const alreadyBlocked = this._getCidrList().some(e => e.cidr === cidr);
+    return html`
+      <button
+        class="action-button"
+        ?disabled=${alreadyBlocked}
+        title=${alreadyBlocked
+          ? `${cidr} is already in the static block list`
+          : `Add ${cidr} to the static block list`}
+        @click=${() => this._blockIp(ip)}
+      >
+        ${alreadyBlocked ? 'Blocked' : 'Block'}
+      </button>
+    `;
+  }
+
   _toggleCidrEnabled(cidr, enabled) {
     this._emitCidrUpdate(this._getCidrList().map(e =>
       e.cidr === cidr ? { ...e, enabled } : e
@@ -564,10 +632,25 @@ class AbuseBlockingModule extends LitElement {
 
   // ── Renderers ─────────────────────────────────────────────────────
 
+  // Render `nRows` placeholder table rows of `nCols` skeleton cells.
+  // Used while a section's data is still null on first load so the
+  // page shell paints immediately instead of blocking on a spinner.
+  _renderSkeletonRows(nCols, nRows) {
+    const cols = Array.from({ length: nCols });
+    const rows = Array.from({ length: nRows });
+    return rows.map(() => html`
+      <tr>
+        ${cols.map(() => html`
+          <td><span class="skeleton skeleton-cell"></span></td>
+        `)}
+      </tr>
+    `);
+  }
+
   render() {
-    if (this.loading && !this.status) {
-      return html`<div class="module-container">Loading…</div>`;
-    }
+    // The page shell renders immediately; each section shows skeleton
+    // placeholders while its data field is still null (first load).
+    // Background polls just swap data in — no skeleton flicker.
     return html`
       <div class="module-container">
         ${this.error ? html`<div class="error-box">${this.error}</div>` : ''}
@@ -584,6 +667,29 @@ class AbuseBlockingModule extends LitElement {
   }
 
   _renderSummary() {
+    // First load: status not yet fetched — show the four cards with
+    // their static labels and skeleton values so the layout is final
+    // before the data lands.
+    if (this.status == null) {
+      const labels = [
+        'fail2ban', 'Currently banned', 'Static blocks', 'Packets dropped',
+      ];
+      return html`
+        <div class="summary-cards">
+          ${labels.map(label => html`
+            <div class="card">
+              <div class="card-label">${label}</div>
+              <div class="card-value">
+                <span class="skeleton skeleton-card-value"></span>
+              </div>
+              <div class="card-sub">
+                <span class="skeleton skeleton-sub"></span>
+              </div>
+            </div>
+          `)}
+        </div>
+      `;
+    }
     const serverUp = this.status?.server_up;
     const dynBanCount = (this.banned?.entries || []).filter(
       e => e.source !== 'static'
@@ -634,8 +740,11 @@ class AbuseBlockingModule extends LitElement {
   }
 
   _renderJailStatus() {
+    // First load: show the table with skeleton rows. Once status has
+    // loaded, an empty jail list collapses the section as before.
+    const loading = this.status == null;
     const jails = this.status?.jails || [];
-    if (!jails.length) return '';
+    if (!loading && !jails.length) return '';
     return html`
       <h2>Jails</h2>
       <div class="panel">
@@ -650,7 +759,7 @@ class AbuseBlockingModule extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${jails.map(j => html`
+            ${loading ? this._renderSkeletonRows(5, 3) : jails.map(j => html`
               <tr>
                 <td class="mono">${j.name}</td>
                 <td>${j.available === false ? '—' : j.currently_failed}</td>
@@ -666,11 +775,27 @@ class AbuseBlockingModule extends LitElement {
   }
 
   _renderBannedTable() {
+    const loading = this.banned == null;
     const entries = this.banned?.entries || [];
     return html`
       <h2>Currently banned</h2>
       <div class="panel">
-        ${entries.length === 0 ? html`
+        ${loading ? html`
+          <table>
+            <thead>
+              <tr>
+                <th>Address</th>
+                <th>Source</th>
+                <th>Jail</th>
+                <th>Remaining</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this._renderSkeletonRows(5, 3)}
+            </tbody>
+          </table>
+        ` : entries.length === 0 ? html`
           <div class="row-empty">No active bans.</div>
         ` : html`
           <table>
@@ -928,7 +1053,22 @@ class AbuseBlockingModule extends LitElement {
           ` : ''}
         </div>
         ${showGeo && sources.length > 0 ? this._renderTrafficMap(sources) : ''}
-        ${!this.includeInternal && suppressed > 0 && sources.length === 0 ? html`
+        ${data == null ? html`
+          <table>
+            <thead>
+              <tr>
+                <th class="nowrap">IP</th>
+                <th class="nowrap">Domain</th>
+                <th>Hits</th>
+                <th>Sample URL</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this._renderSkeletonRows(5, 6)}
+            </tbody>
+          </table>
+        ` : !this.includeInternal && suppressed > 0 && sources.length === 0 ? html`
           <div class="row-empty">
             No external traffic in the last hour — ${_fmtNum(suppressed)} requests
             from LAN / internal networks were suppressed. Toggle "Include LAN"
@@ -945,6 +1085,7 @@ class AbuseBlockingModule extends LitElement {
                 ${showGeo ? html`<th class="nowrap">Location</th>` : ''}
                 <th>Hits</th>
                 <th>Sample URL</th>
+                <th class="nowrap">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -980,6 +1121,7 @@ class AbuseBlockingModule extends LitElement {
                         <span class="uri-caret">${expanded ? '▾' : '▸'}</span>
                       </td>`;
                   })()}
+                  <td class="nowrap">${this._renderBlockButton(s.ip)}</td>
                 </tr>
               `)}
             </tbody>

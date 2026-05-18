@@ -67,6 +67,8 @@ KNOWN_JAILS = (
 COUNTER_COMMENT_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("Static abuse block", "static"),
     ("Static abuse block (fwd)", "static"),
+    ("Static abuse block v6", "static"),
+    ("Static abuse block v6 (fwd)", "static"),
     ("fail2ban v4", "fail2ban_v4"),
     ("fail2ban v4 (fwd)", "fail2ban_v4"),
     ("fail2ban v6", "fail2ban_v6"),
@@ -469,14 +471,15 @@ class AbuseBlockingResolver:
                     "jail": ip_to_jail.get(addr),
                 })
 
-        ## Static set — interval/prefix elements, no timeout.
-        for prefix in _list_nft_set_prefixes("abusive_nets4"):
-            entries.append({
-                "address": prefix,
-                "source": "static",
-                "remaining_seconds": None,
-                "jail": None,
-            })
+        ## Static sets (v4 + v6) — interval/prefix elements, no timeout.
+        for set_name in ("abusive_nets4", "abusive_nets6"):
+            for prefix in _list_nft_set_prefixes(set_name):
+                entries.append({
+                    "address": prefix,
+                    "source": "static",
+                    "remaining_seconds": None,
+                    "jail": None,
+                })
 
         return {"entries": entries}
 
