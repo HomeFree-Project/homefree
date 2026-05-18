@@ -230,6 +230,17 @@ class SystemUpdates:
                     "nix",
                     "--extra-experimental-features", "nix-command flakes",
                     "flake", "lock",
+                    # `flake lock --update-input` rewrites the whole lock
+                    # file. When an alternate base or a custom flake uses a
+                    # local `git+file://`/`path:` input, that input is
+                    # inherently unlocked (no Git revision) and Nix refuses
+                    # to write the lock — discarding the homefree-base bump
+                    # we actually want. These flags (mirroring scripts/
+                    # build.sh and NixOperations._refresh_local_inputs) tell
+                    # Nix the unlocked local inputs are intentional; only
+                    # homefree-base is being updated here regardless.
+                    "--allow-dirty",
+                    "--allow-dirty-locks",
                     "--update-input", SystemUpdates.INPUT_NAME,
                     str(SystemUpdates.FLAKE_DIR),
                 ],
