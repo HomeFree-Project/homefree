@@ -254,9 +254,8 @@ let
     # Stop the proxy service (AdGuard Home will take over port 53)
     systemctl stop adguardhome-dns-proxy.service
   '';
-in
-{
-  options.homefree.service-options.adguard = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -268,7 +267,12 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
+  };
+in
+{
+  options.homefree.services.adguard = userOptions;
 
+  options.homefree.service-options.adguard = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

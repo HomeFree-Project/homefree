@@ -54,22 +54,18 @@ let
     export CANARY_WRITER="${canary-writer}/bin/canary-writer"
     exec ${pkgs.bash}/bin/bash ${./canary-selftest.sh} "$@"
   '';
-in
-{
-  options.homefree.service-options.backup-canary = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = ''
-        Enable the backup-canary service. It verifies that the backup
-        and restore pipeline works, using only throwaway data.
-      '';
+      description = "enable the Backup Self-Test (backup-canary) service";
     };
 
     public = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Open the canary web page to the public WAN.";
+      description = "Open to public on WAN port";
     };
 
     selftest-source = lib.mkOption {
@@ -77,11 +73,15 @@ in
       default = "local";
       description = ''
         Which backup source the automated self-test exercises:
-        'local' (on-disk repo), 'backblaze' (offsite B2 repo), or
-        'both'. Backblaze must be configured for the latter two.
+        'local', 'backblaze', or 'both'.
       '';
     };
+  };
+in
+{
+  options.homefree.services.backup-canary = userOptions;
 
+  options.homefree.service-options.backup-canary = userOptions // {
     # Metadata - always available, not user-configurable.
     label = lib.mkOption {
       type = lib.types.str;

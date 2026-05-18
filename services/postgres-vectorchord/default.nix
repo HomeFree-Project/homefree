@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable VectorChord PostgreSQL service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   # image = "postgres";
   # version = "16.9";
   # image = "tensorchord/vchord-postgres";
@@ -83,19 +97,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.postgres-vectorchord = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable VectorChord PostgreSQL service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.postgres-vectorchord = userOptions;
+  options.homefree.service-options.postgres-vectorchord = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "postgres-vectorchord";

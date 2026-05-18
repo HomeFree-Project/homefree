@@ -4,9 +4,8 @@ let
 
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 25565;
-in
-{
-  options.homefree.service-options.minecraft = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -23,7 +22,7 @@ in
       curseforge-api-key = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "CurseForge API key for downloading modpacks";
+        description = "CurseForge API key for downloading modpacks (SOPS-managed)";
       };
     };
 
@@ -55,17 +54,16 @@ in
           memory = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
-            description = "Memory for Java VM, e.g. 6G";
+            description = "Memory for java vm, e.g. 6G";
           };
           image-tag = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
-            description = "Pin a specific itzg/minecraft-server image tag (e.g. \"java21\", \"2025.7.0\"). Leave empty to use the project default.";
+            description = "Override itzg/minecraft-server image tag, e.g. \"2026.5.0-java17\". Falls back to the module-wide default when null.";
           };
           mode = lib.mkOption {
-            type = lib.types.enum [ "survival" "creative" "adventure" "spectator" ];
+            type = lib.types.nullOr (lib.types.enum [ "adventure" "creative" "hardcore" "spectator" "survival" ]);
             default = "survival";
-            description = "Default game mode for the world.";
           };
           type = lib.mkOption {
             type = lib.types.nullOr (lib.types.enum [
@@ -92,44 +90,41 @@ in
               "QUILT"
             ]);
             default = null;
-            description = "Minecraft server type or mod platform";
           };
-          mod-pack = lib.mkOption {
-            type = lib.types.nullOr (lib.types.submodule {
-              options = {
-                download-url = lib.mkOption {
-                  type = lib.types.str;
-                  description = "Download URL for mod pack";
-                };
-                project-slug = lib.mkOption {
-                  type = lib.types.str;
-                  description = "Project slug identifier";
-                };
-              };
-            });
-            default = null;
-            description = "Mod pack configuration";
+          mod-pack = {
+            download-url = lib.mkOption {
+              type = lib.types.str;
+              description = "Download URL";
+            };
+            project-slug = lib.mkOption {
+              type = lib.types.str;
+              description = "Project slug";
+            };
           };
           mods = lib.mkOption {
-            type = lib.types.listOf (lib.types.submodule {
+            default = [];
+            description = "Mod configs";
+            type = with lib.types; listOf (submodule {
               options = {
                 download-url = lib.mkOption {
                   type = lib.types.str;
-                  description = "Download URL for mod";
+                  description = "Download URL";
                 };
                 project-slug = lib.mkOption {
                   type = lib.types.str;
-                  description = "Project slug identifier";
+                  description = "Project slug";
                 };
               };
             });
-            default = [];
-            description = "Individual mod configurations";
           };
         };
       });
     };
-
+  };
+in
+{
+  options.homefree.services.minecraft = userOptions;
+  options.homefree.service-options.minecraft = userOptions // {
     # Internal option to hold metadata for admin UI schema generation
     options-metadata = lib.mkOption {
       type = lib.types.listOf lib.types.attrs;

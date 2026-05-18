@@ -201,13 +201,12 @@ PGEOF
       fi
     ''}
   '';
-in
-{
-  options.homefree.service-options.freshrss = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable FreshRSS service";
+      description = "enable FreshRSS news reader API";
     };
 
     public = lib.mkOption {
@@ -215,7 +214,12 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
+  };
+in
+{
+  options.homefree.services.freshrss = userOptions;
 
+  options.homefree.service-options.freshrss = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

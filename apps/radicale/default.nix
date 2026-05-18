@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Radicale CalDAV/CardDAV service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   version = "3.6.1.0";
   containerDataPath = "/var/lib/radicale-podman";
   port = 5232;
@@ -60,19 +74,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.radicale = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Radicale service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.radicale = userOptions;
+  options.homefree.service-options.radicale = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "radicale";

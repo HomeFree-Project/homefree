@@ -30,15 +30,8 @@ EOF
     chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/config || true
     chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/addons || true
   '';
-in
-{
-  ## Admin-UI metadata namespace. The user-facing schema is declared
-  ## in module.nix as `homefree.services.odoo`; module.nix's generic
-  ## `intersectAttrs` mirror projects each user-facing service into
-  ## `homefree.service-options.<name>` so admin-web can build its UI.
-  ## That projection only includes services that have a matching
-  ## `service-options.<name>` declaration here.
-  options.homefree.service-options.odoo = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -50,7 +43,17 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
-
+  };
+in
+{
+  ## Admin-UI metadata namespace. The user-facing schema is declared
+  ## in module.nix as `homefree.services.odoo`; module.nix's generic
+  ## `intersectAttrs` mirror projects each user-facing service into
+  ## `homefree.service-options.<name>` so admin-web can build its UI.
+  ## That projection only includes services that have a matching
+  ## `service-options.<name>` declaration here.
+  options.homefree.services.odoo = userOptions;
+  options.homefree.service-options.odoo = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "odoo";

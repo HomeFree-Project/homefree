@@ -9,13 +9,12 @@ let
   version = "4.6.0";
 
   port = 3018;
-in
-{
-  options.homefree.service-options.grocy = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Grocy service";
+      description = "enable Grocy groceries & household management service";
     };
 
     public = lib.mkOption {
@@ -23,7 +22,12 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
+  };
+in
+{
+  options.homefree.services.grocy = userOptions;
 
+  options.homefree.service-options.grocy = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

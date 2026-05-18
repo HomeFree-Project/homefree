@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable WebDAV service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   version = "v5.11.8";
   containerDataPath = "/var/lib/webdav";
   port = 5334;
@@ -122,19 +136,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.webdav = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable hacdias webdav service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.webdav = userOptions;
+  options.homefree.service-options.webdav = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "webdav";

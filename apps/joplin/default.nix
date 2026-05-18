@@ -4,13 +4,12 @@ let
   port = 8975;
   database-name = "joplin";
   database-user = "joplin";
-in
-{
-  options.homefree.service-options.joplin = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Joplin service";
+      description = "enable Joplin notes service";
     };
 
     public = lib.mkOption {
@@ -18,7 +17,11 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
-
+  };
+in
+{
+  options.homefree.services.joplin = userOptions;
+  options.homefree.service-options.joplin = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "joplin";

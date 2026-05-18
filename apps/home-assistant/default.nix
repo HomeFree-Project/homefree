@@ -509,13 +509,11 @@ let
     done
     echo "ha postStart: all onboarding steps complete" >&2
   '';
-in
-{
-  options.homefree.service-options.home-assistant = {
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Home Assistant service";
+      description = "enable Home Assistant Home Automation";
     };
 
     public = lib.mkOption {
@@ -527,19 +525,7 @@ in
     enable-hacs = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = ''
-        Install the Home Assistant Community Store (HACS) custom
-        component. Once enabled, HACS appears as an integration users
-        can add from Settings → Devices → Add Integration → HACS,
-        providing a UI for installing and updating community
-        integrations and frontend cards from inside HA.
-
-        Note: HACS-installed components live as runtime state under
-        /config/custom_components/<x>/ and /config/www/community/ —
-        outside the declarative Nix-managed paths. They survive
-        rebuilds but are not version-pinned in Git. For declarative
-        custom components, use customComponentPackages instead.
-      '';
+      description = "Install HACS (Home Assistant Community Store) for installing community integrations from the HA UI";
     };
 
     ## Extension points for instance configs. The base repo has no
@@ -637,7 +623,11 @@ in
         comment above.)
       '';
     };
-
+  };
+in
+{
+  options.homefree.services.home-assistant = userOptions;
+  options.homefree.service-options.home-assistant = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "home-assistant";

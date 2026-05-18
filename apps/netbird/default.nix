@@ -27,6 +27,26 @@
 ## services/zitadel-podman.nix.
 
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable NetBird VPN server";
+    };
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Dashboard accessible from WAN";
+    };
+    client = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Run the NetBird client on this host (router as peer). Independent of server.";
+      };
+    };
+  };
+
   cfg = config.homefree;
   netbirdCfg = config.homefree.service-options.netbird;
   lan-address = cfg.network.lan-address;
@@ -180,6 +200,13 @@ let
 
 in
 {
+  ## netbird's user-facing JSON-binding schema. This REPLACES the
+  ## legacy compat shim that module.nix declared for
+  ## `homefree.services.netbird`. The `service-options.netbird` block
+  ## below is the authoritative full schema (a superset) and is left
+  ## intact deliberately.
+  options.homefree.services.netbird = userOptions;
+
   options.homefree.service-options.netbird = {
     enable = lib.mkOption {
       type = lib.types.bool;

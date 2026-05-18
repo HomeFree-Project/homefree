@@ -10,9 +10,8 @@ let
     mkdir -p ${containerDataPath}/config
     mkdir -p ${containerDataPath}/Specific
   '';
-in
-{
-  options.homefree.service-options.baikal = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -24,7 +23,12 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
+  };
+in
+{
+  options.homefree.services.baikal = userOptions;
 
+  options.homefree.service-options.baikal = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

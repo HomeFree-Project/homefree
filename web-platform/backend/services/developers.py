@@ -467,6 +467,30 @@ class DevelopersService:
                 )
 
     @staticmethod
+    def _persist_developers(flakes: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
+        """
+        Write the `developers.flakes` list into homefree-config.json.
+
+        DevelopersService owns the `developers` section outright — it does
+        NOT route through ConfigWriter.write_config, because that path is
+        also fed the frontend's whole-config blob by /api/config/apply and
+        would clobber this section with a stale snapshot. We read the file
+        fresh, set only `developers`, and write it back, so a concurrent
+        edit to any other section is preserved.
+        """
+        try:
+            ConfigWriter._backup_config()
+            current = json.loads(ConfigWriter.CONFIG_FILE.read_text())
+            current["developers"] = {"flakes": flakes}
+            ConfigWriter.CONFIG_FILE.write_text(
+                json.dumps(current, indent=2, sort_keys=False) + "\n"
+            )
+            return True, None
+        except Exception as e:
+            logger.error(f"Failed to persist developers section: {e}")
+            return False, f"Failed to persist the developers section: {e}"
+
+    @staticmethod
     def write_flakes(flakes: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
         """
         Persist `flakes`: scaffold, rewrite flake.nix inputs region and
@@ -485,8 +509,9 @@ class DevelopersService:
             logger.error(f"Failed to write flake files: {e}")
             return False, f"Failed to write flake files: {e}"
 
-        if not ConfigWriter.write_config({"developers": {"flakes": flakes}}):
-            return False, "Failed to persist the developers section to homefree-config.json."
+        ok, err = DevelopersService._persist_developers(flakes)
+        if not ok:
+            return False, err
 
         # Local flakes are usually owned by the admin's user, not root;
         # allow-list them so the root-run rebuild can open the repo.

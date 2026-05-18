@@ -170,9 +170,8 @@ EOF
 
     chown -R ${toString dockerUserId}:${toString dockerGroupId} ${containerDataPath}
   '';
-in
-{
-  options.homefree.service-options.cryptpad = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -190,7 +189,12 @@ in
       default = [];
       description = "Public keys that have access to admin panel";
     };
+  };
+in
+{
+  options.homefree.services.cryptpad = userOptions;
 
+  options.homefree.service-options.cryptpad = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

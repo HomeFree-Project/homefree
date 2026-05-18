@@ -349,9 +349,8 @@ let
         || echo "nextcloud postStart: failed to set allow_multiple_user_backends (non-fatal)" >&2
     fi
   '';
-in
-{
-  options.homefree.service-options.nextcloud = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -389,7 +388,11 @@ in
         description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
       };
     };
-
+  };
+in
+{
+  options.homefree.services.nextcloud = userOptions;
+  options.homefree.service-options.nextcloud = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

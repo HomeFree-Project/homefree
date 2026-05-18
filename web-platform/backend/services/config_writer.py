@@ -108,12 +108,18 @@ class ConfigWriter:
             if 'backups' in config:
                 current_config['backups'].update(config['backups'])
 
-            # Developers section holds the registered custom-flake list.
-            # Unlike the other sections this is replaced wholesale (not
-            # deep-merged) so that deleting a flake actually drops it —
-            # a merge would leave stale entries behind.
-            if 'developers' in config:
-                current_config['developers'] = config['developers']
+            # NOTE: the `developers` section (registered custom flakes) is
+            # deliberately NOT written here. It is owned exclusively by
+            # DevelopersService, which writes it via its own endpoints and
+            # keeps /etc/nixos/flake.nix + custom-flakes.nix in sync with
+            # it. The generic /api/config/save and /api/config/apply paths
+            # POST the frontend's whole pendingConfig blob — which carries
+            # a `developers` snapshot taken at page load. If we wrote that
+            # here, a flake removed via the Developers page would be
+            # resurrected by the next Apply (stale snapshot clobbers the
+            # fresh on-disk list). `current_config` is read fresh from
+            # disk above, so simply not touching `developers` preserves
+            # whatever DevelopersService last wrote.
 
             # Write SOPS-managed secrets from plaintext values to SOPS
             success, error = ConfigWriter._write_sops_managed_secrets(current_config)

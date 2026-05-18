@@ -163,49 +163,18 @@ let
       ##      point if you go this route).
     };
   };
-in
-{
-  ## nixpkgs ships its own headplane module (services/networking/headplane.nix)
-  ## but it's pinned to nixpkgs's headplane version (0.6.x). Disable it so
-  ## the upstream flake module — which tracks 0.7+ and adds option fields the
-  ## nixpkgs version doesn't — wins without colliding.
-  disabledModules = [ "services/networking/headplane.nix" ];
-  imports = [
-    homefree-inputs.headplane.nixosModules.headplane
-  ];
 
-  options.homefree.service-options.headscale = {
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Headscale VPN service";
+      description = "enable Headscale vpn service";
     };
 
     public = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "UI open to public on WAN port";
-    };
-
-    label = lib.mkOption {
-      type = lib.types.str;
-      default = "headscale";
-      internal = true;
-      description = "Service label";
-    };
-
-    name = lib.mkOption {
-      type = lib.types.str;
-      default = "VPN (Headscale)";
-      internal = true;
-      description = "Service display name";
-    };
-
-    project-name = lib.mkOption {
-      type = lib.types.str;
-      default = "Headscale";
-      internal = true;
-      description = "Project name";
     };
 
     stun-port = lib.mkOption {
@@ -232,6 +201,40 @@ in
         (controlplane.tailscale.com). Disable this if you require
         complete independence from Tailscale's services.
       '';
+    };
+  };
+in
+{
+  ## nixpkgs ships its own headplane module (services/networking/headplane.nix)
+  ## but it's pinned to nixpkgs's headplane version (0.6.x). Disable it so
+  ## the upstream flake module — which tracks 0.7+ and adds option fields the
+  ## nixpkgs version doesn't — wins without colliding.
+  disabledModules = [ "services/networking/headplane.nix" ];
+  imports = [
+    homefree-inputs.headplane.nixosModules.headplane
+  ];
+
+  options.homefree.services.headscale = userOptions;
+  options.homefree.service-options.headscale = userOptions // {
+    label = lib.mkOption {
+      type = lib.types.str;
+      default = "headscale";
+      internal = true;
+      description = "Service label";
+    };
+
+    name = lib.mkOption {
+      type = lib.types.str;
+      default = "VPN (Headscale)";
+      internal = true;
+      description = "Service display name";
+    };
+
+    project-name = lib.mkOption {
+      type = lib.types.str;
+      default = "Headscale";
+      internal = true;
+      description = "Project name";
     };
 
     ## Headscale's secrets (tailscale-key, headplane-cookie-secret,

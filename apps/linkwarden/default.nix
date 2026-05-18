@@ -82,13 +82,12 @@ let
     fi
     chmod 600 ${ssoEnvFile}
   '';
-in
-{
-  options.homefree.service-options.linkwarden = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable linkwarden service";
+      description = "enable Linkwarden bookmarks service";
     };
 
     public = lib.mkOption {
@@ -97,6 +96,18 @@ in
       description = "Open to public on WAN port";
     };
 
+    secrets = {
+      environment = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of Linkwarden environment variables file. Should not be a file included in your source repo.";
+      };
+    };
+  };
+in
+{
+  options.homefree.services.linkwarden = userOptions;
+  options.homefree.service-options.linkwarden = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "linkwarden";
@@ -116,12 +127,6 @@ in
       default = "linkwarden";
       internal = true;
       description = "Project name";
-    };
-
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
-      default = {};
-      description = "Secrets for linkwarden service";
     };
   };
 

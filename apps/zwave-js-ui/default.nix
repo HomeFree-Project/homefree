@@ -1,5 +1,30 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Z-Wave JS UI controller daemon";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    deviceId = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = ''
+        Stable serial-by-id of the Z-Wave USB controller (without the
+        /dev/serial/by-id/ prefix). For example, an Aeotec Z-Stick
+        Gen5 typically presents as "usb-0658_0200-if00".
+        Find with: ls /dev/serial/by-id/
+      '';
+    };
+  };
+
   ## Image pinned to a known-good tag. Update on review.
   version = "11.17.0";
 
@@ -36,30 +61,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.zwave-js-ui = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Z-Wave JS UI service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
-    deviceId = lib.mkOption {
-      type = lib.types.str;
-      default = "";
-      description = ''
-        Stable serial-by-id of the Z-Wave USB controller (without the
-        /dev/serial/by-id/ prefix). For example, an Aeotec Z-Stick
-        Gen5 typically presents as "usb-0658_0200-if00".
-        Find with: ls /dev/serial/by-id/
-      '';
-    };
-
+  options.homefree.services.zwave-js-ui = userOptions;
+  options.homefree.service-options.zwave-js-ui = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "zwave-js-ui";

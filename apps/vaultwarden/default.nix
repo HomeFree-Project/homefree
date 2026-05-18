@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Vaultwarden Bitwarden password manager backend";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   containerDataPath = "/var/lib/vaultwarden-podman";
   domain = config.homefree.system.domain;
   secretsDir = "/var/lib/homefree-secrets/vaultwarden";
@@ -95,19 +109,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.vaultwarden = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Vaultwarden service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.vaultwarden = userOptions;
+  options.homefree.service-options.vaultwarden = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "vaultwarden";

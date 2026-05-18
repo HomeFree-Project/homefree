@@ -12,13 +12,12 @@ let
 
   port = 8096;
   version = "10.11.8";
-in
-{
-  options.homefree.service-options.jellyfin = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Jellyfin service";
+      description = "enable Jellyfin media server";
     };
 
     public = lib.mkOption {
@@ -32,7 +31,11 @@ in
       default = null;
       description = "Location of media files";
     };
-
+  };
+in
+{
+  options.homefree.services.jellyfin = userOptions;
+  options.homefree.service-options.jellyfin = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "jellyfin";

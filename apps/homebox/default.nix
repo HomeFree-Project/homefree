@@ -75,19 +75,12 @@ let
     fi
     chmod 600 ${ssoEnvFile}
   '';
-in
-{
-  options.homefree.service-options.homebox = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Homebox service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
+      description = "enable Homebox inventory management service";
     };
 
     disable-registration = lib.mkOption {
@@ -96,6 +89,16 @@ in
       description = "Disable user registration";
     };
 
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+in
+{
+  options.homefree.services.homebox = userOptions;
+  options.homefree.service-options.homebox = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "homebox";

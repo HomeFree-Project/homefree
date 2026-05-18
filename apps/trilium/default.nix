@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Trilium Notes service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   version = "0.95.0";
   containerDataPath = "/var/lib/trilium-podman";
   port = 8081;
@@ -24,19 +38,8 @@ in
   ## into `homefree.service-options.<name>` so admin-web can build its
   ## UI. That projection only includes services that have a matching
   ## `service-options.<name>` declaration here.
-  options.homefree.service-options.trilium = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Trilium Notes service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.trilium = userOptions;
+  options.homefree.service-options.trilium = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "trilium";

@@ -15,13 +15,12 @@ let
     mkdir -p ${mediaPath}
     mkdir -p ${downloadsPath}
   '';
-in
-{
-  options.homefree.service-options.lidarr = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Lidarr service";
+      description = "enable Lidarr music management service";
     };
 
     public = lib.mkOption {
@@ -31,13 +30,13 @@ in
     };
 
     media-path = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
+      type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Location of music media";
     };
 
     downloads-path = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
+      type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Location of downloads";
     };
@@ -47,7 +46,11 @@ in
       default = true;
       description = "Whether to backup media";
     };
-
+  };
+in
+{
+  options.homefree.services.lidarr = userOptions;
+  options.homefree.service-options.lidarr = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "lidarr";

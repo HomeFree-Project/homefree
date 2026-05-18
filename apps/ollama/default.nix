@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Ollama GenAI service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   containerDataPath = "/var/lib/ollama-webui";
   secretsDir = "/var/lib/homefree-secrets/ollama";
 
@@ -87,19 +101,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.ollama = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Ollama service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.ollama = userOptions;
+  options.homefree.service-options.ollama = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "ollama";

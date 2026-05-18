@@ -1,5 +1,32 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Snipe-IT inventory management service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+
+    secrets = {
+      mysql-password = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of Snipe-IT mysql password file. Should not be a file included in your source repo.";
+      };
+      env = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Location of Snipe-IT env file. Contains DB_PASSWORD, which is the same as mysql-password above, and APP_KEY. Should not be a file included in your source repo.";
+      };
+    };
+  };
+
   containerDataPath = "/var/lib/snipeit";
   secretsDir = "/var/lib/homefree-secrets/snipe-it";
 
@@ -63,19 +90,8 @@ let
   port = 3017;
 in
 {
-  options.homefree.service-options.snipe-it = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Snipe-IT service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.snipe-it = userOptions;
+  options.homefree.service-options.snipe-it = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "snipe-it";
@@ -95,12 +111,6 @@ in
       default = "Snipe-IT";
       internal = true;
       description = "Project name";
-    };
-
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
-      default = {};
-      description = "Secrets for Snipe-IT service";
     };
   };
 

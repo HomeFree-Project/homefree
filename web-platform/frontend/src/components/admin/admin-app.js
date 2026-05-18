@@ -1657,6 +1657,14 @@ class AdminApp extends LitElement {
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
+    // The `developers` section (registered custom flakes) is owned
+    // solely by the Developers module via its own /api/developers/*
+    // endpoints — it is NOT part of the config blob the global Apply
+    // submits. Strip it so a stale page-load snapshot can't resurrect
+    // a flake the user removed on the Custom Flakes page. The backend
+    // also ignores `developers` on this path; this is defence in depth.
+    delete merged.developers;
+
     return merged;
   }
 

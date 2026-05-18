@@ -126,6 +126,37 @@ Notes:
 - Move any podman container that doesn't require root to non-root.
 - Detect that nixcfg is dirty and show this in the admin UI.
   *(Note: a `/api/config/dirty` backend endpoint exists; surface it in the frontend.)*
+- **Custom Flakes: restore app settings when a removed flake is re-added.**
+
+  DONE (already implemented): removing a custom-flake app no longer breaks the
+  build. `homefree-configuration.nix` used to do `homefree.services =
+  jsonData.services`, so an orphaned `services.<name>` block left behind by a
+  removed flake (whose option-declaring module is gone) aborted every rebuild
+  with `error: The option 'homefree.services.<name>' does not exist`. It now
+  filters `jsonData.services` to keys with a declared `homefree.services.<name>`
+  option (`lib.filterAttrs ... options.homefree.services ? ${name}`), so an
+  orphaned key is silently ignored. The orphaned settings stay inert in
+  `homefree-config.json`. Applied in both `install.py`'s
+  `HOMEFREE_CONFIG_TEMPLATE` and live `/etc/nixos/homefree-configuration.nix`.
+
+  STILL TODO — *active* restore: because the orphaned `services.<name>` block is
+  left in place (just not evaluated), re-adding the flake currently does NOT
+  surface those old settings in the admin UI until... actually it should — the
+  block is still in the JSON, so once the flake's module re-declares the option,
+  the filter stops dropping it and the settings come back automatically. So the
+  remove→re-add round-trip likely already preserves settings. **Verify this**:
+  remove a custom flake, confirm `services.<name>` stays in `homefree-config.json`,
+  re-add the flake, rebuild, and confirm the app comes back with its prior
+  `enable`/options rather than defaults. If it works, this item is fully done and
+  can be struck. If the admin UI or some save path strips the orphaned block in
+  the meantime, then implement explicit orphan-and-restore in `DevelopersService`
+  (it owns the `developers` section + flake lifecycle).
+
+  (Earlier this item proposed a separate `developers.orphaned-settings` store and
+  a `provides:[service-names]` field on flake entries to map flake→service. With
+  the filter approach above, neither is needed — the orphaned block can simply
+  remain in `services.<name>` harmlessly. Keep the `provides` idea on file only
+  if a future need to *purge* orphaned settings arises.)
 - HA: declarative pre-seeded config entries with `!secret` resolution
   - `homefree.service-options.home-assistant.configEntries = { hacs = { data = { token = "!secret hacs_github_token"; ... }; }; ... };`
   - preStart strict-overlay-merges entries into `.storage/core.config_entries`

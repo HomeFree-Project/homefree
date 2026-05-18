@@ -228,9 +228,8 @@ SQL
 
     echo "immich postStart: SSO config applied via SQL" >&2
   '';
-in
-{
-  options.homefree.service-options.immich = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -242,7 +241,11 @@ in
       default = false;
       description = "Open to public on WAN port";
     };
-
+  };
+in
+{
+  options.homefree.services.immich = userOptions;
+  options.homefree.service-options.immich = userOptions // {
     # Metadata - always available, not user-configurable
     label = lib.mkOption {
       type = lib.types.str;

@@ -155,13 +155,12 @@ let
     ## @TODO: just mount this directly as readonly, no need to copy
     cp ${config-yaml} ${containerDataPath}/config/config.yaml
   '';
-in
-  {
-  options.homefree.service-options.frigate = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Frigate service";
+      description = "enable Frigate video recording service";
     };
 
     enable-coral = lib.mkOption {
@@ -177,7 +176,7 @@ in
     };
 
     media-path = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
+      type = lib.types.nullOr lib.types.path;
       default = null;
       description = "Location to save recording";
     };
@@ -191,28 +190,38 @@ in
     retain = lib.mkOption {
       type = lib.types.nullOr lib.types.int;
       default = null;
-      description = "If specified, how long in DAYS to keep files before deleting";
+      description = "If specified, how long in DAYS to keep files before deleting. This applies to ALL files: clips, recordings, exports, etc.";
     };
 
     hwaccel-args = lib.mkOption {
       type = lib.types.str;
       default = "preset-intel-qsv-h264";
       description = ''
-        ffmpeg hwaccel preset. Per the Frigate docs:
-        - Intel iGPU (QuickSync): "preset-intel-qsv-h264" (default)
-        - AMD GPU (VAAPI):        "preset-vaapi"
-        - Raspberry Pi:           "-c:v h264_v4l2m2m"
-        - Nvidia:                 "preset-nvidia-h264"
-        - CPU-only:               "" (empty string disables hwaccel)
+        ffmpeg hwaccel preset. Intel iGPU: "preset-intel-qsv-h264".
+        AMD GPU: "preset-vaapi". Raspberry Pi: "-c:v h264_v4l2m2m".
+        Nvidia: "preset-nvidia-h264". Empty string disables hwaccel.
       '';
     };
 
     cameras = lib.mkOption {
-      type = lib.types.nullOr (lib.types.listOf lib.types.attrs);
+      description = "list of cameras";
       default = null;
-      description = "List of cameras";
+      type = with lib.types; nullOr (listOf (submodule {
+        options = {
+          enable = lib.mkOption { type = lib.types.bool; default = true; description = "Camera enabled"; };
+          name = lib.mkOption { type = lib.types.str; description = "Camera name"; };
+          path = lib.mkOption { type = lib.types.str; description = "URL / path to camera"; };
+          width = lib.mkOption { type = lib.types.int; default = 1920; description = "Width in pixels"; };
+          height = lib.mkOption { type = lib.types.int; default = 1080; description = "Height in pixels"; };
+          direct-stream = lib.mkOption { type = lib.types.bool; default = false; description = "Don't use go2rtc by default. Addresses certain issues, such as audio delay in recordings"; };
+        };
+      }));
     };
-
+  };
+in
+  {
+  options.homefree.services.frigate = userOptions;
+  options.homefree.service-options.frigate = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "frigate";

@@ -1,5 +1,19 @@
 { config, lib, pkgs, ... }:
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "enable Screeenly preview generation service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   containerDataPath = "/var/lib/screeenly";
   containerImageName = "hadogenes/screeenly";
   containerHash = "sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f";
@@ -26,19 +40,8 @@ let
   '';
 in
 {
-  options.homefree.service-options.screeenly = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Screeenly service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.screeenly = userOptions;
+  options.homefree.service-options.screeenly = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "screeenly";

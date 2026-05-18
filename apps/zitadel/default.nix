@@ -22,6 +22,21 @@
 ##     as every other service's secrets dir)
 
 let
+  userOptions = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      ## Zitadel is the SSO backbone; enabled by default.
+      default = true;
+      description = "enable Zitadel auth service";
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
+    };
+  };
+
   zitadelVersion = "v4.15.0";
   zitadelDataPath = "/var/lib/zitadel";
   zitadelPort = 3241;
@@ -142,19 +157,8 @@ in
     ./password-shim.nix
   ];
 
-  options.homefree.service-options.zitadel = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "enable Zitadel service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
-    };
-
+  options.homefree.services.zitadel = userOptions;
+  options.homefree.service-options.zitadel = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "zitadel";

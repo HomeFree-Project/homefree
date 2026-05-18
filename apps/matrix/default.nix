@@ -204,19 +204,12 @@ let
           http://127.0.0.1:${toString port} 2>&1 | tail -3 || true
     ''}
   '';
-in
-{
-  options.homefree.service-options.matrix = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable Matrix-Synapse service";
-    };
-
-    public = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Open to public on WAN port";
+      description = "enable Matrix chat service";
     };
 
     enable-federation = lib.mkOption {
@@ -227,29 +220,37 @@ in
 
     federation-domain-whitelist = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [];
-      description = "Federation domain whitelist";
+      default = [ "matrix.org" "nixos.org" "homefree.host" "rycee.net" "gnome.org" ];
+    };
+
+    public = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Open to public on WAN port";
     };
 
     admin-account = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Admin account username (localpart only, e.g. 'erahhal')";
+      description = "Admin user for matrix synapse server (localpart only)";
     };
 
     server-name = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = ''
-        Override Matrix server_name. Defaults to homefree.system.domain
-        when null. Set explicitly when migrating an existing homeserver
-        whose user_ids/events/signing key are tied to a different
-        identity than the current box's primary domain. Changing this
-        on a non-empty DB requires the DB to already contain users for
-        the configured value — Synapse refuses to start otherwise.
-      '';
+      description = "Override Matrix server_name. Defaults to homefree.system.domain.";
     };
 
+    secrets = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
+      default = {};
+      description = "Secrets for Matrix service";
+    };
+  };
+in
+{
+  options.homefree.services.matrix = userOptions;
+  options.homefree.service-options.matrix = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "matrix";
@@ -269,12 +270,6 @@ in
       default = "Matrix-Synapse";
       internal = true;
       description = "Project name";
-    };
-
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.nullOr lib.types.path);
-      default = {};
-      description = "Secrets for Matrix service";
     };
   };
 

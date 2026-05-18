@@ -11,13 +11,12 @@ let
     mkdir -p ${configPath}
     mkdir -p ${downloadsPath}
   '';
-in
-{
-  options.homefree.service-options.nzbget = {
+
+  userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "enable NZBGet service";
+      description = "enable NZBGet downloader";
     };
 
     public = lib.mkOption {
@@ -37,7 +36,11 @@ in
       default = true;
       description = "Whether to backup media";
     };
-
+  };
+in
+{
+  options.homefree.services.nzbget = userOptions;
+  options.homefree.service-options.nzbget = userOptions // {
     label = lib.mkOption {
       type = lib.types.str;
       default = "nzbget";
