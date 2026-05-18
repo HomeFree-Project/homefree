@@ -39,7 +39,10 @@ export const themeVars = css`
     color: var(--hf-text);
     background: var(--hf-bg);
     color-scheme: dark;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    /* Inter is vendored locally and registered via @font-face in
+       index.html — see src/assets/fonts/. The system stack stays as a
+       fallback for the brief moment before the woff2 loads. */
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
       Roboto, sans-serif;
   }
 `;

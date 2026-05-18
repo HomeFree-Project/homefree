@@ -4,6 +4,7 @@ import { handleSignOut } from '../../shared/auth.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
 import { shellStyles } from '../../shared/shell.js';
+import { navIcon } from '../../shared/icons.js';
 import './modules/dashboard-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
@@ -92,7 +93,7 @@ class AdminApp extends LitElement {
       border-radius: 6px;
       border: 1px solid var(--hf-accent);
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -188,7 +189,7 @@ class AdminApp extends LitElement {
 
     .btn-primary {
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       border-color: var(--hf-accent);
     }
 
@@ -613,11 +614,12 @@ class AdminApp extends LitElement {
     // (services + their backups), Identity (users + SSO). The item
     // formerly titled "System" is renamed "Host" to avoid colliding
     // with the section name.
+    // Per-item icons are resolved from `id` via navIcon() (see
+    // shared/icons.js) — no `icon` key is stored here.
     this.modules = [
       {
         id: 'dashboard',
         title: 'Dashboard',
-        icon: '📊',
         section: 'System'
       },
       {
@@ -626,105 +628,91 @@ class AdminApp extends LitElement {
         // also links here. Renders the finish-setup-wizard component.
         id: 'finish-setup',
         title: 'Finish Setup',
-        icon: '🚀',
         section: 'System'
       },
       {
         id: 'system',
         title: 'Host',
-        icon: '⚙️',
         section: 'System'
       },
       {
         id: 'network',
         title: 'Network',
-        icon: '🌐',
         section: 'System'
       },
       {
         id: 'lan-clients',
         title: 'LAN Clients',
-        icon: '💻',
         section: 'System'
       },
       {
         id: 'dns',
         title: 'DNS',
-        icon: '🔍',
         section: 'System'
       },
       {
         id: 'mounts',
         title: 'Mounts',
-        icon: '🗂️',
         section: 'System'
       },
       {
         id: 'extra-proxies',
         title: 'External Proxies',
-        icon: '🔌',
         section: 'System'
       },
       {
         id: 'proxied-domains',
         title: 'Proxied Domains',
-        icon: '🌐',
         section: 'System'
       },
       {
         id: 'abuse-blocking',
         title: 'Network Traffic',
-        icon: '🛡️',
         section: 'System'
       },
       {
-        id: 'advanced',
-        title: 'Advanced',
-        icon: '🔧',
-        section: 'System'
-      },
-      {
-        id: 'status',
-        title: 'Status',
-        icon: '📊',
+        // Build status + rebuild log viewer.
+        id: 'build-logs',
+        title: 'Build & Logs',
         section: 'System'
       },
       {
         id: 'updates',
         title: 'Updates',
-        icon: '⬆️',
         section: 'System'
       },
       {
-        id: 'services',
-        title: 'Services',
-        icon: '📦',
+        id: 'apps',
+        title: 'App Configuration',
         section: 'Applications'
       },
       {
         id: 'backups',
         title: 'Backups',
-        icon: '💾',
         section: 'Applications'
       },
       {
         id: 'users',
         title: 'Users',
-        icon: '👥',
         section: 'Identity'
       },
       {
         id: 'sso',
         title: 'SSO',
-        icon: '🔐',
         section: 'Identity'
+      },
+      {
+        // Raw homefree-config.json viewer — a power-user / debugging
+        // surface, grouped with the other Developers tools.
+        id: 'json-config',
+        title: 'JSON Config',
+        section: 'Developers'
       },
       {
         // Register custom Nix flakes that extend the system with the
         // user's own apps/modules. Last section — a power-user feature.
         id: 'developers',
         title: 'Custom Flakes',
-        icon: '🧩',
         section: 'Developers'
       }
     ];
@@ -1083,8 +1071,8 @@ class AdminApp extends LitElement {
     // Update URL hash to maintain state
     window.location.hash = `#/${moduleId}`;
 
-    // If clicking Status nav, clear the needs attention flag
-    if (moduleId === 'status') {
+    // If clicking the Build & Logs nav, clear the needs-attention flag
+    if (moduleId === 'build-logs') {
       this.statusNeedsAttention = false;
     }
 
@@ -2133,7 +2121,7 @@ class AdminApp extends LitElement {
           ></proxied-domains-module>
         `;
 
-      case 'services':
+      case 'apps':
         return html`
           <services-module
             .serverConfig=${this.serverConfig}
@@ -2174,15 +2162,17 @@ class AdminApp extends LitElement {
           <users-module></users-module>
         `;
 
-      case 'advanced':
+      case 'json-config':
         return html`
           <div class="module-content">
-            <h3>Advanced Configuration</h3>
-            <p>Advanced configuration options will be available in a future update.</p>
+            <h3>JSON Config</h3>
+            <p>The raw <code>homefree-config.json</code> for this box, exactly
+               as the system reads it. Read-only — use the other admin pages
+               to make changes.</p>
 
             ${this.config ? html`
               <details open class="config-details">
-                <summary>View Current Configuration (Debug)</summary>
+                <summary>View Current Configuration</summary>
                 <pre class="config-json"
                      .innerHTML=${this.highlightJson(JSON.stringify(this.config, null, 2))}></pre>
               </details>
@@ -2190,7 +2180,7 @@ class AdminApp extends LitElement {
           </div>
         `;
 
-      case 'status':
+      case 'build-logs':
         return html`
           <status-module
             .rebuildStatus=${this.rebuildStatus}
@@ -2334,26 +2324,26 @@ class AdminApp extends LitElement {
                 class="nav-item nav-item-finish-setup ${this.currentModule === 'finish-setup' ? 'active' : ''}"
                 @click=${() => this.handleModuleClick('finish-setup')}
               >
-                <span class="nav-item-icon">${finishSetupModule.icon}</span>
+                <span class="nav-item-icon">${navIcon('finish-setup')}</span>
                 <span class="nav-item-text">${finishSetupModule.title}</span>
               </div>
             ` : ''}
             <!-- Cross-site link to the per-user portal. External
                  navigation, so no active state / handleModuleClick. -->
             <a class="nav-item" href="${this._homeUrl()}">
-              <span class="nav-item-icon">🏠</span>
+              <span class="nav-item-icon">${navIcon('home')}</span>
               <span class="nav-item-text">Home</span>
             </a>
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`
                 <div
-                  class="nav-item ${this.currentModule === module.id ? 'active' : ''} ${module.id === 'status' && (this.statusFlashing || this.statusNeedsAttention) ? 'flashing' : ''}"
+                  class="nav-item ${this.currentModule === module.id ? 'active' : ''} ${module.id === 'build-logs' && (this.statusFlashing || this.statusNeedsAttention) ? 'flashing' : ''}"
                   @click=${() => this.handleModuleClick(module.id)}
                 >
-                  <span class="nav-item-icon">${module.icon}</span>
+                  <span class="nav-item-icon">${navIcon(module.id)}</span>
                   <span class="nav-item-text">${module.title}</span>
-                  ${module.id === 'status' ? html`
+                  ${module.id === 'build-logs' ? html`
                     <span class="status-badge ${this.getStatusBadgeClass()}">
                       ${this.rebuildStatus.running ? html`<div class="spinner-tiny"></div>` : ''}
                     </span>
@@ -2367,7 +2357,7 @@ class AdminApp extends LitElement {
             <div class="nav-section-title">More</div>
             <a class="nav-item" href="${this._manualUrl()}"
                target="_blank" rel="noopener">
-              <span class="nav-item-icon">📖</span>
+              <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
             </a>
           </nav>

@@ -34,15 +34,17 @@ class DnsModule extends LitElement {
       width: 100%;
     }
 
+    /* minmax(0, 1fr) lets a column shrink below its content width;
+       plain 1fr would overflow / clip the field on narrow screens. */
     .field-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 20px;
     }
 
     @media (max-width: 768px) {
       .field-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
     }
 
@@ -198,12 +200,8 @@ class DnsModule extends LitElement {
       <div class="module-container">
         <config-section
           title="Local DNS Overrides"
-          description="Map custom hostnames to IP addresses on your local network"
+          description="Resolve custom hostnames (e.g. myserver.local) to specific IP addresses on your local network."
         >
-          <p style="color: var(--hf-text-muted); font-size: 14px; margin-bottom: 16px;">
-            DNS overrides allow you to resolve custom hostnames like
-            "myserver.local" to specific IP addresses on your network.
-          </p>
           <table-editor
             .columns=${dnsOverrideColumns}
             .data=${dns.overrides || []}

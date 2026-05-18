@@ -119,7 +119,12 @@ export const shellStyles = css`
   .nav-item {
     display: flex;
     align-items: center;
+    /* Fixed line-height so the row is exactly the same height whether
+       the label text is shown (expanded) or hidden (collapsed). The
+       18px icon then sits inside that line box and nothing shifts
+       vertically when the sidebar collapses. */
     padding: 10px 20px;
+    line-height: 20px;
     color: var(--hf-text-muted);
     text-decoration: none;
     cursor: pointer;
@@ -136,15 +141,28 @@ export const shellStyles = css`
     color: var(--hf-text);
     border-left-color: var(--hf-accent);
   }
+  /* Monochrome line icons (shared/icons.js). The SVG inherits the
+     nav-item text color via stroke="currentColor", so it tints with
+     hover / active states for free — no per-state filter needed.
+
+     The icon BOX is 20px tall — matching the label's 20px line-height
+     — so it is the row's tallest flex item whether or not the label
+     is shown. That keeps every nav-item exactly 40px (10+20+10) when
+     the sidebar collapses, so the icons never shift vertically. The
+     SVG glyph itself stays 18px, centred inside the 20px box. */
   .nav-item-icon {
     width: 20px;
+    height: 20px;
     margin-right: 12px;
-    font-size: 16px;
     flex-shrink: 0;
-    filter: grayscale(0.4);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
-  .nav-item.active .nav-item-icon {
-    filter: none;
+  .nav-item-icon svg {
+    width: 18px;
+    height: 18px;
+    display: block;
   }
   /* Finish-setup nav item — pinned at the top of the menu while post-
      install setup is incomplete. A distinct amber tint marks it as a
@@ -155,9 +173,6 @@ export const shellStyles = css`
     color: var(--hf-text);
     font-weight: 600;
     margin: 0 0 8px 0;
-  }
-  .nav-item-finish-setup .nav-item-icon {
-    filter: none;
   }
   .nav-item-finish-setup:hover {
     background: rgba(245, 191, 66, 0.2);

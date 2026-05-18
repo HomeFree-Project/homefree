@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { getServices, getServiceOptionsSchema, postServiceAction } from '../../../api/client.js';
 import '../../shared/config-section.js';
+import '../../shared/app-card.js';
 import '../secrets-input.js';
 import '../service-option-input.js';
 
@@ -88,35 +89,46 @@ class ServicesModule extends LitElement {
       border-color: var(--hf-accent);
     }
 
-    .services-list {
-      width: 100%;
+    /* Responsive card grid — one <app-card> per service. Collapses to
+       a single column on narrow screens. An expanded card spans the
+       full row so its config form has room (see .card-expanded). */
+    .service-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+    app-card.card-expanded {
+      grid-column: 1 / -1;
     }
 
-    .service-row {
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border);
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 12px;
-      transition: all 0.2s;
-    }
-
-    .service-row:hover {
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    }
-
-    .service-row.enabled {
-      border-color: var(--hf-accent);
-    }
-
-    .service-row-main {
+    /* Slotted card body: status line, URL, toggles, action buttons. */
+    .card-status {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .card-url {
+      font-size: 12px;
+      color: var(--hf-accent);
+      text-decoration: none;
+      word-break: break-all;
+      display: block;
+      margin-bottom: 8px;
+    }
+    .card-url:hover { text-decoration: underline; }
+
+    .card-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 4px;
     }
 
     .config-expander {
-      padding: 12px 16px;
+      margin: 12px -18px -18px;
+      padding: 12px 18px;
       border-top: 1px solid var(--hf-border);
       background: var(--hf-surface-2);
       cursor: pointer;
@@ -127,6 +139,7 @@ class ServicesModule extends LitElement {
       color: var(--hf-accent);
       transition: all 0.2s;
       user-select: none;
+      border-radius: 0 0 11px 11px;
     }
 
     .config-expander:hover {
@@ -147,7 +160,6 @@ class ServicesModule extends LitElement {
       display: flex;
       align-items: center;
       gap: 8px;
-      min-width: 120px;
     }
 
     .status-dot {
@@ -205,35 +217,6 @@ class ServicesModule extends LitElement {
     .status-text.degraded { color: var(--hf-warn); }
     .status-text.starting { color: var(--hf-warn); }
 
-    .service-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .service-name {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--hf-text);
-      margin-bottom: 4px;
-    }
-
-    .service-project {
-      font-size: 13px;
-      color: var(--hf-text-muted);
-      margin-bottom: 4px;
-    }
-
-    .service-url {
-      font-size: 12px;
-      color: var(--hf-accent);
-      text-decoration: none;
-      word-break: break-all;
-    }
-
-    .service-url:hover {
-      text-decoration: underline;
-    }
-
     .service-systemd {
       font-size: 11px;
       color: var(--hf-text-muted);
@@ -287,24 +270,18 @@ class ServicesModule extends LitElement {
       max-width: 560px;
     }
 
-    .service-controls {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      align-items: flex-end;
-    }
-
+    /* Each toggle is a full-width row inside the card: label on the
+       left, switch on the right — readable on desktop and mobile. */
     .toggle-container {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
     }
 
     .toggle-label {
       font-size: 13px;
       color: var(--hf-text-muted);
-      min-width: 90px;
-      text-align: right;
     }
 
     .toggle-switch {
@@ -397,7 +374,7 @@ class ServicesModule extends LitElement {
 
     .refresh-button {
       background: var(--hf-accent);
-      color: var(--hf-text);
+      color: #06281c;
       border: none;
       padding: 8px 16px;
       border-radius: 6px;
@@ -416,32 +393,21 @@ class ServicesModule extends LitElement {
       cursor: not-allowed;
     }
 
-    /* Child services (instances) styling */
+    /* Child services (instances) — a stack of nested <app-card>s
+       inside an expanded parent's config section. */
     .child-services {
       margin-top: 8px;
-      margin-left: 24px;
       padding-left: 16px;
       border-left: 2px solid var(--hf-border);
-    }
-
-    .service-row-child {
-      background: var(--hf-surface-2);
-      margin-bottom: 8px;
-      padding: 12px;
-    }
-
-    .service-row-child .service-name {
-      font-size: 14px;
-    }
-
-    .service-row-child .service-project {
-      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     /* Instance management buttons */
     .add-instance-button {
       background: var(--hf-accent);
-      color: var(--hf-text);
+      color: #06281c;
       border: none;
       padding: 10px 16px;
       border-radius: 8px;
@@ -504,36 +470,11 @@ class ServicesModule extends LitElement {
       color: var(--hf-err);
       font-size: 11px;
       margin-top: 4px;
-      max-width: 280px;
-      text-align: right;
       word-break: break-word;
     }
 
-    @media (max-width: 768px) {
-      .service-row {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 12px;
-      }
-
-      .status-indicator {
-        width: 100%;
-      }
-
-      .service-controls {
-        width: 100%;
-        align-items: flex-start;
-      }
-
-      .toggle-container {
-        width: 100%;
-        justify-content: space-between;
-      }
-
-      .toggle-label {
-        text-align: left;
-      }
-    }
+    /* The card grid is responsive on its own (auto-fill minmax) — it
+       collapses to one column on narrow screens with no extra rules. */
   `;
 
   constructor() {
@@ -914,7 +855,7 @@ class ServicesModule extends LitElement {
     return pendingChildren;
   }
 
-  renderServiceRow(service) {
+  renderServiceCard(service) {
     const statusClass = this.getStatusClass(service.active_state, service.sub_state, service.partial);
     const statusText = this.getStatusText(service.active_state, service.sub_state, service.enabled, service.partial);
     const isEnabled = service.enabled;
@@ -961,114 +902,119 @@ class ServicesModule extends LitElement {
       : service.label;
     const isExpanded = this.expandedServices.has(expandId);
 
-    // Add child class if this service has a parent
-    const childClass = service.parent ? 'service-row-child' : '';
+    // The whole service is one <app-card>: the shared icon + title up
+    // top, the admin controls (status / URL / toggles / actions) and
+    // the expandable config section in the default slot. An expanded
+    // card spans the full grid row so its config form has room.
+    const cardClass = isExpanded ? 'card-expanded' : '';
 
     return html`
-      <div class="service-row ${isEnabled ? 'enabled' : ''} ${childClass}">
-        <div class="service-row-main">
-          <div class="status-indicator">
-            <div class="status-dot ${statusClass}"></div>
-            <div class="status-text ${statusClass}">${statusText}</div>
+      <app-card
+        class="${cardClass}"
+        ?enabled=${isEnabled}
+        .label=${service.parent || service.label}
+        .name=${service.name}
+        .subtitle=${service.project_name || ''}
+      >
+        <div class="card-status">
+          <div class="status-dot ${statusClass}"></div>
+          <div class="status-text ${statusClass}">${statusText}</div>
+        </div>
+
+        ${service.url && isEnabled ? html`
+          <a href="${service.url}" target="_blank" class="card-url">
+            ${service.url}
+          </a>
+        ` : ''}
+
+        ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
+          <div class="service-systemd">
+            systemd:
+            ${(() => {
+              const units = (service.unit_states && service.unit_states.length > 0)
+                ? service.unit_states
+                : service.systemd_services.map(n => ({
+                    name: n,
+                    active_state: 'unknown',
+                    sub_state: 'unknown',
+                  }));
+              return units.map((u, i, arr) => {
+                const healthy  = u.active_state === 'active' && u.sub_state === 'running';
+                const unknown  = u.active_state === 'unknown';
+                const starting = u.active_state === 'activating'
+                              || u.active_state === 'reloading'
+                              || u.sub_state === 'start';
+                const cls = healthy  ? 'unit-ok'
+                          : unknown  ? 'unit-unknown'
+                          : starting ? 'unit-starting'
+                          :            'unit-bad';
+                const tip = healthy
+                  ? `${u.name}: ${u.active_state} (${u.sub_state})`
+                  : unknown
+                    ? `${u.name}: status unknown`
+                    : starting
+                      ? `${u.name}: ${u.active_state} (${u.sub_state}) — starting`
+                      : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
+                return html`<span class="unit ${cls}" title="${tip}">${u.name}</span>${i < arr.length - 1 ? html`<span class="unit-sep">, </span>` : ''}`;
+              });
+            })()}
           </div>
+        ` : ''}
 
-          <div class="service-info">
-            <div class="service-name">${service.name}</div>
-            <div class="service-project">${service.project_name}</div>
-            ${service.url && isEnabled ? html`
-              <a href="${service.url}" target="_blank" class="service-url">
-                ${service.url}
-              </a>
-            ` : ''}
-            ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
-              <div class="service-systemd">
-                systemd:
-                ${(() => {
-                  const units = (service.unit_states && service.unit_states.length > 0)
-                    ? service.unit_states
-                    : service.systemd_services.map(n => ({
-                        name: n,
-                        active_state: 'unknown',
-                        sub_state: 'unknown',
-                      }));
-                  return units.map((u, i, arr) => {
-                    const healthy  = u.active_state === 'active' && u.sub_state === 'running';
-                    const unknown  = u.active_state === 'unknown';
-                    const starting = u.active_state === 'activating'
-                                  || u.active_state === 'reloading'
-                                  || u.sub_state === 'start';
-                    const cls = healthy  ? 'unit-ok'
-                              : unknown  ? 'unit-unknown'
-                              : starting ? 'unit-starting'
-                              :            'unit-bad';
-                    const tip = healthy
-                      ? `${u.name}: ${u.active_state} (${u.sub_state})`
-                      : unknown
-                        ? `${u.name}: status unknown`
-                        : starting
-                          ? `${u.name}: ${u.active_state} (${u.sub_state}) — starting`
-                          : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
-                    return html`<span class="unit ${cls}" title="${tip}">${u.name}</span>${i < arr.length - 1 ? html`<span class="unit-sep">, </span>` : ''}`;
-                  });
-                })()}
-              </div>
-            ` : ''}
-            ${this.renderSsoBadge(service)}
-          </div>
+        ${this.renderSsoBadge(service)}
 
-          <div class="service-controls">
-            ${!cannotDisable ? html`
-              <div class="toggle-container">
-                <span class="toggle-label">Enable</span>
-                <label class="toggle-switch">
-                  <input
-                    type="checkbox"
-                    .checked=${isEnabled}
-                    @change=${(e) => {
-                      if (service.parent) {
-                        this.handleInstanceToggle(service.parent, service.label, e.target.checked);
-                      } else {
-                        this.handleServiceToggle(service.label, e.target.checked);
-                      }
-                    }}
-                  />
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-            ` : ''}
+        <div class="card-controls">
+          ${!cannotDisable ? html`
+            <div class="toggle-container">
+              <span class="toggle-label">Enable</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  .checked=${isEnabled}
+                  @change=${(e) => {
+                    if (service.parent) {
+                      this.handleInstanceToggle(service.parent, service.label, e.target.checked);
+                    } else {
+                      this.handleServiceToggle(service.label, e.target.checked);
+                    }
+                  }}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          ` : ''}
 
-            ${isEnabled && !isAdminApi ? html`
-              <div class="toggle-container">
-                <span class="toggle-label">Public (WAN)</span>
-                <label class="toggle-switch">
-                  <input
-                    type="checkbox"
-                    .checked=${isPublic}
-                    @change=${(e) => {
-                      if (service.parent) {
-                        this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
-                      } else {
-                        this.handlePublicToggle(service.label, e.target.checked);
-                      }
-                    }}
-                  />
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-            ` : ''}
+          ${isEnabled && !isAdminApi ? html`
+            <div class="toggle-container">
+              <span class="toggle-label">Public (WAN)</span>
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  .checked=${isPublic}
+                  @change=${(e) => {
+                    if (service.parent) {
+                      this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
+                    } else {
+                      this.handlePublicToggle(service.label, e.target.checked);
+                    }
+                  }}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          ` : ''}
 
-            ${cannotDisable ? html`
-              <div class="toggle-label" style="color: var(--hf-text-muted); font-size: 12px;">
-                ${isAdminApi ? 'System service' : 'System service (always enabled)'}
-              </div>
-            ` : ''}
+          ${cannotDisable ? html`
+            <div class="toggle-label" style="color: var(--hf-text-muted); font-size: 12px;">
+              ${isAdminApi ? 'System service' : 'System service (always enabled)'}
+            </div>
+          ` : ''}
 
-            ${this.renderActionButtons(service)}
-          </div>
+          ${this.renderActionButtons(service)}
         </div>
 
         ${this.renderConfigSection(service, hasConfig, isExpanded, expandId)}
-      </div>
+      </app-card>
     `;
   }
 
@@ -1197,7 +1143,7 @@ class ServicesModule extends LitElement {
         </div>
 
         <div class="child-services">
-          ${childServices.map(child => this.renderServiceRow(child))}
+          ${childServices.map(child => this.renderServiceCard(child))}
 
           ${hasInstancesOption ? html`
             <button
@@ -1387,7 +1333,7 @@ class ServicesModule extends LitElement {
       return html`
         <div class="module-container">
           <div class="loading-spinner">
-            Loading services...
+            Loading apps...
           </div>
         </div>
       `;
@@ -1457,9 +1403,9 @@ class ServicesModule extends LitElement {
 
         <div class="info-box">
           <div class="info-text">
-            <strong>${runningCount} running / ${enabledCount} enabled / ${this.services.length} total services</strong>
+            <strong>${runningCount} running / ${enabledCount} enabled / ${this.services.length} total apps</strong>
             <div style="margin-top: 8px; font-size: 13px;">
-              Enable/disable services and configure public WAN access. Running services appear at the top.
+              Enable/disable apps and configure public WAN access. Running apps appear at the top.
             </div>
           </div>
           <button
@@ -1474,19 +1420,19 @@ class ServicesModule extends LitElement {
         <div class="search-box">
           <input
             type="text"
-            placeholder="Search services..."
+            placeholder="Search apps..."
             .value=${this.searchQuery}
             @input=${this.handleSearch}
           />
         </div>
 
-        <div class="services-list">
-          ${filteredServices.map(service => this.renderServiceRow(service))}
+        <div class="service-grid">
+          ${filteredServices.map(service => this.renderServiceCard(service))}
         </div>
 
         ${filteredServices.length === 0 ? html`
           <div class="no-results">
-            No services found matching "${this.searchQuery}"
+            No apps found matching "${this.searchQuery}"
           </div>
         ` : ''}
       </div>

@@ -68,6 +68,15 @@ separate deployments. It is *not* one machine's config.
    messages. Write the commit message as plain content with no
    tool-attribution footer.
 
+8. **All web assets must be vendored locally.** Every font, JS/CSS
+   library, icon set, and other asset used by any web page
+   (`web-platform/`, `services/landing-page/`, etc.) must be served
+   from this repo — never loaded from a CDN, Google Fonts, or any
+   third-party URL. HomeFree boxes must render fully offline and leak
+   no requests to outside hosts. The repo already vendors Lit
+   (`web-platform/frontend/src/vendor/`) and the Inter font
+   (`src/assets/fonts/`); follow that pattern for anything new.
+
 ## How services are structured
 
 - Each app/infra module is one directory under `apps/` or `services/`,

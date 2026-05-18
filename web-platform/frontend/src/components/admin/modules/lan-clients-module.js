@@ -103,7 +103,7 @@ class LanClientsModule extends LitElement {
     }
     .action-button.primary {
       background: var(--hf-accent);
-      color: #fff;
+      color: #06281c;
       border-color: var(--hf-accent);
     }
     .action-button.danger:hover:not(:disabled) {

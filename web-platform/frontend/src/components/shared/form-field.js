@@ -56,6 +56,10 @@ class FormField extends LitElement {
       transition: border-color 0.15s, box-shadow 0.15s;
       max-width: 500px;
       width: 100%;
+      /* Without border-box, the 12px padding + 1px border add ONTO a
+         width:100%, so the field overflows its parent on narrow
+         screens and gets clipped on the right edge. */
+      box-sizing: border-box;
     }
 
     input[type="text"]::placeholder,

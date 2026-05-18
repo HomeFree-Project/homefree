@@ -87,6 +87,11 @@ class SecretsInput extends LitElement {
 
     textarea {
       flex: 1;
+      /* min-width:0 so the textarea can shrink inside its flex row
+         instead of overflowing; box-sizing so padding/border stay
+         inside the measured width. */
+      min-width: 0;
+      box-sizing: border-box;
       padding: 10px 12px;
       font-size: 14px;
       background: var(--hf-bg);
@@ -146,7 +151,7 @@ class SecretsInput extends LitElement {
 
     .btn-set {
       background: var(--hf-accent);
-      color: var(--hf-text);
+      color: #06281c;
     }
 
     .btn-set:hover:not(:disabled) {

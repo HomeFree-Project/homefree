@@ -25,15 +25,17 @@ class NetworkModule extends LitElement {
       width: 100%;
     }
 
+    /* minmax(0, 1fr) lets a column shrink below its content width;
+       plain 1fr would overflow / clip the field on narrow screens. */
     .field-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 20px;
     }
 
     @media (max-width: 768px) {
       .field-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
     }
 

@@ -197,7 +197,7 @@ class BackupsModule extends LitElement {
       gap: 8px;
     }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-primary   { background: var(--hf-accent); color: var(--hf-text); }
+    .btn-primary   { background: var(--hf-accent); color: #06281c; }
     .btn-primary:hover:not(:disabled) { background: var(--hf-accent-hover); }
     .btn-secondary {
       background: var(--hf-surface-2);
@@ -350,7 +350,7 @@ class BackupsModule extends LitElement {
     .source-toggle-btn:hover { color: var(--hf-text); }
     .source-toggle-btn.active {
       background: var(--hf-accent);
-      color: #fff;
+      color: #06281c;
     }
 
     /* ---- snapshot list ---- */

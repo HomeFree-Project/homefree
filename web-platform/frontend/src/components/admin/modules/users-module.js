@@ -67,7 +67,33 @@ class UsersModule extends LitElement {
       margin-bottom: 16px;
     }
 
-    table { width: 100%; border-collapse: collapse; }
+    /* Canonical list-table shell — matches the shared table-editor:
+       bordered box, table scrolls horizontally inside it, add control
+       is an attached footer button below the scroll area. */
+    .table-editor {
+      border: 1px solid var(--hf-border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--hf-surface);
+    }
+    .table-scroll { overflow-x: auto; }
+    .add-row-btn {
+      display: block;
+      width: 100%;
+      padding: 11px;
+      background: var(--hf-surface-2);
+      border: none;
+      border-top: 1px solid var(--hf-border);
+      color: var(--hf-accent);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .add-row-btn:hover { background: var(--hf-surface-3); }
+
+    table { width: 100%; border-collapse: collapse; min-width: max-content; }
     th, td {
       padding: 12px;
       text-align: left;
@@ -151,7 +177,7 @@ class UsersModule extends LitElement {
     button.btn.danger { color: #fca5a5; border-color: rgba(248,113,113,0.3); }
     button.btn.primary {
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       border-color: var(--hf-accent);
     }
     button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -161,7 +187,8 @@ class UsersModule extends LitElement {
 
     .edit-form, .create-form {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      /* minmax(0, …) so fields shrink instead of overflowing. */
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 12px;
       padding: 16px;
       background: var(--hf-surface);
@@ -554,13 +581,6 @@ class UsersModule extends LitElement {
             <button class="btn" @click=${this.refresh} ?disabled=${this.loading}>
               ${this.loading ? 'Refreshing…' : 'Refresh'}
             </button>
-            <button class="btn primary"
-              @click=${() => {
-                this.showCreate = !this.showCreate;
-                this.editingId = null;
-                this.error = '';
-              }}
-            >${this.showCreate ? 'Cancel' : 'Add user'}</button>
           </div>
 
           ${this.showCreate ? this._renderCreateForm() : ''}
@@ -568,17 +588,36 @@ class UsersModule extends LitElement {
 
           ${this.loading && this.users.length === 0
             ? html`<p class="muted">Loading users…</p>`
-            : this.users.length === 0
-              ? html`<p class="muted">No users yet. Click "Add user" to create one.</p>`
-              : this._renderTable()}
+            : this._renderTable()}
         </config-section>
       </div>
     `;
   }
 
   _renderTable() {
+    const addBtn = html`
+      <button class="add-row-btn"
+        @click=${() => {
+          this.showCreate = !this.showCreate;
+          this.editingId = null;
+          this.error = '';
+        }}
+      >${this.showCreate ? 'Cancel' : '+ Add user'}</button>
+    `;
+    if (this.users.length === 0) {
+      return html`
+        <div class="table-editor">
+          <p class="muted" style="padding: 24px; margin: 0; text-align: center;">
+            No users yet. Click "Add user" to create one.
+          </p>
+          ${addBtn}
+        </div>
+      `;
+    }
     return html`
-      <table>
+      <div class="table-editor">
+        <div class="table-scroll">
+        <table>
         <thead>
           <tr>
             <th>Username</th>
@@ -636,7 +675,10 @@ class UsersModule extends LitElement {
             `;
           })}
         </tbody>
-      </table>
+        </table>
+        </div>
+        ${addBtn}
+      </div>
     `;
   }
 

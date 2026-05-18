@@ -114,6 +114,22 @@ class UpdatesModule extends LitElement {
       border-color: var(--hf-accent);
       font-weight: 600;
     }
+    /* Link styled as a button — for navigating to another admin
+       module (e.g. Custom Flakes) at normal body size. */
+    a.btn-link {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 8px 16px;
+      background: var(--hf-surface);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    a.btn-link:hover { background: var(--hf-surface-2); }
     button.btn.primary:hover:not(:disabled) { background: var(--hf-accent-hover); }
 
     .error {
@@ -214,7 +230,7 @@ class UpdatesModule extends LitElement {
           <span class="ref">${info.baseOverrideUrl || 'unknown'}</span>
           <p>Updates here won't apply unless the official repository is
             re-enabled:</p>
-          <a class="ref" href="#/developers">Developers → Custom Flakes</a>
+          <a class="btn-link" href="#/developers">Custom Flakes</a>
         </div>
       ` : ''}
 

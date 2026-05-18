@@ -3,6 +3,13 @@ import { LitElement, html, css } from 'lit';
 /**
  * Table editor component for list-based configuration
  * Supports add, edit, delete operations
+ *
+ * This is the canonical list-table pattern for the admin UI: a
+ * bordered box whose TABLE scrolls horizontally on its own when too
+ * wide, with the "Add" control as a fixed footer button BELOW the
+ * scroll area (so it never scrolls sideways out of view). Other
+ * modules with hand-rolled tables should match this shape — bordered,
+ * internally-scrolling container + attached footer add button.
  */
 class TableEditor extends LitElement {
   static properties = {
@@ -16,16 +23,29 @@ class TableEditor extends LitElement {
       display: block;
     }
 
-    .table-container {
+    /* Outer wrapper — owns the border + rounded corners so the table
+       can scroll inside it while the footer add button stays put. */
+    .table-editor {
       border: 1px solid var(--hf-border);
       border-radius: 8px;
       overflow: hidden;
       background: var(--hf-surface);
     }
 
+    .table-container {
+      /* Scroll horizontally rather than clip when the table is wider
+         than this box (many columns). Narrow tables fit with no
+         scrollbar at all — see the table min-width below. */
+      overflow-x: auto;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
+      /* Size columns to their content; only scroll when genuinely too
+         wide. A small 3-column table (e.g. Additional Domains) fits a
+         phone with no horizontal scroll. */
+      min-width: max-content;
     }
 
     thead {
@@ -59,22 +79,39 @@ class TableEditor extends LitElement {
       white-space: nowrap;
     }
 
-    .btn-icon {
-      background: none;
-      border: none;
-      color: var(--hf-accent);
+    .row-actions {
+      display: inline-flex;
+      gap: 8px;
+    }
+
+    /* Real text buttons (Edit / Delete) — clearer than glyphs and the
+       same on desktop and mobile. */
+    .btn-row {
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      color: var(--hf-text);
       cursor: pointer;
-      padding: 4px 8px;
-      font-size: 15px;
-      transition: opacity 0.15s;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+      transition: all 0.15s;
     }
 
-    .btn-icon:hover {
-      opacity: 0.7;
+    .btn-row:hover {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
-    .btn-icon.delete {
+    .btn-row.delete {
       color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
+    }
+
+    .btn-row.delete:hover {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
     }
 
     .empty-state {
@@ -83,7 +120,10 @@ class TableEditor extends LitElement {
       color: var(--hf-text-muted);
     }
 
+    /* Footer add button — sibling of (not inside) .table-container, so
+       it stays fixed when the table scrolls horizontally. */
     .add-row-btn {
+      display: block;
       width: 100%;
       padding: 11px;
       background: var(--hf-surface-2);
@@ -92,6 +132,7 @@ class TableEditor extends LitElement {
       color: var(--hf-accent);
       font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
       transition: background 0.15s;
     }
@@ -170,6 +211,9 @@ class TableEditor extends LitElement {
     .modal-field input,
     .modal-field select {
       width: 100%;
+      /* border-box so the 12px right padding stays inside the field
+         instead of pushing its edge past the modal content box. */
+      box-sizing: border-box;
       padding: 9px 12px;
       font-size: 13px;
       background: var(--hf-bg);
@@ -212,7 +256,7 @@ class TableEditor extends LitElement {
 
     .btn-primary {
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       border-color: var(--hf-accent);
     }
 
@@ -356,12 +400,13 @@ class TableEditor extends LitElement {
 
   render() {
     return html`
-      <div class="table-container">
+      <div class="table-editor">
+        <div class="table-container">
         <table>
           <thead>
             <tr>
               ${this.columns.map(col => html`<th>${col.label}</th>`)}
-              <th style="width: 100px;">Actions</th>
+              <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -377,25 +422,26 @@ class TableEditor extends LitElement {
                   <td>${this.renderCell(row, col)}</td>
                 `)}
                 <td class="actions-cell">
-                  <button
-                    class="btn-icon"
-                    @click=${() => this.openEditModal(row, index)}
-                    title="Edit"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    class="btn-icon delete"
-                    @click=${() => this.deleteRow(index)}
-                    title="Delete"
-                  >
-                    🗑️
-                  </button>
+                  <span class="row-actions">
+                    <button
+                      class="btn-row"
+                      @click=${() => this.openEditModal(row, index)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="btn-row delete"
+                      @click=${() => this.deleteRow(index)}
+                    >
+                      Delete
+                    </button>
+                  </span>
                 </td>
               </tr>
             `)}
           </tbody>
         </table>
+        </div>
 
         <button class="add-row-btn" @click=${this.openAddModal}>
           + ${this.addLabel}

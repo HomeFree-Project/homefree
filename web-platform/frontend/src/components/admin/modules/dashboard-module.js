@@ -130,7 +130,10 @@ class DashboardModule extends LitElement {
       font-weight: 600;
     }
     tr:last-child td { border-bottom: none; }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    /* Numeric columns are right-aligned — the header cell must match
+       the value cells below it, so .num applies to th as well as td. */
+    th.num, td.num { text-align: right; }
+    td.num { font-variant-numeric: tabular-nums; }
 
     /* Usage meter — disk / memory bars */
     .meter {
@@ -199,7 +202,19 @@ class DashboardModule extends LitElement {
       width: 100%;
       height: auto;
       display: block;
-      border-radius: 4px;
+    }
+    /* The uptime strip is far shorter than the line charts it shares a
+       grid row with, so its panel gets stretched tall to match. Make
+       this panel a flex column and let the strip wrapper grow + center
+       so the strip sits in the middle of the box, not pinned to top. */
+    .panel-uptime {
+      display: flex;
+      flex-direction: column;
+    }
+    .uptime-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
     }
 
     .error-message {
@@ -728,7 +743,7 @@ class DashboardModule extends LitElement {
     return html`
       <h2>History</h2>
       <div class="chart-grid">
-        <div class="panel">
+        <div class="panel panel-uptime">
           <div class="panel-title">
             Connectivity
             <span class="hint">${
@@ -736,7 +751,9 @@ class DashboardModule extends LitElement {
                 ? 'no dropouts — probes 1.1.1.1'
                 : `${downCount} dropout${downCount === 1 ? '' : 's'} in window`}</span>
           </div>
-          ${this._renderUptimeBar(samples, spanSec)}
+          <div class="uptime-wrap">
+            ${this._renderUptimeBar(samples, spanSec)}
+          </div>
           <div class="legend">
             <span class="up">Online</span>
             <span class="down">Offline</span>

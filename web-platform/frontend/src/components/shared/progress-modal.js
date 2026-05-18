@@ -175,7 +175,7 @@ class ProgressModal extends LitElement {
 
     .btn-primary {
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       border-color: var(--hf-accent);
     }
 

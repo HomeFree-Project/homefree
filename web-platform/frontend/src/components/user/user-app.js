@@ -18,6 +18,8 @@ import {
   renderUserMenu,
 } from '../../shared/user-menu.js';
 import { shellStyles } from '../../shared/shell.js';
+import { navIcon } from '../../shared/icons.js';
+import '../shared/app-card.js';
 
 // Per-user dashboard at home.<domain>. Same app-shell shape as
 // admin-app: left sidebar for intra-site nav, top-bar with the
@@ -36,9 +38,10 @@ function routeFromHash() {
   return ROUTE_APPS;
 }
 
+// Per-item icons resolved from `id` via navIcon() (see shared/icons.js).
 const MODULES = [
-  { id: ROUTE_APPS,    title: 'Apps',    icon: '⊞', section: 'Home' },
-  { id: ROUTE_PROFILE, title: 'Profile', icon: '👤', section: 'Account' },
+  { id: ROUTE_APPS,    title: 'Apps',    section: 'Home' },
+  { id: ROUTE_PROFILE, title: 'Profile', section: 'Account' },
 ];
 
 class UserApp extends LitElement {
@@ -72,58 +75,11 @@ class UserApp extends LitElement {
     }
     *, *::before, *::after { box-sizing: border-box; }
 
-    /* App launcher grid */
+    /* App launcher grid — tiles are the shared <app-card> (compact). */
     .app-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
       gap: 14px;
-    }
-    .app-tile {
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border);
-      border-radius: 12px;
-      padding: 18px 18px 16px;
-      transition: border-color 0.2s, transform 0.2s, background 0.2s;
-      color: inherit;
-      text-decoration: none;
-      display: block;
-    }
-    .app-tile:hover {
-      border-color: var(--hf-accent);
-      background: var(--hf-surface-2);
-      transform: translateY(-1px);
-    }
-    .app-tile-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      display: grid;
-      place-items: center;
-      margin-bottom: 12px;
-      color: var(--hf-text-muted);
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      overflow: hidden;
-    }
-    .app-tile-icon img {
-      width: 70%;
-      height: 70%;
-      object-fit: contain;
-      filter: invert(1) brightness(0.92);
-    }
-    .app-tile-name {
-      font-weight: 600;
-      font-size: 0.96rem;
-      letter-spacing: -0.01em;
-      margin: 0 0 2px;
-      color: var(--hf-text);
-    }
-    .app-tile-sub {
-      font-size: 0.78rem;
-      color: var(--hf-text-subtle);
-      margin: 0;
     }
     .empty {
       color: var(--hf-text-muted);
@@ -381,7 +337,7 @@ class UserApp extends LitElement {
               ${mods.map(m => html`
                 <a class="nav-item ${this.route === m.id ? 'active' : ''}"
                    href="#/${m.id}">
-                  <span class="nav-item-icon">${m.icon}</span>
+                  <span class="nav-item-icon">${navIcon(m.id)}</span>
                   <span class="nav-item-text">${m.title}</span>
                 </a>
               `)}
@@ -395,13 +351,13 @@ class UserApp extends LitElement {
             <div class="nav-section-title">More</div>
             ${this.user?.is_admin_role ? html`
               <a class="nav-item" href="${this._adminUrl()}">
-                <span class="nav-item-icon">🛠️</span>
+                <span class="nav-item-icon">${navIcon('admin')}</span>
                 <span class="nav-item-text">Admin</span>
               </a>
             ` : ''}
             <a class="nav-item" href="${this._manualUrl()}"
                target="_blank" rel="noopener">
-              <span class="nav-item-icon">📖</span>
+              <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
             </a>
           </nav>
@@ -449,36 +405,17 @@ class UserApp extends LitElement {
   }
 
   _renderTile(s) {
-    const title = s.name || s.label || '?';
-    const subtitle = s.project_name && s.project_name !== title
-      ? s.project_name : '';
-    const initials = title
-      .split(/[\s\-_/]+/)
-      .map(w => w.charAt(0))
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
+    // Presentation (icon + fallback + titles) lives in the shared
+    // <app-card>; the whole card is a link to the app.
     return html`
-      <a class="app-tile" href="${s.url}"
-         target="_blank" rel="noopener">
-        <div class="app-tile-icon">
-          <img src="/icons/${s.label}.svg" alt=""
-               @error=${this._onIconError}
-               data-initials="${initials}">
-        </div>
-        <p class="app-tile-name">${title}</p>
-        ${subtitle ? html`
-          <p class="app-tile-sub">${subtitle}</p>
-        ` : ''}
-      </a>
+      <app-card
+        compact
+        .label=${s.label}
+        .name=${s.name || s.label || '?'}
+        .subtitle=${s.project_name || ''}
+        .href=${s.url}
+      ></app-card>
     `;
-  }
-
-  _onIconError(e) {
-    const img = e.currentTarget;
-    const initials = img.getAttribute('data-initials') || '?';
-    const parent = img.parentElement;
-    if (parent) parent.textContent = initials;
   }
 
   _renderProfileView() {

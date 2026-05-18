@@ -102,10 +102,16 @@ class AbuseBlockingModule extends LitElement {
       border-radius: 10px;
       padding: 14px 16px;
       margin-bottom: 16px;
-      /* Safety net: if a table is still wider than the panel (very
-         long rDNS hostnames, narrow viewport), scroll inside the box
-         rather than overflowing past its right border. */
+      /* The panel never scrolls — it holds the filter bar / map too.
+         Wide tables get their own .table-scroll wrapper instead. */
+      min-width: 0;
+    }
+
+    /* Per-table horizontal scroll: a wide table scrolls INSIDE this
+       box, never widening the panel or the page. */
+    .table-scroll {
       overflow-x: auto;
+      max-width: 100%;
     }
 
     table {
@@ -748,6 +754,7 @@ class AbuseBlockingModule extends LitElement {
     return html`
       <h2>Jails</h2>
       <div class="panel">
+        <div class="table-scroll">
         <table>
           <thead>
             <tr>
@@ -770,6 +777,7 @@ class AbuseBlockingModule extends LitElement {
             `)}
           </tbody>
         </table>
+        </div>
       </div>
     `;
   }
@@ -781,6 +789,7 @@ class AbuseBlockingModule extends LitElement {
       <h2>Currently banned</h2>
       <div class="panel">
         ${loading ? html`
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -795,9 +804,11 @@ class AbuseBlockingModule extends LitElement {
               ${this._renderSkeletonRows(5, 3)}
             </tbody>
           </table>
+          </div>
         ` : entries.length === 0 ? html`
           <div class="row-empty">No active bans.</div>
         ` : html`
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -812,6 +823,7 @@ class AbuseBlockingModule extends LitElement {
               ${entries.map(e => this._renderBannedRow(e))}
             </tbody>
           </table>
+          </div>
         `}
       </div>
     `;
@@ -1054,6 +1066,7 @@ class AbuseBlockingModule extends LitElement {
         </div>
         ${showGeo && sources.length > 0 ? this._renderTrafficMap(sources) : ''}
         ${data == null ? html`
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -1068,6 +1081,7 @@ class AbuseBlockingModule extends LitElement {
               ${this._renderSkeletonRows(5, 6)}
             </tbody>
           </table>
+          </div>
         ` : !this.includeInternal && suppressed > 0 && sources.length === 0 ? html`
           <div class="row-empty">
             No external traffic in the last hour — ${_fmtNum(suppressed)} requests
@@ -1077,6 +1091,7 @@ class AbuseBlockingModule extends LitElement {
         ` : sources.length === 0 ? html`
           <div class="row-empty">No matching traffic in the last hour.</div>
         ` : html`
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -1126,6 +1141,7 @@ class AbuseBlockingModule extends LitElement {
               `)}
             </tbody>
           </table>
+          </div>
         `}
         ${showGeo ? html`
           <div class="help-text" style="margin-top: 10px; margin-bottom: 0;">
@@ -1178,6 +1194,7 @@ class AbuseBlockingModule extends LitElement {
         ${list.length === 0 ? html`
           <div class="row-empty">No blocked ranges configured.</div>
         ` : html`
+          <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -1217,6 +1234,7 @@ class AbuseBlockingModule extends LitElement {
               `)}
             </tbody>
           </table>
+          </div>
         `}
       </div>
     `;

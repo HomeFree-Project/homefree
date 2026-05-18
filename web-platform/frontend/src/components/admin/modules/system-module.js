@@ -35,15 +35,18 @@ class SystemModule extends LitElement {
       width: 100%;
     }
 
+    /* minmax(0, 1fr) — not 1fr — so a column can shrink below its
+       content's min-content width. Plain 1fr keeps an implicit
+       min-width:auto and the field overflows / clips on the right. */
     .field-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 20px;
     }
 
     @media (max-width: 768px) {
       .field-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
     }
 
@@ -98,10 +101,14 @@ class SystemModule extends LitElement {
 
     textarea {
       width: 100%;
+      max-width: 500px;
+      box-sizing: border-box;
       padding: 10px 12px;
       font-size: 14px;
       border: 1px solid var(--hf-border-2);
       border-radius: 8px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
       font-family: monospace;
       resize: vertical;
       min-height: 100px;
@@ -341,14 +348,23 @@ class SystemModule extends LitElement {
             Additional domains. The JSON shape is a flat array of strings
             (e.g. ["rahh.al", "slacktopia.org"]). table-editor works in
             terms of row objects, so we translate on the way in and out
-            via handleAdditionalDomainsChange below.
+            via handleAdditionalDomainsChange below. table-editor has no
+            title/help of its own, so the heading + description are
+            rendered here.
           -->
+          <h4 style="font-size: 14px; color: var(--hf-text); margin: 20px 0 4px;">
+            Additional Domains
+          </h4>
+          <p style="font-size: 12px; color: var(--hf-text-muted); margin: 0 0 12px;">
+            Extra public domains served alongside the primary domain. Caddy
+            will issue certificates and Unbound will resolve them. Each
+            service's reverse-proxy gets ${'${subdomain}.${domain}'} for
+            every domain listed (primary + additional).
+          </p>
           <table-editor
-            label="Additional Domains"
             .columns=${additionalDomainsColumns}
             .data=${(system.additionalDomains || []).map(d => ({ domain: d }))}
             addLabel="Add Domain"
-            help="Extra public domains served alongside the primary domain. Caddy will issue certificates and Unbound will resolve them. Each service's reverse-proxy gets ${'${subdomain}.${domain}'} for every domain listed (primary + additional)."
             @data-change=${this.handleAdditionalDomainsChange}
           ></table-editor>
         </config-section>

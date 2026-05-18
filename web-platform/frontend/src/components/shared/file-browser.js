@@ -210,7 +210,7 @@ class FileBrowser extends LitElement {
 
     .btn-select {
       background: var(--hf-accent);
-      color: var(--hf-text);
+      color: #06281c;
     }
 
     .btn-select:hover:not(:disabled) {
