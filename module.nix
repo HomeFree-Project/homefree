@@ -1978,6 +1978,28 @@
               '';
             };
 
+            sso-bypass-paths = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = [ "/api/*" ];
+              description = ''
+                Request path patterns that skip the SSO gate when
+                `oauth2 = true`. Each entry is a Caddy path matcher
+                token; a request whose path matches any entry bypasses
+                the oauth2-proxy `forward_auth` and reaches the
+                upstream directly.
+
+                This is a generic primitive — the base distribution
+                does not assume what any path means. A service (in
+                this repo or in an external flake) declares the paths
+                its non-browser API clients use, because those clients
+                cannot complete an interactive OAuth login and would
+                otherwise be locked out. Such clients authenticate to
+                the upstream with its own native credentials, while
+                browser traffic to the web UI stays gated.
+              '';
+            };
+
             require-admin-role = lib.mkOption {
               type = lib.types.bool;
               default = false;

@@ -3041,6 +3041,118 @@ async def apply_system_update():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class DeveloperFlakeRequest(BaseModel):
+    """Register/update a custom developer flake."""
+    name: str
+    type: str  # "local" | "remote"
+    url: str
+    inputName: Optional[str] = None
+    moduleAttr: Optional[str] = None
+    id: Optional[str] = None
+    enabled: Optional[bool] = True
+
+
+class DeveloperFlakeProbeRequest(BaseModel):
+    """Deep-probe a flake URL before registering it."""
+    type: str
+    url: str
+    moduleAttr: Optional[str] = None
+
+
+@app.get("/api/developers/flakes")
+async def get_developer_flakes():
+    """List the custom flakes registered via the Developers section."""
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        return JSONResponse(content={"flakes": DevelopersService.list_flakes()})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing developer flakes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/flakes")
+async def save_developer_flake(req: DeveloperFlakeRequest):
+    """
+    Register a new custom flake (no id) or update an existing one (with id).
+    Rewrites /etc/nixos/flake.nix and custom-flakes.nix; does NOT rebuild —
+    the user applies via the global Apply Changes flow.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.register_or_update(req.dict())
+        status = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/developers/flakes/{flake_id}")
+async def delete_developer_flake(flake_id: str):
+    """Remove a registered custom flake. Does not rebuild."""
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.delete_flake(flake_id)
+        status = 200 if result.get("success") else 404
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/flakes/validate")
+async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
+    """
+    Deep-probe a flake URL: confirm it is reachable and exposes the
+    requested nixosModules attribute. Best-effort — offline boxes get
+    warnings, not hard errors.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        url = (req.url or "").strip()
+        if req.type == "local" and url and not url.startswith("git+file://"):
+            url = "git+file://" + url
+
+        return JSONResponse(content=DevelopersService.probe_flake(
+            url, req.moduleAttr or "default"
+        ))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve frontend static files
 frontend_dir = Path("/etc/homefree-installer/frontend")
 if frontend_dir.exists():
