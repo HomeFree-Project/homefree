@@ -511,7 +511,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
     }) enabled-instances)
   );
 
-  systemd.services = lib.optionalAttrs config.homefree.service-options.mediawiki.enable
+  systemd.services = lib.mkIf config.homefree.service-options.mediawiki.enable
   (lib.listToAttrs (
     lib.map (site:
     let

@@ -100,7 +100,7 @@ in
     };
   } else {};
 
-  systemd.services.podman-trilium = lib.optionalAttrs (config.homefree.services.trilium.enable == true) {
+  systemd.services.podman-trilium = lib.mkIf (config.homefree.services.trilium.enable == true) {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

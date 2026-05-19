@@ -170,7 +170,7 @@ in
     };
   };
 
-  systemd.services.podman-homebox = lib.optionalAttrs config.homefree.service-options.homebox.enable {
+  systemd.services.podman-homebox = lib.mkIf config.homefree.service-options.homebox.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

@@ -119,6 +119,11 @@ Situational knowledge — read the linked note when working in that area:
   `lib/secrets-anchor.nix`; generating straight into
   `/var/lib/homefree-secrets` loses the value on restore.
   → `docs/agent-notes/secrets-anchoring.md`
+- **Flake-lock local-input refresh** — a dev box pins the `homefree`
+  input to the local checkout; `nixos-rebuild` builds the *locked*
+  snapshot, and `flake update <input>` will NOT re-hash a dirty tree.
+  The lock node must be stripped and re-locked, or edits silently don't
+  take effect. → `docs/agent-notes/flake-lock-local-input-refresh.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

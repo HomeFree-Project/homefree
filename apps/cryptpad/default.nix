@@ -273,7 +273,7 @@ in
     };
   };
 
-  systemd.services.podman-cryptpad = lib.optionalAttrs config.homefree.service-options.cryptpad.enable {
+  systemd.services.podman-cryptpad = lib.mkIf config.homefree.service-options.cryptpad.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

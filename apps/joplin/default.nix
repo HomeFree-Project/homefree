@@ -88,7 +88,7 @@ in
     };
   };
 
-  systemd.services.podman-joplin = lib.optionalAttrs config.homefree.service-options.joplin.enable {
+  systemd.services.podman-joplin = lib.mkIf config.homefree.service-options.joplin.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
   };

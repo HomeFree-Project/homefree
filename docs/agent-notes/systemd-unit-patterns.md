@@ -46,6 +46,30 @@ The fix: every `service-config` entry carries a top-level `enable` field
 backup-canary) doesn't need the field — its entry simply doesn't exist
 when disabled. New unconditional-`[{ ... }]` apps **must** set `enable`.
 
+### Gate a `systemd.services.<name>` with `mkIf`, never `optionalAttrs`
+
+Many apps attach extra attrs (`after`, `wants`, `ExecStartPre`) to the
+`podman-<name>` unit that `virtualisation.oci-containers` generates:
+
+```nix
+systemd.services.podman-foo = lib.mkIf cfg.enable { ... };   # correct
+systemd.services.podman-foo = lib.optionalAttrs cfg.enable { ... };  # BUG
+```
+
+`lib.optionalAttrs false { ... }` evaluates to `{}` — but
+`systemd.services.podman-foo = {}` **still declares a service**: the
+module system materializes a unit file for *any* key present in
+`systemd.services`, even an empty one. With the app disabled there is no
+oci-container, so no `ExecStart` — the result is the same no-`ExecStart`
+stub that fails `nixos-rebuild switch` with exit 4.
+
+`lib.mkIf false { ... }` is a real conditional: it contributes *no
+definition* for the key, so the unit never exists. Always use `mkIf`
+(not `optionalAttrs`) when the gated value is a whole `systemd.services.<name>`
+entry. `optionalAttrs` is still fine for `oci-containers.containers`
+(an empty *containers* attrset adds nothing — the hazard is only an empty
+value sitting *at a service key*).
+
 ## Oneshot bootstrap units: omit `RemainAfterExit`
 
 A oneshot whose job is to **assert filesystem state** (perms, ownership,

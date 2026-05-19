@@ -372,7 +372,7 @@ in
   ## takes a node identifier and the comma-separated list of approved CIDRs.
   ## We find the node by hostname (the router advertises homefree.lan via
   ## tailscale up) and approve our LAN subnet on that node.
-  systemd.services.headscale-enable-routes = lib.optionalAttrs headscaleEnabled {
+  systemd.services.headscale-enable-routes = lib.mkIf headscaleEnabled {
     description = "Approve the LAN subnet route advertised by the local tailscale client";
     ## Run after tailscaled-autoconnect has finished registering the
     ## host node (it advertises the LAN subnet via --advertise-routes).

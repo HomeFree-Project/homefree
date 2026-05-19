@@ -359,9 +359,35 @@ class NixOperations:
         there. Dev installs get every local input refreshed regardless of
         what it's named or how many there are.
 
+        Why `--update-input` / `flake update <input>` does NOT work
+        ───────────────────────────────────────────────────────────
+        The obvious approach — `nix flake lock --update-input <name>` —
+        silently fails to do anything when the input is a *dirty* git
+        working tree (uncommitted edits, the normal dev state). Nix locks
+        a dirty tree by narHash with a `dirtyRev` marker. On Nix 2.34,
+        `--update-input` (and its successor `flake update <input>`) sees
+        an existing dirty-lock entry, treats it as already satisfied, and
+        does NOT re-hash the tree — so a tree that changed since the lock
+        was written is ignored. The refresh no-ops, the rebuild builds
+        stale code, and the user's edit "doesn't take effect."
+
+        What actually works
+        ───────────────────
+        Force a fresh resolution: delete the local input's node from
+        flake.lock (and scrub every reference to it), then run a plain
+        `flake lock`. With the node gone, Nix has nothing to treat as
+        satisfied — it MUST re-evaluate the input from flake.nix and
+        re-hash the live working tree. `--allow-dirty-locks` is still
+        required so Nix will *write* a lock whose input lacks a git
+        revision; the difference is we removed the stale node first, so
+        there is nothing for Nix to keep.
+
         Best-effort: failures are logged but don't block the rebuild —
         a transient `nix flake lock` failure shouldn't prevent the user
-        from applying their config.
+        from applying their config. We write flake.lock back only after
+        a successful in-memory edit, and only if there is something to
+        strip, so a parse failure or an all-remote (production) lock
+        leaves the file untouched.
         """
         try:
             lock_path = NixOperations.FLAKE_DIR / "flake.lock"
@@ -374,63 +400,85 @@ class NixOperations:
                 logger.warning(f"Could not parse flake.lock: {e}")
                 return
 
-            # Walk root.inputs to get the user-facing input names; only
-            # those can be passed to `--update-input`. Transitive inputs
-            # of inputs are out of scope (we can't address them by name
-            # from this flake anyway).
             nodes = lock.get("nodes", {})
             root = nodes.get("root", {})
             root_input_refs = root.get("inputs", {})
 
-            to_refresh = []
+            # Collect the *node names* backing every root input that
+            # resolves to a local working tree. A root input ref is
+            # normally a string node name; a list is a follows-path
+            # (rare for root inputs) — we only strip the simple case.
+            strip_nodes = set()
+            strip_names = []
             for input_name, target in root_input_refs.items():
-                # `target` may be either a string node name or a list path.
-                # Normalise to the actual node dict.
-                if isinstance(target, list):
-                    # Follow the path through nodes (rare for root inputs)
-                    node = nodes
-                    for step in target:
-                        node = nodes.get(step, {})
-                else:
-                    node = nodes.get(target, {})
+                if not isinstance(target, str):
+                    continue
+                node = nodes.get(target, {})
+                if NixOperations._input_is_local_working_tree(
+                    node.get("locked", {})
+                ):
+                    strip_nodes.add(target)
+                    strip_names.append(input_name)
 
-                locked = node.get("locked", {})
-                if NixOperations._input_is_local_working_tree(locked):
-                    to_refresh.append(input_name)
-
-            if not to_refresh:
+            if not strip_nodes:
+                # All-remote lock (production install) — nothing to do.
                 return
 
-            logger.info(f"Refreshing local working-tree flake inputs: {to_refresh}")
-            for name in to_refresh:
-                try:
-                    result = subprocess.run(
-                        [
-                            "nix",
-                            "--extra-experimental-features", "nix-command flakes",
-                            "flake", "lock",
-                            # These flags mirror scripts/build.sh — they're
-                            # required when the source is a dirty git tree
-                            # or a path: input, both of which are inherently
-                            # non-reproducible and trigger Nix's safety check.
-                            "--allow-dirty",
-                            "--allow-dirty-locks",
-                            "--update-input", name,
-                            str(NixOperations.FLAKE_DIR),
-                        ],
-                        capture_output=True, text=True, timeout=60,
+            logger.info(
+                f"Forcing re-resolution of local working-tree flake "
+                f"inputs: {strip_names} (stripping nodes {sorted(strip_nodes)})"
+            )
+
+            # Remove the stale node(s) so Nix cannot treat them as
+            # satisfied, then scrub every dangling reference to them
+            # from the remaining nodes' `inputs` maps — a lock that
+            # references a missing node is rejected by Nix.
+            for n in strip_nodes:
+                nodes.pop(n, None)
+            for node in nodes.values():
+                ins = node.get("inputs")
+                if not isinstance(ins, dict):
+                    continue
+                for key, ref in list(ins.items()):
+                    if isinstance(ref, str) and ref in strip_nodes:
+                        del ins[key]
+
+            try:
+                lock_path.write_text(json.dumps(lock, indent=2))
+            except Exception as e:
+                logger.warning(f"Could not rewrite flake.lock for refresh: {e}")
+                return
+
+            # Re-lock: Nix re-resolves the stripped inputs from flake.nix,
+            # re-hashing the live working tree. --allow-dirty(-locks) are
+            # required because a local dev tree is inherently non-
+            # reproducible (dirty git / path: input) and Nix's safety
+            # check would otherwise refuse to write the lock.
+            try:
+                result = subprocess.run(
+                    [
+                        "nix",
+                        "--extra-experimental-features", "nix-command flakes",
+                        "flake", "lock",
+                        "--allow-dirty",
+                        "--allow-dirty-locks",
+                        str(NixOperations.FLAKE_DIR),
+                    ],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        f"flake lock re-resolution returned "
+                        f"{result.returncode}: {result.stderr.strip()}"
                     )
-                    if result.returncode != 0:
-                        logger.warning(
-                            f"flake lock --update-input {name} returned "
-                            f"{result.returncode}: {result.stderr.strip()}"
-                        )
-                    else:
-                        logger.info(f"Refreshed input: {name}")
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"Timed out refreshing input {name}")
-                except Exception as e:
-                    logger.warning(f"Error refreshing input {name}: {e}")
+                else:
+                    logger.info(
+                        f"Re-resolved local working-tree inputs: {strip_names}"
+                    )
+            except subprocess.TimeoutExpired:
+                logger.warning("Timed out re-locking local flake inputs")
+            except Exception as e:
+                logger.warning(f"Error re-locking local flake inputs: {e}")
         except Exception as e:
             logger.warning(f"_refresh_local_inputs failed: {e}")
 

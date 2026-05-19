@@ -129,7 +129,7 @@ in
     };
   };
 
-  systemd.services.podman-jellyfin = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
+  systemd.services.podman-jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

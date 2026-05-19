@@ -79,7 +79,7 @@ in
     };
   };
 
-  systemd.services.podman-baikal = lib.optionalAttrs config.homefree.service-options.baikal.enable {
+  systemd.services.podman-baikal = lib.mkIf config.homefree.service-options.baikal.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

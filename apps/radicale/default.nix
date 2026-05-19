@@ -128,7 +128,7 @@ in
     };
   };
 
-  systemd.services.podman-radicale = lib.optionalAttrs config.homefree.service-options.radicale.enable  {
+  systemd.services.podman-radicale = lib.mkIf config.homefree.service-options.radicale.enable  {
     after = [
       "dns-ready.service"
       "zitadel-password-shim.service"

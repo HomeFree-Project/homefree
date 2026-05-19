@@ -344,7 +344,7 @@ in
     };
   };
 
-  systemd.services.podman-snipe-it = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
+  systemd.services.podman-snipe-it = lib.mkIf config.homefree.service-options.snipe-it.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

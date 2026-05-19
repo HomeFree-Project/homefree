@@ -689,7 +689,7 @@ in
     };
   };
 
-  systemd.services.podman-homeassistant = lib.optionalAttrs config.homefree.services.home-assistant.enable {
+  systemd.services.podman-homeassistant = lib.mkIf config.homefree.services.home-assistant.enable {
     ## When Z-Wave JS UI is also enabled, prefer to start it first.
     ## `wants` (not `requires`) so HA still boots if Z-Wave is disabled
     ## or its container fails — HA's zwave_js config entry will retry

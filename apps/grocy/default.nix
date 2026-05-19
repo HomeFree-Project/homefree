@@ -80,7 +80,7 @@ in
     };
   };
 
-  systemd.services.podman-grocy = lib.optionalAttrs config.homefree.service-options.grocy.enable {
+  systemd.services.podman-grocy = lib.mkIf config.homefree.service-options.grocy.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

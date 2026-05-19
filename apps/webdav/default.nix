@@ -187,7 +187,7 @@ in
     };
   };
 
-  systemd.services.podman-webdav = lib.optionalAttrs config.homefree.service-options.webdav.enable {
+  systemd.services.podman-webdav = lib.mkIf config.homefree.service-options.webdav.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

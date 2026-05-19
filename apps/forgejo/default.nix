@@ -428,7 +428,7 @@ in
     };
   };
 
-    systemd.services.podman-forgejo = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
+    systemd.services.podman-forgejo = lib.mkIf config.homefree.service-options.forgejo.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

@@ -373,7 +373,7 @@ in
 
   # Dedicated systemd service for temporary DNS proxy during image pull
   # Not auto-started; manually controlled by preStart script
-  systemd.services.adguardhome-dns-proxy = lib.optionalAttrs config.homefree.service-options.adguard.enable {
+  systemd.services.adguardhome-dns-proxy = lib.mkIf config.homefree.service-options.adguard.enable {
     description = "Temporary DNS proxy for AdGuard Home startup";
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
@@ -390,7 +390,7 @@ in
     };
   };
 
-  systemd.services.podman-adguardhome =lib.optionalAttrs config.homefree.service-options.adguard.enable {
+  systemd.services.podman-adguardhome =lib.mkIf config.homefree.service-options.adguard.enable {
     after = [ "unbound.service" ];
     wants = [ "unbound.service" ];
     ## AdGuard is the front-end resolver and caches whatever unbound

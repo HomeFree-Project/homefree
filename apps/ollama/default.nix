@@ -193,7 +193,7 @@ in
     };
   };
 
-  systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.service-options.ollama.enable {
+  systemd.services.podman-ollama-webui = lib.mkIf config.homefree.service-options.ollama.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

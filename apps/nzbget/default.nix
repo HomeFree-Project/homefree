@@ -94,7 +94,7 @@ in
     };
   };
 
-  systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
+  systemd.services.podman-nzbget = lib.mkIf config.homefree.service-options.nzbget.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

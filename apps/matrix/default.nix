@@ -341,7 +341,7 @@ in
       };
     };
 
-    systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
+    systemd.services.podman-matrix-synapse = lib.mkIf config.homefree.service-options.matrix.enable {
       after = [ "dns-ready.service" "postgresql.service" ];
       requires = [ "postgresql.service" ];
       wants = [ "dns-ready.service" ];

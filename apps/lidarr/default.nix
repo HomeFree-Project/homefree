@@ -103,7 +103,7 @@ in
     };
   };
 
-  systemd.services.podman-lidarr = lib.optionalAttrs config.homefree.service-options.lidarr.enable {
+  systemd.services.podman-lidarr = lib.mkIf config.homefree.service-options.lidarr.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

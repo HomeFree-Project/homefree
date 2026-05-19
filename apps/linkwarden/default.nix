@@ -233,7 +233,7 @@ in
 
   };
 
-  systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
+  systemd.services.podman-linkwarden = lib.mkIf config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {
@@ -241,7 +241,7 @@ in
     };
   };
 
-  systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
+  systemd.services.podman-meilisearch = lib.mkIf config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

@@ -116,7 +116,7 @@ in
     };
   };
 
-  systemd.services.podman-screeenly = lib.optionalAttrs enabled {
+  systemd.services.podman-screeenly = lib.mkIf enabled {
     after = [ "dns-ready.service" "postgresql.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {

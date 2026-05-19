@@ -580,7 +580,7 @@ in
     };
   };
 
-  systemd.services.podman-nextcloud = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" "postgresql.service" ];
     wants = [ "postgresql.service" "dns-ready.service" ];
     ## The container bind-mounts the host's /run/postgresql (a per-boot
@@ -602,18 +602,18 @@ in
     startLimitIntervalSec = 300;  # 5 minutes
   };
 
-  systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud-redis = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
   };
 
-  systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud-appapi-harp = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "podman-nextcloud.service" ];
   };
 
-  systemd.services.podman-nextcloud-cron = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud-cron = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
   };

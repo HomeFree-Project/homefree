@@ -325,7 +325,7 @@ in
       };
     };
 
-    systemd.services.podman-freshrss = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
+    systemd.services.podman-freshrss = lib.mkIf config.homefree.service-options.freshrss.enable {
       ## FreshRSS connects to PostgreSQL over the host's
       ## /run/postgresql socket, bind-mounted into the container. A
       ## bind mount pins the directory inode at container-start time,

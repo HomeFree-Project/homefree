@@ -376,7 +376,7 @@ in
     ) (lib.filter (instance: instance.enable) config.homefree.service-options.minecraft.instances))
   );
 
-  systemd.services = lib.optionalAttrs config.homefree.service-options.minecraft.enable
+  systemd.services = lib.mkIf config.homefree.service-options.minecraft.enable
   (lib.listToAttrs (
     lib.map (instance:
     let

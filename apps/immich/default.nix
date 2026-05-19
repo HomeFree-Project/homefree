@@ -498,7 +498,7 @@ in
     };
   };
 
-  systemd.services.podman-immich-server = lib.optionalAttrs config.homefree.service-options.immich.enable {
+  systemd.services.podman-immich-server = lib.mkIf config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {
@@ -507,12 +507,12 @@ in
     };
   };
 
-  systemd.services.podman-immich-machine-learning = lib.optionalAttrs config.homefree.service-options.immich.enable {
+  systemd.services.podman-immich-machine-learning = lib.mkIf config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
   };
 
-  systemd.services.podman-immich-redis = lib.optionalAttrs config.homefree.service-options.immich.enable {
+  systemd.services.podman-immich-redis = lib.mkIf config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
   };

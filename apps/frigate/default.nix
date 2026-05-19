@@ -387,7 +387,7 @@ in
     };
   };
 
-  systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
+  systemd.services.podman-frigate = lib.mkIf config.homefree.service-options.frigate.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
     serviceConfig = {
@@ -395,7 +395,7 @@ in
     };
   };
 
-  systemd.services.frigate-cleanup-old-data = lib.optionalAttrs (retain != null && retain > 0) {
+  systemd.services.frigate-cleanup-old-data = lib.mkIf (retain != null && retain > 0) {
     wantedBy = [];  # Only ever start with timer
     description = "Clean up Frigate files older than ${toString retain} days";
     serviceConfig = {

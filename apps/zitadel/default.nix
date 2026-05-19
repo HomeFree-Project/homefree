@@ -638,7 +638,7 @@ in
       '';
     };
 
-    systemd.services.podman-zitadel = lib.optionalAttrs zitadelEnabled {
+    systemd.services.podman-zitadel = lib.mkIf zitadelEnabled {
       after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
       requires = [ "zitadel-prepare-secrets.service" ];
       wants = [ "dns-ready.service" ];
