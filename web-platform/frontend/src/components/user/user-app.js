@@ -332,6 +332,7 @@ class UserApp extends LitElement {
             </button>
           </div>
           <nav class="nav-menu">
+           <div class="nav-menu-inner">
             ${Object.entries(sections).map(([sect, mods]) => html`
               <div class="nav-section-title">${sect}</div>
               ${mods.map(m => html`
@@ -360,6 +361,7 @@ class UserApp extends LitElement {
               <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
             </a>
+           </div>
           </nav>
         </div>
         <div class="sidebar-backdrop"

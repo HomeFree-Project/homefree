@@ -2319,6 +2319,7 @@ class AdminApp extends LitElement {
           </div>
 
           <nav class="nav-menu">
+           <div class="nav-menu-inner">
             ${finishSetupModule ? html`
               <div
                 class="nav-item nav-item-finish-setup ${this.currentModule === 'finish-setup' ? 'active' : ''}"
@@ -2360,6 +2361,7 @@ class AdminApp extends LitElement {
               <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
             </a>
+           </div>
           </nav>
 
           <!-- Apply button pinned to the sidebar bottom. nav-menu has

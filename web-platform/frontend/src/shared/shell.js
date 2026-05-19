@@ -111,10 +111,52 @@ export const shellStyles = css`
     background: var(--hf-surface-3);
     color: var(--hf-text);
   }
+  /* Scroll-fade affordance for the nav list — Lea Verou's pure-CSS
+     scrolling-shadows recipe (lea.verou.me/blog/2012/04, as written up
+     on css-tricks.com "Scroll Shadows").
+
+     When the nav outgrows the sidebar (many items on a short screen) a
+     soft glow appears at whichever edge has more content beyond it,
+     and disappears at the ends of the scroll range — a "there's more"
+     cue. Adapted for dark mode: the cover is the sidebar surface and
+     the shadow is a LIGHT glow (a dark shadow on near-black would be
+     invisible).
+
+     Four background layers on the scroll container:
+       1-2  COVER linear-gradients — background-attachment: local, so
+            they MOVE with the scrolled content. At rest a cover sits
+            over its edge's glow and hides it; scroll and the cover
+            slides away, uncovering the glow.
+       3-4  GLOW radial-gradients — background-attachment: scroll, so
+            they stay PINNED to the visible top/bottom edges.
+     Order matters: covers first (drawn on top), glows last. The
+     attachment list is local, local, scroll, scroll to match.
+
+     Padding lives on .nav-menu-inner, not on the .nav-menu scroll
+     container, so it can't offset the layer alignment. */
   .nav-menu {
     flex: 1;
-    padding: 16px 0;
     overflow-y: auto;
+    background:
+      /* 1: cover, top */
+      linear-gradient(var(--hf-surface) 30%, rgba(17, 20, 26, 0))
+        center top,
+      /* 2: cover, bottom */
+      linear-gradient(rgba(17, 20, 26, 0), var(--hf-surface) 70%)
+        center bottom,
+      /* 3: glow, top */
+      radial-gradient(farthest-side at 50% 0,
+        rgba(150, 165, 195, 0.5), rgba(150, 165, 195, 0)) center top,
+      /* 4: glow, bottom */
+      radial-gradient(farthest-side at 50% 100%,
+        rgba(150, 165, 195, 0.5), rgba(150, 165, 195, 0)) center bottom;
+    background-repeat: no-repeat;
+    background-color: var(--hf-surface);
+    background-size: 100% 40px, 100% 40px, 100% 14px, 100% 14px;
+    background-attachment: local, local, scroll, scroll;
+  }
+  .nav-menu-inner {
+    padding: 16px 0;
   }
   .nav-item {
     display: flex;

@@ -51,6 +51,11 @@ class AppCard extends LitElement {
       text-decoration: none;
       display: flex;
       flex-direction: column;
+      /* Fill the grid cell so every card in a row is the same height —
+         a CSS grid stretches the host, and this passes that height
+         through to the card itself. */
+      height: 100%;
+      box-sizing: border-box;
       transition: border-color 0.2s, transform 0.2s, background 0.2s;
     }
 

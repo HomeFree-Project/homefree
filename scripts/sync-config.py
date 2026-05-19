@@ -1,12 +1,37 @@
 #!/usr/bin/env python3
 """
-Sync homefree-config.json with module.nix schema.
+Sync homefree-config.json with the HomeFree service schema.
 
-This script ensures that the JSON config file stays in sync with module.nix
-by adding new services and removing obsolete ones while preserving user values.
+This script keeps the JSON config in sync with the schema by adding
+newly-introduced services and dropping option subkeys that no longer
+exist, while preserving all user values. It NEVER removes a whole
+service — a `services.<name>` key may belong to a custom-flake app
+this script cannot see, and the Nix layer already tolerates orphaned
+keys (see `homefree-configuration.nix`).
+
+Service schema discovery
+------------------------
+A service's `homefree.services.<name>` option may be declared in two
+places, and BOTH are scanned:
+
+  1. The top-level `module.nix` `services = { ... }` block — used only
+     for the handful of services with no app directory (admin,
+     landing-page, oauth2-proxy).
+
+  2. Each app's own `apps/<name>/default.nix` (or
+     `services/<name>/default.nix`) — since the `apps/`/`services/`
+     auto-discovery refactor, every user-facing service declares
+     `options.homefree.services.<name>` in its own directory.
+
+Scanning ONLY `module.nix` (as this script originally did) made the
+sync think every app-directory service was "obsolete" and strip it
+from the config — a destructive bug. Discovery must mirror what
+`configuration.nix`'s `discoverModules` does: every non-`_`-prefixed
+directory under `apps/` and `services/` is a real service.
 """
 
 import json
+import os
 import sys
 import re
 from typing import Any, Dict, Set, List, Tuple
@@ -119,31 +144,182 @@ def extract_service_schema_from_module(module_file: str) -> Dict[str, Dict[str, 
         return {}
 
 
+def _read_enable_default(lines: List[str], start: int) -> bool:
+    """Scan forward from an `enable = lib.mkOption {` line for a
+    `default = true|false;`. Returns False if not found (the common
+    default — most services ship disabled)."""
+    for j in range(start, min(start + 15, len(lines))):
+        md = re.match(r'^\s*default\s*=\s*(true|false)\s*;', lines[j])
+        if md:
+            return md.group(1) == 'true'
+        if '};' in lines[j]:
+            break
+    return False
+
+
+def _parse_options_attrset(lines: List[str], open_idx: int) -> Dict[str, Any]:
+    """
+    Parse an attrset of `mkOption`s — the body bound to
+    `homefree.services.<name>` (typically the `userOptions` let-binding
+    in an app's default.nix).
+
+    `open_idx` is the line index whose text contains the attrset's
+    opening `{`. Walks to the matching `}` and returns:
+
+        { 'subkeys': Set[str], 'enable_default': bool }
+
+    Subkeys are detected at the attrset's top level via
+    `<name> = lib.mkOption { ... }` or `<name> = { ... }` (nested
+    groupings like `secrets = { ... }`). Same conservative textual
+    style as the module.nix parser.
+    """
+    subkeys: Set[str] = set()
+    enable_default = False
+    depth = 0
+    started = False
+    for i in range(open_idx, len(lines)):
+        line = lines[i]
+        depth_before = depth
+        depth += line.count('{') - line.count('}')
+        if not started:
+            if depth > 0:
+                started = True
+            continue
+        # Top level of the attrset is depth 1 (depth_before == 1).
+        if depth_before == 1:
+            m = re.match(r'^\s*([\w-]+)\s*=\s*(?:lib\.mkOption|\{)', line)
+            if m:
+                key = m.group(1)
+                subkeys.add(key)
+                if key == 'enable' and 'lib.mkOption' in line:
+                    enable_default = _read_enable_default(lines, i + 1)
+        if depth <= 0:
+            break
+    return {'subkeys': subkeys, 'enable_default': enable_default}
+
+
+def _extract_schema_from_app_file(app_file: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Parse one `apps/<name>/default.nix` (or `services/<name>/...`) for
+    its `options.homefree.services.<name>` declaration and return the
+    {name: metadata} schema entry (usually a single entry, but a file
+    may declare more than one).
+
+    Handles the two declaration shapes seen in the repo:
+      - `options.homefree.services.<name> = userOptions;`
+        where `userOptions` is a `let`-bound attrset above.
+      - `options.homefree.services.<name> = { ... };` inline.
+    """
+    schema: Dict[str, Dict[str, Any]] = {}
+    try:
+        with open(app_file, 'r') as f:
+            lines = f.readlines()
+    except OSError:
+        return schema
+
+    for i, line in enumerate(lines):
+        m = re.match(
+            r'^\s*options\.homefree\.services\.([\w-]+)\s*=\s*(.+)$',
+            line,
+        )
+        if not m:
+            continue
+        name = m.group(1)
+        rhs = m.group(2).strip()
+        if rhs.startswith('{'):
+            # Inline attrset on this line.
+            schema[name] = _parse_options_attrset(lines, i)
+        else:
+            # RHS is an identifier (e.g. `userOptions;` or
+            # `userOptions // { ... };`). Find that let-binding.
+            ident_m = re.match(r'([\w-]+)', rhs)
+            if not ident_m:
+                continue
+            ident = ident_m.group(1)
+            bind_idx = None
+            for j, bl in enumerate(lines):
+                if re.match(rf'^\s*{re.escape(ident)}\s*=\s*\{{', bl):
+                    bind_idx = j
+                    break
+            if bind_idx is not None:
+                schema[name] = _parse_options_attrset(lines, bind_idx)
+            else:
+                # Binding not found textually — still register the
+                # service (with no subkeys) so it is recognised; the
+                # stale-subkey sweep simply skips a service with an
+                # empty subkey set.
+                schema[name] = {'subkeys': set(), 'enable_default': False}
+    return schema
+
+
+def extract_service_schema(module_file: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Aggregate the full service schema from BOTH sources:
+      1. the top-level module.nix `services = { ... }` block, and
+      2. every `apps/<name>/default.nix` and `services/<name>/default.nix`
+         that declares `options.homefree.services.<name>`.
+
+    A config-service is precisely a thing that declares
+    `homefree.services.<name>` — that declaration is what maps to a
+    `services.<name>` key in homefree-config.json. Directories that
+    don't declare it are pure infrastructure modules (caddy, unbound,
+    mysql, ...) — they have no config-service key and must NOT be
+    discovered, or the sync would wrongly inject them into the JSON.
+
+    Disabled modules (`_`-prefixed directories) are skipped, mirroring
+    configuration.nix's discovery.
+    """
+    repo_root = os.path.dirname(os.path.abspath(module_file))
+
+    # (1) module.nix services block (admin, landing-page, oauth2-proxy).
+    schema: Dict[str, Dict[str, Any]] = dict(
+        extract_service_schema_from_module(module_file)
+    )
+
+    # (2) every app/service directory that declares a config service.
+    for sub in ('apps', 'services'):
+        base = os.path.join(repo_root, sub)
+        if not os.path.isdir(base):
+            continue
+        for entry in sorted(os.listdir(base)):
+            if entry.startswith('_'):
+                continue  # disabled module — excluded from the build
+            app_file = os.path.join(base, entry, 'default.nix')
+            if not os.path.isfile(app_file):
+                continue
+            for name, meta in _extract_schema_from_app_file(app_file).items():
+                schema[name] = meta
+
+    return schema
+
+
 def extract_service_names_from_module(module_file: str) -> List[str]:
     """Compatibility wrapper. Returns a sorted list of service names."""
-    return sorted(extract_service_schema_from_module(module_file).keys())
+    return sorted(extract_service_schema(module_file).keys())
 
 
 def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]]:
     """
-    Sync current config with module.nix.
+    Sync current config with the HomeFree service schema.
     Returns (synced_config, changes).
 
     This focuses on the practical sync issues:
-    1. Services: Ensure all services from module.nix exist in JSON
-    2. Remove obsolete services not in module.nix
+    1. Add schema services missing from the JSON (with correct defaults)
+    2. Drop option subkeys no longer declared for a known service
     3. Preserve all user-configured values
+    4. NEVER remove a whole service — see the note below; custom-flake
+       services and orphaned keys are kept and merely reported
     """
     changes = []
     synced_config = json.loads(json.dumps(current_config))  # Deep copy
 
-    # Pull the full service schema from module.nix. Names are used for the
-    # service-level add/remove sweep; per-service subkey sets are used to
-    # drop stale option keys that no longer correspond to a declared option.
-    module_schema = extract_service_schema_from_module(module_file)
+    # Pull the full service schema from module.nix AND every app/service
+    # directory. Names drive the service-level add/remove sweep;
+    # per-service subkey sets drive the stale-option-key drop.
+    module_schema = extract_service_schema(module_file)
 
     if not module_schema:
-        changes.append("! Warning: Could not extract services from module.nix, skipping service sync")
+        changes.append("! Warning: Could not extract services from schema, skipping service sync")
         return synced_config, changes
 
     module_services_set = set(module_schema.keys())
@@ -155,22 +331,38 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
 
     current_services = set(synced_config['services'].keys())
 
-    # Find obsolete services (in JSON but not in module.nix)
-    obsolete_services = current_services - module_services_set
+    # NOTE — this sync deliberately NEVER removes a whole service.
+    #
+    # A `services.<name>` key in the config can come from a CUSTOM
+    # FLAKE (registered under `developers.flakes`) — an app declared in
+    # a flake OUTSIDE this repo. This script only scans the in-repo
+    # apps/ and services/ trees, so it cannot see custom-flake services
+    # and must not treat their config keys as "obsolete". A previous
+    # version of this script removed every service it didn't recognise
+    # and silently wiped users' configs.
+    #
+    # Removal is also unnecessary: `homefree-configuration.nix` filters
+    # `services.<name>` keys to ones that resolve to a declared option
+    # at eval time, so a genuinely orphaned key (app deleted, flake
+    # removed) is tolerated by the build — it does not need pruning
+    # here. The settings stay inert in the JSON and come back if the
+    # app/flake is re-added.
+    #
+    # Unrecognised services are merely reported, for visibility.
+    unrecognised = sorted(current_services - module_services_set)
+    if unrecognised:
+        changes.append(
+            "i Unrecognised services kept as-is (custom-flake apps or "
+            f"orphaned keys; not removed): {', '.join(unrecognised)}"
+        )
 
-    # Find new services (in module.nix but not in JSON)
+    # Find new services (in the in-repo schema but not in JSON)
     new_services = module_services_set - current_services
 
-    # Remove obsolete services
-    for service in sorted(obsolete_services):
-        del synced_config['services'][service]
-        changes.append(f"- Removed obsolete service: {service}")
-
-    # Add new services with defaults pulled from module.nix's mkOption
-    # `default = ...` declarations. The `enable` default in particular
-    # varies per service (e.g. zitadel defaults on, frigate defaults off);
-    # without this lookup every fresh-add would land disabled and the
-    # user would have to flip them all on by hand.
+    # Add new services with defaults pulled from each app's `enable`
+    # mkOption `default = ...`. The default varies per service (e.g.
+    # zitadel defaults on, frigate defaults off); without this lookup
+    # every fresh-add would land disabled.
     for service in sorted(new_services):
         enable_default = module_schema[service]['enable_default']
         synced_config['services'][service] = {
@@ -183,18 +375,29 @@ def sync_config(module_file: str, current_config: Dict) -> Tuple[Dict, List[str]
         )
 
     # Drop stale subkeys: JSON has a key under `services.<name>` that
-    # isn't declared in module.nix for that service. Left unchecked
-    # these break the build at Nix eval time with an opaque "option
-    # does not exist" error. The most common cause is a service
-    # losing an option upstream (e.g. `mediawiki.secrets` removed)
-    # while an existing JSON file still carries the now-orphan key.
+    # isn't declared for that service. Left unchecked these break the
+    # build at Nix eval time with an opaque "option does not exist"
+    # error. The most common cause is a service losing an option
+    # upstream (e.g. `mediawiki.secrets` removed) while an existing
+    # JSON file still carries the now-orphan key.
+    #
+    # This only runs for services we HAVE a schema for. A custom-flake
+    # service (no in-repo schema) is skipped entirely — we can't tell a
+    # valid subkey from a stale one without the flake's option set, and
+    # guessing would corrupt a working config.
     for service in sorted(synced_config['services'].keys()):
         if service not in module_schema:
-            continue  # Already handled by the obsolete-services pass.
+            continue  # custom-flake / unrecognised — leave it untouched.
         svc_cfg = synced_config['services'][service]
         if not isinstance(svc_cfg, dict):
             continue
         declared = module_schema[service]['subkeys']
+        # An empty subkey set means the app's option block could not be
+        # text-parsed (not that the service has zero options). Skip the
+        # sweep — dropping "stale" keys against an empty schema would
+        # delete EVERY key and corrupt a working service config.
+        if not declared:
+            continue
         stale = [k for k in svc_cfg.keys() if k not in declared]
         for key in sorted(stale):
             value = svc_cfg.pop(key)

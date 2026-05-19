@@ -184,16 +184,79 @@ if [[ "$OFFLINE" == "true" ]]; then
     export NIX_REMOTE=daemon
     ulimit -n 4096
 else
-    log_info "Updating homefree-local and homefree-base flake inputs..."
-    FLAKE_UPDATE_CMD="nix flake lock --allow-dirty --allow-dirty-locks --update-input homefree-local --update-input homefree-base '$FLAKE_DIR'"
+    # Refresh the flake inputs that point at a LOCAL working tree
+    # (`git+file://` / `path:` URLs) so the build picks up uncommitted
+    # working-tree edits. These inputs are content-addressed by NAR
+    # hash in flake.lock; without an explicit update the lock keeps a
+    # stale hash and Nix rebuilds the old, cached derivation — the
+    # edits never reach the store.
+    #
+    # IMPORTANT: the input NAMES are not fixed. The HomeFree source
+    # input is bound via flake.nix's managed `homefree-base-override`
+    # block and may be called `homefree-alt`, `homefree-local`, etc.
+    # depending on how the box was set up. Hard-coding a name (the old
+    # behaviour: `--update-input homefree-local`) silently updated
+    # NOTHING on a box whose input was named differently, so the build
+    # served stale frontend/code. Discover the local inputs from the
+    # flake's own metadata instead.
+    log_info "Discovering flake inputs to refresh (local + HomeFree source)..."
+    # `nix flake metadata` reads the dirty git tree, which on an
+    # installed box contains root-owned files (homefree-config.json) —
+    # so it needs the same privilege the build does.
+    METADATA_CMD="nix flake metadata '$FLAKE_DIR' --json"
     if [[ $EUID -ne 0 ]]; then
-        FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
+        METADATA_CMD="sudo $METADATA_CMD"
     fi
-    if ! eval "$FLAKE_UPDATE_CMD"; then
-        log_error "Failed to update flake inputs"
-        exit 1
+    LOCAL_INPUTS=$(eval "$METADATA_CMD" 2>/dev/null \
+        | python3 -c "
+import json, sys
+try:
+    meta = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+nodes = meta.get('locks', {}).get('nodes', {}) or {}
+root = meta.get('locks', {}).get('root', 'root')
+# Only the root flake's DIRECT inputs — never transitive deps
+# (nixpkgs_2, crane, ...). Updating those is out of scope and slow.
+direct = (nodes.get(root, {}) or {}).get('inputs', {}) or {}
+for name, ref in direct.items():
+    # An input may resolve to a node under a different key (Nix
+    # dedups identical inputs); ref is that node key (str) or a path.
+    node_key = ref if isinstance(ref, str) else name
+    node = nodes.get(node_key, {}) or nodes.get(name, {}) or {}
+    orig = node.get('original', {}) or {}
+    url = orig.get('url', '') or ''
+    typ = orig.get('type', '')
+    # Refresh an input if it is EITHER:
+    #  - a local working-tree input (file:// URL or path:) — its lock
+    #    NAR-hash goes stale against uncommitted edits; OR
+    #  - the HomeFree source input itself (name starts 'homefree-') —
+    #    so a build still pulls the latest upstream on a box with no
+    #    local override. This preserves the old behaviour without the
+    #    hard-coded-name bug.
+    if url.startswith('file:') or typ == 'path' or name.startswith('homefree-'):
+        print(name)
+" || true)
+
+    if [[ -z "$LOCAL_INPUTS" ]]; then
+        log_warning "No local or HomeFree flake inputs found in $FLAKE_DIR/flake.nix"
+        log_warning "Skipping input refresh — build may use the locked snapshot."
+    else
+        UPDATE_ARGS=()
+        for inp in $LOCAL_INPUTS; do
+            UPDATE_ARGS+=("$inp")
+        done
+        log_info "Updating flake inputs: ${UPDATE_ARGS[*]}"
+        FLAKE_UPDATE_CMD="nix flake update ${UPDATE_ARGS[*]} --flake '$FLAKE_DIR' --allow-dirty --allow-dirty-locks"
+        if [[ $EUID -ne 0 ]]; then
+            FLAKE_UPDATE_CMD="sudo $FLAKE_UPDATE_CMD"
+        fi
+        if ! eval "$FLAKE_UPDATE_CMD"; then
+            log_error "Failed to update flake inputs"
+            exit 1
+        fi
+        log_success "Flake inputs updated successfully"
     fi
-    log_success "Flake inputs updated successfully"
 fi
 
 # Sync homefree-config.json with module.nix schema
