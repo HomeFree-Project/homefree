@@ -169,45 +169,47 @@ class LanClientsModule extends LitElement {
       color: var(--hf-err);
     }
 
-    /* Inline edit row */
+    /* Inline edit row — the editable cells become inputs in place, so
+       the row stays column-aligned with the rest of the table. */
     .edit-row td {
       background: var(--hf-surface-2);
-      white-space: normal;
     }
-    .edit-grid {
-      display: flex;
-      gap: 12px;
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
-    .edit-field { display: flex; flex-direction: column; gap: 3px; }
-    .edit-field label {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--hf-text-muted);
-    }
-    .edit-field input[type='text'] {
+    /* An input that fills its table cell. border-box keeps the
+       padding/border inside the column width so nothing overflows. */
+    .cell-input {
+      width: 100%;
+      box-sizing: border-box;
       background: var(--hf-surface);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       color: var(--hf-text);
       padding: 5px 8px;
       font-size: 13px;
+      font-family: inherit;
+    }
+    .cell-input.mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .edit-field.check {
-      flex-direction: row;
+    .cell-input:focus {
+      outline: none;
+      border-color: var(--hf-accent);
+    }
+    /* Internet-access checkbox in the Type column. */
+    .wan-toggle {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
+      font-size: 12px;
+      color: var(--hf-text);
+      cursor: pointer;
     }
-    .edit-field.check label { text-transform: none; font-size: 12px; }
-    .edit-actions { display: flex; gap: 6px; }
-    .edit-error {
+    /* Validation error — its own full-width row under the edit row. */
+    .edit-error-row td {
+      background: var(--hf-surface-2);
       color: var(--hf-err);
       font-size: 12px;
-      margin-top: 6px;
-      flex-basis: 100%;
+      white-space: normal;
+      padding-top: 0;
     }
 
     .error-message {
@@ -462,42 +464,55 @@ class LanClientsModule extends LitElement {
 
   // --- render ------------------------------------------------------------
 
-  _renderEditRow() {
+  // Render the row being edited as a real per-column <tr>: the
+  // editable columns (Hostname, IP, internet-access) become inputs
+  // in place, the rest of the cells keep their normal read-only
+  // content, so the row stays aligned with the table around it.
+  // A second full-width <tr> carries any validation error.
+  _renderEditRow(row) {
     const f = this.editForm;
     return html`
       <tr class="edit-row">
-        <td colspan="7">
-          <div class="edit-grid">
-            <div class="edit-field">
-              <label>Hostname</label>
-              <input type="text" .value=${f.hostname}
-                     @input=${e => { this.editForm = { ...f, hostname: e.target.value }; }}>
-            </div>
-            <div class="edit-field">
-              <label>Reserved IP</label>
-              <input type="text" .value=${f.ip}
-                     @input=${e => { this.editForm = { ...f, ip: e.target.value }; }}>
-            </div>
-            <div class="edit-field check">
-              <input type="checkbox" id="wan-access-${this.editMac}"
-                     .checked=${f.wanAccess}
-                     @change=${e => { this.editForm = { ...f, wanAccess: e.target.checked }; }}>
-              <label for="wan-access-${this.editMac}">Allow internet access</label>
-            </div>
-            <div class="edit-actions">
-              <button class="action-button primary" @click=${() => this._saveEdit()}>
-                Save reservation
-              </button>
-              <button class="action-button" @click=${() => this._cancelEdit()}>
-                Cancel
-              </button>
-            </div>
-            ${this.editError
-              ? html`<div class="edit-error">${this.editError}</div>`
-              : ''}
-          </div>
+        <td>
+          <span class="dot ${row.online ? 'up' : 'down'}"></span>
+          ${row.online ? 'online' : 'offline'}
+        </td>
+        <td>
+          <input class="cell-input" type="text" .value=${f.hostname}
+                 placeholder="hostname"
+                 @input=${e => { this.editForm = { ...f, hostname: e.target.value }; }}>
+        </td>
+        <td>
+          <input class="cell-input mono" type="text" .value=${f.ip}
+                 placeholder="0.0.0.0"
+                 @input=${e => { this.editForm = { ...f, ip: e.target.value }; }}>
+        </td>
+        <td class="mono">${row.mac}</td>
+        <td>${row.static ? '— reserved —' : this._fmtExpiry(row.leaseExpiry)}</td>
+        <td>
+          <label class="wan-toggle" for="wan-access-${this.editMac}">
+            <input type="checkbox" id="wan-access-${this.editMac}"
+                   .checked=${f.wanAccess}
+                   @change=${e => { this.editForm = { ...f, wanAccess: e.target.checked }; }}>
+            Internet access
+          </label>
+        </td>
+        <td class="actions">
+          <button class="action-button primary" @click=${() => this._saveEdit()}>
+            Save
+          </button>
+          <button class="action-button" @click=${() => this._cancelEdit()}>
+            Cancel
+          </button>
         </td>
       </tr>
+      ${this.editError
+        ? html`
+            <tr class="edit-error-row">
+              <td colspan="7">${this.editError}</td>
+            </tr>
+          `
+        : ''}
     `;
   }
 
@@ -626,7 +641,7 @@ class LanClientsModule extends LitElement {
                 </thead>
                 <tbody>
                   ${shown.map(row => this.editMac === row.mac
-                    ? this._renderEditRow()
+                    ? this._renderEditRow(row)
                     : this._renderRow(row))}
                 </tbody>
               </table>
