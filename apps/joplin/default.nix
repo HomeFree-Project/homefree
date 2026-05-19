@@ -90,7 +90,7 @@ in
 
   systemd.services.podman-joplin = lib.optionalAttrs config.homefree.service-options.joplin.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
   };
 
     homefree.service-config = [{

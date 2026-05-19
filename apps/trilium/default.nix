@@ -102,7 +102,7 @@ in
 
   systemd.services.podman-trilium = lib.optionalAttrs (config.homefree.services.trilium.enable == true) {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "trilium-prestart" preStart}" ];
     };

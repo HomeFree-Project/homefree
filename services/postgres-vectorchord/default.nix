@@ -158,7 +158,7 @@ in
 
   systemd.services.podman-postgres-vectorchord = {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "postgres-vectorchord-prestart" preStart}" ];
       # Add restart delay to prevent rapid restart loops

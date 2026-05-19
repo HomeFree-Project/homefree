@@ -3,6 +3,7 @@ import '../../shared/config-section.js';
 import '../../shared/form-field.js';
 import '../../shared/lat-lng-picker.js';
 import '../../shared/table-editor.js';
+import { alertDialog } from '../../shared/confirm-dialog.js';
 import {
   getTimezones, getLocales, getCountries, getCurrencies, getLanguages,
   lookupElevation,
@@ -82,21 +83,34 @@ class SystemModule extends LitElement {
       font-size: 16px;
     }
 
+    /* Textarea + button stacked; button left-aligned with the
+       textarea and sized to its own content (align-items: flex-start
+       keeps it from stretching the full max-width). */
+    .add-key-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    /* Canonical admin button — 9px 16px / 13px / radius 6px,
+       bordered surface (matches admin-app / table-editor / etc). */
     .add-key-btn {
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: 1px solid var(--hf-accent);
-      background: var(--hf-surface);
-      color: var(--hf-accent);
-      font-size: 14px;
+      padding: 9px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .add-key-btn:hover {
-      background: var(--hf-accent);
-      color: var(--hf-text);
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
     textarea {
@@ -242,9 +256,9 @@ class SystemModule extends LitElement {
     }));
   }
 
-  addSshKey() {
+  async addSshKey() {
     if (!this.newSshKey.trim()) {
-      alert('Please enter an SSH key');
+      await alertDialog({ message: 'Please enter an SSH key.' });
       return;
     }
 
@@ -538,23 +552,24 @@ class SystemModule extends LitElement {
               </p>
             `}
 
-            <textarea
-              placeholder="Paste SSH public key here (ssh-rsa ...)"
-              .value=${this.newSshKey}
-              @input=${(e) => { this.newSshKey = e.target.value; }}
-            ></textarea>
+            <div class="add-key-row">
+              <textarea
+                placeholder="Paste SSH public key here (ssh-rsa ...)"
+                .value=${this.newSshKey}
+                @input=${(e) => { this.newSshKey = e.target.value; }}
+              ></textarea>
 
-            <button
-              class="add-key-btn"
-              @click=${this.addSshKey}
-              style="margin-top: 12px;"
-            >
-              + Add SSH Key
-            </button>
+              <button
+                class="add-key-btn"
+                @click=${this.addSshKey}
+              >
+                + Add SSH Key
+              </button>
+            </div>
           </div>
 
-          <div style="margin-top: 16px; padding: 12px; background: var(--hf-accent-soft); border-left: 4px solid var(--hf-accent); border-radius: 4px; font-size: 13px; color: var(--hf-text);">
-            <strong>💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
+          <div style="margin-top: 16px; padding: 14px 18px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--hf-accent); border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--hf-text-muted);">
+            <strong style="color: var(--hf-text);">💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
             <ul style="margin: 8px 0 0 20px; padding: 0;">
               <li>After adding a key, click "Save & Apply" to activate it</li>
               <li>Secrets fields (on Backups and Services pages) will be enabled after the rebuild completes</li>

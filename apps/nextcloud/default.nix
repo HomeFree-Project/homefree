@@ -578,8 +578,7 @@ in
 
   systemd.services.podman-nextcloud = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" "postgresql.service" ];
-    requires = [ "dns-ready.service" ];
-    wants = [ "postgresql.service" ];
+    wants = [ "postgresql.service" "dns-ready.service" ];
     ## The container bind-mounts the host's /run/postgresql (a per-boot
     ## tmpfs that postgresql.service owns via RuntimeDirectory). When
     ## Postgres restarts it recreates that directory with a fresh
@@ -601,7 +600,7 @@ in
 
   systemd.services.podman-nextcloud-redis = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
   };
 
   systemd.services.podman-nextcloud-appapi-harp = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {

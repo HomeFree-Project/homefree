@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { confirmDialog, alertDialog } from '../shared/confirm-dialog.js';
 
 /**
  * Secrets input component
@@ -123,14 +124,19 @@ class SecretsInput extends LitElement {
       text-security: disc;
     }
 
+    /* Canonical admin button — matches admin-app / table-editor:
+       9px 16px / 13px / radius 6px, bordered surface look. */
     .btn {
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: none;
-      font-size: 14px;
+      padding: 9px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .btn:disabled {
@@ -139,32 +145,36 @@ class SecretsInput extends LitElement {
     }
 
     .btn-toggle {
-      background: var(--hf-surface-2);
-      color: var(--hf-text);
-      border: 1px solid var(--hf-border-2);
       min-width: 60px;
     }
 
     .btn-toggle:hover:not(:disabled) {
       background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
+    /* Primary action — accent fill, dark text. */
     .btn-set {
       background: var(--hf-accent);
       color: #06281c;
+      border-color: var(--hf-accent);
     }
 
     .btn-set:hover:not(:disabled) {
       background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
 
+    /* Danger action — bordered, red text (matches the table-row
+       Delete button), not a solid-red fill. */
     .btn-clear {
-      background: var(--hf-err);
-      color: var(--hf-text);
+      color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
     }
 
     .btn-clear:hover:not(:disabled) {
-      background: #dc2626;
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
     }
 
     .btn-group {
@@ -172,13 +182,15 @@ class SecretsInput extends LitElement {
       gap: 8px;
     }
 
+    /* Unified notification box — grey-tinted bg, colored left edge. */
     .warning-message {
-      padding: 12px;
-      background: rgba(245, 158, 11, 0.1);
-      border: 1px solid var(--hf-warn);
+      padding: 14px 18px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
       border-radius: 8px;
       font-size: 13px;
-      color: var(--hf-warn);
+      line-height: 1.5;
+      color: var(--hf-text-muted);
       margin-top: 12px;
     }
   `;
@@ -199,7 +211,7 @@ class SecretsInput extends LitElement {
 
   async handleSet() {
     if (!this.inputValue || !this.inputValue.trim()) {
-      alert('Please enter a secret value');
+      await alertDialog({ message: 'Please enter a secret value.' });
       return;
     }
 
@@ -235,14 +247,24 @@ class SecretsInput extends LitElement {
 
     } catch (error) {
       console.error('Error setting secret:', error);
-      alert(`Failed to set secret: ${error.message}`);
+      await alertDialog({
+        title: 'Error',
+        message: `Failed to set secret: ${error.message}`,
+        variant: 'danger',
+      });
     } finally {
       this.saving = false;
     }
   }
 
   async handleClear() {
-    if (!confirm('Are you sure you want to delete this secret? This action cannot be undone.')) {
+    const ok = await confirmDialog({
+      title: 'Clear secret?',
+      message: 'This permanently deletes the stored secret value. This action cannot be undone.',
+      confirmText: 'Clear',
+      variant: 'danger',
+    });
+    if (!ok) {
       return;
     }
 
@@ -271,7 +293,11 @@ class SecretsInput extends LitElement {
 
     } catch (error) {
       console.error('Error deleting secret:', error);
-      alert(`Failed to delete secret: ${error.message}`);
+      await alertDialog({
+        title: 'Error',
+        message: `Failed to delete secret: ${error.message}`,
+        variant: 'danger',
+      });
     } finally {
       this.saving = false;
     }

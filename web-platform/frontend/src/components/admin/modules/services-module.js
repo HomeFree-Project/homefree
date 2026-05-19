@@ -4,6 +4,7 @@ import '../../shared/config-section.js';
 import '../../shared/app-card.js';
 import '../secrets-input.js';
 import '../service-option-input.js';
+import { confirmDialog } from '../../shared/confirm-dialog.js';
 
 /**
  * Services configuration module
@@ -52,14 +53,16 @@ class ServicesModule extends LitElement {
       flex: 1;
     }
 
+    /* Unified notification box — grey-tinted bg, colored left edge. */
     .warning-box {
-      background: rgba(245, 158, 11, 0.1);
-      border: 1px solid var(--hf-warn);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
       border-radius: 8px;
-      padding: 12px 16px;
+      padding: 14px 18px;
       margin-bottom: 16px;
       font-size: 13px;
-      color: var(--hf-warn);
+      line-height: 1.5;
+      color: var(--hf-text-muted);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -91,12 +94,13 @@ class ServicesModule extends LitElement {
 
     /* Responsive card grid — one <app-card> per service. Collapses to
        a single column on narrow screens. An expanded card spans the
-       full row so its config form has room (see .card-expanded). */
+       full row so its config form has room (see .card-expanded).
+       Default grid align-items:stretch makes every card in a row
+       the same height; app-card has height:100% to fill the cell. */
     .service-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 12px;
-      align-items: start;
     }
     app-card.card-expanded {
       grid-column: 1 / -1;
@@ -358,13 +362,16 @@ class ServicesModule extends LitElement {
     }
 
     .error-box {
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid var(--hf-err);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
       border-radius: 8px;
-      padding: 16px;
+      padding: 14px 18px;
       margin-bottom: 20px;
-      color: var(--hf-err);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--hf-text-muted);
     }
+    .error-box strong { color: var(--hf-text); }
 
     .no-results {
       text-align: center;
@@ -744,9 +751,12 @@ class ServicesModule extends LitElement {
 
   async handleServiceAction(label, action) {
     if (action === 'stop') {
-      const ok = window.confirm(
-        `Stop ${label}? The service will not auto-restart until you start it manually or rebuild.`
-      );
+      const ok = await confirmDialog({
+        title: 'Stop service?',
+        message: `Stop ${label}? The service will not auto-restart until you start it manually or rebuild.`,
+        confirmText: 'Stop',
+        variant: 'danger',
+      });
       if (!ok) return;
     }
     this.pendingActions = { ...this.pendingActions, [label]: action };

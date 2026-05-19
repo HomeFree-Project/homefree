@@ -228,7 +228,7 @@ in
 
   systemd.services.podman-linkwarden = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "linkwarden-prestart" preStart}" ];
     };
@@ -236,7 +236,7 @@ in
 
   systemd.services.podman-meilisearch = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "meili-prestart" preStart}" ];
     };

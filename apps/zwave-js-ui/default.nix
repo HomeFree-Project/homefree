@@ -150,7 +150,7 @@ in
 
     systemd.services.podman-zwave-js-ui = lib.optionalAttrs config.homefree.services.zwave-js-ui.enable {
       after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "zwave-js-ui-prestart" preStart}" ];
       };

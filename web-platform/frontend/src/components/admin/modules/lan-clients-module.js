@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getLanClients } from '../../../api/client.js';
+import { confirmDialog } from '../../shared/confirm-dialog.js';
 
 /**
  * LAN Clients module.
@@ -83,18 +84,23 @@ class LanClientsModule extends LitElement {
       align-items: center;
       flex-wrap: wrap;
     }
+    /* Compact table-row button — matches the shared table-editor
+       .btn-row (Edit / Delete): 5px 12px / 12px / radius 6px. */
     .action-button {
       background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 6px;
       font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
+      transition: all 0.15s;
     }
     .action-button:hover:not(:disabled) {
       background: var(--hf-surface-3);
-      border-color: var(--hf-accent);
+      border-color: var(--hf-text-subtle);
     }
     .action-button:disabled { opacity: 0.5; cursor: default; }
     .action-button.active {
@@ -106,9 +112,18 @@ class LanClientsModule extends LitElement {
       color: #06281c;
       border-color: var(--hf-accent);
     }
-    .action-button.danger:hover:not(:disabled) {
-      border-color: var(--hf-err);
+    .action-button.primary:hover:not(:disabled) {
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
+    }
+    /* Danger — red text always (matches table-editor .btn-row.delete). */
+    .action-button.danger {
       color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
+    }
+    .action-button.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
     }
 
     .panel {
@@ -118,13 +133,39 @@ class LanClientsModule extends LitElement {
       padding: 4px 0;
       overflow-x: auto;
     }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    /* table-layout: fixed so column widths come from the explicit
+       th widths below, NOT from cell content. Without it, swapping a
+       cell's text for an <input> when a row enters edit mode would
+       re-balance every column and shift the table. min-width keeps
+       the fixed columns from crushing on narrow screens — the table
+       scrolls inside .panel (overflow-x:auto) instead. */
+    table {
+      width: 100%;
+      /* Fixed columns: 90+130+150+110+160+200 = 840px + Hostname
+         ~150px minimum. */
+      min-width: 990px;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 13px;
+    }
     th, td {
       text-align: left;
       padding: 9px 14px;
       border-bottom: 1px solid var(--hf-border);
       white-space: nowrap;
     }
+    /* Text cells: clip an over-long value with an ellipsis rather
+       than letting it widen the column. NOT applied to the actions
+       cell — clipping interactive buttons would hide a still-
+       clickable control (e.g. "Remove static" truncated to "...").  */
+    td:not(.actions) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Every row is exactly this tall — a normal row and its
+       edit-mode version both settle to this height, so flipping a
+       row into edit mode shifts nothing below it. */
+    td { height: 40px; }
     th {
       font-size: 11px;
       text-transform: uppercase;
@@ -132,9 +173,19 @@ class LanClientsModule extends LitElement {
       color: var(--hf-text-muted);
       font-weight: 600;
     }
+    /* Explicit column widths — Status, Hostname, IP, MAC, DHCP lease,
+       Type, Actions. Hostname has no width so it absorbs the slack.
+       Actions is wide enough for "Edit" + "Remove static" side by
+       side so neither button is ever clipped. */
+    th:nth-child(1) { width: 90px; }
+    th:nth-child(3) { width: 130px; }
+    th:nth-child(4) { width: 150px; }
+    th:nth-child(5) { width: 110px; }
+    th:nth-child(6) { width: 160px; }
+    th:nth-child(7) { width: 200px; }
     tr:last-child td { border-bottom: none; }
     td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    td.actions { text-align: right; }
+    td.actions { text-align: right; white-space: nowrap; }
     td.actions .action-button { margin-left: 6px; }
 
     .dot {
@@ -159,10 +210,6 @@ class LanClientsModule extends LitElement {
     .tag.static {
       border-color: var(--hf-accent);
       color: var(--hf-accent);
-    }
-    .tag.pending {
-      border-color: var(--hf-warn);
-      color: var(--hf-warn);
     }
     .tag.noinet {
       border-color: var(--hf-err);
@@ -203,8 +250,10 @@ class LanClientsModule extends LitElement {
       color: var(--hf-text);
       cursor: pointer;
     }
-    /* Validation error — its own full-width row under the edit row. */
+    /* Validation error — its own full-width row under the edit row.
+       height:auto so it sizes to the message, not the 40px row grid. */
     .edit-error-row td {
+      height: auto;
       background: var(--hf-surface-2);
       color: var(--hf-err);
       font-size: 12px;
@@ -212,15 +261,18 @@ class LanClientsModule extends LitElement {
       padding-top: 0;
     }
 
+    /* Unified notification box — grey-tinted bg, colored left edge. */
     .error-message {
-      background: color-mix(in srgb, var(--hf-err) 12%, transparent);
-      border: 1px solid var(--hf-err);
-      color: var(--hf-err);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
+      color: var(--hf-text-muted);
       border-radius: 8px;
-      padding: 10px 14px;
+      padding: 14px 18px;
       font-size: 13px;
+      line-height: 1.5;
       margin-bottom: 16px;
     }
+    .error-message strong { color: var(--hf-text); }
     .empty, .loading {
       color: var(--hf-text-muted);
       font-size: 13px;
@@ -281,11 +333,6 @@ class LanClientsModule extends LitElement {
       ip: e.ip || '',
       'wan-access': e['wan-access'] !== false,
     }));
-  }
-
-  /** True once the user has edited static-ips this session. */
-  _hasPendingStatic() {
-    return Array.isArray(this.pendingConfig?.network?.['static-ips']);
   }
 
   /** Emit a config-change patch with the new static-ips list. */
@@ -434,8 +481,29 @@ class LanClientsModule extends LitElement {
     this._cancelEdit();
   }
 
-  _removeStatic(mac) {
-    this._emitStaticIps(this._staticIps().filter(s => s['mac-address'] !== mac));
+  // Removing a static reservation is destructive — it drops the
+  // IP/hostname binding for that device. Confirm before doing it so a
+  // stray click (the action buttons sit right next to "Edit") can't
+  // silently delete a reservation.
+  async _removeStatic(row) {
+    const label = row.hostname
+      ? `"${row.hostname}" (${row.ip || row.mac})`
+      : (row.ip || row.mac);
+    const ok = await confirmDialog({
+      title: 'Remove static reservation?',
+      message:
+        `Remove the static reservation for ${label}?\n\n` +
+        `The device keeps its current connection but will get a ` +
+        `dynamic DHCP address on its next lease — its IP may change.`,
+      confirmText: 'Remove',
+      variant: 'danger',
+    });
+    if (!ok) {
+      return;
+    }
+    this._emitStaticIps(
+      this._staticIps().filter(s => s['mac-address'] !== row.mac)
+    );
   }
 
   // Lightweight client-side IPv4 check — the Nix activation does the
@@ -545,7 +613,7 @@ class LanClientsModule extends LitElement {
                 <button class="action-button" @click=${() => this._startEdit(row)}>
                   Edit
                 </button>
-                <button class="action-button danger" @click=${() => this._removeStatic(row.mac)}>
+                <button class="action-button danger" @click=${() => this._removeStatic(row)}>
                   Remove static
                 </button>
               `
@@ -584,10 +652,8 @@ class LanClientsModule extends LitElement {
         <h2>LAN Clients</h2>
         <div class="subtitle">
           Devices on the local network, from DHCP leases and the kernel
-          neighbour table — joined with static-IP reservations. Reservation
-          changes apply on the next ${this._hasPendingStatic()
-            ? html`Apply <span class="tag pending">unsaved changes</span>`
-            : 'Apply'}.
+          neighbour table — joined with static-IP reservations.
+          Reservation changes apply on the next Apply.
         </div>
 
         <div class="cards">

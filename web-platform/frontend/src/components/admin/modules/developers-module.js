@@ -9,6 +9,7 @@ import {
   validateHomefreeBase,
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
+import { confirmDialog } from '../../shared/confirm-dialog.js';
 
 /**
  * Developers module — register custom Nix flakes.
@@ -63,42 +64,49 @@ class DevelopersModule extends LitElement {
     .module-container { width: 100%; }
 
     .info-box {
-      background: var(--hf-accent-soft);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-accent);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-accent);
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
 
     .notice {
-      background: rgba(74,222,128,0.1);
-      border: 1px solid rgba(74,222,128,0.35);
-      color: #4ade80;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-accent);
       padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .notice strong { color: #4ade80; }
+    .notice strong { color: var(--hf-text); }
 
     .error {
-      background: rgba(248,113,113,0.08);
-      border: 1px solid rgba(248,113,113,0.3);
-      color: #fca5a5;
-      padding: 12px 16px;
-      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
+      padding: 14px 18px;
+      border-radius: 8px;
       margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     .warn {
-      background: rgba(250,204,21,0.1);
-      border: 1px solid rgba(250,204,21,0.35);
-      color: #facc15;
-      padding: 10px 14px;
-      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
+      padding: 14px 18px;
+      border-radius: 8px;
       margin-bottom: 12px;
+      color: var(--hf-text-muted);
       font-size: 13px;
+      line-height: 1.5;
     }
 
     h3 { color: var(--hf-text); margin: 24px 0 12px; font-size: 16px; }
@@ -166,45 +174,68 @@ class DevelopersModule extends LitElement {
       font-size: 14px;
     }
 
-    .type-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
-    .type-toggle button {
-      flex: 1;
-      padding: 8px;
-      background: var(--hf-surface-2);
-      color: var(--hf-text-muted);
+    /* Compact segmented control — buttons sized to their content and
+       joined into a single pill, so they don't stretch on wide screens. */
+    .type-toggle {
+      display: inline-flex;
+      margin-bottom: 14px;
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
+      overflow: hidden;
+    }
+    .type-toggle button {
+      padding: 7px 16px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text-muted);
+      border: none;
+      border-right: 1px solid var(--hf-border-2);
       cursor: pointer;
       font-size: 13px;
     }
+    .type-toggle button:last-child { border-right: none; }
     .type-toggle button.active {
       background: var(--hf-accent);
       color: #06281c;
-      border-color: var(--hf-accent);
       font-weight: 600;
     }
 
     .input-with-browse { display: flex; gap: 8px; }
     .input-with-browse input { flex: 1; }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px. */
     button.btn {
-      padding: 8px 16px;
-      background: var(--hf-surface);
+      padding: 9px 16px;
+      background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
     }
-    button.btn:hover:not(:disabled) { background: var(--hf-surface-2); }
+    button.btn:hover:not(:disabled) {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
+    }
     button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
     button.btn.primary {
       background: var(--hf-accent);
       color: #06281c;
       border-color: var(--hf-accent);
-      font-weight: 600;
     }
-    button.btn.danger { color: #f87171; border-color: rgba(248,113,113,0.3); }
+    button.btn.primary:hover:not(:disabled) {
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
+    }
+    button.btn.danger {
+      color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
+    }
+    button.btn.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
+    }
 
     .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
     .advanced-toggle {
@@ -406,7 +437,13 @@ class DevelopersModule extends LitElement {
   }
 
   async _delete(flake) {
-    if (!confirm(`Remove the custom flake "${flake.name}"?`)) return;
+    const ok = await confirmDialog({
+      title: 'Remove custom flake?',
+      message: `Remove the custom flake "${flake.name}"? Its apps and modules will no longer be composed into the system after the next rebuild.`,
+      confirmText: 'Remove',
+      variant: 'danger',
+    });
+    if (!ok) return;
     this.error = '';
     this.notice = '';
     try {
@@ -776,7 +813,7 @@ class DevelopersModule extends LitElement {
 
         <div class="actions">
           <button
-            class="btn primary"
+            class="btn"
             ?disabled=${this.saving || !this.formName || !this.formUrl}
             @click=${this._save}
           >${this.saving ? 'Saving…' : (editing ? 'Save changes' : 'Register flake')}</button>

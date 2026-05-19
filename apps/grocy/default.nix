@@ -82,7 +82,7 @@ in
 
   systemd.services.podman-grocy = lib.optionalAttrs config.homefree.service-options.grocy.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "grocy-prestart" preStart}" ];
     };

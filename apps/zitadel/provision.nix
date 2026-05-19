@@ -131,7 +131,14 @@ let
       ## "Logout successful" page.
       post_logout_uris = oauth2ProxyPostLogoutUris;
       needs_pat = false;
-      post_restart_units = [ "podman-oauth2-proxy.service" ];
+      ## oauth2-proxy runs blue/green — list both colour units. The
+      ## consumer uses try-restart, so only the running (active) colour
+      ## is restarted to pick up the freshly-written OIDC secrets; the
+      ## dormant standby is skipped.
+      post_restart_units = [
+        "podman-oauth2-proxy-blue.service"
+        "podman-oauth2-proxy-green.service"
+      ];
     }
     {
       svc = "headscale";

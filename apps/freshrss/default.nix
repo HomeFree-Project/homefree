@@ -324,7 +324,8 @@ in
       ## PostgreSQL restart cascade a FreshRSS restart, re-binding the
       ## current /run/postgresql.
       after = [ "dns-ready.service" "postgresql.service" ];
-      requires = [ "dns-ready.service" "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      wants = [ "dns-ready.service" ];
       partOf = [ "postgresql.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "freshrss-prestart" preStart}" ];

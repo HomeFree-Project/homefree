@@ -389,7 +389,7 @@ in
 
   systemd.services.podman-frigate = lib.optionalAttrs config.homefree.service-options.frigate.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
     };

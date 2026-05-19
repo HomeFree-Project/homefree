@@ -667,7 +667,8 @@ in
   ## file is fatal at unit start.
   systemd.services.headplane = lib.mkIf deployHeadplane {
     after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
-    requires = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
+    requires = [ "headscale.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
+    wants = [ "dns-ready.service" ];
     ## Headplane reads the headscale config file at startup; if we
     ## regenerate that file but the unit definition is otherwise
     ## unchanged, NixOS won't restart the unit on rebuild and the new

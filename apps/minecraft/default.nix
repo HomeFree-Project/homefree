@@ -399,7 +399,7 @@ in
       name = "podman-${instance-id}";
       value = {
         after = [ "dns-ready.service" ];
-        requires = [ "dns-ready.service" ];
+        wants = [ "dns-ready.service" ];
         # Don't kick the running game server on every nixos-rebuild just
         # because some transitive dependency (glibc, podman, coreutils)
         # rotated. The container itself doesn't change unless the image

@@ -333,6 +333,17 @@ class UserApp extends LitElement {
           </div>
           <nav class="nav-menu">
            <div class="nav-menu-inner">
+            <!-- Cross-site link to the Admin app, pinned at the top of
+                 the nav (mirrors where admin-app pins its "Home" link).
+                 External navigation, so no hash route / active state.
+                 Admin-role users only — hidden entirely otherwise. -->
+            ${this.user?.is_admin_role ? html`
+              <a class="nav-item nav-item-crosssite" href="${this._adminUrl()}">
+                <span class="nav-item-icon">${navIcon('admin')}</span>
+                <span class="nav-item-text">Admin</span>
+                <span class="nav-item-arrow">↗</span>
+              </a>
+            ` : ''}
             ${Object.entries(sections).map(([sect, mods]) => html`
               <div class="nav-section-title">${sect}</div>
               ${mods.map(m => html`
@@ -343,19 +354,9 @@ class UserApp extends LitElement {
                 </a>
               `)}
             `)}
-            <!-- Cross-site links to the other HomeFree surfaces, in
-                 their own "More" section so they read as navigation
-                 rather than account settings. Real external
-                 navigations, so no hash route / active state. Admin
-                 only for admin-role users; Manual opens in a new tab
-                 since it has no nav to get back. -->
+            <!-- Manual in its own "More" section. External link, opens
+                 in a new tab since it has no nav to get back here. -->
             <div class="nav-section-title">More</div>
-            ${this.user?.is_admin_role ? html`
-              <a class="nav-item" href="${this._adminUrl()}">
-                <span class="nav-item-icon">${navIcon('admin')}</span>
-                <span class="nav-item-text">Admin</span>
-              </a>
-            ` : ''}
             <a class="nav-item" href="${this._manualUrl()}"
                target="_blank" rel="noopener">
               <span class="nav-item-icon">${navIcon('manual')}</span>

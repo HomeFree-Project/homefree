@@ -306,7 +306,8 @@ in
 
     systemd.services.podman-matrix-synapse = lib.optionalAttrs config.homefree.service-options.matrix.enable {
       after = [ "dns-ready.service" "postgresql.service" ];
-      requires = [ "dns-ready.service" "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      wants = [ "dns-ready.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}" ];
         ExecStartPost = [ "!${postStart}" ];

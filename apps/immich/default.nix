@@ -491,7 +491,7 @@ in
 
   systemd.services.podman-immich-server = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "imimich-server-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];
@@ -500,12 +500,12 @@ in
 
   systemd.services.podman-immich-machine-learning = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
   };
 
   systemd.services.podman-immich-redis = lib.optionalAttrs config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
   };
 
     homefree.service-config = [{

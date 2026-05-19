@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { confirmDialog } from './confirm-dialog.js';
 
 /**
  * Table editor component for list-based configuration
@@ -73,6 +74,10 @@ class TableEditor extends LitElement {
     tr:hover {
       background: var(--hf-surface-2);
     }
+
+    /* Boolean-column cell markers: green check / red cross. */
+    .bool-yes { color: var(--hf-accent); font-weight: 600; }
+    .bool-no  { color: var(--hf-err);    font-weight: 600; }
 
     .actions-cell {
       text-align: right;
@@ -328,16 +333,22 @@ class TableEditor extends LitElement {
     this.closeModal();
   }
 
-  deleteRow(index) {
-    if (confirm('Are you sure you want to delete this row?')) {
-      const newData = this.data.filter((_, i) => i !== index);
+  async deleteRow(index) {
+    const ok = await confirmDialog({
+      title: 'Delete entry?',
+      message: 'This removes the entry from the list. The change takes effect when you click Apply.',
+      confirmText: 'Delete',
+      variant: 'danger',
+    });
+    if (!ok) return;
 
-      this.dispatchEvent(new CustomEvent('data-change', {
-        detail: { data: newData },
-        bubbles: true,
-        composed: true
-      }));
-    }
+    const newData = this.data.filter((_, i) => i !== index);
+
+    this.dispatchEvent(new CustomEvent('data-change', {
+      detail: { data: newData },
+      bubbles: true,
+      composed: true
+    }));
   }
 
   handleFieldChange(key, value) {
@@ -348,7 +359,9 @@ class TableEditor extends LitElement {
     const value = row[column.key];
 
     if (column.type === 'boolean') {
-      return value ? '✓' : '✗';
+      return value
+        ? html`<span class="bool-yes">✓</span>`
+        : html`<span class="bool-no">✗</span>`;
     }
 
     return value || '-';

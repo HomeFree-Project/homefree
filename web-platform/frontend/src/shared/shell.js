@@ -224,6 +224,31 @@ export const shellStyles = css`
     background: rgba(245, 191, 66, 0.22);
     border-left-color: #f5bf42;
   }
+  /* Cross-site nav item — a link OUT of the current app (Home portal
+     -> Admin, Admin -> Home portal). A very subtle surface tint plus a
+     trailing arrow marks it as leaving the current page. No active
+     left-bar — it is a link, never a selected state. Pinned at the top
+     of the nav menu. */
+  .nav-item-crosssite {
+    background: var(--hf-surface-2);
+    color: var(--hf-text);
+    font-weight: 600;
+    margin: 0 0 8px 0;
+  }
+  .nav-item-crosssite:hover {
+    background: var(--hf-surface-3);
+    color: var(--hf-text);
+  }
+  /* Trailing arrow pushed to the right edge of the row; hidden when
+     the sidebar collapses (label text hides too). */
+  .nav-item-crosssite .nav-item-arrow {
+    margin-left: auto;
+    font-size: 13px;
+    opacity: 0.55;
+  }
+  .sidebar.collapsed .nav-item-crosssite .nav-item-arrow {
+    display: none;
+  }
   .sidebar.collapsed .nav-item-text {
     display: none;
   }

@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/password-input.js';
+import { confirmDialog } from '../../shared/confirm-dialog.js';
 import {
   listUsers, createUser, deleteUser, setUserAdmin,
   getCurrentUser, updateUser, setUserPassword, changeOwnPassword,
@@ -48,15 +49,19 @@ class UsersModule extends LitElement {
     :host { display: block; }
     .module-container { width: 100%; }
 
+    /* Unified notification box — grey-tinted bg, colored left edge,
+       normal body + heading text. */
     .info-box {
-      background: var(--hf-accent-soft);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-accent);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-accent);
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
 
     .error {
       background: rgba(248,113,113,0.08);
@@ -164,21 +169,38 @@ class UsersModule extends LitElement {
       cursor: not-allowed;
     }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px. */
     button.btn {
-      padding: 6px 12px;
-      background: var(--hf-surface);
+      padding: 9px 16px;
+      background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       cursor: pointer;
       font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
     }
-    button.btn:hover:not(:disabled) { background: var(--hf-surface-2); }
-    button.btn.danger { color: #fca5a5; border-color: rgba(248,113,113,0.3); }
+    button.btn:hover:not(:disabled) {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
+    }
+    button.btn.danger {
+      color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
+    }
+    button.btn.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
+    }
     button.btn.primary {
       background: var(--hf-accent);
       color: #06281c;
       border-color: var(--hf-accent);
+    }
+    button.btn.primary:hover:not(:disabled) {
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
     button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -383,10 +405,15 @@ class UsersModule extends LitElement {
 
   async _delete(user) {
     if (this._isProtectedAdmin(user)) return;
-    if (!confirm(
-      `Delete user "${user.username}"? This is permanent. They will be ` +
-      `signed out of all integrated services on next session refresh.`
-    )) return;
+    const ok = await confirmDialog({
+      title: 'Delete user?',
+      message:
+        `Delete user "${user.username}"? This is permanent. They will be ` +
+        `signed out of all integrated services on next session refresh.`,
+      confirmText: 'Delete',
+      variant: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteUser(user.id);
       this.users = this.users.filter(u => u.id !== user.id);

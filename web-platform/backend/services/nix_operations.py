@@ -44,13 +44,18 @@ class NixOperations:
     # admin-api can restart freely without killing an in-flight rebuild.
     REBUILD_UNIT = "homefree-rebuild.service"
 
-    # Written by the admin-api blue/green flip activation script when a
-    # flip fails its health check (or Caddy reload). Its presence means
-    # the box is still serving the PREVIOUS admin-api version — a flip
-    # failure deliberately exits the activation script 0, so the rebuild
-    # itself reports success; this marker is how that partial outcome
-    # surfaces in the UI. Cleared by the next successful flip.
-    FLIP_FAILED_FILE = REBUILD_STATE_DIR / "admin-api-flip-failed.json"
+    # Flip-failure markers, one per blue/green service (lib/blue-green.nix).
+    # A flip activation script writes its marker when the flip fails its
+    # health check (or Caddy reload). Presence means the box is still
+    # serving that service's PREVIOUS version — a flip failure
+    # deliberately exits the activation script 0, so the rebuild itself
+    # reports success; these markers are how that partial outcome
+    # surfaces in the UI. Each is cleared by that service's next
+    # successful flip. (service-label, marker-path) pairs.
+    FLIP_FAILED_FILES = [
+        ("admin-api",    REBUILD_STATE_DIR / "admin-api-flip-failed.json"),
+        ("oauth2-proxy", Path("/var/lib/oauth2-proxy/oauth2-proxy-flip-failed.json")),
+    ]
 
     _current_rebuild_output_file = None
     _current_rebuild_output_offset = 0
@@ -609,37 +614,41 @@ class NixOperations:
             return None
 
     @staticmethod
-    @staticmethod
     def _apply_flip_failure(status: Dict[str, Any]) -> Dict[str, Any]:
-        """Fold an admin-api blue/green flip failure into a finished
-        rebuild status.
+        """Fold any blue/green flip failure into a finished rebuild
+        status.
 
-        A flip failure (new admin-api failed its health check, or the
+        A flip failure (the new colour failed its health check, or the
         Caddy reload failed) deliberately does NOT fail the rebuild —
         the activation script exits 0 so the rest of activation
-        completes and the box keeps serving the previous, known-good
-        admin-api. The failure is recorded in FLIP_FAILED_FILE. Here we
-        surface it: mark the rebuild partial_success and append a
-        human-readable line to the output the UI already renders.
+        completes and the box keeps serving that service's previous,
+        known-good version. Each blue/green service records its failure
+        in its own marker file (see FLIP_FAILED_FILES). Here we surface
+        every present marker: mark the rebuild partial_success and
+        append a human-readable line per service to the output the UI
+        already renders.
         """
         try:
-            if not NixOperations.FLIP_FAILED_FILE.exists():
-                return status
-            try:
-                marker = json.loads(NixOperations.FLIP_FAILED_FILE.read_text())
-            except Exception:
-                marker = {}
-            reason = marker.get("reason", "unknown error")
-            note = (
-                "\n[admin-api] hot-swap to the new version failed "
-                f"({reason}) — still serving the previous admin-api. "
-                "The rest of the rebuild was applied. Re-apply to retry."
-            )
-            status = dict(status)
-            status["partial_success"] = True
-            status["output"] = (status.get("output") or "") + note
+            notes = []
+            for label, path in NixOperations.FLIP_FAILED_FILES:
+                if not path.exists():
+                    continue
+                try:
+                    marker = json.loads(path.read_text())
+                except Exception:
+                    marker = {}
+                reason = marker.get("reason", "unknown error")
+                notes.append(
+                    f"\n[{label}] hot-swap to the new version failed "
+                    f"({reason}) — still serving the previous {label}. "
+                    "The rest of the rebuild was applied. Re-apply to retry."
+                )
+            if notes:
+                status = dict(status)
+                status["partial_success"] = True
+                status["output"] = (status.get("output") or "") + "".join(notes)
         except Exception as e:
-            logger.error(f"Error folding flip-failure marker into status: {e}")
+            logger.error(f"Error folding flip-failure markers into status: {e}")
         return status
 
     def get_rebuild_status() -> Dict[str, Any]:

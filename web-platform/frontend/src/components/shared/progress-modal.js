@@ -163,12 +163,16 @@ class ProgressModal extends LitElement {
       margin-top: 24px;
     }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px. */
     .btn {
-      padding: 9px 20px;
+      padding: 9px 16px;
       border-radius: 6px;
-      border: 1px solid transparent;
+      border: 1px solid var(--hf-border-2);
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
       font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
       transition: all 0.15s;
     }
@@ -195,15 +199,16 @@ class ProgressModal extends LitElement {
       border-color: var(--hf-text-subtle);
     }
 
+    /* Danger — bordered, red text (matches the table-row Delete). */
     .btn-danger {
-      background: var(--hf-err);
-      color: white;
-      border-color: var(--hf-err);
+      background: var(--hf-surface-2);
+      color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
     }
 
     .btn-danger:hover {
-      background: #dc2626;
-      border-color: #dc2626;
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
     }
 
     .status-icon.warning {

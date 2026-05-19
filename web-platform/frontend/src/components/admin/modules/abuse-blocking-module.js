@@ -7,6 +7,7 @@ import {
   postAbuseBlockingUnban,
 } from '../../../api/client.js';
 import { WORLD_LAND_PATH, WORLD_VIEWBOX } from './world-map-path.js';
+import { confirmDialog } from '../../shared/confirm-dialog.js';
 
 /**
  * Network Traffic module (sidebar label; id/route/files remain
@@ -196,6 +197,17 @@ class AbuseBlockingModule extends LitElement {
       cursor: not-allowed;
     }
 
+    /* Destructive variant — bordered, red text (matches the
+       table-row Delete style used across the admin UI). */
+    .action-button.danger {
+      color: var(--hf-err);
+      border-color: color-mix(in srgb, var(--hf-err) 45%, transparent);
+    }
+    .action-button.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
+    }
+
     .filter-bar {
       display: flex;
       gap: 8px;
@@ -271,22 +283,24 @@ class AbuseBlockingModule extends LitElement {
     }
 
     .error-box {
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid var(--hf-err);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
       border-radius: 8px;
-      padding: 12px 16px;
-      color: var(--hf-err);
+      padding: 14px 18px;
+      color: var(--hf-text-muted);
       font-size: 13px;
+      line-height: 1.5;
       margin-bottom: 16px;
     }
 
     .down-banner {
-      background: rgba(245, 158, 11, 0.1);
-      border: 1px solid var(--hf-warn);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
       border-radius: 8px;
-      padding: 12px 16px;
-      color: var(--hf-warn);
+      padding: 14px 18px;
+      color: var(--hf-text-muted);
       font-size: 13px;
+      line-height: 1.5;
       margin-bottom: 16px;
     }
 
@@ -475,7 +489,12 @@ class AbuseBlockingModule extends LitElement {
   }
 
   async _handleUnban(jail, ip) {
-    if (!window.confirm(`Unban ${ip} from ${jail}?`)) return;
+    const ok = await confirmDialog({
+      title: 'Unban address?',
+      message: `Unban ${ip} from ${jail}? The address will be able to reach this server again.`,
+      confirmText: 'Unban',
+    });
+    if (!ok) return;
     this.pendingUnban = { ...this.pendingUnban, [ip]: true };
     try {
       const res = await postAbuseBlockingUnban(jail, ip);
@@ -566,7 +585,14 @@ class AbuseBlockingModule extends LitElement {
     this.cidrError = null;
   }
 
-  _removeCidr(cidr) {
+  async _removeCidr(cidr) {
+    const ok = await confirmDialog({
+      title: 'Remove block?',
+      message: `Remove ${cidr} from the static block list? The change takes effect when you click Apply.`,
+      confirmText: 'Remove',
+      variant: 'danger',
+    });
+    if (!ok) return;
     this._emitCidrUpdate(this._getCidrList().filter(e => e.cidr !== cidr));
   }
 
@@ -1226,7 +1252,7 @@ class AbuseBlockingModule extends LitElement {
                     />
                   </td>
                   <td class="nowrap">
-                    <button class="action-button" @click=${() => this._removeCidr(e.cidr)}>
+                    <button class="action-button danger" @click=${() => this._removeCidr(e.cidr)}>
                       Remove
                     </button>
                   </td>

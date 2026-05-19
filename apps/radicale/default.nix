@@ -133,8 +133,7 @@ in
       "dns-ready.service"
       "zitadel-password-shim.service"
     ];
-    requires = [ "dns-ready.service" ];
-    wants = [ "zitadel-password-shim.service" ];
+    wants = [ "zitadel-password-shim.service" "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "radicale-prestart" preStart}" ];
     };

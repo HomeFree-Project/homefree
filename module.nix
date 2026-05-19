@@ -21,6 +21,22 @@
       '';
     };
 
+    internal = {
+      caddy-file-scope-imports = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        internal = true;
+        default = [];
+        description = ''
+          Caddy `import` directives to emit at FILE SCOPE (outside any
+          site block, before the vhosts) in the generated Caddyfile.
+          Blue/green services (lib/blue-green.nix) append their runtime
+          snippet import here so caddy/default.nix need not know which
+          services use the mechanism. Each entry is a full directive
+          line, e.g. `import /run/homefree/admin-api-upstream.caddy`.
+        '';
+      };
+    };
+
     system = {
       hostName = lib.mkOption {
         type = lib.types.str;
@@ -930,6 +946,21 @@
               type = lib.types.nullOr lib.types.int;
               default = null;
               description = "port of service on lan network";
+            };
+
+            upstream-snippet = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Name of a Caddy snippet to `import` as this service's
+                reverse_proxy target, instead of a literal host:port.
+                Used by the blue/green mechanism (lib/blue-green.nix):
+                the snippet points at whichever colour is currently
+                active and is rewritten at flip time, so the upstream
+                can change with no nixos-rebuild. When set, the generic
+                reverse-proxy generator emits `import <snippet>` in
+                place of `reverse_proxy host:port`.
+              '';
             };
 
             static-path = lib.mkOption {

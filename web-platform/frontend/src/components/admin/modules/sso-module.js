@@ -35,16 +35,24 @@ class SsoModule extends LitElement {
 
     .module-container { width: 100%; }
 
+    /* Unified notification box — grey-tinted bg, colored left edge,
+       colored heading, normal body text. */
     .info-box {
-      background: var(--hf-accent-soft);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-accent);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-accent);
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
 
-    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--hf-text);
+    }
 
     .status-row {
       display: flex;

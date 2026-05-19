@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { confirmDialog } from './shared/confirm-dialog.js';
 
 class FinishedStep extends LitElement {
   static properties = {
@@ -178,8 +179,14 @@ class FinishedStep extends LitElement {
     }
   `;
 
-  handleReboot() {
-    if (confirm('Are you sure you want to reboot? Make sure to remove the installation media.')) {
+  async handleReboot() {
+    const ok = await confirmDialog({
+      title: 'Reboot system?',
+      message: 'Are you sure you want to reboot? Make sure to remove the installation media.',
+      confirmText: 'Reboot',
+      variant: 'danger',
+    });
+    if (ok) {
       // Trigger reboot via backend
       window.location.href = '/reboot';
     }

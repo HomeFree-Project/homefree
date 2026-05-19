@@ -202,7 +202,20 @@ in
     wants = [ "dns-ready.service" ]
       ++ lib.optional (config.homefree.services.adguard.enable or false)
            "caddy-adguard-basic-auth.service";
-    requires = [ "dns-ready.service" ];
+
+    ## NB: deliberately NO `requires = [ "dns-ready.service" ]`.
+    ##
+    ## `requires` is a *lifecycle* binding: with it, restarting the
+    ## DNS stack (unbound/dnsmasq → dns-ready) drags Caddy down and
+    ## back up with it. A rebuild that touches the DNS stack would
+    ## stop Caddy, then wait out the DNS teardown — observed as a
+    ## ~30-40s full reverse-proxy outage for EVERY proxied service,
+    ## not just admin-api. Caddy only needs DNS *ready at startup*
+    ## (ACME / DNS-01), which `wants` + `after` already give us; a
+    ## DNS restart while Caddy is already running is harmless (Caddy
+    ## just re-resolves). This mirrors the `partOf` that was removed
+    ## below for the same class of problem.
+    ##
     ## Restart Caddy with Unbound DNS changes
     ## NOTE: Commented out - creates circular dependency with unbound's partOf below.
     ## This causes 90-second delays when restarting unbound (caddy times out on SIGTERM).
@@ -252,7 +265,22 @@ in
     # acmeCA = "https://acme-staging-v02.api.letsencrypt.org/directory";
 
     # Global configuration for DNS-01 challenge
-    globalConfig = lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
+    globalConfig =
+      ## grace_period bounds how long Caddy waits for in-flight
+      ## connections on a config reload AND on shutdown (SIGTERM).
+      ## With NO grace_period, a `caddy reload` or a `systemctl stop`
+      ## hangs on long-lived connections (browser SSE/polling, h2/QUIC
+      ## keep-alives) for ~30s — observed as a 30s `Stopping caddy...`
+      ## that stalls the whole rebuild's stop transaction and blocks
+      ## every unit ordered behind caddy (unbound, dns-ready, the
+      ## adguard container). The NixOS Caddy module's `enableReload`
+      ## docs explicitly recommend setting this. 5s is ample for a
+      ## reverse proxy to drain real requests; anything still open is
+      ## a long-poll that the client will simply re-establish.
+      ''
+        grace_period 5s
+      ''
+    + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
       cert_issuer acme {
         dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {$DNS_API_TOKEN}
         resolvers ${lib.concatStringsSep " " config.homefree.dns.remote.cert-management.dns-01.resolvers}
@@ -274,10 +302,18 @@ in
     ## options block and before the vhosts — exactly where snippet
     ## definitions must live.
     ##
-    ## NB: this makes /run/homefree/admin-api-upstream.caddy a hard
-    ## dependency of Caddy's config parse; admin-api-snippet.service
-    ## has `before = caddy.service` to guarantee it exists.
-    extraConfig = "import /run/homefree/admin-api-upstream.caddy";
+    ## NB: each imported snippet file is a hard dependency of Caddy's
+    ## config parse; every blue/green service's `<name>-snippet.service`
+    ## has `before = caddy.service` to guarantee its file exists.
+    ##
+    ## The import lines come from `homefree.internal.caddy-file-scope-
+    ## imports`, which each blue/green service (lib/blue-green.nix)
+    ## appends to — so this module need not know which services use the
+    ## mechanism. Caddy `extraConfig` lands at file scope, after the
+    ## global options block and before the vhosts — exactly where
+    ## snippet *definitions* must live.
+    extraConfig = lib.concatStringsSep "\n"
+      config.homefree.internal.caddy-file-scope-imports;
 
     virtualHosts = lib.mkMerge [
       (lib.listToAttrs (lib.flatten (lib.map (service-config:
@@ -448,14 +484,14 @@ in
               ##    admin-api's middleware. Both files are checked at
               ##    REQUEST time via CEL file(), so no rebuild flips it.
               @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})`
-              forward_auth @sso_gate http://${lan-address}:4180 {
-                uri /oauth2/auth
-                copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups
-                @bad_status status 401
-                handle_response @bad_status {
-                  redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
-                }
-              }
+              ## SSO gate — forward_auth to the active oauth2-proxy
+              ## colour. `oauth2_proxy_forward_auth` is the runtime
+              ## blue/green snippet (lib/blue-green.nix); it carries the
+              ## forward_auth pointed at the active colour's port plus
+              ## the /oauth2/auth uri, header passthrough, and the
+              ## 401 → login redirect. References @sso_gate, defined
+              ## just above — keep that ordering (textual expansion).
+              import oauth2_proxy_forward_auth
               ${if reverse-proxy-config.require-admin-role or false then ''
                 ## Second forward_auth: enforce homefree-admin role.
                 ## oauth2-proxy already validated the session above;
@@ -593,14 +629,11 @@ in
                   reverse-proxy-config.sso-bypass-paths}
               ''}
             }
-            forward_auth @sso_gate http://${lan-address}:4180 {
-              uri /oauth2/auth
-              copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups
-              @bad_status status 401
-              handle_response @bad_status {
-                redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
-              }
-            }
+            ## SSO gate — forward_auth to the active oauth2-proxy
+            ## colour via the runtime blue/green snippet. See the
+            ## static-path branch above for the rationale; @sso_gate
+            ## is defined just above — keep that ordering.
+            import oauth2_proxy_forward_auth
             ${if reverse-proxy-config.require-admin-role or false then ''
               ## Second forward_auth: enforce homefree-admin role
               ## via admin-api. See the static-path branch above
@@ -677,6 +710,16 @@ in
             }
           '' else "")
           +
+          ## When `upstream-snippet` is set (blue/green services), the
+          ## upstream is an `import` of a runtime snippet that points at
+          ## the active colour — no literal host:port, no transport /
+          ## header tweaks (those services don't use them). Otherwise
+          ## the normal literal `reverse_proxy host:port { ... }` block.
+          (if reverse-proxy-config.upstream-snippet != null then ''
+            handle {
+              import ${reverse-proxy-config.upstream-snippet}
+            }
+          '' else (
           ''
             handle {
               reverse_proxy ${if reverse-proxy-config.ssl == true then "https" else "http"}://${reverse-proxy-config.host}:${toString reverse-proxy-config.port} {
@@ -747,6 +790,10 @@ in
           ''
             }
           ''))
+          ## close the `if upstream-snippet != null then … else ( … )`
+          ## wrap added around the handle/reverse_proxy block above:
+          ## `)` ends the `else (` group, `)` ends the `(if …` group.
+          ))
           + (if reverse-proxy-config.extraCaddyConfig != null then reverse-proxy-config.extraCaddyConfig else "");
         };
       };

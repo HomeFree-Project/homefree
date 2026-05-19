@@ -195,7 +195,7 @@ in
 
   systemd.services.podman-ollama-webui = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "ollama-webui-prestart" preStart}" ];
     };

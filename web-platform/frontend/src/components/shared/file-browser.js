@@ -184,14 +184,16 @@ class FileBrowser extends LitElement {
       justify-content: flex-end;
     }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px. */
     .btn {
-      padding: 10px 20px;
-      border-radius: 8px;
-      border: none;
-      font-size: 14px;
+      padding: 9px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--hf-border-2);
+      font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
 
     .btn:disabled {
@@ -206,15 +208,18 @@ class FileBrowser extends LitElement {
 
     .btn-cancel:hover:not(:disabled) {
       background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
     }
 
     .btn-select {
       background: var(--hf-accent);
       color: #06281c;
+      border-color: var(--hf-accent);
     }
 
     .btn-select:hover:not(:disabled) {
       background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
     }
 
     .create-folder-section {

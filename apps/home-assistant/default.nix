@@ -689,8 +689,8 @@ in
     ## once the WS server comes up.
     after = [ "dns-ready.service" ]
       ++ lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
-    requires = [ "dns-ready.service" ];
-    wants = lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
+    wants = [ "dns-ready.service" ]
+      ++ lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "homeassistant-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];

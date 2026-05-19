@@ -96,7 +96,7 @@ in
 
   systemd.services.podman-nzbget = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
     after = [ "dns-ready.service" ];
-    requires = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "nzbget-prestart" preStart}" ];
     };

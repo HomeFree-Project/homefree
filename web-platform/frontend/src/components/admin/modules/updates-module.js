@@ -23,35 +23,49 @@ class UpdatesModule extends LitElement {
 
     .module-container { width: 100%; }
 
+    /* Unified notification box — grey-tinted bg, colored left edge,
+       colored heading, normal body text. Matches .help-box elsewhere
+       in the admin. info/success = accent, warning = warn, error
+       = err. */
     .info-box {
-      background: var(--hf-accent-soft);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-accent);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-accent);
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--hf-text);
+    }
 
     .notice {
-      background: rgba(74,222,128,0.1);
-      border: 1px solid rgba(74,222,128,0.35);
-      color: #4ade80;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-accent);
       padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .notice strong { color: #4ade80; }
+    .notice strong { display: block; margin-bottom: 6px; color: var(--hf-text); }
 
     .warn-box {
-      background: rgba(250,204,21,0.1);
-      border: 1px solid rgba(250,204,21,0.35);
-      color: #facc15;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
       padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .warn-box strong { display: block; margin-bottom: 10px; color: #facc15; }
+    .warn-box strong { display: block; margin-bottom: 10px; color: var(--hf-text); }
     .warn-box p { margin: 10px 0 4px; }
     .warn-box .ref {
       display: block;
@@ -60,8 +74,8 @@ class UpdatesModule extends LitElement {
       word-break: break-all;
       margin-left: 14px;
     }
-    .warn-box a.ref { color: #facc15; text-decoration: underline; }
-    .warn-box a.ref:hover { color: #fde047; }
+    .warn-box a.ref { color: var(--hf-warn); text-decoration: underline; }
+    .warn-box a.ref:hover { color: #fbbf24; }
 
     .status-row {
       display: flex;
@@ -97,48 +111,61 @@ class UpdatesModule extends LitElement {
 
     .actions { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px. */
     button.btn {
-      padding: 8px 16px;
-      background: var(--hf-surface);
+      padding: 9px 16px;
+      background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
     }
-    button.btn:hover:not(:disabled) { background: var(--hf-surface-2); }
+    button.btn:hover:not(:disabled) {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
+    }
     button.btn:disabled { opacity: 0.5; cursor: wait; }
     button.btn.primary {
       background: var(--hf-accent);
       color: #06281c;
       border-color: var(--hf-accent);
-      font-weight: 600;
     }
     /* Link styled as a button — for navigating to another admin
-       module (e.g. Custom Flakes) at normal body size. */
+       module (e.g. Custom Flakes); same metrics as button.btn. */
     a.btn-link {
       display: inline-block;
       margin-top: 6px;
-      padding: 8px 16px;
-      background: var(--hf-surface);
+      padding: 9px 16px;
+      background: var(--hf-surface-2);
       color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
       text-decoration: none;
       cursor: pointer;
     }
-    a.btn-link:hover { background: var(--hf-surface-2); }
-    button.btn.primary:hover:not(:disabled) { background: var(--hf-accent-hover); }
+    a.btn-link:hover {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-text-subtle);
+    }
+    button.btn.primary:hover:not(:disabled) {
+      background: var(--hf-accent-hover);
+      border-color: var(--hf-accent-hover);
+    }
 
     .error {
-      background: rgba(248,113,113,0.08);
-      border: 1px solid rgba(248,113,113,0.3);
-      color: #fca5a5;
-      padding: 12px 16px;
-      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
+      color: var(--hf-text-muted);
+      padding: 14px 18px;
+      border-radius: 8px;
       margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     .muted { color: var(--hf-text-muted); font-size: 13px; }

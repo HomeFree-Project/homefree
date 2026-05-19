@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { rebootSystem } from '../api/client.js';
+import { confirmDialog, alertDialog } from './shared/confirm-dialog.js';
 import './welcome-step.js';
 import './network-step.js';
 import './wiring-step.js';
@@ -205,14 +206,26 @@ class InstallerApp extends LitElement {
   }
 
   async handleReboot() {
-    if (confirm('Are you sure you want to reboot? Make sure to remove the installation media.')) {
+    const ok = await confirmDialog({
+      title: 'Reboot system?',
+      message: 'Are you sure you want to reboot? Make sure to remove the installation media.',
+      confirmText: 'Reboot',
+      variant: 'danger',
+    });
+    if (ok) {
       try {
         // Trigger reboot via backend API
         await rebootSystem();
         // Show a message since the connection will be lost
-        alert('System is rebooting. Please remove the installation media and wait for the system to restart.');
+        await alertDialog({
+          message: 'System is rebooting. Please remove the installation media and wait for the system to restart.',
+        });
       } catch (err) {
-        alert('Failed to trigger reboot: ' + err.message);
+        await alertDialog({
+          title: 'Error',
+          message: 'Failed to trigger reboot: ' + err.message,
+          variant: 'danger',
+        });
       }
     }
   }

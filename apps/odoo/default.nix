@@ -117,7 +117,8 @@ in
 
   systemd.services.podman-odoo = {
     after = [ "dns-ready.service" "postgresql.service" ];
-    requires = [ "dns-ready.service" "postgresql.service" ];
+    requires = [ "postgresql.service" ];
+    wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "odoo-prestart" preStart}" ];
     };

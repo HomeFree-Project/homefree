@@ -96,22 +96,24 @@ class BackupsModule extends LitElement {
     }
 
     /* ---- generic boxes ---- */
+    /* Unified notification box — grey-tinted bg, colored left edge,
+       colored heading, normal body text. .warn-box is applied
+       alongside .info-box and only re-colours the edge + heading. */
     .info-box {
-      background: var(--hf-accent-soft);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-accent);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-accent);
-      font-size: 14px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; }
+    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
     .info-box ul { margin: 8px 0 0 20px; padding: 0; }
 
     .warn-box {
-      background: rgba(245, 158, 11, 0.1);
-      border-left: 4px solid var(--hf-warn);
-      color: var(--hf-warn);
+      border-left-color: var(--hf-warn);
     }
 
     .status-line {

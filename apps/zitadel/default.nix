@@ -57,7 +57,10 @@ let
   loginClientPatFile = "${zitadelBootstrapPath}/login-client.pat";
 
   oauth2ProxyVersion = "v7.12.0";
-  oauth2ProxyPort = 4180;
+  ## oauth2-proxy runs blue/green (lib/blue-green.nix) for zero-downtime
+  ## rebuilds — two colour containers on two ports. blue keeps the
+  ## historical :4180; green is :4181.
+  oauth2ProxyColours = { blue = 4180; green = 4181; };
   oauth2ProxyEnvFile = "/var/lib/oauth2-proxy/env";
 
   # Per-secret files for everything Zitadel + its bundled oauth2-proxy need.
@@ -91,6 +94,124 @@ let
     } > "${oauth2ProxyEnvFile}"
     chmod 600 "${oauth2ProxyEnvFile}"
   '';
+
+  ## ExecStartPre: refuse to start until the three OIDC secrets exist
+  ## (oauth2-proxy crash-loops without them). Runs for BOTH colours.
+  oauth2ProxySecretsCheck = pkgs.writeShellScript "oauth2-proxy-secrets-check" ''
+    for f in oauth2-cookie-secret oidc-client-id oidc-client-secret; do
+      if [ ! -s "${zitadelSecretsDir}/$f" ]; then
+        echo "oauth2-proxy: ${zitadelSecretsDir}/$f missing or empty — refusing to start" >&2
+        exit 1
+      fi
+    done
+  '';
+
+  ## Factory for an oauth2-proxy colour container. Differs between
+  ## colours ONLY by port (`ports` mapping + OAUTH2_PROXY_HTTP_ADDRESS)
+  ## — see the INVARIANT in lib/blue-green.nix. autoStart=false: only
+  ## the active colour is started, by oauth2-proxy-active.service.
+  ## The shared env file holds only the three (port-independent)
+  ## secrets, so both colours share it safely.
+  mkOauth2ProxyContainer = colour: port: {
+    image = "oauth2-proxy/oauth2-proxy:${oauth2ProxyVersion}";
+    autoStart = false;
+    extraOptions = [ "--network=host" ];
+    ports = [ "0.0.0.0:${toString port}:${toString port}" ];
+    volumes = [ "/etc/localtime:/etc/localtime:ro" ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      OAUTH2_PROXY_PROVIDER = "oidc";
+      OAUTH2_PROXY_OIDC_ISSUER_URL = "https://sso.${config.homefree.system.domain}";
+      OAUTH2_PROXY_REDIRECT_URL = "https://auth.${config.homefree.system.domain}/oauth2/callback";
+      OAUTH2_PROXY_EMAIL_DOMAINS = "*";
+      OAUTH2_PROXY_COOKIE_DOMAINS = ".${config.homefree.system.domain}";
+      OAUTH2_PROXY_WHITELIST_DOMAINS = ".${config.homefree.system.domain}";
+      ## Per-colour listen port — the one value that differs.
+      OAUTH2_PROXY_HTTP_ADDRESS = "0.0.0.0:${toString port}";
+      OAUTH2_PROXY_REVERSE_PROXY = "true";
+      OAUTH2_PROXY_COOKIE_SECURE = "true";
+      OAUTH2_PROXY_COOKIE_HTTPONLY = "true";
+      OAUTH2_PROXY_SCOPE = "openid email profile urn:zitadel:iam:org:project:roles";
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM = "urn:zitadel:iam:org:project:roles";
+      ## See the long note in the prior single-container definition:
+      ## admin-only gating happens in the FastAPI middleware, not here,
+      ## because Zitadel's role claim is an object oauth2-proxy v7's
+      ## group parser can't key. # OAUTH2_PROXY_ALLOWED_GROUPS = ...
+      ##
+      ## Caddy serves sso.<domain> with its internal CA; skip-verify is
+      ## safe over the local bridge (we're talking to ourselves).
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY = "true";
+      OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION = "false";
+      OAUTH2_PROXY_PASS_USER_HEADERS = "true";
+      OAUTH2_PROXY_SET_AUTHORIZATION_HEADER = "true";
+      ## SET_XAUTHREQUEST emits X-Auth-Request-* on /oauth2/auth — what
+      ## Caddy's forward_auth copies. Without it the backend rejects
+      ## with "missing X-Auth-Request-User".
+      OAUTH2_PROXY_SET_XAUTHREQUEST = "true";
+      OAUTH2_PROXY_OIDC_EMAIL_CLAIM = "email";
+      ## preferred_username (not the numeric `sub`) so the value
+      ## matches the OS-side admin username the middleware compares.
+      OAUTH2_PROXY_USER_ID_CLAIM = "preferred_username";
+    };
+    # Env file synthesised by the prestart from the SOPS-managed
+    # secrets — colour-independent, both colours share it.
+    environmentFiles = [ oauth2ProxyEnvFile ];
+  };
+
+  ## Blue/green machinery for oauth2-proxy. Pure call — only the
+  ## merged `oauth2ProxyBg.config` is gated on zitadelEnabled below.
+  oauth2ProxyBg = (import ../../lib/blue-green.nix { inherit lib pkgs; }) {
+    name = "oauth2-proxy";
+    stateDir = "/var/lib/oauth2-proxy";
+    colours = oauth2ProxyColours;
+    workload = {
+      kind = "oci-container";
+      mkContainer = mkOauth2ProxyContainer;
+      ## Merged into each generated podman-oauth2-proxy-<colour>.service.
+      ## restartIfChanged=false is the critical property — the flip
+      ## owns succession; activation must NOT bounce the active colour.
+      extraUnitConfig = colour: {
+        after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
+        requires = [ "zitadel-prepare-secrets.service" ];
+        wants = [ "dns-ready.service" ];
+        restartIfChanged = false;
+        serviceConfig.ExecStartPre = [
+          "!${oauth2ProxySecretsCheck}"
+          "!${pkgs.writeShellScript "oauth2-proxy-prestart" oauth2ProxyPreStart}"
+        ];
+      };
+    };
+    healthCheck = { kind = "http"; path = "/ping"; };
+    ## A container definition change shows up as a new generated
+    ## unit-file hash for the canonical (blue) colour.
+    closure = { kind = "unit-file"; colour = "blue"; };
+    caddySnippets = [
+      {
+        snippetName = "oauth2_proxy_forward_auth";
+        body = ''
+          	forward_auth @sso_gate http://${config.homefree.network.lan-address}:__PORT__ {
+          		uri /oauth2/auth
+          		copy_headers X-Auth-Request-User X-Auth-Request-Preferred-Username X-Auth-Request-Email X-Auth-Request-Access-Token X-Auth-Request-Groups
+          		@bad_status status 401
+          		handle_response @bad_status {
+          			redir https://auth.${config.homefree.system.domain}/oauth2/start?rd={scheme}://{host}{uri} 302
+          		}
+          	}'';
+      }
+      {
+        snippetName = "oauth2_proxy_reverse_proxy";
+        body = ''	reverse_proxy http://${config.homefree.network.lan-address}:__PORT__'';
+      }
+    ];
+    migrateFrom = "podman-oauth2-proxy.service";
+    migrateRollback = "leave-down";
+    failureMarker = "oauth2-proxy-flip-failed.json";
+    ## Order this flip after admin-api's snippet writer, so admin-api's
+    ## file-scope Caddy `import` target exists before this flip reloads
+    ## Caddy. The name is the static `${name}-bg-snippet` of
+    ## services/admin-web/default.nix's admin-api blue/green instance.
+    snippetActivationDeps = [ "admin-api-bg-snippet" ];
+  };
 
   zitadelEnabled = config.homefree.service-options.zitadel.enable;
 
@@ -191,7 +312,26 @@ in
     ## here.
   };
 
-  config = {
+  config = lib.mkMerge [
+
+  ## oauth2-proxy blue/green machinery — colour containers, boot
+  ## oneshots, flip script, Caddy snippet. Gated on zitadelEnabled
+  ## (oauth2-proxy is meaningless without Zitadel).
+  ##
+  ## `mkIf` (not `optionalAttrs`): mkIf is lazy — the module system
+  ## defers the gated value, so the condition (a `config` lookup)
+  ## doesn't have to be resolved while the `config` attrset's shape is
+  ## being built. `optionalAttrs` forces the condition eagerly there,
+  ## which is a `config`-depends-on-`config` infinite recursion.
+  (lib.mkIf zitadelEnabled oauth2ProxyBg.config)
+
+  ## Register oauth2-proxy's runtime snippet for Caddy file-scope
+  ## import (only when Zitadel — hence oauth2-proxy — is enabled).
+  (lib.mkIf zitadelEnabled {
+    homefree.internal.caddy-file-scope-imports = [ oauth2ProxyBg.caddyImportLine ];
+  })
+
+  {
     # ── Zitadel container ────────────────────────────────────────────────
     virtualisation.oci-containers.containers =
       (lib.optionalAttrs zitadelEnabled {
@@ -410,150 +550,6 @@ in
             HOSTNAME = "0.0.0.0";
           };
         };
-      })
-      # ── OAuth2 Proxy container ──────────────────────────────────────
-      ## We always RENDER the oauth2-proxy container into the system,
-      ## but we don't auto-start it (autoStart=false) — its
-      ## ExecStartPre refuses to launch until the three secret files
-      ## have been written by zitadel-provision.service. The
-      ## provision script then `systemctl start`s it once the secrets
-      ## land. This avoids the double-rebuild that an `optionalAttrs
-      ## deployOauth2Proxy` gate would require (since the gate uses
-      ## builtins.pathExists, evaluated at build time).
-      // (lib.optionalAttrs zitadelEnabled {
-        oauth2-proxy = {
-          image = "oauth2-proxy/oauth2-proxy:${oauth2ProxyVersion}";
-
-          ## autoStart=true so the unit comes up at every boot AND
-          ## after rebuild-restarts. The ExecStartPre below refuses
-          ## to launch if OIDC secrets aren't on disk yet — that's
-          ## the real gate (fresh install, pre-provision). On boxes
-          ## that have already been provisioned, autoStart ensures
-          ## oauth2-proxy comes back without requiring zitadel-
-          ## provision.service to kick it. (Previously autoStart=
-          ## false meant rebuilds left the unit inactive until the
-          ## next provision-run, which broke admin.<domain> + every
-          ## oauth2-gated service.)
-          autoStart = true;
-
-          extraOptions = [
-            # @TODO: Is host networking actually necessary?
-            "--network=host"
-          ];
-
-          ports = [
-            "0.0.0.0:${toString oauth2ProxyPort}:${toString oauth2ProxyPort}"
-          ];
-
-          volumes = [
-            "/etc/localtime:/etc/localtime:ro"
-          ];
-
-          environment = {
-            TZ = config.homefree.system.timeZone;
-            OAUTH2_PROXY_PROVIDER = "oidc";
-            OAUTH2_PROXY_OIDC_ISSUER_URL = "https://sso.${config.homefree.system.domain}";
-            OAUTH2_PROXY_REDIRECT_URL = "https://auth.${config.homefree.system.domain}/oauth2/callback";
-            OAUTH2_PROXY_EMAIL_DOMAINS = "*";
-            OAUTH2_PROXY_COOKIE_DOMAINS = ".${config.homefree.system.domain}";
-            OAUTH2_PROXY_WHITELIST_DOMAINS = ".${config.homefree.system.domain}";
-            OAUTH2_PROXY_HTTP_ADDRESS = "0.0.0.0:${toString oauth2ProxyPort}";
-            OAUTH2_PROXY_REVERSE_PROXY = "true";
-            OAUTH2_PROXY_COOKIE_SECURE = "true";
-            OAUTH2_PROXY_COOKIE_HTTPONLY = "true";
-            ## `urn:zitadel:iam:org:project:roles` asks Zitadel to
-            ## embed the user's homefree-project roles in the id
-            ## token under `urn:zitadel:iam:org:project:roles`. We
-            ## then surface those to downstream services as the
-            ## `groups` claim (OAUTH2_PROXY_OIDC_GROUPS_CLAIM below),
-            ## which is what most services natively understand for
-            ## admin-vs-user mapping.
-            OAUTH2_PROXY_SCOPE = "openid email profile urn:zitadel:iam:org:project:roles";
-
-            ## Pull the role list out of Zitadel's namespaced claim
-            ## and re-emit it under the standard `groups` claim. The
-            ## namespaced claim is an *object* keyed by role name (each
-            ## value is a per-org map), not a flat array; oauth2-proxy
-            ## handles both, taking the keys when it sees the object
-            ## form.
-            OAUTH2_PROXY_OIDC_GROUPS_CLAIM =
-              "urn:zitadel:iam:org:project:roles";
-
-            ## Admin-only gate at the oauth2-proxy layer is DISABLED
-            ## for now. We tried `OAUTH2_PROXY_ALLOWED_GROUPS =
-            ## "homefree-admin"`, but Zitadel's role claim
-            ## (urn:zitadel:iam:org:project:roles) is an OBJECT whose
-            ## keys are role names — not a string array — and
-            ## oauth2-proxy v7's group parser doesn't extract keys
-            ## from that shape. The result: oauth2-proxy sees no
-            ## groups and 403s everyone.
-            ##
-            ## Workaround in flight: a Zitadel Action that flattens
-            ## the role-keys list into a standard `groups` claim
-            ## array. Once that lands, set ALLOWED_GROUPS back on.
-            ##
-            ## In the meantime, admin gating happens in the FastAPI
-            ## middleware (TrustedHeaderAuthMiddleware in
-            ## simple_main.py) which CAN parse the namespaced
-            ## claim. The admin UI is therefore still admin-only.
-            ## AdGuard / WebDAV are open to any authenticated user
-            ## until the flattening action is deployed — known gap.
-            # OAUTH2_PROXY_ALLOWED_GROUPS = "homefree-admin";
-
-            ## Caddy serves https://sso.<domain> with a cert from its
-            ## built-in "Caddy Local Authority" CA, which isn't in the
-            ## system trust store. oauth2-proxy needs to fetch
-            ## /.well-known/openid-configuration on startup and would
-            ## fail with `tls: x509: certificate signed by unknown
-            ## authority`. We're talking to ourselves over a local
-            ## bridge — skip verify is safe here. (Alternatives:
-            ## point at http://<lan>:3241 directly, but then the
-            ## issuer URL Zitadel embeds in tokens won't match what
-            ## oauth2-proxy expects, breaking validation.)
-            OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY = "true";
-            OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION = "false";
-
-            ## Needed to prevent Zitadel from blocking due to user-agent
-            ## headers being different between proxy and upstream.
-            OAUTH2_PROXY_PASS_USER_HEADERS = "true";
-            OAUTH2_PROXY_SET_AUTHORIZATION_HEADER = "true";
-
-            ## Required for Caddy's `forward_auth ... copy_headers
-            ## X-Auth-Request-User ...` to actually have something
-            ## to copy. Without this, the /oauth2/auth response
-            ## returns 200 on success but with NO X-Auth-Request-*
-            ## headers — Caddy then proxies the request to the
-            ## backend with no auth header, and the FastAPI middle-
-            ## ware in web-platform/backend/simple_main.py rejects
-            ## with "missing X-Auth-Request-User".
-            ##
-            ## PASS_USER_HEADERS (above) only emits headers when
-            ## oauth2-proxy itself proxies the request through to
-            ## an upstream. SET_XAUTHREQUEST is the orthogonal flag
-            ## that emits the same headers on the auth-only
-            ## endpoint /oauth2/auth, which is what Caddy's
-            ## forward_auth uses.
-            OAUTH2_PROXY_SET_XAUTHREQUEST = "true";
-
-            ## Source the X-Auth-Request-User value from the OIDC
-            ## `preferred_username` claim — Zitadel sets this to
-            ## the bare username we configured (e.g. "erahhal"),
-            ## matching /var/lib/homefree-admin/admin-username
-            ## that the FastAPI middleware compares against.
-            ##
-            ## Without this oauth2-proxy defaults to the OIDC `sub`
-            ## claim, which is Zitadel's numeric internal user ID
-            ## ("372411477086899193") — never matches the OS-side
-            ## admin username, so every authenticated request gets
-            ## 403 "not the admin user".
-            OAUTH2_PROXY_OIDC_EMAIL_CLAIM = "email";
-            OAUTH2_PROXY_USER_ID_CLAIM = "preferred_username";
-          };
-
-          # Env file is synthesised by the prestart from the SOPS-managed
-          # secrets in /var/lib/homefree-secrets/zitadel/.
-          environmentFiles = [ oauth2ProxyEnvFile ];
-        };
       });
 
     # ── systemd unit overrides ───────────────────────────────────────────
@@ -639,7 +635,8 @@ in
 
     systemd.services.podman-zitadel = lib.optionalAttrs zitadelEnabled {
       after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      requires = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
+      requires = [ "zitadel-prepare-secrets.service" ];
+      wants = [ "dns-ready.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "zitadel-prestart" zitadelPreStart}" ];
       };
@@ -655,35 +652,16 @@ in
     ## will retry, and once the PAT lands it succeeds.
     systemd.services.podman-zitadel-login = lib.mkIf zitadelEnabled {
       after = [ "dns-ready.service" "podman-zitadel.service" ];
-      requires = [ "dns-ready.service" ];
-      wants = [ "podman-zitadel.service" ];
+      wants = [ "podman-zitadel.service" "dns-ready.service" ];
     };
 
-    ## oauth2-proxy unit is always rendered when Zitadel is enabled,
-    ## but its ExecStartPre refuses to launch until the three secret
-    ## files have been written by zitadel-provision.service. The
-    ## provision script `systemctl start`s it once the secrets land.
-    systemd.services.podman-oauth2-proxy = lib.optionalAttrs zitadelEnabled {
-      after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      requires = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      serviceConfig = {
-        ## Refuse to start if the OIDC client_id/client_secret aren't
-        ## on disk yet — oauth2-proxy crash-loops without them, and
-        ## crash-looping past StartLimitBurst trips a permanent
-        ## failure that needs `systemctl reset-failed` to recover.
-        ExecStartPre = [
-          "!${pkgs.writeShellScript "oauth2-proxy-secrets-check" ''
-            for f in oauth2-cookie-secret oidc-client-id oidc-client-secret; do
-              if [ ! -s "${zitadelSecretsDir}/$f" ]; then
-                echo "oauth2-proxy: ${zitadelSecretsDir}/$f missing or empty — refusing to start" >&2
-                exit 1
-              fi
-            done
-          ''}"
-          "!${pkgs.writeShellScript "oauth2-proxy-prestart" oauth2ProxyPreStart}"
-        ];
-      };
-    };
+    ## NOTE: oauth2-proxy now runs blue/green (lib/blue-green.nix —
+    ## the `oauth2ProxyBg` binding in the `let` above). Its two colour
+    ## containers, the secrets-check + env-synthesis ExecStartPre, the
+    ## boot oneshots and the flip activation script are all generated
+    ## there and merged via `oauth2ProxyBg.config`. The single
+    ## `podman-oauth2-proxy` container + override that used to live
+    ## here are gone.
 
     # ── service-config (admin UI surface) ────────────────────────────────
     # The SSO entry covers Zitadel API, Login UI, AND oauth2-proxy in
@@ -702,7 +680,10 @@ in
         systemd-service-names = [
           "podman-zitadel"
           "podman-zitadel-login"
-          "podman-oauth2-proxy"
+          # oauth2-proxy runs blue/green — both colour units listed;
+          # only the active one is running (standby shows inactive).
+          "podman-oauth2-proxy-blue"
+          "podman-oauth2-proxy-green"
         ];
         admin.show = true;
         sso = {
@@ -765,7 +746,10 @@ in
         label = "oauth2proxy";
         name = "OAuth2 Proxy";
         project-name = "OAuth2 Proxy";
-        systemd-service-names = [ "podman-oauth2-proxy" ];
+        systemd-service-names = [
+          "podman-oauth2-proxy-blue"
+          "podman-oauth2-proxy-green"
+        ];
         admin.show = false;
         sso = {
           kind = "infra";
@@ -776,11 +760,15 @@ in
           subdomains = [ "auth" ];
           http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
           https-domains = [ config.homefree.system.domain ];
-          host = config.homefree.network.lan-address;
-          port = oauth2ProxyPort;
+          ## No literal host:port — the upstream is the blue/green
+          ## runtime snippet, which points at the active oauth2-proxy
+          ## colour and is rewritten at flip time (no nixos-rebuild
+          ## needed to change the upstream). See lib/blue-green.nix.
+          upstream-snippet = "oauth2_proxy_reverse_proxy";
           public = false;
         };
       }
     ]);
-  };
+  }
+  ];
 }

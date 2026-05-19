@@ -391,7 +391,7 @@ in
     ## crash-looping) until zitadel-provision lands the secrets.
     systemd.services.podman-netbird-management = lib.mkIf enabled {
       after = [ "dns-ready.service" "podman-zitadel.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
       ## Unit is silently skipped (ConditionResult=no) until all four
       ## Zitadel-provided secrets land on disk. zitadel-provision
       ## `try-restart`s us once they do — no crash-loop, no restart
@@ -409,7 +409,7 @@ in
 
     systemd.services.podman-netbird-signal = lib.mkIf enabled {
       after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
       ## Volume mount target needs to exist before podman tries to bind
       ## it in. Independent of the OIDC secrets gate.
       serviceConfig.ExecStartPre = [
@@ -421,7 +421,7 @@ in
 
     systemd.services.podman-netbird-relay = lib.mkIf enabled {
       after = [ "dns-ready.service" "podman-netbird-management.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
       ## Relay needs the auth secret that netbird-management generates
       ## in its preStart. Gate on the file being present so we don't
       ## crash-loop pre-provisioning.
@@ -440,7 +440,7 @@ in
 
     systemd.services.podman-netbird-dashboard = lib.mkIf enabled {
       after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
       unitConfig.ConditionPathExists = [
         "${secretsDir}/oidc-client-id"
       ];
@@ -468,7 +468,7 @@ in
 
     systemd.services.podman-netbird-coturn = lib.mkIf enabled {
       after = [ "dns-ready.service" ];
-      requires = [ "dns-ready.service" ];
+      wants = [ "dns-ready.service" ];
     };
 
 

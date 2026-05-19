@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
+import { confirmDialog } from '../shared/confirm-dialog.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
 import { shellStyles } from '../../shared/shell.js';
@@ -170,14 +171,18 @@ class AdminApp extends LitElement {
       flex-shrink: 0;
     }
 
+    /* Canonical admin button — 9px 16px / 13px / radius 6px, the
+       shared form-button size. Primary / danger variants below keep
+       the same metrics, only colours change. */
     .btn {
-      padding: 7px 14px;
+      padding: 9px 16px;
       border-radius: 6px;
       border: 1px solid var(--hf-border-2);
       background: var(--hf-surface-2);
       color: var(--hf-text);
       font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
       transition: all 0.15s;
     }
@@ -337,14 +342,18 @@ class AdminApp extends LitElement {
       font-weight: 500;
     }
 
+    /* Unified notification box — grey-tinted bg, colored left edge. */
     .error-message {
-      background: rgba(239, 68, 68, 0.08);
-      color: var(--hf-err);
-      padding: 16px;
+      background: rgba(59, 130, 246, 0.08);
+      color: var(--hf-text-muted);
+      padding: 14px 18px;
       border-radius: 8px;
-      border-left: 3px solid var(--hf-err);
+      border-left: 4px solid var(--hf-err);
+      font-size: 13px;
+      line-height: 1.5;
       margin: 32px;
     }
+    .error-message strong { color: var(--hf-text); }
 
     /* Service reload overlay */
     .service-reload-overlay {
@@ -1454,11 +1463,17 @@ class AdminApp extends LitElement {
     });
   }
 
-  handleInstanceDelete(e) {
+  async handleInstanceDelete(e) {
     const { parentLabel, instanceIndex } = e.detail;
 
     // Confirm deletion
-    if (!confirm('Are you sure you want to delete this instance? This action cannot be undone after applying changes.')) {
+    const ok = await confirmDialog({
+      title: 'Delete instance?',
+      message: 'Are you sure you want to delete this instance? This action cannot be undone after applying changes.',
+      confirmText: 'Delete',
+      variant: 'danger',
+    });
+    if (!ok) {
       return;
     }
 
@@ -2329,11 +2344,13 @@ class AdminApp extends LitElement {
                 <span class="nav-item-text">${finishSetupModule.title}</span>
               </div>
             ` : ''}
-            <!-- Cross-site link to the per-user portal. External
-                 navigation, so no active state / handleModuleClick. -->
-            <a class="nav-item" href="${this._homeUrl()}">
+            <!-- Cross-site link to the per-user portal, pinned at the
+                 top of the nav. External navigation, so no active
+                 state / handleModuleClick. -->
+            <a class="nav-item nav-item-crosssite" href="${this._homeUrl()}">
               <span class="nav-item-icon">${navIcon('home')}</span>
               <span class="nav-item-text">Home</span>
+              <span class="nav-item-arrow">↗</span>
             </a>
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>

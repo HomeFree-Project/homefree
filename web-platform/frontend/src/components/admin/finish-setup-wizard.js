@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { themeVars } from '../../shared/theme.js';
+import { confirmDialog } from '../shared/confirm-dialog.js';
 import {
   addAuthorizedKey,
   getSecretsStatus,
@@ -802,13 +803,17 @@ class FinishSetupWizard extends LitElement {
 
   // Skipping DNS-01 leaves admin.<domain> HTTPS-unreachable — confirm before
   // moving on. Nothing is saved.
-  skipDnsStep() {
-    const ok = window.confirm(
-      'Skip the wildcard certificate?\n\n'
-      + 'Without DNS-01, HomeFree cannot issue an HTTPS certificate for '
-      + 'admin.<domain>. The admin page will stay reachable only over plain '
-      + 'HTTP on your LAN. You can finish this later from the Finish setup '
-      + 'page.');
+  async skipDnsStep() {
+    const ok = await confirmDialog({
+      title: 'Skip the wildcard certificate?',
+      message:
+        'Without DNS-01, HomeFree cannot issue an HTTPS certificate for '
+        + 'admin.<domain>. The admin page will stay reachable only over plain '
+        + 'HTTP on your LAN. You can finish this later from the Finish setup '
+        + 'page.',
+      confirmText: 'Skip',
+      variant: 'danger',
+    });
     if (ok) {
       this.error = '';
       this.step = 2;
@@ -886,12 +891,16 @@ class FinishSetupWizard extends LitElement {
 
   // Skipping ddclient leaves public pages unresolvable from the internet —
   // confirm before moving on. Nothing is saved.
-  skipDdnsStep() {
-    const ok = window.confirm(
-      'Skip dynamic DNS?\n\n'
-      + 'Without ddclient, any pages you want reachable from the public '
-      + 'internet won\'t resolve to this box. Your LAN and internal DNS are '
-      + 'unaffected. You can add this later from the Finish setup page.');
+  async skipDdnsStep() {
+    const ok = await confirmDialog({
+      title: 'Skip dynamic DNS?',
+      message:
+        'Without ddclient, any pages you want reachable from the public '
+        + 'internet won\'t resolve to this box. Your LAN and internal DNS are '
+        + 'unaffected. You can add this later from the Finish setup page.',
+      confirmText: 'Skip',
+      variant: 'danger',
+    });
     if (ok) {
       this.error = '';
       this.step = 3;

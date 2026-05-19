@@ -39,19 +39,24 @@ class NetworkModule extends LitElement {
       }
     }
 
+    /* Unified notification box — grey-tinted bg, colored left edge,
+       colored heading, normal body text. */
     .warning-box {
-      background: rgba(245, 158, 11, 0.1);
+      background: rgba(59, 130, 246, 0.08);
       border-left: 4px solid var(--hf-warn);
-      padding: 16px;
+      padding: 14px 18px;
       border-radius: 8px;
       margin-bottom: 20px;
-      color: var(--hf-warn);
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     .warning-box strong {
       display: block;
       margin-bottom: 8px;
-      font-size: 16px;
+      font-size: 14px;
+      color: var(--hf-text);
     }
   `;
 

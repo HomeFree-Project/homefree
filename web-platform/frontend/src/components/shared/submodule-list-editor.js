@@ -41,16 +41,18 @@ class SubmoduleListEditor extends LitElement {
       margin-bottom: 12px;
     }
 
+    /* Canonical primary admin button — 9px 16px / 13px / radius 6px. */
     .btn-add {
-      padding: 8px 14px;
+      padding: 9px 16px;
       background: var(--hf-accent);
-      color: white;
+      color: #06281c;
       border: 1px solid var(--hf-accent);
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.15s;
     }
 
     .btn-add:hover:not(:disabled) {
@@ -129,20 +131,24 @@ class SubmoduleListEditor extends LitElement {
       gap: 8px;
     }
 
+    /* Compact danger button — matches the table-row Delete look:
+       bordered, red text, not a solid-red fill. */
     .btn-remove {
-      padding: 6px 12px;
-      background: var(--hf-err);
-      color: white;
-      border: 1px solid var(--hf-err);
-      border-radius: 4px;
+      padding: 5px 12px;
+      background: var(--hf-surface-2);
+      color: var(--hf-err);
+      border: 1px solid color-mix(in srgb, var(--hf-err) 45%, transparent);
+      border-radius: 6px;
       font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.15s;
     }
 
     .btn-remove:hover:not(:disabled) {
-      background: #dc2626;
-      border-color: #dc2626;
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
     }
 
     .btn-remove:disabled {
