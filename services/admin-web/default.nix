@@ -461,102 +461,257 @@ let
     ${pkgs.coreutils}/bin/ln -s ${service-icons-pkg} /run/homefree/admin/icons
   '';
 
+  ## ─── Blue/green admin-api ────────────────────────────────────────
+  ##
+  ## admin-api runs as TWO permanent units, admin-api-blue (:8000) and
+  ## admin-api-green (:8001), built from one shared function. On a
+  ## rebuild that changes the backend, the admin-api-flip activation
+  ## script starts the standby colour, health-gates it, gracefully
+  ## reloads Caddy onto it, then stops the old colour — a red-black
+  ## flip with zero noticeable downtime for the Admin/Home UIs.
+  ##
+  ## Caddy reaches whichever colour is active via an `import`ed
+  ## snippet file (see snippetTemplate below); the flip rewrites that
+  ## file and `systemctl reload caddy` (graceful, drains in-flight).
+
+  adminApiColours = {
+    blue  = 8000;
+    green = 8001;
+  };
+
+  ## Friendly access-denied page served by Caddy when admin-api's
+  ## /api/auth/admin-check returns 403, so a non-admin user lands on a
+  ## real page instead of the raw JSON body. Lives here (not in
+  ## caddy/default.nix) because it is emitted as part of the admin-api
+  ## upstream snippet that the flip rewrites.
+  accessDeniedHtml = ''
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Access denied</title>
+      <style>
+        body { font-family: system-ui, -apple-system, sans-serif;
+               background: #f8f9fa; color: #212529; margin: 0;
+               min-height: 100vh; display: flex; align-items: center;
+               justify-content: center; padding: 1rem; }
+        .card { background: white; border-radius: 12px;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+                padding: 3rem 2.5rem; max-width: 500px; width: 100%;
+                text-align: center; }
+        .icon { font-size: 3rem; margin-bottom: 1rem; }
+        h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #dc3545; }
+        p  { margin: 0.5rem 0; line-height: 1.5; color: #495057; }
+        .actions { margin-top: 2rem; display: flex; gap: 0.75rem;
+                   justify-content: center; flex-wrap: wrap; }
+        a  { display: inline-block; padding: 0.6rem 1.2rem;
+             border-radius: 6px; text-decoration: none; font-weight: 500;
+             transition: background 120ms ease; }
+        .primary   { background: #0d6efd; color: white; }
+        .primary:hover   { background: #0b5ed7; }
+        .secondary { background: #e9ecef; color: #212529; }
+        .secondary:hover { background: #dee2e6; }
+        .small { color: #6c757d; font-size: 0.875rem; margin-top: 1.5rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="icon">🚫</div>
+        <h1>Access denied</h1>
+        <p>You are signed in, but this service requires the
+           <code>homefree-admin</code> role.</p>
+        <p class="small">Ask your HomeFree administrator to grant
+           you the role, or sign out to switch users.</p>
+        <div class="actions">
+          <a class="primary"
+             href="https://auth.${cfg.system.domain}/oauth2/sign_out?rd=https%3A%2F%2F${cfg.system.domain}%2F">
+            Sign out
+          </a>
+          <a class="secondary" href="https://${cfg.system.domain}/">
+            Home
+          </a>
+        </div>
+      </div>
+    </body>
+    </html>
+  '';
+
+  ## Caddy snippet-definition file, `import`ed at file scope by the
+  ## generated Caddyfile. Both call-site directives (`reverse_proxy`
+  ## for /api/*, `forward_auth` for the admin-role check) become a
+  ## one-line `import` of the matching snippet here.
+  ##
+  ## `__PORT__` is substituted at runtime by writeUpstreamSnippet —
+  ## that is the one byte that the flip changes (8000 <-> 8001). The
+  ## Caddyfile that `import`s this file never changes, so a flip needs
+  ## only `caddy reload`, never a nixos-rebuild.
+  ##
+  ## NOTE: `admin_api_admin_check` references the matcher `@sso_gate`,
+  ## which is defined by the importing site BEFORE the `import` line.
+  ## Snippet expansion is textual, so `@sso_gate` resolves in the
+  ## call-site's scope — caddy/default.nix must keep that ordering.
+  snippetTemplate = pkgs.writeText "admin-api-upstream.caddy.tmpl" ''
+    (admin_api_proxy) {
+    	reverse_proxy localhost:__PORT__ {
+    		@backend_down status 502 503 504
+    		handle_response @backend_down {
+    			root * /var/lib/homefree-admin
+    			rewrite * /service-state.json
+    			file_server
+    		}
+    	}
+    }
+
+    (admin_api_admin_check) {
+    	forward_auth @sso_gate localhost:__PORT__ {
+    		uri /api/auth/admin-check
+    		header_up X-Auth-Request-User {http.request.header.X-Auth-Request-User}
+    		header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
+    		header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
+    		header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
+    		@admin_denied status 403
+    		handle_response @admin_denied {
+    			header Content-Type "text/html; charset=utf-8"
+    			header Cache-Control "no-store"
+    			respond <<HTML
+    ${accessDeniedHtml}
+    HTML 403
+    		}
+    	}
+    }
+  '';
+
+  ## Runtime location of the materialised snippet (port substituted).
+  ## /run is tmpfs, so admin-api-snippet.service recreates it on every
+  ## boot before caddy starts; the flip script also rewrites it live.
+  upstreamSnippetPath = "/run/homefree/admin-api-upstream.caddy";
+
+  ## Shell fragment: write upstreamSnippetPath for a given port.
+  ## $1 = port. Validates the result is non-empty before declaring
+  ## success — a missing/empty snippet would stop Caddy from parsing
+  ## its config at all.
+  writeUpstreamSnippet = ''
+    write_upstream_snippet() {
+      local port="$1"
+      local tmp="${upstreamSnippetPath}.tmp"
+      ${pkgs.coreutils}/bin/mkdir -p /run/homefree
+      ${pkgs.gnused}/bin/sed "s/__PORT__/$port/g" ${snippetTemplate} > "$tmp"
+      if [ ! -s "$tmp" ]; then
+        echo "admin-api: refusing to install empty upstream snippet" >&2
+        ${pkgs.coreutils}/bin/rm -f "$tmp"
+        return 1
+      fi
+      ${pkgs.coreutils}/bin/mv "$tmp" "${upstreamSnippetPath}"
+    }
+  '';
+
+  ## Shared builder for the two admin-api colour units. They are
+  ## identical except for the port (which also makes the unit hashes
+  ## distinct). restartIfChanged = false: NixOS writes the updated
+  ## unit file but must NOT bounce the running process — the flip
+  ## owns succession. NOT wantedBy multi-user.target — the boot
+  ## oneshot admin-api-active.service starts the active colour only.
+  mkAdminApiUnit = colour: port: {
+    description = "HomeFree Admin API Backend (${colour})";
+    after = [ "network.target" ];
+    restartIfChanged = false;
+
+    serviceConfig = {
+      Type = "simple";
+      User = "root";
+      Group = "root";
+      StateDirectory = "homefree-admin";
+      WorkingDirectory = "/var/lib/homefree-admin";
+      ExecStart = "${admin-backend}/bin/homefree-admin-backend";
+      Restart = "always";
+      RestartSec = "10s";
+      KillMode = "process";
+      Environment = [
+        "PATH=${lib.makeBinPath [
+          pkgs.nixos-rebuild
+          pkgs.nix
+          pkgs.git
+          pkgs.systemd
+          pkgs.sops
+          pkgs.ssh-to-age
+          pkgs.coreutils
+          pkgs.bash
+          pkgs.gnused
+          pkgs.gnugrep
+          pkgs.findutils
+          pkgs.shadow
+          pkgs.fail2ban
+          pkgs.nftables
+          pkgs.iproute2
+        ]}"
+        "HOMEFREE_FRONTEND_PATH=${installerWebPath}/frontend"
+        "HOMEFREE_DEVELOPMENT=${if config.homefree.development then "1" else "0"}"
+        # Per-colour listen port. admin-api-blue=8000, admin-api-green=8001.
+        "HOMEFREE_ADMIN_API_PORT=${toString port}"
+      ];
+    };
+  };
+
 in
 {
   # Admin service is always enabled - no enable check needed
   config = {
 
-    # Admin API backend service
-    systemd.services.admin-api = {
-      description = "HomeFree Admin API Backend";
+    ## Admin API backend — two permanent colour units. See the
+    ## blue/green block in the `let` above for the full rationale.
+    ##
+    ## PATH note (carried from the old single unit): coreutils + the
+    ## standard userspace tools are needed because the rebuild we
+    ## spawn (nixos-rebuild-ng) shells out to bare commands like
+    ## `test`, `mkdir`, `cat` without absolute paths. systemd-run
+    ## inherits this PATH into the transient homefree-rebuild.service,
+    ## so anything missing fails mid-rebuild with [Errno 2].
+    systemd.services.admin-api-blue  = mkAdminApiUnit "blue"  adminApiColours.blue;
+    systemd.services.admin-api-green = mkAdminApiUnit "green" adminApiColours.green;
+
+    ## Boot oneshot: materialise the Caddy upstream snippet in /run
+    ## (tmpfs, cleared every boot) BEFORE caddy starts. If the
+    ## `import` target is missing, caddy fails to parse its config and
+    ## will not start at all — hence the hard `before = caddy.service`.
+    systemd.services.admin-api-snippet = {
+      description = "Write admin-api Caddy upstream snippet";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "caddy.service" ];
+      after = [ "local-fs.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        ${writeUpstreamSnippet}
+        active_color="$(${pkgs.coreutils}/bin/cat /var/lib/homefree-admin/active-color 2>/dev/null || echo blue)"
+        case "$active_color" in
+          green) port=${toString adminApiColours.green} ;;
+          *)     port=${toString adminApiColours.blue} ;;
+        esac
+        write_upstream_snippet "$port"
+      '';
+    };
+
+    ## Boot oneshot: start whichever colour the pointer file names
+    ## (default blue). Only ONE colour runs at a time; the standby
+    ## unit stays dormant because nothing `wants` it.
+    systemd.services.admin-api-active = {
+      description = "Start the active-colour admin-api";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
-
-      ## restartIfChanged = false used to live here, with a separate
-      ## activation script (`reconcile-admin-api`, below) that did a
-      ## deferred systemd-run restart. That introduced a 15-20s
-      ## window post-rebuild where the OLD admin-api kept serving
-      ## requests with stale code — and the same auto-restart
-      ## mechanism we needed for code-only changes is what NixOS
-      ## already does natively when `restartIfChanged` is the
-      ## default (true).
-      ##
-      ## Letting NixOS restart admin-api on activation is now safe
-      ## because the rebuild itself runs in a transient unit
-      ## (homefree-rebuild.service, see nix_operations.py) owned by
-      ## PID 1 — admin-api going down mid-rebuild doesn't kill the
-      ## rebuild. The HTTP response to /api/rebuild dies, but the
-      ## frontend's polling on /api/config/rebuild-status picks it
-      ## up again as soon as the new admin-api is up (~2s).
-
       serviceConfig = {
-        Type = "simple";
-        User = "root";
-        Group = "root";
-        StateDirectory = "homefree-admin";
-        WorkingDirectory = "/var/lib/homefree-admin";
-        ExecStart = "${admin-backend}/bin/homefree-admin-backend";
-        Restart = "always";
-        RestartSec = "10s";
-
-        # Stop only the main process, not the entire control group. The
-        # rebuild now runs in its own transient systemd unit
-        # (homefree-rebuild.service) launched via systemd-run, so admin-api
-        # stopping should never affect it. KillMode=process is belt-and-
-        # suspenders for any other detached helpers we spawn.
-        KillMode = "process";
-
-        # Environment
-        # NB: coreutils + standard userspace tools are needed because the
-        # rebuild we spawn (nixos-rebuild-ng) shells out to bare commands like
-        # `test`, `mkdir`, `cat`, etc. without absolute paths. systemd-run
-        # inherits this PATH into the transient unit, so anything missing
-        # here will fail mid-rebuild with [Errno 2] No such file or directory.
-        Environment = [
-          "PATH=${lib.makeBinPath [
-            pkgs.nixos-rebuild
-            pkgs.nix
-            pkgs.git
-            pkgs.systemd
-            pkgs.sops
-            pkgs.ssh-to-age
-            pkgs.coreutils
-            pkgs.bash
-            pkgs.gnused
-            pkgs.gnugrep
-            pkgs.findutils
-            ## chpasswd, used by the OS password sync in
-            ## /api/users/me/password and /api/users/{id}/password
-            ## (Zitadel→OS direction). The PAM bridge handles the
-            ## reverse OS→Zitadel direction.
-            pkgs.shadow
-            ## fail2ban-client + nft, used by resolvers/abuse_blocking.py
-            ## to read jail status, nftables sets, and run targeted
-            ## unbans. Without these on PATH the Abuse Blocking page
-            ## shows the layer as Down even when fail2ban is happily
-            ## running under systemd.
-            pkgs.fail2ban
-            pkgs.nftables
-            ## `ip`, used by resolvers/dashboard.py for default-route
-            ## gateway discovery and the LAN-clients neighbour table.
-            ## Without it the dashboard's gateway fields are blank and
-            ## every LAN client shows offline.
-            pkgs.iproute2
-          ]}"
-          # Path of the served frontend bundle, used by the closure-id
-          # endpoint. Embeds the nix-store hash, so it changes IFF the
-          # frontend itself changed (not on every unrelated rebuild).
-          "HOMEFREE_FRONTEND_PATH=${installerWebPath}/frontend"
-          # Development-mode flag. A dev box uses Caddy's internal CA and
-          # is typically a port-forwarded test VM where a real SSO login
-          # can never complete (oauth2-proxy's redirect URLs are
-          # port-less). admin-api's auth middleware reads this to relax
-          # the SSO-header requirement in dev mode only — production
-          # boxes are never in dev mode, so the gate stays fully enforced
-          # there. See TrustedHeaderAuthMiddleware._is_dev_mode().
-          "HOMEFREE_DEVELOPMENT=${if config.homefree.development then "1" else "0"}"
-        ];
+        Type = "oneshot";
+        RemainAfterExit = true;
       };
+      script = ''
+        active_color="$(${pkgs.coreutils}/bin/cat /var/lib/homefree-admin/active-color 2>/dev/null || echo blue)"
+        case "$active_color" in
+          green) ${pkgs.systemd}/bin/systemctl start admin-api-green ;;
+          *)     ${pkgs.systemd}/bin/systemctl start admin-api-blue ;;
+        esac
+      '';
     };
 
     # Admin UI service configuration (served by Caddy)
@@ -567,7 +722,10 @@ in
         project-name = "HomeFree Admin";
 
         systemd-service-names = [
-          "admin-api"
+          # Both colour units — only the active one is running; the
+          # standby shows inactive, which is expected.
+          "admin-api-blue"
+          "admin-api-green"
           "caddy"
         ];
 
@@ -650,17 +808,12 @@ in
             @api {
               path /api/* /health
             }
+            # admin_api_proxy is defined in the runtime-rewritten
+            # snippet (/run/homefree/admin-api-upstream.caddy); it
+            # carries the reverse_proxy to the active blue/green port
+            # plus the @backend_down -> service-state.json fallback.
             handle @api {
-              reverse_proxy localhost:8000 {
-                # Handle backend unavailability gracefully
-                @backend_down status 502 503 504
-                handle_response @backend_down {
-                  # Serve state file when backend is down
-                  root * /var/lib/homefree-admin
-                  rewrite * /service-state.json
-                  file_server
-                }
-              }
+              import admin_api_proxy
             }
 
             # NOTE: cache headers (no-store, strip ETag/Last-Modified) are
@@ -690,7 +843,10 @@ in
         project-name = "HomeFree Dashboard";
 
         systemd-service-names = [
-          "admin-api"
+          # Both colour units — only the active one is running; the
+          # standby shows inactive, which is expected.
+          "admin-api-blue"
+          "admin-api-green"
           "caddy"
         ];
 
@@ -749,15 +905,10 @@ in
             @api {
               path /api/* /health
             }
+            # admin_api_proxy: see the admin vhost above — same
+            # runtime-rewritten snippet, points at the active colour.
             handle @api {
-              reverse_proxy localhost:8000 {
-                @backend_down status 502 503 504
-                handle_response @backend_down {
-                  root * /var/lib/homefree-admin
-                  rewrite * /service-state.json
-                  file_server
-                }
-              }
+              import admin_api_proxy
             }
 
             # NOTE: cache headers are set centrally in
@@ -774,7 +925,10 @@ in
         project-name = "HomeFree Admin API";
 
         systemd-service-names = [
-          "admin-api"
+          # Both colour units — only the active one is running; the
+          # standby shows inactive, which is expected.
+          "admin-api-blue"
+          "admin-api-green"
           "caddy"
         ];
 
@@ -796,18 +950,167 @@ in
       deps = [];
     };
 
-    ## NOTE: the `reconcile-admin-api` activation script used to live
-    ## here. It was a deferred systemd-run that restarted admin-api
-    ## ~15-20s after rebuild completed (a small sleep + activation
-    ## handoff). Combined with `restartIfChanged = false`, that left
-    ## a window where the old admin-api kept serving stale code.
+    ## ─── admin-api blue/green flip ───────────────────────────────
     ##
-    ## We've now removed both — admin-api uses NixOS's default
-    ## `restartIfChanged = true`, so the unit gets restarted as
-    ## part of standard activation. Rebuild safety is preserved by
-    ## homefree-rebuild.service (transient, PID 1-owned) decoupling
-    ## the rebuild's lifetime from admin-api's. See the comment
-    ## above the admin-api systemd.services definition.
+    ## Runs at the end of every `nixos-rebuild switch` (UI-triggered
+    ## OR plain CLI — activation is the one path common to both). If
+    ## the admin-backend closure changed, it starts the standby
+    ## colour, health-gates it, rewrites the Caddy upstream snippet,
+    ## gracefully reloads Caddy onto it, then stops the old colour.
+    ##
+    ## Pointer files in /var/lib/homefree-admin/ (persistent):
+    ##   active-color            — "blue" | "green"
+    ##   active-backend-closure  — store path of the running backend
+    ##   admin-api-flip-failed.json — present iff the last flip failed
+    ##
+    ## The script ALWAYS exits 0: a non-zero activation script makes
+    ## nixos-rebuild report failure and can abort the rest of
+    ## activation. A failed flip is surfaced via the marker file
+    ## (nix_operations.py reads it and reports partial_success), not
+    ## via a failed rebuild — the box keeps serving known-good code.
+    system.activationScripts.admin-api-flip = {
+      ## `etc` must run first: it writes the admin-api-blue/green unit
+      ## files into /etc/systemd/system. Without that dep the flip can
+      ## run before the unit files exist, and the `daemon-reload`
+      ## below would not pick them up. `setup-admin-config` writes the
+      ## /run/homefree/admin config the backend reads on start.
+      deps = [ "setup-admin-config" "etc" ];
+      text = ''
+        ${writeUpstreamSnippet}
+
+        sysctl=${pkgs.systemd}/bin/systemctl
+        curl=${pkgs.curl}/bin/curl
+        statedir=/var/lib/homefree-admin
+        ${pkgs.coreutils}/bin/mkdir -p "$statedir"
+
+        blue_port=${toString adminApiColours.blue}
+        green_port=${toString adminApiColours.green}
+        desired_closure="$(${pkgs.coreutils}/bin/readlink -f ${admin-backend})"
+
+        # CRITICAL: activation scripts run BEFORE switch-to-configuration
+        # reloads the systemd manager, so the just-written admin-api-blue
+        # / admin-api-green unit files are not yet visible to systemd
+        # (`systemctl start` would fail "Unit not found"). Reload the
+        # manager now so the colour units — and the old admin-api's
+        # removal — are known before we touch them.
+        $sysctl daemon-reload
+
+        # 1. No-op fast path — backend unchanged (every rebuild that
+        #    doesn't touch admin-api lands here and does nothing).
+        if [ -f "$statedir/active-backend-closure" ] && \
+           [ "$(${pkgs.coreutils}/bin/cat "$statedir/active-backend-closure")" = "$desired_closure" ]; then
+          echo "admin-api-flip: backend unchanged, no flip needed"
+          exit 0
+        fi
+
+        # unit_running <unit> — true iff systemd reports it active.
+        unit_running() {
+          [ "$($sysctl is-active "$1" 2>/dev/null)" = "active" ]
+        }
+
+        # health_gate <unit> <port> — poll /health up to ~30s. Returns
+        # 0 on the first HTTP 200. Bails early (non-zero) the moment the
+        # unit is no longer active, so a crash-looping backend doesn't
+        # cost the full 30s.
+        #
+        # `-s` (no `-S`): the first poll or two routinely lose the race
+        # with uvicorn binding the port — those are expected retries,
+        # not errors, so curl stays silent. A genuine failure surfaces
+        # via the unit_running check / the health-gate return value.
+        health_gate() {
+          local unit="$1" port="$2" i
+          for i in $(${pkgs.coreutils}/bin/seq 1 60); do
+            if $curl -fs -o /dev/null --max-time 2 "http://localhost:$port/health"; then
+              return 0
+            fi
+            if ! unit_running "$unit"; then
+              echo "admin-api-flip: $unit is not active — aborting health gate" >&2
+              return 1
+            fi
+            ${pkgs.coreutils}/bin/sleep 0.5
+          done
+          return 1
+        }
+
+        # mark_failed <colour> <reason> — write the marker, log, exit 0.
+        # printf (not a heredoc): activation-script text keeps its Nix
+        # indentation, which would break a heredoc terminator.
+        mark_failed() {
+          ${pkgs.coreutils}/bin/printf \
+            '{"failed": true, "attempted_color": "%s", "attempted_closure": "%s", "reason": "%s", "timestamp": "%s"}\n' \
+            "$1" "$desired_closure" "$2" "$(${pkgs.coreutils}/bin/date -Is)" \
+            > "$statedir/admin-api-flip-failed.json"
+          echo "admin-api-flip: FAILED ($2) — still serving previous version" >&2
+          exit 0
+        }
+
+        # 2. Migration branch — first deploy of the blue/green scheme.
+        #    No pointer files yet; the old single `admin-api` unit is
+        #    being retired. Bring blue up FIRST (same :8000 the old
+        #    unit uses — so start it only after stopping the old one),
+        #    health-gate it, and only then record blue as active. If
+        #    blue fails to come up, roll back to the old admin-api so
+        #    the box is never left without a backend.
+        if [ ! -f "$statedir/active-color" ]; then
+          echo "admin-api-flip: first deploy — migrating to blue"
+          write_upstream_snippet "$blue_port" || true
+          $sysctl stop admin-api.service 2>/dev/null || true
+          if $sysctl start admin-api-blue && health_gate admin-api-blue "$blue_port"; then
+            echo blue > "$statedir/active-color"
+            echo "$desired_closure" > "$statedir/active-backend-closure"
+            ${pkgs.coreutils}/bin/rm -f "$statedir/admin-api-flip-failed.json"
+            echo "admin-api-flip: migrated — now serving blue"
+          else
+            echo "admin-api-flip: blue failed on first deploy — rolling back to old admin-api" >&2
+            $sysctl stop admin-api-blue 2>/dev/null || true
+            $sysctl start admin-api.service 2>/dev/null || true
+            mark_failed blue "blue failed to come up on first deploy"
+          fi
+          exit 0
+        fi
+
+        # 3. Normal flip.
+        current="$(${pkgs.coreutils}/bin/cat "$statedir/active-color")"
+        if [ "$current" = "blue" ]; then
+          standby=green; standby_port="$green_port"
+        else
+          standby=blue;  standby_port="$blue_port"
+        fi
+        echo "admin-api-flip: $current -> $standby"
+
+        # 4. Start the standby colour (picks up the new code — its
+        #    unit file was already written by activation).
+        if ! $sysctl start "admin-api-$standby"; then
+          $sysctl stop "admin-api-$standby" 2>/dev/null || true
+          mark_failed "$standby" "standby failed to start"
+        fi
+
+        # 5. Health-gate the standby.
+        if ! health_gate "admin-api-$standby" "$standby_port"; then
+          $sysctl stop "admin-api-$standby" 2>/dev/null || true
+          mark_failed "$standby" "health check timeout"
+        fi
+
+        # 6. Point Caddy at the standby colour and reload gracefully.
+        if ! write_upstream_snippet "$standby_port"; then
+          $sysctl stop "admin-api-$standby" 2>/dev/null || true
+          mark_failed "$standby" "could not write upstream snippet"
+        fi
+        if ! $sysctl reload caddy; then
+          # Roll back the snippet; keep the old colour serving.
+          write_upstream_snippet "$( [ "$current" = blue ] && echo "$blue_port" || echo "$green_port" )" || true
+          $sysctl stop "admin-api-$standby" 2>/dev/null || true
+          mark_failed "$standby" "caddy reload failed"
+        fi
+
+        # 7. Flip committed — stop the old colour, record new state.
+        $sysctl stop "admin-api-$current" 2>/dev/null || true
+        echo "$standby" > "$statedir/active-color"
+        echo "$desired_closure" > "$statedir/active-backend-closure"
+        ${pkgs.coreutils}/bin/rm -f "$statedir/admin-api-flip-failed.json"
+        echo "admin-api-flip: now serving $standby"
+      '';
+    };
 
   };
 }

@@ -136,18 +136,14 @@ let
       file_server
     }
 
-    ## API + health -> admin backend. Mirrors admin-web's @api handler,
-    ## including the graceful fallback when the backend is briefly down.
+    ## API + health -> admin backend. Mirrors admin-web's @api handler.
+    ## admin_api_proxy is the runtime-rewritten snippet (defined by the
+    ## file-scope import in services/caddy/default.nix) — it carries the
+    ## reverse_proxy to the active blue/green port plus the graceful
+    ## @backend_down -> service-state.json fallback.
     @api path /api/* /health
     handle @api {
-      reverse_proxy localhost:8000 {
-        @backend_down status 502 503 504
-        handle_response @backend_down {
-          root * /var/lib/homefree-admin
-          rewrite * /service-state.json
-          file_server
-        }
-      }
+      import admin_api_proxy
     }
 
     ## Everything else: the static frontend, with SPA fallback so deep

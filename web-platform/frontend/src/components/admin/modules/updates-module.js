@@ -237,8 +237,14 @@ class UpdatesModule extends LitElement {
       ${this.updateDone ? html`
         <div class="notice">
           <strong>System version updated</strong>
-          Click <strong>Apply Changes</strong> in the sidebar to rebuild your
-          system onto the new version.
+          ${info.baseOverrideActive ? html`
+            The recorded version was updated, but the next rebuild will use
+            the alternate HomeFree repository above, not this version.
+            Re-enable the official repository for this update to take effect.
+          ` : html`
+            Click <strong>Apply Changes</strong> in the sidebar to rebuild
+            your system onto the new version.
+          `}
         </div>
       ` : ''}
 

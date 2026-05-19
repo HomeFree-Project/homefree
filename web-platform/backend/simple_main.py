@@ -2983,6 +2983,13 @@ async def get_rebuild_status(request: Request):
         full = NixOperations.get_full_log()
         if full:
             status = {**status, "output": full}
+            # get_rebuild_status() already set partial_success for a
+            # failed admin-api blue/green flip; re-apply so the
+            # human-readable note also lands on the full-log output
+            # (the line above just overwrote the note get_rebuild_status
+            # appended to the incremental slice).
+            if not status.get('running') and status.get('exit_code') is not None:
+                status = NixOperations._apply_flip_failure(status)
 
         from models import RebuildStatus
         result = RebuildStatus(
@@ -3263,9 +3270,15 @@ if __name__ == "__main__":
     logger.info("Starting HomeFree Web Installer Backend (REST API)")
     logger.info("All installation endpoints available at /api/*")
 
+    # Port is set per-instance by the systemd unit (admin-api-blue /
+    # admin-api-green run the same binary on different ports for the
+    # blue/green flip). Defaults to 8000 for dev / manual invocation.
+    port = int(os.environ.get("HOMEFREE_ADMIN_API_PORT", "8000"))
+    logger.info(f"Listening on port {port}")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info"
     )

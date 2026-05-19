@@ -44,6 +44,14 @@ class NixOperations:
     # admin-api can restart freely without killing an in-flight rebuild.
     REBUILD_UNIT = "homefree-rebuild.service"
 
+    # Written by the admin-api blue/green flip activation script when a
+    # flip fails its health check (or Caddy reload). Its presence means
+    # the box is still serving the PREVIOUS admin-api version — a flip
+    # failure deliberately exits the activation script 0, so the rebuild
+    # itself reports success; this marker is how that partial outcome
+    # surfaces in the UI. Cleared by the next successful flip.
+    FLIP_FAILED_FILE = REBUILD_STATE_DIR / "admin-api-flip-failed.json"
+
     _current_rebuild_output_file = None
     _current_rebuild_output_offset = 0
     _last_rebuild_error = None
@@ -601,6 +609,39 @@ class NixOperations:
             return None
 
     @staticmethod
+    @staticmethod
+    def _apply_flip_failure(status: Dict[str, Any]) -> Dict[str, Any]:
+        """Fold an admin-api blue/green flip failure into a finished
+        rebuild status.
+
+        A flip failure (new admin-api failed its health check, or the
+        Caddy reload failed) deliberately does NOT fail the rebuild —
+        the activation script exits 0 so the rest of activation
+        completes and the box keeps serving the previous, known-good
+        admin-api. The failure is recorded in FLIP_FAILED_FILE. Here we
+        surface it: mark the rebuild partial_success and append a
+        human-readable line to the output the UI already renders.
+        """
+        try:
+            if not NixOperations.FLIP_FAILED_FILE.exists():
+                return status
+            try:
+                marker = json.loads(NixOperations.FLIP_FAILED_FILE.read_text())
+            except Exception:
+                marker = {}
+            reason = marker.get("reason", "unknown error")
+            note = (
+                "\n[admin-api] hot-swap to the new version failed "
+                f"({reason}) — still serving the previous admin-api. "
+                "The rest of the rebuild was applied. Re-apply to retry."
+            )
+            status = dict(status)
+            status["partial_success"] = True
+            status["output"] = (status.get("output") or "") + note
+        except Exception as e:
+            logger.error(f"Error folding flip-failure marker into status: {e}")
+        return status
+
     def get_rebuild_status() -> Dict[str, Any]:
         """
         Get status of current rebuild operation.
@@ -642,12 +683,12 @@ class NixOperations:
                     if log_file.exists():
                         with open(log_file, 'r') as f:
                             full_output = f.read()
-                    return {
+                    return NixOperations._apply_flip_failure({
                         'running': False,
                         'output': full_output,
                         'exit_code': saved_status.get('exit_code'),
                         'partial_success': saved_status.get('partial_success', False),
-                    }
+                    })
                 except Exception as e:
                     logger.error(f"Error reading saved rebuild status: {e}")
 
@@ -807,12 +848,12 @@ class NixOperations:
         except Exception as e:
             logger.error(f"Error finalising rebuild: {e}")
 
-        return {
+        return NixOperations._apply_flip_failure({
             'running': False,
             'output': new_output,
             'exit_code': exit_code,
             'partial_success': partial_success,
-        }
+        })
 
     @staticmethod
     def generate_diff() -> Dict[str, Any]:

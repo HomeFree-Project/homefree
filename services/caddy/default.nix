@@ -5,104 +5,14 @@ let
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
-  ## Friendly access-denied page served by Caddy when admin-api's
-  ## /api/auth/admin-check returns 403. Used in place of admin-api's
-  ## raw JSON body so a non-admin user lands on a real page (with a
-  ## sign-out link to switch users) instead of `{"detail":"..."}`.
-  ##
-  ## Caddy's `respond` directive expects the body inline; we render
-  ## the HTML to a Nix string here so it's reused by every gated
-  ## site without duplicating markup.
-  ##
-  ## Sign-out link follows the same chain used elsewhere in this file
-  ## (oauth2-proxy /oauth2/sign_out -> Zitadel /oidc/v1/end_session).
-  ## The post-logout URI lands them at https://<domain>/ so they can
-  ## sign in as a different user. {env.OAUTH2_PROXY_CLIENT_ID} is
-  ## populated by caddy-adguard-basic-auth.service.
-  accessDeniedHtml = ''
-    <!doctype html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>Access denied</title>
-      <style>
-        body { font-family: system-ui, -apple-system, sans-serif;
-               background: #f8f9fa; color: #212529; margin: 0;
-               min-height: 100vh; display: flex; align-items: center;
-               justify-content: center; padding: 1rem; }
-        .card { background: white; border-radius: 12px;
-                box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-                padding: 3rem 2.5rem; max-width: 500px; width: 100%;
-                text-align: center; }
-        .icon { font-size: 3rem; margin-bottom: 1rem; }
-        h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #dc3545; }
-        p  { margin: 0.5rem 0; line-height: 1.5; color: #495057; }
-        .actions { margin-top: 2rem; display: flex; gap: 0.75rem;
-                   justify-content: center; flex-wrap: wrap; }
-        a  { display: inline-block; padding: 0.6rem 1.2rem;
-             border-radius: 6px; text-decoration: none; font-weight: 500;
-             transition: background 120ms ease; }
-        .primary   { background: #0d6efd; color: white; }
-        .primary:hover   { background: #0b5ed7; }
-        .secondary { background: #e9ecef; color: #212529; }
-        .secondary:hover { background: #dee2e6; }
-        .small { color: #6c757d; font-size: 0.875rem; margin-top: 1.5rem; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="icon">🚫</div>
-        <h1>Access denied</h1>
-        <p>You are signed in, but this service requires the
-           <code>homefree-admin</code> role.</p>
-        <p class="small">Ask your HomeFree administrator to grant
-           you the role, or sign out to switch users.</p>
-        <div class="actions">
-          <!--
-            Sign out clears the oauth2-proxy session cookie and
-            bounces back to the homefree landing page. We don't
-            chain through Zitadel's end_session here — the
-            respond directive's body isn't guaranteed to expand
-            {env.OAUTH2_PROXY_CLIENT_ID} placeholders, and
-            without that param Zitadel ignores
-            post_logout_redirect_uri. The shorter sign-out is
-            enough: re-visiting any gated service triggers a
-            fresh SSO prompt.
-          -->
-          <a class="primary"
-             href="https://auth.${config.homefree.system.domain}/oauth2/sign_out?rd=https%3A%2F%2F${config.homefree.system.domain}%2F">
-            Sign out
-          </a>
-          <a class="secondary" href="https://${config.homefree.system.domain}/">
-            Home
-          </a>
-        </div>
-      </div>
-    </body>
-    </html>
-  '';
-
-  ## Caddy snippet emitted after every admin-check forward_auth so
-  ## a 403 from admin-api becomes the friendly HTML page above
-  ## instead of the raw JSON body Caddy would otherwise short-circuit.
-  ## Quoted heredoc-style for inline use inside the larger Caddy
-  ## config string.
-  ##
-  ## Note: Caddy's `respond` body interpolates {placeholders}; we've
-  ## pre-substituted {env.OAUTH2_PROXY_CLIENT_ID} above in the Nix
-  ## string. The literal Caddy placeholders that remain (e.g. nothing
-  ## inside the HTML) are inert.
-  adminCheckDenyHandler = ''
-    @admin_denied status 403
-    handle_response @admin_denied {
-      header Content-Type "text/html; charset=utf-8"
-      header Cache-Control "no-store"
-      respond <<HTML
-    ${accessDeniedHtml}
-    HTML 403
-    }
-  '';
+  ## NOTE: the admin-role-check `forward_auth` (with its friendly
+  ## access-denied page) used to be defined inline here as
+  ## `accessDeniedHtml` + `adminCheckDenyHandler`. It now lives in
+  ## services/admin-web/default.nix as the `admin_api_admin_check`
+  ## Caddy snippet, because the admin-api upstream port is rewritten
+  ## at runtime by the blue/green flip. The two call sites below
+  ## just `import admin_api_admin_check` (the snippet definition is
+  ## brought in by the file-scope `import` of the runtime snippet).
 
   # Process proxied domains for standard reverse proxy (proxy handles TLS)
   processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
@@ -354,6 +264,21 @@ in
       local_certs
     '';
 
+    ## File-scope import of the admin-api upstream snippet. This
+    ## registers the `admin_api_proxy` and `admin_api_admin_check`
+    ## snippet *definitions* used by the admin / home / finish-setup
+    ## vhosts. The file is materialised at runtime (port substituted
+    ## for the active blue/green colour) by admin-api-snippet.service
+    ## before caddy starts, and rewritten in place by the blue/green
+    ## flip. Caddy `extraConfig` lands at file scope, after the global
+    ## options block and before the vhosts — exactly where snippet
+    ## definitions must live.
+    ##
+    ## NB: this makes /run/homefree/admin-api-upstream.caddy a hard
+    ## dependency of Caddy's config parse; admin-api-snippet.service
+    ## has `before = caddy.service` to guarantee it exists.
+    extraConfig = "import /run/homefree/admin-api-upstream.caddy";
+
     virtualHosts = lib.mkMerge [
       (lib.listToAttrs (lib.flatten (lib.map (service-config:
       let
@@ -535,21 +460,15 @@ in
                 ## Second forward_auth: enforce homefree-admin role.
                 ## oauth2-proxy already validated the session above;
                 ## now ask admin-api whether this user has the
-                ## homefree-admin project role. admin-api's middle-
-                ## ware parses Zitadel's namespaced role-claim JSON
-                ## (oauth2-proxy can't) and 403s non-admins.
-                ##
-                ## We forward the X-Auth-Request-* headers that the
-                ## first forward_auth populated so admin-api sees
-                ## the same identity oauth2-proxy validated.
-                forward_auth @sso_gate http://${lan-address}:8000 {
-                  uri /api/auth/admin-check
-                  header_up X-Auth-Request-User {http.request.header.X-Auth-Request-User}
-                  header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
-                  header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
-                  header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
-                  ${adminCheckDenyHandler}
-                }
+                ## homefree-admin project role (its middleware parses
+                ## Zitadel's namespaced role-claim JSON; oauth2-proxy
+                ## can't) and 403s non-admins. The `admin_api_admin_check`
+                ## snippet carries the forward_auth (pointed at the
+                ## active blue/green port), the X-Auth-Request-* header
+                ## passthrough, and the friendly 403 page. It references
+                ## the @sso_gate matcher defined just above — keep that
+                ## ordering, snippet expansion is textual.
+                import admin_api_admin_check
               '' else ""}
             '' else ""}
             root * ${reverse-proxy-config.static-path}
@@ -685,15 +604,9 @@ in
             ${if reverse-proxy-config.require-admin-role or false then ''
               ## Second forward_auth: enforce homefree-admin role
               ## via admin-api. See the static-path branch above
-              ## for the design rationale.
-              forward_auth @sso_gate http://${lan-address}:8000 {
-                uri /api/auth/admin-check
-                header_up X-Auth-Request-User {http.request.header.X-Auth-Request-User}
-                header_up X-Auth-Request-Preferred-Username {http.request.header.X-Auth-Request-Preferred-Username}
-                header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
-                header_up X-Auth-Request-Groups {http.request.header.X-Auth-Request-Groups}
-                ${adminCheckDenyHandler}
-              }
+              ## for the design rationale. admin_api_admin_check is
+              ## the runtime snippet pointing at the active colour.
+              import admin_api_admin_check
             '' else ""}
           '' else "")
           +

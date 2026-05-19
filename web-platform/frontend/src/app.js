@@ -129,9 +129,16 @@ class HomeFreeApp extends LitElement {
     // Retry logic to handle transient NetworkErrors during page refresh
     // when old page's cleanup races with new page's first request.
     // Auth failures (401/403) are NOT transient — short-circuit those
-    // immediately so the user doesn't sit through 3x retries before
+    // immediately so the user doesn't sit through retries before
     // seeing the access-denied page.
-    let retries = 3;
+    //
+    // 12 retries x 500ms = ~6s of cover. The admin-api blue/green flip
+    // makes a hard outage here unlikely (Caddy reload is graceful and
+    // falls back to service-state.json), but a page loaded at the exact
+    // moment of a slow flip could still see a couple of failed /api/mode
+    // calls — 6s of patient retry rides over that instead of dumping the
+    // user on a dead "Connection Error" page.
+    let retries = 12;
     let lastError = null;
 
     while (retries > 0) {
