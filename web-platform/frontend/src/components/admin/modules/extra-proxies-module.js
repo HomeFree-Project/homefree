@@ -116,6 +116,7 @@ class ExtraProxiesModule extends LitElement {
           <table-editor
             .columns=${columns}
             .data=${rows}
+            .neutralBooleans=${true}
             addLabel="Add Entry"
             @data-change=${this.handleProxiesChange}
           ></table-editor>

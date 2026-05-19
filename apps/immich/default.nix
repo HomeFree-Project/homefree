@@ -519,6 +519,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.immich) label name project-name;
+      enable = config.homefree.service-options.immich.enable;
       release-tracking = {
         type = "github";
         project = "immich-app/immich";

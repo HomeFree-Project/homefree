@@ -16,7 +16,10 @@ class TableEditor extends LitElement {
   static properties = {
     columns: { type: Array },
     data: { type: Array },
-    addLabel: { type: String }
+    addLabel: { type: String },
+    // When true, an unset boolean renders the ✗ in muted gray instead
+    // of red — for tables where "false" is a neutral choice, not a fault.
+    neutralBooleans: { type: Boolean }
   };
 
   static styles = css`
@@ -78,6 +81,8 @@ class TableEditor extends LitElement {
     /* Boolean-column cell markers: green check / red cross. */
     .bool-yes { color: var(--hf-accent); font-weight: 600; }
     .bool-no  { color: var(--hf-err);    font-weight: 600; }
+    /* Neutral variant — "false" is just a choice here, not a fault. */
+    .bool-no.bool-neutral { color: var(--hf-text-muted); }
 
     /* Boolean columns render a single glyph — shrink them to content
        and let the header text wrap rather than stretch the column (and
@@ -374,7 +379,7 @@ class TableEditor extends LitElement {
     if (column.type === 'boolean') {
       return value
         ? html`<span class="bool-yes">✓</span>`
-        : html`<span class="bool-no">✗</span>`;
+        : html`<span class="bool-no ${this.neutralBooleans ? 'bool-neutral' : ''}">✗</span>`;
     }
 
     return value || '-';

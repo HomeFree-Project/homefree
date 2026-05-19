@@ -187,6 +187,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.vaultwarden) label name project-name;
+      enable = config.homefree.service-options.vaultwarden.enable;
       systemd-service-names = [
         "podman-vaultwarden"
       ];

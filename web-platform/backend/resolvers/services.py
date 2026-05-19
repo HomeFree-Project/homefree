@@ -64,6 +64,99 @@ def _resolve_sso(
     return kind, notes, provisioned, applicable
 
 
+def _bg_base(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """If `name` ends in -blue/-green return (base, colour), else (None, None).
+
+    The -blue/-green suffix is the blue/green unit-naming contract — see
+    lib/blue-green.nix (unitPrefix / unitName). Both a plain systemd
+    colour (`<name>-<colour>`) and a podman one (`podman-<name>-<colour>`)
+    end in the same suffix, so suffix matching covers both."""
+    for colour in ("blue", "green"):
+        suffix = "-" + colour
+        if name.endswith(suffix):
+            return name[: -len(suffix)], colour
+    return None, None
+
+
+def _collapse_blue_green(unit_states):
+    """Collapse each blue/green unit pair into ONE synthetic UnitState so a
+    deliberately-dormant standby colour does not read as 'degraded'.
+
+    A blue/green service runs as two units on two ports — only one colour
+    serves traffic at a time, the other sits intentionally `inactive`
+    (see docs/agent-notes/blue-green-deployment.md). A flat aggregate
+    would always see "some up, some not" and report degraded forever.
+
+    Returns the list to aggregate over: standalone units (unchanged) plus
+    one synthetic verdict per detected pair — healthy if >=1 colour is
+    running, starting if a colour is activating and none up, failed/down
+    if neither colour can run (a real outage, NOT masked). Also tags the
+    REAL UnitState objects with .bg_role ('active'/'standby') in the
+    unambiguous one-colour-running case, so the UI can render the dormant
+    colour as non-error."""
+    from models import UnitState
+
+    by_name = {u.name: u for u in unit_states}
+
+    bg_pairs = []          # (base, blue_unit, green_unit)
+    paired_names: Set[str] = set()
+    for u in unit_states:
+        base, _ = _bg_base(u.name)
+        if base is None or u.name in paired_names:
+            continue
+        blue_name, green_name = base + "-blue", base + "-green"
+        # A real pair requires BOTH colours present. A lone -blue with no
+        # -green sibling is NOT a pair — it falls through as a standalone.
+        if blue_name in by_name and green_name in by_name:
+            bg_pairs.append((base, by_name[blue_name], by_name[green_name]))
+            paired_names.add(blue_name)
+            paired_names.add(green_name)
+
+    def _is_running(u):
+        return u.active_state == "active" and u.sub_state == "running"
+
+    def _is_starting(u):
+        return u.active_state in ("activating", "reloading") or u.sub_state == "start"
+
+    def _is_failed(u):
+        return u.active_state == "failed"
+
+    pair_verdicts = []
+    for base, blue, green in bg_pairs:
+        pair = (blue, green)
+        running = [u for u in pair if _is_running(u)]
+
+        # Verdict precedence: running > starting > failed > inactive.
+        if running:
+            # >=1 colour serving -> healthy. Steady state (one running,
+            # one inactive) AND flip-in-progress (both running) both
+            # land here.
+            verdict = UnitState(name=base, active_state="active", sub_state="running")
+        elif any(_is_starting(u) for u in pair):
+            # a colour mid-start, none up yet -> "starting"
+            verdict = UnitState(name=base, active_state="activating", sub_state="start")
+        elif any(_is_failed(u) for u in pair):
+            # neither colour can run, >=1 failed -> real outage, NOT masked
+            verdict = UnitState(name=base, active_state="failed", sub_state="failed")
+        else:
+            # neither running, neither starting, none failed -> both dead
+            verdict = UnitState(name=base, active_state="inactive", sub_state="dead")
+        pair_verdicts.append(verdict)
+
+        # Tag the real units for the UI — ONLY in the unambiguous
+        # one-running case, the only case where an inactive colour is
+        # *expected*. both-running (mid-flip): neither is dormant ->
+        # leave None. neither-running: a down colour SHOULD look down ->
+        # leave None.
+        if len(running) == 1:
+            running[0].bg_role = "active"
+            other = green if running[0] is blue else blue
+            other.bg_role = "standby"
+
+    standalone = [u for u in unit_states if u.name not in paired_names]
+    return standalone + pair_verdicts
+
+
 class ServicesResolver:
     @staticmethod
     def get_services() -> List[ServiceStatus]:
@@ -347,11 +440,18 @@ class ServicesResolver:
         Query each systemd unit's state and return:
           (aggregate_active_state, aggregate_sub_state, unit_states)
 
-        unit_states is a list of {"name", "active_state", "sub_state"} —
-        one entry per unit, so the UI can flag specific stragglers when
-        the aggregate is "degraded".
+        unit_states is a list of {"name", "active_state", "sub_state",
+        "bg_role"} — one entry per *real* unit, so the UI can flag
+        specific stragglers when the aggregate is "degraded".
 
-        Aggregate semantics (the part that drives the colored dot):
+        Before aggregating, blue/green colour pairs are collapsed by
+        _collapse_blue_green: a `<base>-blue` / `<base>-green` pair is
+        one logical unit (healthy if either colour is up), so the
+        always-inactive standby colour doesn't peg the row at "degraded".
+        The returned unit_states still lists every real unit.
+
+        Aggregate semantics (the part that drives the colored dot —
+        computed over the collapsed list):
         - All units active+running  -> ("active", "running")     -> green "Running"
         - Some active, some not     -> ("active", "degraded")    -> yellow "Degraded"
         - All units failed          -> ("failed", "failed")      -> red "Failed"
@@ -408,14 +508,19 @@ class ServicesResolver:
                 sub_state=sub_state,
             ))
 
-        # Compute aggregate
-        running = [u for u in unit_states if u.active_state == "active" and u.sub_state == "running"]
-        failed = [u for u in unit_states if u.active_state == "failed"]
-        starting = [u for u in unit_states if u.active_state in ("activating", "reloading") or u.sub_state == "start"]
-        # "Not running" = anything that isn't healthy: inactive, failed, unknown, etc.
-        not_running = [u for u in unit_states if u not in running]
+        # Compute aggregate. Collapse blue/green colour pairs first: a
+        # pair is one logical unit (healthy if either colour is up), so
+        # the always-inactive standby colour doesn't drag the row into a
+        # permanent "degraded". Standalone units pass through unchanged.
+        agg_input = _collapse_blue_green(unit_states)
 
-        total = len(unit_states)
+        running = [u for u in agg_input if u.active_state == "active" and u.sub_state == "running"]
+        failed = [u for u in agg_input if u.active_state == "failed"]
+        starting = [u for u in agg_input if u.active_state in ("activating", "reloading") or u.sub_state == "start"]
+        # "Not running" = anything that isn't healthy: inactive, failed, unknown, etc.
+        not_running = [u for u in agg_input if u not in running]
+
+        total = len(agg_input)
         if not_running == []:
             agg_active, agg_sub = "active", "running"
         elif starting and len(running) + len(starting) == total:

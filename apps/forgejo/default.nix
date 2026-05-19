@@ -439,6 +439,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.forgejo) label name project-name;
+      enable = config.homefree.service-options.forgejo.enable;
       systemd-service-names = [
         "podman-forgejo"
       ];

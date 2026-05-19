@@ -139,6 +139,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.jellyfin) label name project-name;
+      enable = config.homefree.service-options.jellyfin.enable;
       sso = {
         kind = "none";
         applicable = false;

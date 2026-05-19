@@ -1820,6 +1820,14 @@ class AdminApp extends LitElement {
       this.showToast('A rebuild is already in progress.', 'warning', 4000);
       return;
     }
+    // Show the spinner on the same tick as the click. The validate/apply
+    // network round-trips below would otherwise delay it visibly. Every
+    // failure/early-return path below resets this so the button recovers.
+    this.rebuildStatus = {
+      running: true,
+      message: 'Applying configuration…',
+      lastUpdate: null
+    };
     try {
       // Flush any pending save first so we apply the latest in-memory state
       if (this._saveTimer) {
@@ -1841,6 +1849,7 @@ class AdminApp extends LitElement {
       if (!validation.valid) {
         const firstError = validation.errors[0] || 'Validation failed';
         this.showToast(`Validation failed: ${firstError}`, 'error', 7000);
+        this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
 
@@ -1853,6 +1862,7 @@ class AdminApp extends LitElement {
 
       if (!result.success) {
         this.showToast(`Failed to apply: ${result.message || 'Unknown error'}`, 'error', 7000);
+        this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
 
@@ -1862,6 +1872,8 @@ class AdminApp extends LitElement {
       this.dirtyModules.clear();
       this.updateMergedConfig();
 
+      // Spinner is already showing (set on click). Just refine the message;
+      // pollRebuildStatus() owns rebuildStatus from here on.
       this.rebuildStatus = {
         running: true,
         message: 'Starting system rebuild...',
@@ -1873,6 +1885,7 @@ class AdminApp extends LitElement {
     } catch (error) {
       console.error('Error applying changes:', error);
       this.showToast(`Error: ${error.message || 'Unknown error'}`, 'error', 7000);
+      this.rebuildStatus = { running: false, message: '', lastUpdate: null };
     }
   }
 

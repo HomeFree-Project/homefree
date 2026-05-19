@@ -21,14 +21,24 @@
 ## block is picked up automatically. Apps that need different
 ## behavior (oneshot provisioners, backup runs) can override per-unit
 ## using mkForce; we use mkDefault here so explicit overrides win.
+##
+## Only ENABLED entries are considered. Apps emit their
+## `service-config` block unconditionally (so the admin UI can list a
+## disabled service), but when a service is disabled its backing unit
+## is not generated at all. Declaring `systemd.services.<name>` here
+## for a missing unit would materialize a stub unit with restart attrs
+## but no ExecStart, which systemd rejects ("Service has no
+## ExecStart=...") and which breaks `nixos-rebuild switch`. Filtering
+## on `enable` is what keeps a disabled service from leaving that stub.
 { config, lib, ... }:
 
 let
   ## Flatten every `systemd-service-names` entry across all
-  ## registered services into a unique unit-name list.
+  ## *enabled* registered services into a unique unit-name list.
   allUnitNames = lib.unique (lib.concatMap
     (sc: sc.systemd-service-names or [])
-    (config.homefree.service-config or [])
+    (lib.filter (sc: sc.enable or true)
+      (config.homefree.service-config or []))
   );
 
   ## Per-unit overrides. mkDefault so an app's own

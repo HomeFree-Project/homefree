@@ -5,6 +5,7 @@ import '../../shared/app-card.js';
 import '../secrets-input.js';
 import '../service-option-input.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
+import { actionIcon } from '../../../shared/icons.js';
 
 /**
  * Services configuration module
@@ -92,42 +93,185 @@ class ServicesModule extends LitElement {
       border-color: var(--hf-accent);
     }
 
-    /* Responsive card grid — one <app-card> per service. Collapses to
-       a single column on narrow screens. An expanded card spans the
-       full row so its config form has room (see .card-expanded).
-       Default grid align-items:stretch makes every card in a row
-       the same height; app-card has height:100% to fill the cell. */
+    /* Card grid — two <app-card>s per row. Two-up (rather than the old
+       auto-fill of narrow 280px tiles) gives each card enough width to
+       seat the icon, name, status badge and action buttons on one
+       header row without the name clipping. Collapses to a single
+       column on narrow screens. An expanded card spans the full row so
+       its config form has room (see .card-expanded). Default grid
+       align-items:stretch makes every card in a row the same height;
+       app-card has height:100% to fill the cell. */
     .service-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(2, 1fr);
       gap: 12px;
+    }
+    @media (max-width: 720px) {
+      .service-grid {
+        grid-template-columns: 1fr;
+      }
     }
     app-card.card-expanded {
       grid-column: 1 / -1;
     }
 
-    /* Slotted card body: status line, URL, toggles, action buttons. */
-    .card-status {
+    /* ---- App card: three stacked zones --------------------------------
+       The admin app card was a ragged stack of left-aligned rows. It is
+       now organised into three deliberate zones inside <app-card>:
+         1. header slot  — status badge + lifecycle icon-buttons, pinned
+                            to the right of the icon/title row.
+         2. .card-meta   — an aligned label/value block (URL, SSO). A
+                            fixed-width label column lines every row up.
+         3. .card-footer — the Enable / Public toggles, fenced off from
+                            the meta block by a hairline rule.
+       The per-unit systemd list and the deeper config form live below,
+       inside the "More settings" expander. ------------------------------ */
+
+    /* Zone 1 — header slot content (sits in <app-card>'s .head-aside). */
+    .card-head {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
+      gap: 6px;
     }
-    .card-url {
-      font-size: 12px;
+
+    /* Status as a single pill: a coloured dot + word. Replaces the old
+       loose dot+text row and the separate monospace systemd line. */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px 3px 8px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      background: var(--hf-surface-3);
+      color: var(--hf-text-muted);
+    }
+    .status-badge.running  { background: rgba(52,211,153,0.13);  color: var(--hf-ok); }
+    .status-badge.failed   { background: rgba(239,68,68,0.13);   color: var(--hf-err); }
+    .status-badge.degraded { background: rgba(245,158,11,0.13);  color: var(--hf-warn); }
+    .status-badge.starting { background: rgba(245,158,11,0.13);  color: var(--hf-warn); }
+
+    /* Compact square lifecycle buttons (play / restart / stop). They sit
+       in the header beside the badge — icon-only, with title tooltips —
+       so they cost no vertical space on the card face. */
+    .icon-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .icon-action {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      color: var(--hf-text-muted);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .icon-action svg {
+      width: 13px;
+      height: 13px;
+    }
+    .icon-action:hover:not(:disabled) {
+      background: var(--hf-surface-3);
+      border-color: var(--hf-accent);
+      color: var(--hf-text);
+    }
+    .icon-action.danger:hover:not(:disabled) {
+      border-color: var(--hf-err);
+      color: var(--hf-err);
+    }
+    .icon-action:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    /* The in-flight button keeps a steady accent tint while its request
+       is outstanding (the icon itself doesn't spin — title says why). */
+    .icon-action.busy {
+      border-color: var(--hf-accent);
+      color: var(--hf-accent);
+    }
+
+    /* Zone 2 — aligned meta block. Each row is [label | value] on a
+       shared two-column grid so every label edge and value edge lines
+       up, however many rows a given service has. The value track is
+       minmax(0, 1fr) rather than a plain 1fr so it can shrink below its
+       content's intrinsic width on a narrow card — a 1fr track has an
+       implicit min-width:auto and would let a long URL push the grid
+       wider than the card and overflow the right edge. */
+    .card-meta {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 6px 10px;
+      align-items: baseline;
+      margin-bottom: 2px;
+    }
+    .meta-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--hf-text-subtle);
+      white-space: nowrap;
+    }
+    .meta-value {
+      font-size: 12.5px;
+      color: var(--hf-text-muted);
+      min-width: 0;
+    }
+    a.meta-value {
       color: var(--hf-accent);
       text-decoration: none;
+      /* break-all lets a long unbroken URL fold inside the value
+         column instead of forcing the column (and the card) wider. */
       word-break: break-all;
-      display: block;
-      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
-    .card-url:hover { text-decoration: underline; }
+    a.meta-value:hover { text-decoration: underline; }
+    /* The URL text — min-width:0 lets it shrink inside the flex anchor
+       so word-break can fold it; without it the text is treated as an
+       unshrinkable flex item and overflows. */
+    a.meta-value > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    a.meta-value svg {
+      width: 11px;
+      height: 11px;
+      flex-shrink: 0;
+      opacity: 0.8;
+    }
+    /* The SSO value carries one of three coloured states inline. */
+    .meta-value .sso-state.ok       { color: var(--hf-ok); }
+    .meta-value .sso-state.warn     { color: var(--hf-warn); }
+    .meta-value .sso-state.disabled { color: var(--hf-text-subtle); }
 
-    .card-controls {
+    /* Zone 3 — toggle footer. Fenced from the meta block by a hairline;
+       the two toggle rows stack with a tight, even gap. */
+    .card-footer {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hf-border);
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      margin-top: 4px;
+      gap: 8px;
+    }
+    /* A system service (admin/admin-api) has no toggles — show a single
+       muted note in the footer's place so the card still has a base. */
+    .system-note {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hf-border);
+      font-size: 12px;
+      color: var(--hf-text-subtle);
     }
 
     .config-expander {
@@ -160,47 +304,6 @@ class ServicesModule extends LitElement {
       transform: rotate(90deg);
     }
 
-    .status-indicator {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .status-dot.running {
-      background: var(--hf-ok);
-      box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
-    }
-
-    .status-dot.stopped {
-      background: var(--hf-text-muted);
-    }
-
-    .status-dot.failed {
-      background: var(--hf-err);
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
-    }
-
-    .status-dot.degraded {
-      background: var(--hf-warn);
-      box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
-    }
-
-    .status-dot.starting {
-      background: var(--hf-warn);
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-
-    .status-dot.unknown {
-      background: var(--hf-border-2);
-    }
-
     @keyframes pulse {
       0%, 100% {
         opacity: 1;
@@ -210,63 +313,36 @@ class ServicesModule extends LitElement {
       }
     }
 
-    .status-text {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--hf-text-muted);
-    }
-
-    .status-text.running { color: var(--hf-ok); }
-    .status-text.failed { color: var(--hf-err); }
-    .status-text.degraded { color: var(--hf-warn); }
-    .status-text.starting { color: var(--hf-warn); }
-
-    .service-systemd {
-      font-size: 11px;
-      color: var(--hf-text-muted);
-      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-      margin-top: 4px;
-    }
-
-    .service-systemd .unit {
-      display: inline;
-    }
-
-    .service-systemd .unit.unit-starting {
-      color: var(--hf-warn);
-      font-weight: 600;
-    }
-
-    .service-systemd .unit.unit-bad {
-      color: var(--hf-err);
-      font-weight: 600;
-    }
-
-    .service-systemd .unit.unit-unknown {
-      color: var(--hf-text-muted);
-    }
-
-    /* SSO surfacing — inline pill + reason. Mirrors the styling
-       formerly on the dedicated SSO page; centralizing all
-       per-service info in one place is the goal. */
-    .service-sso {
-      margin-top: 6px;
+    /* ---- Systemd units list (inside the "More settings" expander) -----
+       The per-unit health that used to crowd the card face now lives
+       here: one row per unit, a small status dot + the unit name. */
+    .systemd-units {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
-    .service-sso .pill {
-      display: inline-block;
-      width: fit-content;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.02em;
+    .systemd-unit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      color: var(--hf-text-muted);
     }
-    .service-sso .pill.ok       { background: rgba(74,222,128,0.12); color: #4ade80; }
-    .service-sso .pill.warn     { background: rgba(250,204,21,0.12); color: #facc15; }
-    .service-sso .pill.disabled { background: var(--hf-surface-2);   color: var(--hf-text-muted); }
+    .unit-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--hf-border-2);
+    }
+    .unit-dot.unit-ok       { background: var(--hf-ok); }
+    .unit-dot.unit-bad      { background: var(--hf-err); }
+    .unit-dot.unit-starting { background: var(--hf-warn); animation: pulse 1.5s ease-in-out infinite; }
+    /* A blue/green standby unit being inactive is its expected steady
+       state, not an error — render it muted, like an unknown unit. */
+    .unit-dot.unit-standby,
+    .unit-dot.unit-unknown  { background: var(--hf-text-subtle); }
 
     /* Each toggle is a full-width row inside the card: label on the
        left, switch on the right — readable on desktop and mobile. */
@@ -438,39 +514,12 @@ class ServicesModule extends LitElement {
       background: #dc2626;
     }
 
-    .action-buttons {
-      display: flex;
-      gap: 6px;
-    }
-    .action-button {
-      background: var(--hf-surface-2);
-      color: var(--hf-text);
-      border: 1px solid var(--hf-border-2);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .action-button:hover:not(:disabled) {
-      background: var(--hf-surface-3);
-      border-color: var(--hf-accent);
-    }
-    .action-button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .action-button.danger {
-      color: var(--hf-err);
-    }
-    .action-button.danger:hover:not(:disabled) {
-      background: rgba(239, 68, 68, 0.1);
-      border-color: var(--hf-err);
-    }
+    /* A failed lifecycle action surfaces its error under the toggle
+       footer (the icon-buttons themselves are too small to caption). */
     .action-error {
       color: var(--hf-err);
       font-size: 11px;
-      margin-top: 4px;
+      margin-top: 8px;
       word-break: break-word;
     }
 
@@ -884,7 +933,12 @@ class ServicesModule extends LitElement {
       !serviceOptions[key]['sops-managed']
     );
     const hasExtraOptions = extraOptions.length > 0;
-    let hasConfig = hasSecrets || hasExtraOptions || hasChildren;
+    // The per-unit systemd list now lives inside the expander, so a
+    // running multi-unit service with no other options must still be
+    // expandable — hasUnits feeds hasConfig for that reason.
+    const hasUnits = isEnabled && !service.parent &&
+      service.systemd_services && service.systemd_services.length > 0;
+    let hasConfig = hasSecrets || hasExtraOptions || hasChildren || hasUnits;
 
     // For child services (instances), check if parent has instance configuration
     if (service.parent) {
@@ -906,11 +960,15 @@ class ServicesModule extends LitElement {
       : service.label;
     const isExpanded = this.expandedServices.has(expandId);
 
-    // The whole service is one <app-card>: the shared icon + title up
-    // top, the admin controls (status / URL / toggles / actions) and
-    // the expandable config section in the default slot. An expanded
-    // card spans the full grid row so its config form has room.
+    // The whole service is one <app-card>, organised into three zones:
+    //   - header slot: a status badge + lifecycle icon-buttons, pinned
+    //     beside the icon/title.
+    //   - default slot: an aligned meta block (URL, SSO) then a toggle
+    //     footer, then the expandable config section.
+    // An expanded card spans the full grid row so its config form has
+    // room. The systemd unit list lives inside that expander.
     const cardClass = isExpanded ? 'card-expanded' : '';
+    const actionErr = this.actionErrors[service.label];
 
     return html`
       <app-card
@@ -920,55 +978,21 @@ class ServicesModule extends LitElement {
         .name=${service.name}
         .subtitle=${service.project_name || ''}
       >
-        <div class="card-status">
-          <div class="status-dot ${statusClass}"></div>
-          <div class="status-text ${statusClass}">${statusText}</div>
+        <div slot="header" class="card-head">
+          <span class="status-badge ${statusClass}" title="${statusText}">
+            ${statusText}
+          </span>
+          ${this.renderIconActions(service)}
         </div>
 
-        ${service.url && isEnabled ? html`
-          <a href="${service.url}" target="_blank" class="card-url">
-            ${service.url}
-          </a>
-        ` : ''}
+        ${this.renderMetaBlock(service, isEnabled)}
 
-        ${service.systemd_services && service.systemd_services.length > 0 && isEnabled ? html`
-          <div class="service-systemd">
-            systemd:
-            ${(() => {
-              const units = (service.unit_states && service.unit_states.length > 0)
-                ? service.unit_states
-                : service.systemd_services.map(n => ({
-                    name: n,
-                    active_state: 'unknown',
-                    sub_state: 'unknown',
-                  }));
-              return units.map((u, i, arr) => {
-                const healthy  = u.active_state === 'active' && u.sub_state === 'running';
-                const unknown  = u.active_state === 'unknown';
-                const starting = u.active_state === 'activating'
-                              || u.active_state === 'reloading'
-                              || u.sub_state === 'start';
-                const cls = healthy  ? 'unit-ok'
-                          : unknown  ? 'unit-unknown'
-                          : starting ? 'unit-starting'
-                          :            'unit-bad';
-                const tip = healthy
-                  ? `${u.name}: ${u.active_state} (${u.sub_state})`
-                  : unknown
-                    ? `${u.name}: status unknown`
-                    : starting
-                      ? `${u.name}: ${u.active_state} (${u.sub_state}) — starting`
-                      : `${u.name}: ${u.active_state} (${u.sub_state}) — not healthy`;
-                return html`<span class="unit ${cls}" title="${tip}">${u.name}</span>${i < arr.length - 1 ? html`<span class="unit-sep">, </span>` : ''}`;
-              });
-            })()}
+        ${cannotDisable ? html`
+          <div class="system-note">
+            ${isAdminApi ? 'System service' : 'System service — always enabled'}
           </div>
-        ` : ''}
-
-        ${this.renderSsoBadge(service)}
-
-        <div class="card-controls">
-          ${!cannotDisable ? html`
+        ` : html`
+          <div class="card-footer">
             <div class="toggle-container">
               <span class="toggle-label">Enable</span>
               <label class="toggle-switch">
@@ -986,93 +1010,70 @@ class ServicesModule extends LitElement {
                 <span class="toggle-slider"></span>
               </label>
             </div>
-          ` : ''}
 
-          ${isEnabled && !isAdminApi ? html`
-            <div class="toggle-container">
-              <span class="toggle-label">Public (WAN)</span>
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  .checked=${isPublic}
-                  @change=${(e) => {
-                    if (service.parent) {
-                      this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
-                    } else {
-                      this.handlePublicToggle(service.label, e.target.checked);
-                    }
-                  }}
-                />
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          ` : ''}
+            ${isEnabled ? html`
+              <div class="toggle-container">
+                <span class="toggle-label">Public (WAN)</span>
+                <label class="toggle-switch">
+                  <input
+                    type="checkbox"
+                    .checked=${isPublic}
+                    @change=${(e) => {
+                      if (service.parent) {
+                        this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
+                      } else {
+                        this.handlePublicToggle(service.label, e.target.checked);
+                      }
+                    }}
+                  />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            ` : ''}
+          </div>
+        `}
 
-          ${cannotDisable ? html`
-            <div class="toggle-label" style="color: var(--hf-text-muted); font-size: 12px;">
-              ${isAdminApi ? 'System service' : 'System service (always enabled)'}
-            </div>
-          ` : ''}
-
-          ${this.renderActionButtons(service)}
-        </div>
+        ${actionErr ? html`<div class="action-error">${actionErr}</div>` : ''}
 
         ${this.renderConfigSection(service, hasConfig, isExpanded, expandId)}
       </app-card>
     `;
   }
 
-  /* Per-row Start / Restart / Stop buttons. Hidden for:
-     - services with no backing systemd units (admin parent rows,
-       pending instances not yet realized)
-     - the admin-api / admin services themselves (would cut the
-       request that issued the action; backend also refuses)
-     - synthetic pending instances (no real units yet) */
-  renderActionButtons(service) {
-    if (service.label === 'admin' || service.label === 'admin-api') return '';
-    if (!service.systemd_services || service.systemd_services.length === 0) return '';
-    if (!service.enabled) {
-      // A disabled service shouldn't be controllable here — enable it
-      // via the toggle + rebuild first. Showing buttons would lie
-      // about what they do (the unit may not even exist post-disable).
-      return '';
+  /* The aligned meta block: a [label | value] grid carrying the service
+     URL and its SSO posture. Every label edge and value edge lines up
+     across rows. Returns '' when a service has nothing to show (e.g. a
+     disabled service, or an infra service with no URL and no SSO row),
+     so the card collapses to just header + footer. */
+  renderMetaBlock(service, isEnabled) {
+    const rows = [];
+
+    if (service.url && isEnabled) {
+      rows.push(html`
+        <span class="meta-label">URL</span>
+        <a class="meta-value" href="${service.url}" target="_blank" rel="noopener">
+          <span>${service.url.replace(/^https?:\/\//, '')}</span>
+          ${actionIcon('external-link')}
+        </a>
+      `);
     }
-    const pending = this.pendingActions[service.label];
-    const err = this.actionErrors[service.label];
-    const cls = this.getStatusClass(service.active_state, service.sub_state, service.partial);
-    const isRunning = cls === 'running' || cls === 'degraded';
-    const isStopped = cls === 'stopped' || cls === 'failed';
-    return html`
-      <div class="action-buttons">
-        <button class="action-button"
-                ?disabled=${!!pending || isRunning}
-                @click=${() => this.handleServiceAction(service.label, 'start')}>
-          ${pending === 'start' ? 'Starting…' : 'Start'}
-        </button>
-        <button class="action-button"
-                ?disabled=${!!pending || isStopped}
-                @click=${() => this.handleServiceAction(service.label, 'restart')}>
-          ${pending === 'restart' ? 'Restarting…' : 'Restart'}
-        </button>
-        <button class="action-button danger"
-                ?disabled=${!!pending || isStopped}
-                @click=${() => this.handleServiceAction(service.label, 'stop')}>
-          ${pending === 'stop' ? 'Stopping…' : 'Stop'}
-        </button>
-      </div>
-      ${err ? html`<div class="action-error">${err}</div>` : ''}
-    `;
+
+    const ssoRow = this.renderSsoMetaRow(service);
+    if (ssoRow) rows.push(ssoRow);
+
+    if (rows.length === 0) return '';
+    return html`<div class="card-meta">${rows}</div>`;
   }
 
-  /* Render the SSO pill for a service row.
+  /* The SSO posture as one aligned meta row.
      This used to live on a separate /admin/sso page; folding it into
      the services list keeps everything about a service in one place.
      Backend (resolvers/services.py) supplies sso_kind, sso_provisioned
-     and sso_applicable alongside the runtime status. */
-  renderSsoBadge(service) {
+     and sso_applicable alongside the runtime status. Returns '' for
+     'infra' services (Zitadel, oauth2-proxy) — they are the bridge
+     itself, not a consumer, so they carry no SSO row. */
+  renderSsoMetaRow(service) {
     const kind = service.sso_kind || 'none';
-    // 'infra' services (Zitadel, oauth2-proxy) don't show on the SSO
-    // surfacing path — they're the bridge itself, not a consumer.
     if (kind === 'infra') return '';
 
     const typeLabel = ({
@@ -1081,24 +1082,122 @@ class ServicesModule extends LitElement {
       basic_auth: 'Caddy + Basic-Auth bridge',
     })[kind];
 
-    let statusPill;
+    let value;
     if (kind === 'none') {
       // sso_applicable distinguishes a deliberate "not applicable"
       // posture (false) from an integration that is simply pending
       // (true). The reasoning lives in a code comment beside each
       // service's sso block, not in the UI.
-      statusPill = service.sso_applicable === false
-        ? html`<span class="pill disabled">SSO: not applicable</span>`
-        : html`<span class="pill disabled">SSO: not yet implemented</span>`;
+      value = service.sso_applicable === false
+        ? html`<span class="sso-state disabled">Not applicable</span>`
+        : html`<span class="sso-state disabled">Not yet implemented</span>`;
     } else {
-      statusPill = service.sso_provisioned
-        ? html`<span class="pill ok">SSO: ${typeLabel}</span>`
-        : html`<span class="pill warn">SSO: ${typeLabel} (pending)</span>`;
+      value = service.sso_provisioned
+        ? html`<span class="sso-state ok">${typeLabel}</span>`
+        : html`<span class="sso-state warn">${typeLabel} (pending)</span>`;
     }
 
     return html`
-      <div class="service-sso">
-        ${statusPill}
+      <span class="meta-label">SSO</span>
+      <span class="meta-value">${value}</span>
+    `;
+  }
+
+  /* Compact play / restart / stop icon-buttons for the card header.
+     Returns '' (no buttons) for:
+     - the admin-api / admin services themselves (acting on them would
+       cut the request that issued the action; backend also refuses)
+     - services with no backing systemd units (admin parent rows,
+       synthetic pending instances not yet realized)
+     - a disabled service — enable it via the toggle + rebuild first;
+       showing buttons would lie about what they do (the unit may not
+       even exist while disabled). */
+  renderIconActions(service) {
+    if (service.label === 'admin' || service.label === 'admin-api') return '';
+    if (!service.systemd_services || service.systemd_services.length === 0) return '';
+    if (!service.enabled) return '';
+
+    const pending = this.pendingActions[service.label];
+    const cls = this.getStatusClass(service.active_state, service.sub_state, service.partial);
+    const isRunning = cls === 'running' || cls === 'degraded';
+    const isStopped = cls === 'stopped' || cls === 'failed';
+
+    const btn = (action, glyph, danger, disabled, verb) => html`
+      <button
+        class="icon-action ${danger ? 'danger' : ''} ${pending === action ? 'busy' : ''}"
+        ?disabled=${!!pending || disabled}
+        title="${pending === action ? `${verb}…` : verb}"
+        aria-label="${verb}"
+        @click=${() => this.handleServiceAction(service.label, action)}
+      >
+        ${actionIcon(glyph)}
+      </button>
+    `;
+
+    return html`
+      <div class="icon-actions">
+        ${btn('start', 'play', false, isRunning, 'Start')}
+        ${btn('restart', 'restart', false, isStopped, 'Restart')}
+        ${btn('stop', 'stop', true, isStopped, 'Stop')}
+      </div>
+    `;
+  }
+
+  /* The per-unit systemd health list — one row per unit, a small status
+     dot + the unit name. Lives inside the "More settings" expander; it
+     used to crowd the card face as a monospace comma list. */
+  renderSystemdSection(service) {
+    if (service.parent) return '';
+    if (!service.enabled) return '';
+    if (!service.systemd_services || service.systemd_services.length === 0) return '';
+
+    const units = (service.unit_states && service.unit_states.length > 0)
+      ? service.unit_states
+      : service.systemd_services.map(n => ({
+          name: n,
+          active_state: 'unknown',
+          sub_state: 'unknown',
+        }));
+
+    return html`
+      <div class="secrets-section">
+        <div class="secrets-header">
+          <span>Systemd units (${units.length})</span>
+        </div>
+        <div class="secrets-content">
+          <div class="systemd-units">
+            ${units.map(u => {
+              const healthy  = u.active_state === 'active' && u.sub_state === 'running';
+              // A blue/green standby unit being inactive is its expected
+              // steady state, so it is NOT an error.
+              const standby  = u.bg_role === 'standby';
+              const unknown  = u.active_state === 'unknown';
+              const starting = u.active_state === 'activating'
+                            || u.active_state === 'reloading'
+                            || u.sub_state === 'start';
+              const cls = healthy  ? 'unit-ok'
+                        : standby  ? 'unit-standby'
+                        : unknown  ? 'unit-unknown'
+                        : starting ? 'unit-starting'
+                        :            'unit-bad';
+              const tip = healthy
+                ? `${u.active_state} (${u.sub_state})`
+                : standby
+                  ? `${u.active_state} (${u.sub_state}) — standby (blue/green)`
+                  : unknown
+                    ? 'status unknown'
+                    : starting
+                      ? `${u.active_state} (${u.sub_state}) — starting`
+                      : `${u.active_state} (${u.sub_state}) — not healthy`;
+              return html`
+                <div class="systemd-unit" title="${tip}">
+                  <span class="unit-dot ${cls}"></span>
+                  <span>${u.name}</span>
+                </div>
+              `;
+            })}
+          </div>
+        </div>
       </div>
     `;
   }
@@ -1122,6 +1221,7 @@ class ServicesModule extends LitElement {
           ${this.renderChildInstances(service)}
           ${this.renderOptionsSection(service)}
           ${this.renderSecretsSection(service)}
+          ${this.renderSystemdSection(service)}
         `}
       ` : ''}
     `;
@@ -1393,10 +1493,32 @@ class ServicesModule extends LitElement {
       );
     });
 
-    const enabledCount = this.services.filter(s => s.enabled).length;
-    const runningCount = this.services.filter(s =>
-      s.active_state === 'active' && s.sub_state === 'running'
-    ).length;
+    // Header counts must describe the cards actually on screen, i.e.
+    // top-level parents (`parentServices`) — child instances render
+    // nested inside their parent and must not be counted separately.
+    //
+    // A parent with no backing systemd units AND no child instances is
+    // an "external" entry: a reverse-proxy / static-path vhost that
+    // points off-box (or has no local process). It has no run-state to
+    // report, so it can never be "running" — it gets its own bucket
+    // instead of silently dragging down the running count.
+    let runningCount = 0;
+    let disabledCount = 0;
+    let externalCount = 0;
+    for (const service of parentServices) {
+      if (service.enabled) {
+        const hasUnits = service.systemd_services && service.systemd_services.length > 0;
+        const hasChildren = this.getChildServices(service.label).length > 0;
+        if (!hasUnits && !hasChildren) {
+          externalCount++;
+        } else if (service.active_state === 'active' && service.sub_state === 'running') {
+          runningCount++;
+        }
+      } else {
+        disabledCount++;
+      }
+    }
+    const totalCount = parentServices.length;
 
     return html`
       <div class="module-container">
@@ -1408,7 +1530,7 @@ class ServicesModule extends LitElement {
 
         <div class="info-box">
           <div class="info-text">
-            <strong>${runningCount} running / ${enabledCount} enabled / ${this.services.length} total apps</strong>
+            <strong>${runningCount} running${externalCount > 0 ? html` / ${externalCount} external` : ''}${disabledCount > 0 ? html` / ${disabledCount} disabled` : ''} / ${totalCount} total apps</strong>
             <div style="margin-top: 8px; font-size: 13px;">
               Enable/disable apps and configure public WAN access. Running apps appear at the top.
             </div>

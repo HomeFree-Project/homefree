@@ -346,6 +346,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.freshrss) label name project-name;
+      enable = config.homefree.service-options.freshrss.enable;
       systemd-service-names = [
         "podman-freshrss"
       ];

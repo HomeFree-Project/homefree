@@ -251,6 +251,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.linkwarden) label name project-name;
+      enable = config.homefree.service-options.linkwarden.enable;
       systemd-service-names = [
         "podman-linkwarden"
         "podman-meilisearch"

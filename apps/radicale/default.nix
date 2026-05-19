@@ -147,6 +147,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicale) label name project-name;
+      enable = config.homefree.service-options.radicale.enable;
       systemd-service-names = [
         "podman-radicale"
         "zitadel-password-shim"

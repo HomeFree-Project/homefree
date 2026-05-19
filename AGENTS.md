@@ -106,8 +106,9 @@ Situational knowledge — read the linked note when working in that area:
   unbound/adguard restart, or container image pulls race a stale gate.
   → `docs/agent-notes/dns-ready-ordering.md`
 - **systemd unit patterns** — restart policy applied to all catalog
-  services; oneshot bootstrap units and `RemainAfterExit`; podman
-  readiness vs. process readiness.
+  services (a disabled app must set `service-config.enable` or it leaks
+  a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap
+  units and `RemainAfterExit`; podman readiness vs. process readiness.
   → `docs/agent-notes/systemd-unit-patterns.md`
 - **Blue/green deployment** — admin-api and oauth2-proxy run as two
   colour units; a flip activation script swaps them with zero downtime.

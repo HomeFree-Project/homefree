@@ -90,6 +90,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.grocy) label name project-name;
+      enable = config.homefree.service-options.grocy.enable;
       sso = {
         kind = "none";
         applicable = false;

@@ -67,6 +67,7 @@ let
   ## its submodule schema in module.nix — no projection needed beyond
   ## making sure `default` survives. Nix's toJSON handles anything.
   projectEntry = e: {
+    enable = e.enable;
     label = e.label;
     name = e.name;
     project-name = e.project-name;

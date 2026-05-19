@@ -104,6 +104,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.nzbget) label name project-name;
+      enable = config.homefree.service-options.nzbget.enable;
       sso = {
         kind = "none";
         applicable = false;

@@ -113,6 +113,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.lidarr) label name project-name;
+      enable = config.homefree.service-options.lidarr.enable;
       sso = {
         kind = "none";
         applicable = false;

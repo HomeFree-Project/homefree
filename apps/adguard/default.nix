@@ -430,6 +430,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.adguard) label name project-name;
+      enable = config.homefree.service-options.adguard.enable;
       systemd-service-names = [
         "podman-adguardhome"
       ];

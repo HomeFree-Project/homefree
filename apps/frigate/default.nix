@@ -432,6 +432,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.frigate) label name project-name;
+      enable = config.homefree.service-options.frigate.enable;
       systemd-service-names = [
         "podman-frigate"
       ];

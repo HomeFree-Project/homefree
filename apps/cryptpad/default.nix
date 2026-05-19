@@ -283,6 +283,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.cryptpad) label name project-name;
+      enable = config.homefree.service-options.cryptpad.enable;
       systemd-service-names = [
         "podman-cryptpad"
       ];

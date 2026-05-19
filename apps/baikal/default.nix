@@ -89,6 +89,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.baikal) label name project-name;
+      enable = config.homefree.service-options.baikal.enable;
       systemd-service-names = [
         "podman-baikal"
       ];

@@ -51,6 +51,18 @@ const PATHS = {
   manual: svg`<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>`,
 };
 
+// Service-lifecycle action glyphs + the external-link affordance, used
+// by the admin Apps card (services-module.js). Same Lucide stroke set
+// as the nav icons above; rendered via actionIcon() so they inherit the
+// button's text colour. `play`/`stop` are filled shapes so they read
+// clearly at the small 14px button size.
+const ACTION_PATHS = {
+  play: svg`<polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/>`,
+  restart: svg`<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>`,
+  stop: svg`<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>`,
+  'external-link': svg`<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`,
+};
+
 const FALLBACK = svg`<circle cx="12" cy="12" r="3"/>`;
 
 /**
@@ -63,6 +75,21 @@ export function navIcon(id) {
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
          aria-hidden="true">
       ${PATHS[id] || FALLBACK}
+    </svg>
+  `;
+}
+
+/**
+ * Return a Lit SVG template for a service-action glyph (play / restart
+ * / stop / external-link). Like navIcon(), it uses `currentColor` so
+ * the host button's text colour drives the fill/stroke.
+ */
+export function actionIcon(id) {
+  return html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true">
+      ${ACTION_PATHS[id] || FALLBACK}
     </svg>
   `;
 }

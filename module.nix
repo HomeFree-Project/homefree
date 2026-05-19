@@ -755,7 +755,21 @@
       type = with lib.types; listOf (submodule {
         options = {
 
-          # @TODO: Add top-level enable
+          ## Whether the service this entry describes is actually
+          ## enabled. Apps emit their `service-config` block
+          ## unconditionally (so the admin UI can list a disabled
+          ## service and offer to turn it on), so consumers that act
+          ## on the *running* system — notably
+          ## modules/service-restart-policy.nix — must filter on this
+          ## flag. Each app should set it to its own enable flag,
+          ## e.g. `enable = config.homefree.service-options.<n>.enable;`.
+          ## Default true so a block that predates this field (or an
+          ## app that is always-on) keeps working unchanged.
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Whether the described service is enabled";
+          };
 
           label = lib.mkOption {
             type = lib.types.str;

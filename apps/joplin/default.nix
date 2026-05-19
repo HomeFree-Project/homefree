@@ -95,6 +95,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.joplin) label name project-name;
+      enable = config.homefree.service-options.joplin.enable;
       sso = {
         kind = "none";
         applicable = false;

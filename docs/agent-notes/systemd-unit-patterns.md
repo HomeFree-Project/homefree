@@ -22,6 +22,30 @@ Implications:
 - It reads `config.homefree.service-config`, so new apps are covered
   automatically — no hardcoded list.
 
+### A disabled app must set `service-config.enable`
+
+An app's `homefree.service-config` block is normally emitted
+**unconditionally** (so the admin UI can list a disabled service and
+offer to turn it on). But when the app is disabled, its *backing* unit
+is not generated — the `virtualisation.oci-containers.containers.<name>`
+(or `systemd.services.<name>`) block is guarded by the app's `enable`
+flag, so no `ExecStart` is ever produced.
+
+The restart policy must therefore **not** declare `systemd.services.<unit>`
+for a disabled service: doing so materializes a stub unit with
+`Restart=`/`StartLimit*` but no `ExecStart=`, and systemd rejects it —
+*"Service has no ExecStart=, ExecStop=, or SuccessAction=. Refusing"* —
+which fails `nixos-rebuild switch` with exit 4.
+
+The fix: every `service-config` entry carries a top-level `enable` field
+(default `true`). Each app sets it to its own flag,
+`enable = config.homefree.service-options.<name>.enable;`, and
+`service-restart-policy.nix` filters on it before flattening
+`systemd-service-names`. An app that gates its *entire* config block
+(`lib.mkIf cfg.enable` / `lib.optionals enabled [ ... ]`, e.g. headscale,
+backup-canary) doesn't need the field — its entry simply doesn't exist
+when disabled. New unconditional-`[{ ... }]` apps **must** set `enable`.
+
 ## Oneshot bootstrap units: omit `RemainAfterExit`
 
 A oneshot whose job is to **assert filesystem state** (perms, ownership,

@@ -354,6 +354,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.snipe-it) label name project-name;
+      enable = config.homefree.service-options.snipe-it.enable;
       sso = {
         kind = "none";
         applicable = false;

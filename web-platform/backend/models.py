@@ -166,6 +166,12 @@ class UnitState:
     name: str
     active_state: str
     sub_state: str
+    # Role within a blue/green pair: "active" (the colour serving
+    # traffic), "standby" (the dormant colour — inactive is EXPECTED,
+    # not an error), or None (not blue/green, or the pair is mid-flip /
+    # down). Lets the UI avoid painting a healthy dormant standby as a
+    # red error chip. Set by _collapse_blue_green in resolvers/services.py.
+    bg_role: Optional[str] = None
 
 
 @dataclass

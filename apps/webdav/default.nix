@@ -197,6 +197,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.webdav) label name project-name;
+      enable = config.homefree.service-options.webdav.enable;
       systemd-service-names = [
         "podman-webdav"
       ];

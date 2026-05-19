@@ -108,6 +108,21 @@ class ConfigWriter:
             if 'backups' in config:
                 current_config['backups'].update(config['backups'])
 
+            # External Proxies (`service-config`) and whole-domain
+            # transparent proxies (`proxied-domains`) are edited as whole
+            # arrays by the admin UI. Unlike `developers` below they have
+            # no competing on-disk writer, and the frontend always sends
+            # the full array (sourced from the fresh on-disk config when
+            # unedited), so a whole-array replace is correct and cannot
+            # resurrect deleted rows. Without this, deletions on the
+            # External Proxies / Proxied Domains pages are silently
+            # dropped — the row reappears after a page reload.
+            if 'service-config' in config:
+                current_config['service-config'] = config['service-config']
+
+            if 'proxied-domains' in config:
+                current_config['proxied-domains'] = config['proxied-domains']
+
             # NOTE: the `developers` section (registered custom flakes) is
             # deliberately NOT written here. It is owned exclusively by
             # DevelopersService, which writes it via its own endpoints and

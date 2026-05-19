@@ -15,6 +15,12 @@ import { LitElement, html, css } from 'lit';
  * and a slot for everything else. Each surface keeps its own data
  * mapping and event wiring.
  *
+ * Slots:
+ *   header   — optional; sits on the right edge of the icon/title row.
+ *              The admin Apps card injects a status badge + action
+ *              icons here. The Home launcher leaves it empty.
+ *   (default) — the card body, below the header (admin controls etc.).
+ *
  * Properties:
  *   label    — service label; drives the icon URL /icons/<label>.svg
  *   name     — display title
@@ -32,6 +38,7 @@ class AppCard extends LitElement {
     enabled: { type: Boolean, reflect: true },
     compact: { type: Boolean, reflect: true },
     _hasBody: { type: Boolean, state: true },
+    _hasHeader: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -70,11 +77,29 @@ class AppCard extends LitElement {
       transform: translateY(-1px);
     }
 
+    /* The head row wraps: on a card too narrow to seat the title and
+       the header slot side by side (a single-column phone layout), the
+       header slot drops to its own line below the icon/title instead of
+       overflowing the card's right edge. row-gap spaces that wrapped
+       line; on wide cards nothing wraps and row-gap is inert. */
     .head {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
+      gap: 10px 12px;
       min-width: 0;
+    }
+
+    /* Optional header slot — pinned to the right edge of the head row
+       (status badge + action icons on the admin card). margin-left:auto
+       pushes it past the flexible .titles column. Empty on the Home
+       launcher, where it collapses to nothing. When the row wraps it
+       sits on its own line; margin-left:auto then right-aligns it. */
+    .head-aside {
+      margin-left: auto;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
     }
 
     .icon {
@@ -104,8 +129,18 @@ class AppCard extends LitElement {
       object-fit: contain;
     }
 
+    /* The flexible column of the head row: it must grow into the space
+       left by the icon and the (fixed-size) header slot. Without an
+       explicit flex-grow it defaults to flex:0 1 auto and loses the
+       shrink contest to the header slot, collapsing the name to a few
+       clipped letters. flex:1 makes it claim free space.
+       The 140px min-width is the wrap trigger: on a card too narrow to
+       seat icon + 140px title + the header slot, flexbox wraps the
+       header slot to its own line instead of crushing the title to
+       nothing. The name still ellipsis-truncates inside this column. */
     .titles {
-      min-width: 0;
+      flex: 1;
+      min-width: 140px;
     }
     .name {
       font-weight: 600;
@@ -156,11 +191,17 @@ class AppCard extends LitElement {
     this.enabled = false;
     this.compact = false;
     this._hasBody = false;
+    this._hasHeader = false;
   }
 
   /** Track whether the default slot has any assigned content. */
   _onSlotChange(e) {
     this._hasBody = e.target.assignedNodes({ flatten: true }).length > 0;
+  }
+
+  /** Track whether the named `header` slot has any assigned content. */
+  _onHeaderSlotChange(e) {
+    this._hasHeader = e.target.assignedNodes({ flatten: true }).length > 0;
   }
 
   /** Two-letter initials fallback, derived from the display name. */
@@ -198,6 +239,9 @@ class AppCard extends LitElement {
         <div class="titles">
           <p class="name">${this.name || this.label}</p>
           ${sub ? html`<p class="sub">${sub}</p>` : ''}
+        </div>
+        <div class="head-aside" style=${this._hasHeader ? '' : 'display: none;'}>
+          <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
         </div>
       </div>
       <div class="body" style=${this._hasBody ? '' : 'margin-top: 0;'}>

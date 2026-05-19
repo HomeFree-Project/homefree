@@ -203,6 +203,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.ollama) label name project-name;
+      enable = config.homefree.service-options.ollama.enable;
       ## @TODO: Why is this not a list?
       systemd-service-names = [
         "ollama"

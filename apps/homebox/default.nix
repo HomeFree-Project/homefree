@@ -180,6 +180,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.homebox) label name project-name;
+      enable = config.homefree.service-options.homebox.enable;
       systemd-service-names = [
         "podman-homebox"
       ];
