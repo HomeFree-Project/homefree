@@ -52,15 +52,23 @@ class ExtraProxiesModule extends LitElement {
   handleProxiesChange(e) {
     // table-editor returns rows with snake_case keys; subdomains is a
     // comma-separated text field that we split/join.
-    const data = (e.detail.data || []).map(row => ({
-      ...row,
-      port: row.port === '' || row.port == null ? 80 : Number(row.port),
-      subdomains: Array.isArray(row.subdomains)
+    const data = (e.detail.data || []).map(row => {
+      const parsedSubdomains = Array.isArray(row.subdomains)
         ? row.subdomains
         : (typeof row.subdomains === 'string'
             ? row.subdomains.split(',').map(s => s.trim()).filter(Boolean)
-            : [])
-    }));
+            : []);
+      return {
+        ...row,
+        port: row.port === '' || row.port == null ? 80 : Number(row.port),
+        // The help box promises subdomains defaults to [label] when
+        // blank — apply it here so the saved entry actually has a
+        // subdomain (an empty list yields no URL and no Caddy route).
+        subdomains: parsedSubdomains.length > 0
+          ? parsedSubdomains
+          : (row.label ? [row.label] : [])
+      };
+    });
 
     const newConfig = { ...this.config, 'service-config': data };
     this.config = newConfig;

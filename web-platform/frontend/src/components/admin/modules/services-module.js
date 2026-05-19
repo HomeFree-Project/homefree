@@ -97,10 +97,10 @@ class ServicesModule extends LitElement {
        auto-fill of narrow 280px tiles) gives each card enough width to
        seat the icon, name, status badge and action buttons on one
        header row without the name clipping. Collapses to a single
-       column on narrow screens. An expanded card spans the full row so
-       its config form has room (see .card-expanded). Default grid
-       align-items:stretch makes every card in a row the same height;
-       app-card has height:100% to fill the cell. */
+       column on narrow screens. An expanded card keeps its column and
+       simply grows taller in place — it must not widen or reflow the
+       grid. Default grid align-items:stretch makes every card in a row
+       the same height; app-card has height:100% to fill the cell. */
     .service-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -111,21 +111,18 @@ class ServicesModule extends LitElement {
         grid-template-columns: 1fr;
       }
     }
-    app-card.card-expanded {
-      grid-column: 1 / -1;
-    }
 
     /* ---- App card: three stacked zones --------------------------------
        The admin app card was a ragged stack of left-aligned rows. It is
        now organised into three deliberate zones inside <app-card>:
          1. header slot  — status badge + lifecycle icon-buttons, pinned
                             to the right of the icon/title row.
-         2. .card-meta   — an aligned label/value block (URL, SSO). A
-                            fixed-width label column lines every row up.
-         3. .card-footer — the Enable / Public toggles, fenced off from
+         2. .card-meta   — an aligned label/value block (just the URL).
+                            A fixed-width label column lines every row up.
+         3. .card-footer — the Enable / Expose toggles, fenced off from
                             the meta block by a hairline rule.
-       The per-unit systemd list and the deeper config form live below,
-       inside the "More settings" expander. ------------------------------ */
+       The SSO pill, per-unit systemd list and the deeper config form
+       live below, inside the "Details & Config" expander. -------------- */
 
     /* Zone 1 — header slot content (sits in <app-card>'s .head-aside). */
     .card-head {
@@ -249,10 +246,25 @@ class ServicesModule extends LitElement {
       flex-shrink: 0;
       opacity: 0.8;
     }
-    /* The SSO value carries one of three coloured states inline. */
-    .meta-value .sso-state.ok       { color: var(--hf-ok); }
-    .meta-value .sso-state.warn     { color: var(--hf-warn); }
-    .meta-value .sso-state.disabled { color: var(--hf-text-subtle); }
+    /* SSO posture as a pill (inside the "Details & Config" expander).
+       Mirrors the .status-badge pill so it reads as a badge, not as a
+       link — the old inline coloured text was indistinguishable from
+       the URL anchor. */
+    .sso-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      background: var(--hf-surface-3);
+      color: var(--hf-text-muted);
+    }
+    .sso-pill.ok       { background: rgba(52,211,153,0.13); color: var(--hf-ok); }
+    .sso-pill.warn     { background: rgba(245,158,11,0.13); color: var(--hf-warn); }
+    .sso-pill.disabled { background: var(--hf-surface-3);   color: var(--hf-text-subtle); }
 
     /* Zone 3 — toggle footer. Fenced from the meta block by a hairline;
        the two toggle rows stack with a tight, even gap. */
@@ -313,7 +325,7 @@ class ServicesModule extends LitElement {
       }
     }
 
-    /* ---- Systemd units list (inside the "More settings" expander) -----
+    /* ---- Systemd units list (inside the "Details & Config" expander) --
        The per-unit health that used to crowd the card face now lives
        here: one row per unit, a small status dot + the unit name. */
     .systemd-units {
@@ -938,7 +950,11 @@ class ServicesModule extends LitElement {
     // expandable — hasUnits feeds hasConfig for that reason.
     const hasUnits = isEnabled && !service.parent &&
       service.systemd_services && service.systemd_services.length > 0;
-    let hasConfig = hasSecrets || hasExtraOptions || hasChildren || hasUnits;
+    // SSO posture also lives inside the expander; a service with a real
+    // SSO row (anything but an 'infra' bridge service) must stay
+    // expandable even when it has no other config.
+    const hasSso = !service.parent && (service.sso_kind || 'none') !== 'infra';
+    let hasConfig = hasSecrets || hasExtraOptions || hasChildren || hasUnits || hasSso;
 
     // For child services (instances), check if parent has instance configuration
     if (service.parent) {
@@ -963,16 +979,15 @@ class ServicesModule extends LitElement {
     // The whole service is one <app-card>, organised into three zones:
     //   - header slot: a status badge + lifecycle icon-buttons, pinned
     //     beside the icon/title.
-    //   - default slot: an aligned meta block (URL, SSO) then a toggle
-    //     footer, then the expandable config section.
-    // An expanded card spans the full grid row so its config form has
-    // room. The systemd unit list lives inside that expander.
-    const cardClass = isExpanded ? 'card-expanded' : '';
+    //   - default slot: an aligned meta block (just the URL) then a
+    //     toggle footer, then the expandable details section.
+    // The expander (SSO posture + systemd unit list + config form)
+    // grows the card taller in its own grid cell — it does not widen
+    // the card or reflow the grid.
     const actionErr = this.actionErrors[service.label];
 
     return html`
       <app-card
-        class="${cardClass}"
         ?enabled=${isEnabled}
         .label=${service.parent || service.label}
         .name=${service.name}
@@ -1013,7 +1028,7 @@ class ServicesModule extends LitElement {
 
             ${isEnabled ? html`
               <div class="toggle-container">
-                <span class="toggle-label">Public (WAN)</span>
+                <span class="toggle-label">Expose to internet</span>
                 <label class="toggle-switch">
                   <input
                     type="checkbox"
@@ -1040,39 +1055,34 @@ class ServicesModule extends LitElement {
     `;
   }
 
-  /* The aligned meta block: a [label | value] grid carrying the service
-     URL and its SSO posture. Every label edge and value edge lines up
-     across rows. Returns '' when a service has nothing to show (e.g. a
-     disabled service, or an infra service with no URL and no SSO row),
-     so the card collapses to just header + footer. */
+  /* The aligned meta block: a [label | value] grid carrying just the
+     service URL. SSO posture lives inside the "Details & Config"
+     expander instead (see renderSsoSection). Returns '' when there is
+     nothing to show (e.g. a disabled service, or an infra service with
+     no URL), so the card collapses to just header + footer. */
   renderMetaBlock(service, isEnabled) {
-    const rows = [];
+    if (!(service.url && isEnabled)) return '';
 
-    if (service.url && isEnabled) {
-      rows.push(html`
+    return html`
+      <div class="card-meta">
         <span class="meta-label">URL</span>
         <a class="meta-value" href="${service.url}" target="_blank" rel="noopener">
           <span>${service.url.replace(/^https?:\/\//, '')}</span>
           ${actionIcon('external-link')}
         </a>
-      `);
-    }
-
-    const ssoRow = this.renderSsoMetaRow(service);
-    if (ssoRow) rows.push(ssoRow);
-
-    if (rows.length === 0) return '';
-    return html`<div class="card-meta">${rows}</div>`;
+      </div>
+    `;
   }
 
-  /* The SSO posture as one aligned meta row.
-     This used to live on a separate /admin/sso page; folding it into
-     the services list keeps everything about a service in one place.
+  /* The SSO posture as a section inside the "Details & Config"
+     expander. It used to sit on the always-visible card face as
+     coloured text that read like the URL link; rendering it here as a
+     pill — beside the systemd unit list — keeps it distinct and groups
+     all of a service's status in one place.
      Backend (resolvers/services.py) supplies sso_kind, sso_provisioned
-     and sso_applicable alongside the runtime status. Returns '' for
-     'infra' services (Zitadel, oauth2-proxy) — they are the bridge
-     itself, not a consumer, so they carry no SSO row. */
-  renderSsoMetaRow(service) {
+     and sso_applicable. Returns '' for 'infra' services (Zitadel,
+     oauth2-proxy) — they are the bridge itself, not a consumer. */
+  renderSsoSection(service) {
     const kind = service.sso_kind || 'none';
     if (kind === 'infra') return '';
 
@@ -1082,24 +1092,28 @@ class ServicesModule extends LitElement {
       basic_auth: 'Caddy + Basic-Auth bridge',
     })[kind];
 
-    let value;
+    let pill;
     if (kind === 'none') {
       // sso_applicable distinguishes a deliberate "not applicable"
       // posture (false) from an integration that is simply pending
       // (true). The reasoning lives in a code comment beside each
       // service's sso block, not in the UI.
-      value = service.sso_applicable === false
-        ? html`<span class="sso-state disabled">Not applicable</span>`
-        : html`<span class="sso-state disabled">Not yet implemented</span>`;
+      pill = service.sso_applicable === false
+        ? html`<span class="sso-pill disabled">Not applicable</span>`
+        : html`<span class="sso-pill disabled">Not yet implemented</span>`;
     } else {
-      value = service.sso_provisioned
-        ? html`<span class="sso-state ok">${typeLabel}</span>`
-        : html`<span class="sso-state warn">${typeLabel} (pending)</span>`;
+      pill = service.sso_provisioned
+        ? html`<span class="sso-pill ok">${typeLabel}</span>`
+        : html`<span class="sso-pill warn">${typeLabel} (pending)</span>`;
     }
 
     return html`
-      <span class="meta-label">SSO</span>
-      <span class="meta-value">${value}</span>
+      <div class="secrets-section">
+        <div class="secrets-header">
+          <span>Single sign-on</span>
+        </div>
+        <div class="secrets-content">${pill}</div>
+      </div>
     `;
   }
 
@@ -1144,7 +1158,7 @@ class ServicesModule extends LitElement {
   }
 
   /* The per-unit systemd health list — one row per unit, a small status
-     dot + the unit name. Lives inside the "More settings" expander; it
+     dot + the unit name. Lives inside the "Details & Config" expander; it
      used to crowd the card face as a monospace comma list. */
   renderSystemdSection(service) {
     if (service.parent) return '';
@@ -1213,7 +1227,7 @@ class ServicesModule extends LitElement {
         @click=${() => this.toggleSecretsExpanded(expandId)}
       >
         <span class="config-expander-arrow">▶</span>
-        <span>${isExpanded ? 'Hide settings' : 'More settings...'}</span>
+        <span>${isExpanded ? 'Hide details & config' : 'Details & Config'}</span>
       </div>
 
       ${isExpanded ? html`
@@ -1221,6 +1235,7 @@ class ServicesModule extends LitElement {
           ${this.renderChildInstances(service)}
           ${this.renderOptionsSection(service)}
           ${this.renderSecretsSection(service)}
+          ${this.renderSsoSection(service)}
           ${this.renderSystemdSection(service)}
         `}
       ` : ''}

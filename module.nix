@@ -1311,6 +1311,53 @@
           };
         };
       });
+
+      ## Normalize every entry before any consumer reads the option.
+      ## Targets External Proxy rows added through the admin UI, whose
+      ## editor collects neither a subdomain nor a domain reliably:
+      ##
+      ##   - Empty `subdomains` defaults to `[ label ]`. The editor's
+      ##     help text promises this ("defaults to [label] if blank")
+      ##     but never applied it, so entries saved with the field
+      ##     blank had `subdomains = []` — URL generation
+      ##     (services/admin-web) and Caddy vhost generation
+      ##     (services/caddy) both key off `subdomains`, so the entry
+      ##     got no URL and no route.
+      ##   - Empty `https-domains`/`http-domains` defaults
+      ##     `https-domains` to the deployment's own domains.
+      ##
+      ## With both filled, the entry gets a real URL — visible on the
+      ## admin card and surfaced on the home.<domain> grid — and an
+      ## actual Caddy route, with no instance-side glue.
+      ##
+      ## An entry that already specifies these is left untouched
+      ## (HomeFree's own apps set them in their .nix files).
+      apply = entries: map (entry:
+        let
+          rp = entry.reverse-proxy;
+          ## Only normalize entries that actually serve over the reverse
+          ## proxy — leave disabled entries and non-proxy entries alone.
+          ## rootDomain entries deliberately have no subdomain.
+          normalize = rp.enable && !rp.rootDomain;
+          needsSubdomain = normalize && rp.subdomains == [] && entry.label != "";
+          needsDomains =
+            normalize
+            && rp.https-domains == []
+            && rp.http-domains == [];
+          subdomains =
+            if needsSubdomain then [ entry.label ] else rp.subdomains;
+          https-domains =
+            if needsDomains
+            then [ config.homefree.system.domain ]
+                 ++ config.homefree.system.additionalDomains
+            else rp.https-domains;
+        in
+          entry // {
+            reverse-proxy = rp // {
+              inherit subdomains https-domains;
+            };
+          }
+      ) entries;
     };
 
     docker-io-auth = {
