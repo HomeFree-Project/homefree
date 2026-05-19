@@ -32,6 +32,8 @@ class SystemModule extends LitElement {
       display: block;
     }
 
+    /* Width cap + centering is applied once, app-wide, on
+       admin-app.js's .content-area > * — no per-module max-width. */
     .module-container {
       width: 100%;
     }
@@ -85,7 +87,7 @@ class SystemModule extends LitElement {
 
     /* Textarea + button stacked; button left-aligned with the
        textarea and sized to its own content (align-items: flex-start
-       keeps it from stretching the full max-width). */
+       keeps it from stretching to the textarea's full width). */
     .add-key-row {
       display: flex;
       flex-direction: column;
@@ -115,7 +117,6 @@ class SystemModule extends LitElement {
 
     textarea {
       width: 100%;
-      max-width: 500px;
       box-sizing: border-box;
       padding: 10px 12px;
       font-size: 14px;

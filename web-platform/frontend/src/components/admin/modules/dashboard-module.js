@@ -29,6 +29,8 @@ class DashboardModule extends LitElement {
 
   static styles = css`
     :host { display: block; }
+    /* Width cap + centering is applied once, app-wide, on
+       admin-app.js's .content-area > * — no per-module max-width. */
     .module-container { width: 100%; }
 
     h2 {
@@ -39,14 +41,13 @@ class DashboardModule extends LitElement {
     }
     h2:first-child { margin-top: 0; }
 
+    /* Summary cards auto-fill: column count grows on wide screens and
+       collapses to one on a phone — no fixed count, no breakpoint. */
     .cards {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fill, minmax(var(--hf-card-min-sm), 1fr));
       gap: 12px;
       margin-bottom: 16px;
-    }
-    @media (max-width: 900px) {
-      .cards { grid-template-columns: 1fr; }
     }
     .card {
       background: var(--hf-surface);

@@ -21,6 +21,8 @@ class UpdatesModule extends LitElement {
   static styles = css`
     :host { display: block; }
 
+    /* Width cap + centering is applied once, app-wide, on
+       admin-app.js's .content-area > * — no per-module max-width. */
     .module-container { width: 100%; }
 
     /* Unified notification box — grey-tinted bg, colored left edge,

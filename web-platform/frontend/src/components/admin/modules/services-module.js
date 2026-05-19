@@ -93,23 +93,20 @@ class ServicesModule extends LitElement {
       border-color: var(--hf-accent);
     }
 
-    /* Card grid — two <app-card>s per row. Two-up (rather than the old
-       auto-fill of narrow 280px tiles) gives each card enough width to
-       seat the icon, name, status badge and action buttons on one
-       header row without the name clipping. Collapses to a single
-       column on narrow screens. An expanded card keeps its column and
-       simply grows taller in place — it must not widen or reflow the
-       grid. Default grid align-items:stretch makes every card in a row
-       the same height; app-card has height:100% to fill the cell. */
+    /* Card grid — auto-fill with a per-card minimum width. The column
+       count grows with the viewport (more cards per row on a wide
+       monitor) and collapses to one on a phone, with no fixed count
+       and no breakpoint. The --hf-card-min floor keeps each card wide
+       enough to seat the icon, name, status badge and action buttons
+       on one header row without the name clipping. An expanded card
+       keeps its column and simply grows taller in place — it must not
+       widen or reflow the grid. Default grid align-items:stretch makes
+       every card in a row the same height; app-card has height:100% to
+       fill the cell. */
     .service-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(auto-fill, minmax(var(--hf-card-min), 1fr));
       gap: 12px;
-    }
-    @media (max-width: 720px) {
-      .service-grid {
-        grid-template-columns: 1fr;
-      }
     }
 
     /* ---- App card: three stacked zones --------------------------------
@@ -356,13 +353,18 @@ class ServicesModule extends LitElement {
     .unit-dot.unit-standby,
     .unit-dot.unit-unknown  { background: var(--hf-text-subtle); }
 
-    /* Each toggle is a full-width row inside the card: label on the
-       left, switch on the right — readable on desktop and mobile. */
+    /* Each toggle is a row inside the card: label on the left, switch
+       pushed to the right edge by margin-left:auto on the switch. The
+       label stays glued to the start of the line, so on a very wide
+       card the label and switch are not flung to opposite ends —
+       margin-left:auto keeps the pairing correct at any card width. */
     .toggle-container {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
+    }
+    .toggle-container .toggle-switch {
+      margin-left: auto;
     }
 
     .toggle-label {

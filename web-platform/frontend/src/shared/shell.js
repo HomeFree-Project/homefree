@@ -59,9 +59,11 @@ export const shellStyles = css`
     height: 100%;
   }
 
-  /* Sidebar */
+  /* Sidebar. Rail widths come from theme tokens so the content-
+     centering math in admin-app.js (.content-area > *) and the
+     sidebar's own width stay in lockstep. */
   .sidebar {
-    width: 260px;
+    width: var(--hf-sidebar-w-expanded);
     background: var(--hf-surface);
     border-right: 1px solid var(--hf-border);
     color: var(--hf-text);
@@ -72,7 +74,7 @@ export const shellStyles = css`
     flex-shrink: 0;
   }
   .sidebar.collapsed {
-    width: 70px;
+    width: var(--hf-sidebar-w-collapsed);
   }
   .sidebar-header {
     height: 64px;

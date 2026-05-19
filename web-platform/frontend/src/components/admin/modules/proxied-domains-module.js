@@ -18,6 +18,8 @@ class ProxiedDomainsModule extends LitElement {
 
   static styles = css`
     :host { display: block; }
+    /* Width cap + centering is applied once, app-wide, on
+       admin-app.js's .content-area > * — no per-module max-width. */
     .module-container { width: 100%; }
     .help-box {
       background: rgba(59, 130, 246, 0.08);

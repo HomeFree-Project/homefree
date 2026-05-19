@@ -301,6 +301,68 @@ class AdminApp extends LitElement {
       padding: 24px;
       background: var(--hf-bg);
     }
+    /* Single content-width cap + viewport-centering for every admin
+       page. The module element renderModule() mounts is the direct
+       child of .content-area, so capping/centering that child caps
+       every page uniformly.
+
+       .content-area is a flex child to the RIGHT of the in-flow
+       desktop sidebar, so plain margin-inline:auto would centre the
+       box in the POST-sidebar space — it would visibly shift when
+       the sidebar collapses (260->70px). Instead we centre on the
+       full viewport: the box's left edge must sit at (100vw - C)/2
+       from the viewport's left, which is (100vw - C)/2 - S from
+       .content-area's left edge, where S = --hf-sidebar-w (the live
+       sidebar width, set inline on .app-container: 260/70 on
+       desktop, 0 on the mobile overlay). margin-right:auto absorbs
+       the remainder.
+
+       max(0px, ...) clamps the left margin to zero: on wide
+       monitors the calc wins and the box is centred on the monitor
+       and does NOT move when the sidebar toggles; on narrower
+       viewports the 0 floor wins and the box just fills the content
+       area, sitting flush against .content-area's own 24px (or 16px
+       on mobile) padding on both sides — symmetric gutters with no
+       extra margin stacked on the left. The box may move on toggle
+       in this regime; that is acceptable since there is no monitor
+       margin left to centre within. On mobile S is 0px so the same
+       formula resolves to margin-left:0 with no special case.
+
+       100vw is the true viewport width here because the root
+       document never scrolls (scrolling is on .content-area); if
+       that ever changes, revisit this. */
+    .content-area > * {
+      max-width: var(--hf-content-max);
+      /* Floor is 0, not the gutter width. .content-area already
+         provides a symmetric 24px (16px on mobile) of padding on
+         each side; a non-zero margin-left floor would stack on top
+         of that, making the left gap visibly larger than the right
+         (where margin-right:auto collapses to 0 in the narrow
+         regime). In the wide regime the calc value far exceeds 0
+         and wins anyway. */
+      margin-left: max(
+        0px,
+        calc(
+          (100vw - var(--hf-content-max)) / 2
+          - var(--hf-sidebar-w, var(--hf-sidebar-w-expanded))
+        )
+      );
+      margin-right: auto;
+      /* The sidebar transitions its width property over 0.3s ease;
+         the inline --hf-sidebar-w on .app-container, by contrast,
+         snaps instantly when sidebarCollapsed flips. Without a
+         matching transition here, our calc()'d margin-left jumps to
+         its new value on frame one (e.g. 860->1050 at 3840px) while
+         .content-area's left edge is still mid-animation — the box
+         briefly shifts ~190px right and slides back as the sidebar
+         finishes animating. Matching transition duration + easing
+         keeps the box's margin-left and .content-area's left edge
+         moving in lockstep, so they cancel continuously and the box
+         stays put across the full 0.3s. Inert in the narrow regime
+         (margin-left is the constant 24px floor — nothing to
+         animate). */
+      transition: margin-left 0.3s ease;
+    }
 
     .loading-overlay {
       display: flex;
@@ -2344,7 +2406,14 @@ class AdminApp extends LitElement {
           </button>
         </div>
       ` : ''}
-      <div class="app-container ${this.updateAvailable || this.setupIncomplete ? 'with-banner' : ''}">
+      <div
+        class="app-container ${this.updateAvailable || this.setupIncomplete ? 'with-banner' : ''}"
+        style="--hf-sidebar-w: ${this.isMobile
+          ? '0px'
+          : (this.sidebarCollapsed
+              ? 'var(--hf-sidebar-w-collapsed)'
+              : 'var(--hf-sidebar-w-expanded)')}"
+      >
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">

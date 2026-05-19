@@ -36,6 +36,18 @@ export const themeVars = css`
     --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.4);
     --hf-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.6);
 
+    /* Layout — one app-wide content cap + responsive grid floors.
+       Every admin page is capped at --hf-content-max via
+       .content-area > * in admin-app.js; modules themselves stay
+       width:100%. The sidebar rail widths are shared by shell.js's
+       .sidebar width property and admin-app.js's content-centering
+       math so both sides of the layout stay in sync from one source. */
+    --hf-content-max:          1600px;   /* app-wide content cap         */
+    --hf-sidebar-w-expanded:    260px;   /* desktop sidebar rail, open   */
+    --hf-sidebar-w-collapsed:    70px;   /* desktop sidebar rail, closed */
+    --hf-card-min:              300px;   /* service-card auto-fill floor */
+    --hf-card-min-sm:           230px;   /* dashboard card auto-fill floor */
+
     color: var(--hf-text);
     background: var(--hf-bg);
     color-scheme: dark;

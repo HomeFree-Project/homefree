@@ -54,7 +54,11 @@ class FormField extends LitElement {
       color: var(--hf-text);
       font-family: inherit;
       transition: border-color 0.15s, box-shadow 0.15s;
-      max-width: 500px;
+      /* The field fills its grid column; the page-level width limit is
+         the capped .module-container in form modules, not a per-field
+         max-width (a fixed cap stranded standalone fields with dead
+         space, and the <dropdown-select> for type="select" never
+         honored it — so selects and inputs rendered different widths). */
       width: 100%;
       /* Without border-box, the 12px padding + 1px border add ONTO a
          width:100%, so the field overflows its parent on narrow
