@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { themeVars } from '../../shared/theme.js';
 
 /**
  * In-page confirmation dialog — a centered modal that replaces the
@@ -18,7 +19,9 @@ import { LitElement, html, css } from 'lit';
  *
  * confirmDialog() returns a Promise<boolean> — true if the user
  * confirmed, false if they cancelled / dismissed (overlay click or
- * Escape). Lives in Shadow DOM so the page theme tokens still apply.
+ * Escape). The singleton is mounted on <body>, outside every app
+ * shadow root, so it imports `themeVars` into its own `static styles`
+ * to declare the --hf-* tokens itself — they are not inherited.
  */
 class ConfirmDialog extends LitElement {
   static properties = {
@@ -31,14 +34,18 @@ class ConfirmDialog extends LitElement {
     alertOnly: { type: Boolean, state: true }, // hide Cancel, single OK
   };
 
-  static styles = css`
+  // themeVars FIRST — this element is mounted on <body>, outside every
+  // app shadow root, so it inherits none of the page's --hf-* tokens.
+  // It must declare them itself or the panel renders transparent /
+  // borderless with invisible text.
+  static styles = [themeVars, css`
     :host { display: block; }
 
     .overlay {
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(2px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -48,9 +55,13 @@ class ConfirmDialog extends LitElement {
 
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+    /* Opaque card with a clearly visible frame — the overlay behind it
+       is blurred, so a weak border lets the panel blend into the
+       backdrop and the text reads poorly. A lighter surface + stronger
+       border keeps it a distinct, legible card. */
     .dialog {
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border);
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
       border-radius: 12px;
       padding: 28px;
       max-width: 440px;
@@ -124,7 +135,7 @@ class ConfirmDialog extends LitElement {
       background: color-mix(in srgb, var(--hf-err) 14%, transparent);
       border-color: var(--hf-err);
     }
-  `;
+  `];
 
   constructor() {
     super();

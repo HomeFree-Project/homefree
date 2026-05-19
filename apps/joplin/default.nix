@@ -97,7 +97,13 @@ in
       inherit (config.homefree.service-options.joplin) label name project-name;
       sso = {
         kind = "none";
-        notes = "Joplin Server supports SAML only — no native OIDC. Joplin's desktop and mobile clients sync via the server's own credentials API, so a Caddy SSO gate would break sync. OIDC support is requested upstream (laurent22/joplin#14252); revisit when shipped.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Joplin Server supports SAML only — no native OIDC. Joplin's
+        ## desktop and mobile clients sync via the server's own
+        ## credentials API, so a Caddy SSO gate would break sync. OIDC
+        ## support is requested upstream (laurent22/joplin#14252);
+        ## revisit when shipped.
       };
       systemd-service-names = [
         "podman-joplin"

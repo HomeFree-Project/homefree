@@ -267,12 +267,6 @@ class ServicesModule extends LitElement {
     .service-sso .pill.ok       { background: rgba(74,222,128,0.12); color: #4ade80; }
     .service-sso .pill.warn     { background: rgba(250,204,21,0.12); color: #facc15; }
     .service-sso .pill.disabled { background: var(--hf-surface-2);   color: var(--hf-text-muted); }
-    .service-sso .notes {
-      font-size: 11px;
-      color: var(--hf-text-muted);
-      line-height: 1.4;
-      max-width: 560px;
-    }
 
     /* Each toggle is a full-width row inside the card: label on the
        left, switch on the right — readable on desktop and mobile. */
@@ -1070,11 +1064,11 @@ class ServicesModule extends LitElement {
     `;
   }
 
-  /* Render the SSO pill + notes for a service row.
+  /* Render the SSO pill for a service row.
      This used to live on a separate /admin/sso page; folding it into
      the services list keeps everything about a service in one place.
-     Backend (resolvers/services.py) supplies sso_kind, sso_notes,
-     sso_provisioned alongside the runtime status. */
+     Backend (resolvers/services.py) supplies sso_kind, sso_provisioned
+     and sso_applicable alongside the runtime status. */
   renderSsoBadge(service) {
     const kind = service.sso_kind || 'none';
     // 'infra' services (Zitadel, oauth2-proxy) don't show on the SSO
@@ -1089,9 +1083,11 @@ class ServicesModule extends LitElement {
 
     let statusPill;
     if (kind === 'none') {
-      // Same convention as the old SSO page: a note explains *why*
-      // a service won't be SSO'd, vs. an unstarted integration.
-      statusPill = service.sso_notes
+      // sso_applicable distinguishes a deliberate "not applicable"
+      // posture (false) from an integration that is simply pending
+      // (true). The reasoning lives in a code comment beside each
+      // service's sso block, not in the UI.
+      statusPill = service.sso_applicable === false
         ? html`<span class="pill disabled">SSO: not applicable</span>`
         : html`<span class="pill disabled">SSO: not yet implemented</span>`;
     } else {
@@ -1103,7 +1099,6 @@ class ServicesModule extends LitElement {
     return html`
       <div class="service-sso">
         ${statusPill}
-        ${service.sso_notes ? html`<div class="notes">${service.sso_notes}</div>` : ''}
       </div>
     `;
   }

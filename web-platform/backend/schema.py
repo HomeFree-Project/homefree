@@ -117,6 +117,7 @@ class ServiceStatus:
     sso_kind: str = "none"
     sso_notes: str = ""
     sso_provisioned: bool = False
+    sso_applicable: bool = True
 
 
 # Query Type

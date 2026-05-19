@@ -3,6 +3,10 @@ let
   containerDataPath = "/var/lib/freshrss-podman";
   secretsDir = "/var/lib/homefree-secrets/freshrss";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   # image = "lscr.io/linuxserver/freshrss";
   image = "freshrss/freshrss";
   version = "1.28.1";
@@ -90,10 +94,17 @@ PGEOF
     } > ${containerDataPath}/ca-bundle.crt
     chmod 644 ${containerDataPath}/ca-bundle.crt
 
-    if [ ! -s ${secretsDir}/oidc-crypto-key ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 32 > ${secretsDir}/oidc-crypto-key
-      chmod 600 ${secretsDir}/oidc-crypto-key
-    fi
+    ## oidc-crypto-key — Apache mod_auth_openidc state-cookie
+    ## passphrase. Anchored into encrypted /etc/nixos/secrets so it
+    ## survives a restore (lib/secrets-anchor.nix); regenerating it
+    ## breaks in-flight logins.
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "freshrss";
+      key = "oidc-crypto-key";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+    }}
 
     install -m 600 /dev/null ${ssoEnvFile}
     if [ -s ${secretsDir}/oidc-client-id ] \
@@ -340,7 +351,10 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Apache mod_auth_openidc + http_auth mode. Admin is whichever user matches FreshRSS's default_user (must equal Zitadel preferred_username).";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Apache mod_auth_openidc + http_auth mode. Admin is whichever
+        ## user matches FreshRSS's default_user (must equal Zitadel
+        ## preferred_username).
       };
       reverse-proxy = {
         enable = config.homefree.service-options.freshrss.enable;

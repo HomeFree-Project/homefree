@@ -5,6 +5,10 @@ let
   version-appapi-harp = "v0.4.0";
   containerDataPath = "/var/lib/nextcloud-podman";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   port = 3010;
   port-redis = 6379; # Different from other Redis instances
   database-name = "nextcloud";
@@ -156,17 +160,17 @@ let
     ## Nextcloud loads in addition to the bundled certs). That
     ## happens in postStart below; nothing to do here at preStart.
     ##
-    ## Auto-generate the Nextcloud admin password on first boot. Once
-    ## SSO is provisioned the user will log in via Zitadel and never
-    ## need this — it stays as an emergency escape hatch and as the
-    ## password the install wizard uses to bootstrap the admin user.
-    ## Stored in /var/lib/homefree-secrets/nextcloud/admin-password
-    ## (mode 600) so the user can `cat` it if they need it.
-    if [ ! -s /var/lib/homefree-secrets/nextcloud/admin-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 24 \
-        > /var/lib/homefree-secrets/nextcloud/admin-password
-      chmod 600 /var/lib/homefree-secrets/nextcloud/admin-password
-    fi
+    ## Nextcloud admin password — the install wizard bootstraps the
+    ## admin user with it; afterwards it's an emergency escape hatch
+    ## (users log in via Zitadel). Anchored into encrypted
+    ## /etc/nixos/secrets so it survives a restore (lib/secrets-anchor.nix).
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "nextcloud";
+      key = "admin-password";
+      dir = "/var/lib/homefree-secrets/nextcloud";
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
+    }}
 
     ## Synthesise the env file the container reads. POSTGRES_PASSWORD
     ## matches the literal 'changeme' baked into the role-creation
@@ -629,7 +633,10 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "user_oidc provider; homefree-admin role maps to Nextcloud admin group. Emergency escape hatch: /login?direct=1 for local password fallback.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## user_oidc provider; homefree-admin role maps to Nextcloud
+        ## admin group. Emergency escape hatch: /login?direct=1 for
+        ## local password fallback.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.nextcloud.enable;

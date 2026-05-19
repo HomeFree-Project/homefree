@@ -210,7 +210,9 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Open WebUI native OIDC; homefree-admin Zitadel role maps to WebUI admin via OAUTH_ADMIN_ROLES.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Open WebUI native OIDC; homefree-admin Zitadel role maps to
+        ## WebUI admin via OAUTH_ADMIN_ROLES.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.ollama.enable;

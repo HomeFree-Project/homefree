@@ -204,10 +204,10 @@ in
 
       sso = {
         kind = "none";
-        notes = ''
-          The backup canary holds only throwaway data and exposes no
-          sensitive information; it is intentionally not SSO-gated.
-        '';
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## The backup canary holds only throwaway data and exposes no
+        ## sensitive information; it is intentionally not SSO-gated.
       };
 
       ## The exact unit the restore path stops/starts for this service.

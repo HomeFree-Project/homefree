@@ -288,7 +288,10 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC via cryptpad/sso plugin. Admin status is determined by adminKeys (public keys in config.js), NOT by OIDC claim — SSO users are equal until promoted manually.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC via cryptpad/sso plugin. Admin status is
+        ## determined by adminKeys (public keys in config.js), NOT by
+        ## OIDC claim — SSO users are equal until promoted manually.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.cryptpad.enable;

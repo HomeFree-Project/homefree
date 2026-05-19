@@ -109,6 +109,15 @@ Situational knowledge — read the linked note when working in that area:
   services; oneshot bootstrap units and `RemainAfterExit`; podman
   readiness vs. process readiness.
   → `docs/agent-notes/systemd-unit-patterns.md`
+- **Blue/green deployment** — admin-api and oauth2-proxy run as two
+  colour units; a flip activation script swaps them with zero downtime.
+  Never `exit` in an activation script; snippets must precede flips.
+  → `docs/agent-notes/blue-green-deployment.md`
+- **Secrets anchoring** — every auto-generated secret must be anchored
+  into encrypted `/etc/nixos/secrets` (the only backed-up location) via
+  `lib/secrets-anchor.nix`; generating straight into
+  `/var/lib/homefree-secrets` loses the value on restore.
+  → `docs/agent-notes/secrets-anchoring.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

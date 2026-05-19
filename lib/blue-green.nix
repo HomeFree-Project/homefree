@@ -96,25 +96,104 @@ let
 
   marker = "${stateDir}/${failureMarker}";
 
+  ## ── The active-colour anchor ──────────────────────────────────────
+  ## `<name>-active.service` is a polling SUPERVISOR (defined below).
+  ##
+  ## A first design coupled it to the active colour with
+  ## `Requires=`+`After=` and relied on `Restart=always` to resurrect
+  ## a colour killed by `local-fs.target` cycling. That is WRONG and a
+  ## live kill-test proved it: `Restart=` only restarts a service that
+  ## exited on its OWN. When the colour stopped, `Requires=` stopped
+  ## the anchor as a deliberate dependency cascade — a clean stop, for
+  ## which `Restart=` is suppressed. The anchor went down and stayed
+  ## down; the colour was never resurrected.
+  ##
+  ## The correct mechanism is an actual supervisor: NO dependency
+  ## coupling to the colour at all (so the colour stopping never
+  ## touches the anchor), and an `ExecStart` that polls — every couple
+  ## of seconds it reads the `active-color` pointer and `systemctl
+  ## start`s that colour if it is not running. The colour dying is
+  ## then noticed and corrected within the poll interval; the flip
+  ## only has to keep `active-color` current (which it does). No
+  ## drop-in, no `daemon-reload`, no helper — one fewer moving part.
+
+  ## Shell body of the supervisor loop. It is deliberately START-ONLY:
+  ## every few seconds it reads the `active-color` pointer and
+  ## `systemctl start`s that colour if it is not running. That is its
+  ## ENTIRE job — keep the active colour alive (against a
+  ## `local-fs.target` cycle, a crash, an OOM kill, anything).
+  ##
+  ## It must NOT stop the standby colour. An earlier version did, to
+  ## "tidy up", and it caused a TOCTOU race against the flip: a flip
+  ## intentionally runs BOTH colours during its handover (it starts the
+  ## standby, health-gates it, only then retires the old colour). A
+  ## flip-lock file was tried to make the supervisor stand down, but
+  ## the supervisor's check-then-stop is not atomic — the flip could
+  ## create the lock and start the standby in the gap between the
+  ## supervisor's lock check and its `stop`, so the supervisor stopped
+  ## the colour the flip had just started (observed live: a flip's
+  ## health-gate timed out because the supervisor killed the standby
+  ## under it). A start-only supervisor has no such conflict: it never
+  ## touches the standby, so there is nothing to race. The flip itself
+  ## stops the old colour at commit (step 7), and its failure paths
+  ## stop the standby — stopping is wholly the flip's job. A standby
+  ## left running by a crashed flip merely idles on its port (nothing
+  ## routes to it) until the next flip; harmless.
+  ##
+  ## `active-color` is re-read every tick, so a committed flip is
+  ## picked up with no supervisor restart. `systemctl start` on an
+  ## already-running unit is a harmless no-op.
+  activeSupervisorScript = ''
+    sysctl=${pkgs.systemd}/bin/systemctl
+    while :; do
+      active_color="$(${pkgs.coreutils}/bin/cat ${stateDir}/active-color 2>/dev/null || echo blue)"
+      case "$active_color" in
+        green) want=${unitName "green"} ;;
+        *)     want=${unitName "blue"}  ;;
+      esac
+      if [ "$($sysctl is-active "$want" 2>/dev/null)" != "active" ]; then
+        echo "${name}-active: $want (active colour) not running — starting it"
+        $sysctl start "$want" 2>/dev/null || true
+      fi
+      ${pkgs.coreutils}/bin/sleep 3
+    done
+  '';
+
   ## ── The two colour units ──────────────────────────────────────────
   ## For a `systemd` workload, mkUnit yields a full unit attrset.
   ## For an `oci-container` workload, mkContainer yields a container
   ## attrset (NixOS expands it into podman-<name>-<colour>.service),
   ## and extraUnitConfig is merged into that generated unit so we can
-  ## set restartIfChanged=false, ExecStartPre, ordering, etc.
+  ## set ExecStartPre, ordering, etc.
+  ##
+  ## CRITICAL: a colour unit must be invisible to `switch-to-
+  ## configuration` — the flip owns 100% of its start/stop. Setting
+  ## `restartIfChanged = false` alone is NOT enough: a changed unit
+  ## that cannot reload (every podman container: `CanReload=no`) and
+  ## still has the default `stopIfChanged = true` gets *stopped* by
+  ## switch-to-configuration, and since a colour unit is `wantedBy`
+  ## nothing, it never starts again. So BOTH flags are forced false
+  ## here, for both workload kinds — the caller cannot opt out.
+  lifecycleOwnedByFlip = {
+    restartIfChanged = false;
+    stopIfChanged = false;
+  };
+
   colourUnits =
     if workload.kind == "systemd" then {
-      systemd.services."${name}-blue"  = workload.mkUnit "blue"  bluePort;
-      systemd.services."${name}-green" = workload.mkUnit "green" greenPort;
+      systemd.services."${name}-blue"  =
+        (workload.mkUnit "blue"  bluePort)  // lifecycleOwnedByFlip;
+      systemd.services."${name}-green" =
+        (workload.mkUnit "green" greenPort) // lifecycleOwnedByFlip;
     } else {
       virtualisation.oci-containers.containers."${name}-blue" =
         workload.mkContainer "blue" bluePort;
       virtualisation.oci-containers.containers."${name}-green" =
         workload.mkContainer "green" greenPort;
       systemd.services."podman-${name}-blue" =
-        (workload.extraUnitConfig or (_: {})) "blue";
+        ((workload.extraUnitConfig or (_: {})) "blue")  // lifecycleOwnedByFlip;
       systemd.services."podman-${name}-green" =
-        (workload.extraUnitConfig or (_: {})) "green";
+        ((workload.extraUnitConfig or (_: {})) "green") // lifecycleOwnedByFlip;
     };
 
   ## ── Health-gate shell fragment ────────────────────────────────────
@@ -173,6 +252,17 @@ let
       local desired_closure
       ${desiredClosureExpr}
 
+      # Remove a stale supervisor drop-in. An EARLIER (broken) version
+      # of this module gave `${name}-active` a `Requires=<colour>`
+      # drop-in under /run/systemd/system; the current supervisor uses
+      # none. /run drop-ins are NOT cleaned by nixos-rebuild, and
+      # survive until reboot — so a box upgrading from that version
+      # keeps the poison: `Requires=<colour>` makes the supervisor stop
+      # itself the moment it does its job of stopping the standby
+      # colour. Delete it here, before the daemon-reload below picks up
+      # its removal. Harmless when already absent.
+      ${pkgs.coreutils}/bin/rm -rf /run/systemd/system/${name}-active.service.d
+
       # Activation scripts run BEFORE switch-to-configuration reloads the
       # systemd manager — the just-written colour units (and the removal
       # of the legacy unit) are not yet visible. Reload now so every
@@ -180,9 +270,10 @@ let
       $sysctl daemon-reload
 
       # 1. No-op fast path — definition unchanged. Every rebuild that
-      #    doesn't touch this service lands here and does nothing.
-      #    A stale failure marker from a prior aborted rebuild is
-      #    cleared: the active colour is, by definition, healthy here.
+      #    doesn't touch this service lands here. Clears any stale
+      #    failure marker from a prior aborted rebuild — the active
+      #    colour is, by definition, healthy here. The supervisor keeps
+      #    the colour itself running; nothing else to do.
       if [ -f "$statedir/active-closure" ] && \
          [ "$(${pkgs.coreutils}/bin/cat "$statedir/active-closure")" = "$desired_closure" ]; then
         ${pkgs.coreutils}/bin/rm -f "${marker}"
@@ -211,6 +302,8 @@ let
         write_upstream_snippet "$blue_port" || true
         $sysctl stop ${migrateFrom} 2>/dev/null || true
         if $sysctl start ${unitName "blue"} && health_gate ${unitName "blue"} "$blue_port"; then
+          # active-color is the single source of truth — the supervisor
+          # and the `${name}-snippet` oneshot both derive from it.
           echo blue > "$statedir/active-color"
           echo "$desired_closure" > "$statedir/active-closure"
           ${pkgs.coreutils}/bin/rm -f "${marker}"
@@ -238,6 +331,11 @@ let
       standby_unit="${unitPrefix}$standby"
       current_unit="${unitPrefix}$current"
       echo "${name}-flip: $current -> $standby"
+
+      # The supervisor is start-only and only ever (re)starts the
+      # colour named by `active-color` (still `current` until step 7).
+      # It never touches the standby — so the flip needs no lock to
+      # run both colours during the handover below.
 
       # 4. Start the standby colour (its unit file already carries the
       #    new definition, written by activation above).
@@ -268,10 +366,23 @@ let
         return 0
       fi
 
-      # 7. Flip committed — stop the old colour, record new state.
-      $sysctl stop "$current_unit" 2>/dev/null || true
+      # 7. Flip committed. ORDER MATTERS:
+      #
+      #  a. Write `active-color` FIRST. It is the single source of
+      #     truth: the supervisor and the `${name}-snippet` oneshot
+      #     both derive from it, and that oneshot re-runs later in this
+      #     same rebuild during switch-to-configuration. If
+      #     `active-color` were written last, that re-run would read
+      #     the STALE colour and point the Caddy snippet at the
+      #     now-dead old port (observed live: 502s `dial tcp
+      #     :<oldport>: connection refused`). Writing it first makes
+      #     the re-run re-derive the CORRECT port. It also immediately
+      #     repoints the supervisor at the standby — correct, the
+      #     standby is already running and healthy by now.
+      #  b. Retire the old colour.
       echo "$standby" > "$statedir/active-color"
       echo "$desired_closure" > "$statedir/active-closure"
+      $sysctl stop "$current_unit" 2>/dev/null || true
       ${pkgs.coreutils}/bin/rm -f "${marker}"
       echo "${name}-flip: now serving $standby"
       return 0
@@ -323,8 +434,10 @@ in
       };
 
       ## Boot oneshot: materialise the Caddy upstream snippet in /run
-      ## BEFORE caddy starts. A missing import target stops caddy from
-      ## parsing its config — hence the hard `before = caddy.service`.
+      ## BEFORE caddy starts. `/run` is tmpfs, lost on reboot, so this
+      ## re-creates the snippet from the persisted `active-color`
+      ## pointer. A missing import target stops caddy parsing its
+      ## config — hence the hard `before = caddy.service`.
       systemd.services."${name}-snippet" = {
         description = "Write ${name} Caddy upstream snippet";
         wantedBy = [ "multi-user.target" ];
@@ -345,24 +458,50 @@ in
         '';
       };
 
-      ## Boot oneshot: start whichever colour the pointer names (default
-      ## blue). Only ONE colour runs; the standby stays dormant because
-      ## nothing `wants` it (colour units are not wantedBy any target).
+      ## Active-colour supervisor.
+      ##
+      ## A colour unit is `autoStart = false` / `wantedBy` nothing, so
+      ## systemd has no reason to keep it running. That is correct for
+      ## the *standby* — but the *active* colour must be supervised, or
+      ## it stays dead after any event that stops it: a `nixos-rebuild`
+      ## cycles `local-fs.target`/`remote-fs.target`, which stops EVERY
+      ## podman container; an ordinary `autoStart = true` container is
+      ## then re-pulled by `multi-user.target`, but a colour unit would
+      ## not be — and the service goes permanently dark.
+      ##
+      ## This unit is that supervisor. It has NO dependency coupling to
+      ## the colour units at all — deliberately. Its `ExecStart` is a
+      ## loop (`activeSupervisorScript`) that every few seconds reads
+      ## the `active-color` pointer and `systemctl start`s that colour
+      ## if it is not running. So:
+      ##
+      ##   • a colour killed by `local-fs.target` cycling — or by
+      ##     anything else — is noticed within the poll interval and
+      ##     restarted;
+      ##   • the colour stopping does NOT touch this supervisor (no
+      ##     `Requires`/`BindsTo`), so there is no dependency cascade
+      ##     and `Restart=` is never relied on for colour resurrection
+      ##     (`Restart=` does not fire for dependency-driven stops — an
+      ##     earlier `Requires=`-based design failed a live kill-test
+      ##     for exactly that reason);
+      ##   • a flip just updates `active-color`; the very next poll
+      ##     picks it up — no supervisor restart, no drop-in.
+      ##
+      ## `Restart=always` here is only for the supervisor's OWN process
+      ## (e.g. if its shell is killed). `wantedBy multi-user.target`
+      ## means a `local-fs` cycle that stops the supervisor too gets it
+      ## (and hence the colour) back when the target is re-reached.
+      ## The standby colour is named nowhere and stays dormant.
       systemd.services."${name}-active" = {
-        description = "Start the active-colour ${name}";
+        description = "Active-colour supervisor for ${name}";
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" ];
         serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
+          Type = "exec";
+          Restart = "always";
+          RestartSec = 2;
         };
-        script = ''
-          active_color="$(${pkgs.coreutils}/bin/cat ${stateDir}/active-color 2>/dev/null || echo blue)"
-          case "$active_color" in
-            green) ${pkgs.systemd}/bin/systemctl start ${unitName "green"} ;;
-            *)     ${pkgs.systemd}/bin/systemctl start ${unitName "blue"} ;;
-          esac
-        '';
+        script = activeSupervisorScript;
       };
 
       ## The flip. Runs at the end of every `nixos-rebuild switch` (the

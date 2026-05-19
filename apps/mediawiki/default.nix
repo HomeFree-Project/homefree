@@ -10,6 +10,10 @@ let
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 7036;
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   extra-apache-conf = pkgs.writeText "extra.conf" ''
     ServerName 127.0.0.1
   '';
@@ -560,32 +564,39 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
       '')
       );
       preStart = ''
-        ## Auto-generate the two MediaWiki secrets on first start. Both
-        ## are purely internal (the MySQL user lives on this host; the
-        ## wgSecretKey is consumed by MediaWiki itself for cookie/token
-        ## signing). Once generated they're reused across restarts so
-        ## existing sessions remain valid and MySQL stays in sync.
+        ## The two MediaWiki secrets, anchored into encrypted
+        ## /etc/nixos/secrets so they survive a restore
+        ## (lib/secrets-anchor.nix). Regenerating mysql-password
+        ## desyncs the DB user; regenerating wgSecretKey invalidates
+        ## cookies/CSRF tokens.
         ##
         ## State directory is /var/lib/homefree-state/mediawiki (created
-        ## by systemd.tmpfiles below with mode 0700).
+        ## by systemd.tmpfiles below with mode 0700) — mkdirMode=null so
+        ## the anchor does not touch the tmpfiles-managed dir.
+        ${anchor.preamble}
         SECRETS_DIR=/var/lib/homefree-state/mediawiki
         MYSQL_PASSWORD_FILE="$SECRETS_DIR/mysql-password"
         WG_SECRET_KEY_FILE="$SECRETS_DIR/wg-secret-key"
 
-        if [ ! -s "$MYSQL_PASSWORD_FILE" ]; then
-          # 32 base64 chars, stripped of slash/plus/equals so it's safe
+        ${anchor.anchorSecret {
+          service = "mediawiki";
+          key = "mysql-password";
+          dir = "/var/lib/homefree-state/mediawiki";
+          mkdirMode = null;
+          # 32 base64 chars, slash/plus/equals stripped so it is safe
           # to interpolate into PHP and SQL without further escaping.
-          ${pkgs.openssl}/bin/openssl rand -base64 48 \
-            | tr -d '/+=' \
-            | head -c 32 > "$MYSQL_PASSWORD_FILE"
-          chmod 600 "$MYSQL_PASSWORD_FILE"
-        fi
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 48 | tr -d '/+=' | head -c 32";
+        }}
 
-        if [ ! -s "$WG_SECRET_KEY_FILE" ]; then
+        ${anchor.anchorSecret {
+          service = "mediawiki";
+          key = "wgSecretKey";
+          fileName = "wg-secret-key";
+          dir = "/var/lib/homefree-state/mediawiki";
+          mkdirMode = null;
           # MediaWiki recommends 64 hex chars for wgSecretKey.
-          ${pkgs.openssl}/bin/openssl rand -hex 32 > "$WG_SECRET_KEY_FILE"
-          chmod 600 "$WG_SECRET_KEY_FILE"
-        fi
+          generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+        }}
 
         MYSQL_PASSWORD_RAW=$(cat "$MYSQL_PASSWORD_FILE")
         # Defensive: still escape single quotes in case future generation

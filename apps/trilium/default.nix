@@ -118,7 +118,11 @@ in
       ];
       sso = {
         kind = "caddy_gated";
-        notes = "Trilium's inner auth is disabled (TRILIUM_GENERAL_NOAUTHENTICATION=true). Caddy's SSO gate (oauth2-proxy + Zitadel) is the only auth layer. Single-user only — anyone past the gate has owner access.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Trilium's inner auth is disabled
+        ## (TRILIUM_GENERAL_NOAUTHENTICATION=true). Caddy's SSO gate
+        ## (oauth2-proxy + Zitadel) is the only auth layer. Single-user
+        ## only — anyone past the gate has owner access.
       };
       reverse-proxy = {
         enable = true;

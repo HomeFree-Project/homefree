@@ -106,7 +106,13 @@ in
       inherit (config.homefree.service-options.nzbget) label name project-name;
       sso = {
         kind = "none";
-        notes = "NZBGet exposes its JSON-RPC API on the same host:port as the UI, authenticated with HTTP Basic only. *arr-stack services and external scripts talk to that API directly — a site-wide SSO gate would break every integration. Use NZBGet's built-in auth.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## NZBGet exposes its JSON-RPC API on the same host:port as the
+        ## UI, authenticated with HTTP Basic only. *arr-stack services
+        ## and external scripts talk to that API directly — a site-wide
+        ## SSO gate would break every integration. Use NZBGet's
+        ## built-in auth.
       };
       systemd-service-names = [
         "podman-nzbget"

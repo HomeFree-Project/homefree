@@ -66,7 +66,7 @@ class ExtraProxiesModule extends LitElement {
     this.config = newConfig;
     this.modified = true;
     this.dispatchEvent(new CustomEvent('config-change', {
-      detail: { config: newConfig },
+      detail: { module: 'extra-proxies', config: newConfig },
       bubbles: true,
       composed: true
     }));
@@ -84,10 +84,13 @@ class ExtraProxiesModule extends LitElement {
       { key: 'host', label: 'Backend Host', type: 'text', placeholder: 'envoy.lan or 10.0.0.43' },
       { key: 'port', label: 'Port', type: 'text', placeholder: '80' },
       { key: 'subdomains', label: 'Subdomains (comma-sep)', type: 'text', placeholder: 'envoy' },
-      { key: 'ssl', label: 'Backend Uses HTTPS', type: 'boolean' },
-      { key: 'ssl-no-verify', label: 'Skip Cert Verify', type: 'boolean' },
-      { key: 'disable-keepalive', label: 'No Keep-Alive', type: 'boolean' },
-      { key: 'public', label: 'Public on WAN', type: 'boolean' }
+      // Short headers — the boolean columns render a single ✓/✗ glyph,
+      // so a long header needlessly widens the whole table. The help
+      // box above the table explains each field in full.
+      { key: 'ssl', label: 'HTTPS', type: 'boolean' },
+      { key: 'ssl-no-verify', label: 'No Verify', type: 'boolean' },
+      { key: 'disable-keepalive', label: 'No KA', type: 'boolean' },
+      { key: 'public', label: 'Public', type: 'boolean' }
     ];
 
     return html`

@@ -94,7 +94,10 @@ in
       ];
       sso = {
         kind = "caddy_gated";
-        notes = "SSO gates the admin UI only. DAV clients (Thunderbird, iOS Calendar, etc.) authenticate to Baikal directly via HTTP Basic Auth with their per-user app password.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## SSO gates the admin UI only. DAV clients (Thunderbird, iOS
+        ## Calendar, etc.) authenticate to Baikal directly via HTTP
+        ## Basic Auth with their per-user app password.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.baikal.enable;

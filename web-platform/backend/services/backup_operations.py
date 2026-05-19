@@ -434,6 +434,71 @@ class BackupOperations:
             logger.error(f"Error listing services: {e}")
             return {"success": False, "services": [], "error": str(e)}
 
+    # Config files describing what each repository backs up. These give
+    # the SOURCE directories (what will be backed up) cheaply, without
+    # any restic call - unlike get_repository_paths(), which reads a
+    # snapshot. The Run tab uses this; the Restore tab needs snapshots.
+    SERVICE_CATALOG = Path("/etc/homefree/service-config.json")
+    HOMEFREE_CONFIG = Path("/etc/nixos/homefree-config.json")
+
+    @staticmethod
+    def get_source_paths() -> Dict[str, Any]:
+        """Map every backup repository label to its SOURCE directories.
+
+        Reads two JSON config files - no restic, no network, instant:
+
+        * /etc/homefree/service-config.json - per-service `backup.paths`
+          (plus the postgres/mysql dump dirs the backup units add).
+        * /etc/nixos/homefree-config.json - `backups.extra-from-paths`
+          (-> extra-path-N, index = array position) and the implicit
+          system-config repo (-> /etc/nixos).
+
+        Returns: {success, paths: {label: [path, ...]}, error}
+        """
+        paths: Dict[str, List[str]] = {}
+        try:
+            # Per-service repositories from the service catalog.
+            if BackupOperations.SERVICE_CATALOG.exists():
+                catalog = json.loads(
+                    BackupOperations.SERVICE_CATALOG.read_text())
+                for entry in catalog:
+                    label = entry.get("label")
+                    backup = entry.get("backup") or {}
+                    if not label:
+                        continue
+                    repo_paths = list(backup.get("paths") or [])
+                    # The backup units also dump databases into these
+                    # dirs (services/backup/default.nix) - include them
+                    # so the repo's full source set is shown.
+                    if backup.get("postgres-databases"):
+                        repo_paths.append(
+                            f"/var/backup/postgresql-homefree/{label}")
+                    if backup.get("mysql-databases"):
+                        repo_paths.append(
+                            f"/var/backup/mysql-homefree/{label}")
+                    if repo_paths:
+                        paths[label] = repo_paths
+
+            # system-config + extra-path-N from homefree-config.json.
+            if BackupOperations.HOMEFREE_CONFIG.exists():
+                hf = json.loads(
+                    BackupOperations.HOMEFREE_CONFIG.read_text())
+                backups = hf.get("backups") or {}
+                # System configuration repo is always /etc/nixos.
+                paths["system-config"] = ["/etc/nixos"]
+                # extra-path-N: N is the index into extra-from-paths
+                # (services/backup/default.nix uses lib.imap0).
+                for i, p in enumerate(backups.get("extra-from-paths") or []):
+                    paths[f"extra-path-{i}"] = [p]
+
+            return {"success": True, "paths": paths}
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON reading source paths: {e}")
+            return {"success": False, "paths": {}, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Error reading source paths: {e}")
+            return {"success": False, "paths": {}, "error": str(e)}
+
     @staticmethod
     def list_snapshots(service: str,
                        source: BackupSource = BackupSource.AUTO
@@ -896,9 +961,13 @@ class BackupOperations:
 
     @staticmethod
     def _trigger_backups_worker(job: Dict[str, Any], prefix: str,
-                                exclude_repos: List[str]) -> None:
+                                exclude_repos: List[str],
+                                only_repos: Optional[List[str]] = None) -> None:
         """Background worker that starts every restic-backups-<prefix>-*
         unit, recording per-repository progress on the job.
+
+        If ``only_repos`` is given, restrict the run to exactly those
+        repository labels (used by the per-service trigger).
         """
         lock_fd = os.open(str(BackupOperations.LOCK_FILE),
                           os.O_RDWR | os.O_CREAT, 0o600)
@@ -910,9 +979,11 @@ class BackupOperations:
             BackupOperations._write_job(job)
 
             with open(log_file, "a", buffering=1) as logf:
+                def _repo_of(u):
+                    return u.replace(unit_prefix, "").replace(".service", "")
                 units = [u for u in BackupOperations._list_backup_units(prefix)
-                         if u.replace(unit_prefix, "").replace(".service", "")
-                         not in exclude_repos]
+                         if _repo_of(u) not in exclude_repos
+                         and (only_repos is None or _repo_of(u) in only_repos)]
                 if not units:
                     BackupOperations._finish_job(
                         job, JobState.FAILED,
@@ -965,9 +1036,13 @@ class BackupOperations:
             BackupOperations.start_prewarm_thread()
 
     @staticmethod
-    def _trigger_backups(prefix: str, kind: JobKind) -> Dict[str, Any]:
-        """Shared implementation: start every restic-backups-<prefix>-*
-        unit as a tracked job. Non-blocking; returns a job id.
+    def _trigger_backups(prefix: str, kind: JobKind,
+                         only_repo: Optional[str] = None) -> Dict[str, Any]:
+        """Shared implementation: start restic-backups-<prefix>-* units
+        as a tracked job. Non-blocking; returns a job id.
+
+        If ``only_repo`` is given, restrict the run to that single
+        repository label (used by the per-service trigger).
         """
         holder = BackupOperations._lock_holder()
         if holder is not None:
@@ -978,6 +1053,12 @@ class BackupOperations:
         units = BackupOperations._list_backup_units(prefix)
         repos = [u.replace(unit_prefix, "").replace(".service", "")
                  for u in units]
+        if only_repo is not None:
+            if only_repo not in repos:
+                return {"success": False,
+                        "error": f"No {prefix} backup found for "
+                                 f"'{only_repo}'."}
+            repos = [only_repo]
         if not repos:
             return {"success": False,
                     "error": f"No {prefix} backup services found. "
@@ -986,9 +1067,10 @@ class BackupOperations:
         BackupOperations._ensure_directories()
         job = BackupOperations._new_job(kind, repos)
         BackupOperations.CURRENT_JOB_FILE.write_text(job["id"])
+        only_repos = [only_repo] if only_repo is not None else None
         threading.Thread(
             target=BackupOperations._trigger_backups_worker,
-            args=(job, prefix, []), daemon=True,
+            args=(job, prefix, [], only_repos), daemon=True,
             name=f"{kind.value}-{job['id']}").start()
         return {"success": True, "job_id": job["id"], "job": job}
 
@@ -1011,6 +1093,26 @@ class BackupOperations:
         Raises BackupBusy if the subsystem is already in use.
         """
         return BackupOperations._trigger_backups("backblaze", JobKind.SYNC)
+
+    @staticmethod
+    def trigger_service_backup(label: str, source: str) -> Dict[str, Any]:
+        """Run the backup for a SINGLE service now. Non-blocking.
+
+        ``source`` is "local" or "backblaze". Reuses the same job /
+        lock machinery as the bulk triggers, so only one backup-
+        subsystem job runs at a time.
+
+        Raises BackupBusy if the subsystem is already in use.
+        """
+        if source == "local":
+            return BackupOperations._trigger_backups(
+                "local", JobKind.BACKUP, only_repo=label)
+        if source == "backblaze":
+            return BackupOperations._trigger_backups(
+                "backblaze", JobKind.SYNC, only_repo=label)
+        return {"success": False,
+                "error": f"Unknown backup source '{source}' "
+                         f"(expected 'local' or 'backblaze')."}
 
     # ----------------------------------------------------- status (compat)
 
@@ -1079,15 +1181,22 @@ class BackupOperations:
         run time straight from systemd - cheap, no restic calls.
 
         Returns:
-            {total, ok, failed, failed_services, last_run, next_run}
+            {total, ok, failed, never_run, failed_services,
+             never_run_services, last_run, next_run}
             timestamps are ISO strings (or None).
+
+        A backup is bucketed three ways, not two:
+          * ok        - has run and the last run succeeded
+          * failed    - has run and the last run errored (a real problem)
+          * never_run - has never executed yet; an unknown, not a failure
         """
         unit_prefix = f"restic-backups-{prefix}-"
         services = [u.replace(unit_prefix, "").replace(".service", "")
                     for u in BackupOperations._list_backup_units(prefix)]
         result: Dict[str, Any] = {
-            "total": len(services), "ok": 0, "failed": 0,
-            "failed_services": [], "last_run": None, "next_run": None,
+            "total": len(services), "ok": 0, "failed": 0, "never_run": 0,
+            "failed_services": [], "never_run_services": [],
+            "last_run": None, "next_run": None,
         }
         if not services:
             return result
@@ -1113,41 +1222,70 @@ class BackupOperations:
 
             res = props.get("Result", "")
             exit_status = props.get("ExecMainStatus", "")
-            has_run = bool(props.get("ExecMainExitTimestamp", "").strip())
 
-            # A unit that has run is OK iff Result=success and exit 0.
-            # A unit that has never run counts as failed-to-have-data:
-            # surface it as "failed" so a never-running backup is visible.
+            # Query the timer first - it carries the only run signal that
+            # survives a daemon-reload.
+            timer_props: Dict[str, str] = {}
+            try:
+                tshow = subprocess.run(
+                    ["systemctl", "show", timer,
+                     "-p", "NextElapseUSecRealtime",
+                     "-p", "LastTriggerUSec"],
+                    capture_output=True, text=True, timeout=5)
+                timer_props = dict(
+                    line.split("=", 1)
+                    for line in tshow.stdout.strip().split("\n")
+                    if "=" in line)
+            except Exception:
+                timer_props = {}
+
+            last_trigger = timer_props.get("LastTriggerUSec", "").strip()
+            exit_ts = props.get("ExecMainExitTimestamp", "").strip()
+
+            # Has this backup unit ever executed?
+            #
+            # `ExecMainExitTimestamp` looks like the obvious signal, but
+            # systemd clears the runtime invocation state (ExecMain*) of
+            # an *inactive* unit whenever its unit file is re-linked and
+            # `daemon-reload` runs - which happens on every nixos-rebuild.
+            # `Result` is no help either: it *defaults* to "success" on a
+            # unit that has never started, so a non-empty Result does not
+            # prove a run.
+            #
+            # The timer's LastTriggerUSec is the reliable proof: empty
+            # until the timer first fires the unit, a real timestamp
+            # after, and preserved across daemon-reload. A unit with
+            # neither LastTriggerUSec nor ExecMainExitTimestamp has
+            # genuinely never run - that is an "unknown", not a failure
+            # (e.g. a freshly-provisioned box before its first 02:00
+            # window), so it gets its own bucket rather than counting as
+            # a real backup failure.
+            has_run = bool(last_trigger) or bool(exit_ts)
+
             if not has_run:
-                result["failed"] += 1
-                result["failed_services"].append(svc)
+                result["never_run"] += 1
+                result["never_run_services"].append(svc)
             elif res == "success" and exit_status in ("0", ""):
                 result["ok"] += 1
             else:
                 result["failed"] += 1
                 result["failed_services"].append(svc)
 
-            # Track most-recent run across all units.
-            exit_ts = props.get("ExecMainExitTimestamp", "").strip()
-            if exit_ts:
-                parsed = BackupOperations._parse_systemd_ts(exit_ts)
+            # Most-recent past run, from the timer's LastTriggerUSec
+            # (survives daemon-reload); fall back to the service's exit
+            # timestamp if the timer has no trigger record yet.
+            run_ts = last_trigger or exit_ts
+            if run_ts:
+                parsed = BackupOperations._parse_systemd_ts(run_ts)
                 if parsed and parsed > last_run_ts:
                     last_run_ts = parsed
 
-            # Track the soonest upcoming run from the timer.
-            try:
-                tshow = subprocess.run(
-                    ["systemctl", "show", timer,
-                     "-p", "NextElapseUSecRealtime"],
-                    capture_output=True, text=True, timeout=5)
-                nxt = tshow.stdout.strip().split("=", 1)
-                if len(nxt) == 2 and nxt[1].strip():
-                    parsed = BackupOperations._parse_systemd_ts(nxt[1].strip())
-                    if parsed and (next_run_ts == 0.0
-                                   or parsed < next_run_ts):
-                        next_run_ts = parsed
-            except Exception:
-                pass
+            nxt = timer_props.get("NextElapseUSecRealtime", "").strip()
+            if nxt:
+                parsed = BackupOperations._parse_systemd_ts(nxt)
+                if parsed and (next_run_ts == 0.0
+                               or parsed < next_run_ts):
+                    next_run_ts = parsed
 
         if last_run_ts:
             result["last_run"] = datetime.fromtimestamp(

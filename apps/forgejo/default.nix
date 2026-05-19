@@ -8,6 +8,10 @@ let
   forgejoSecretsDir = "/var/lib/homefree-secrets/forgejo";
   domain = config.homefree.system.domain;
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   ## SQL template to clear the GroupClaimName / AdminGroup fields
   ## on the existing Zitadel auth source row. Defined as a regular
   ## `"..."` Nix string so we don't have to escape apostrophes
@@ -29,40 +33,38 @@ let
     mkdir -p ${containerDataPath}
     mkdir -p ${forgejoSecretsDir}
 
-    ## Auto-generate the four secrets needed to bypass Forgejo's
-    ## install wizard. Each one is generated only if missing, so
-    ## restarts and rebuilds are no-ops. Stored at mode 600 in the
-    ## existing forgejoSecretsDir alongside the OIDC secrets that
-    ## zitadel-provision writes — same access-control story.
+    ${anchor.preamble}
+
+    ## The three secrets needed to bypass Forgejo's install wizard,
+    ## each anchored into encrypted /etc/nixos/secrets so it survives
+    ## a restore (lib/secrets-anchor.nix).
     ##
-    ## - secret-key: 64-char hex string used by Forgejo to derive
-    ##   internal MACs.
-    ## - internal-token: HS256-signed JWT secret used for
-    ##   inter-process API auth (ssh hooks, web ↔ background, etc.).
-    ##   Must be a JWT secret format ("base64-of-random-bytes" is
-    ##   what `forgejo generate secret INTERNAL_TOKEN` produces).
-    ## - admin-password: random 24-byte base64 string. Once SSO is
-    ##   wired in the user logs in via Zitadel; this stays as an
-    ##   emergency escape hatch (the local admin account remains).
-    if [ ! -s ${forgejoSecretsDir}/secret-key ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 32 \
-        > ${forgejoSecretsDir}/secret-key
-      chmod 600 ${forgejoSecretsDir}/secret-key
-    fi
-    if [ ! -s ${forgejoSecretsDir}/internal-token ]; then
-      ## Forgejo's INTERNAL_TOKEN is a JWT secret — base64url(random).
-      ## Length matches what `forgejo generate secret INTERNAL_TOKEN`
-      ## produces (~105 bytes after base64).
-      ${pkgs.openssl}/bin/openssl rand -base64 96 \
-        | ${pkgs.coreutils}/bin/tr -d '\n' \
-        > ${forgejoSecretsDir}/internal-token
-      chmod 600 ${forgejoSecretsDir}/internal-token
-    fi
-    if [ ! -s ${forgejoSecretsDir}/admin-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 24 \
-        > ${forgejoSecretsDir}/admin-password
-      chmod 600 ${forgejoSecretsDir}/admin-password
-    fi
+    ## - secret-key: 64-char hex string Forgejo uses to derive internal
+    ##   MACs and to decrypt stored 2FA secrets — regenerating it on a
+    ##   restore would orphan every user's stored 2FA/token data.
+    ## - internal-token: HS256-signed JWT secret for inter-process API
+    ##   auth. Must be JWT-secret format (base64-of-random-bytes, what
+    ##   `forgejo generate secret INTERNAL_TOKEN` produces, ~105 bytes).
+    ## - admin-password: emergency escape hatch for the local admin
+    ##   account; users normally log in via Zitadel.
+    ${anchor.anchorSecret {
+      service = "forgejo";
+      key = "secret-key";
+      dir = forgejoSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+    }}
+    ${anchor.anchorSecret {
+      service = "forgejo";
+      key = "internal-token";
+      dir = forgejoSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 96 | ${pkgs.coreutils}/bin/tr -d '\\n'";
+    }}
+    ${anchor.anchorSecret {
+      service = "forgejo";
+      key = "admin-password";
+      dir = forgejoSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
+    }}
 
     ## Build a CA bundle the container can mount over its own
     ## /etc/ssl/certs/ca-certificates.crt. Caddy issues internal
@@ -442,7 +444,9 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC; homefree-admin role maps to Forgejo admin via oauth_admins_role.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC; homefree-admin role maps to Forgejo admin via
+        ## oauth_admins_role.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.forgejo.enable;

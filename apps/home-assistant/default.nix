@@ -12,6 +12,10 @@ let
   port = 8123;
   domain = config.homefree.system.domain;
   adminUser = config.homefree.system.adminUsername;
+
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
   adminDescription = config.homefree.system.adminDescription or adminUser;
 
   ## ── Build the `homeassistant:` YAML block from homefree.system.*.
@@ -265,15 +269,18 @@ let
     done
 
     ## ── Bootstrap admin password ───────────────────────────────────
-    ## Random, never shown. Used exactly once via the onboarding API
-    ## in postStart to satisfy HA's "an admin must exist" requirement,
-    ## then the user logs in via Zitadel and this password becomes
-    ## dead config.
-    if [ ! -s ${haSecretsDir}/admin-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 24 \
-        > ${haSecretsDir}/admin-password
-      chmod 600 ${haSecretsDir}/admin-password
-    fi
+    ## Random, never shown. Used via the onboarding API in postStart to
+    ## satisfy HA's "an admin must exist" requirement and to re-auth
+    ## after restarts; the user logs in via Zitadel. HA never mutates
+    ## this file, so it is anchored into encrypted /etc/nixos/secrets
+    ## (lib/secrets-anchor.nix) and re-materialized on restore.
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "home-assistant";
+      key = "admin-password";
+      dir = haSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
+    }}
 
     ${lib.optionalString cfg.enableSecretsFile ''
       ## ── secrets.yaml from on-disk secret files ────────────────────
@@ -705,7 +712,8 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC via auth_oidc custom component.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC via auth_oidc custom component.
         secrets-dir = "home-assistant";
       };
       reverse-proxy = {

@@ -437,7 +437,9 @@ in
       ];
       sso = {
         kind = "caddy_gated";
-        notes = "Outer gate admin-only. Frigate's own login still appears inside; native OIDC bridge pending.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Outer gate admin-only. Frigate's own login still appears
+        ## inside; native OIDC bridge pending.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.frigate.enable;

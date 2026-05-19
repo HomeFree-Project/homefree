@@ -157,7 +157,11 @@ in
         ## the local zitadel-password-shim. No Caddy gate — the auth
         ## happens inside Radicale on every request (DAV + web UI).
         kind = "native_oidc";
-        notes = "Uses Zitadel credentials directly via the zitadel-password-shim. Both the web UI and DAV clients (Thunderbird, iOS Calendar, etc.) authenticate with your homefree username + password.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Uses Zitadel credentials directly via the
+        ## zitadel-password-shim. Both the web UI and DAV clients
+        ## (Thunderbird, iOS Calendar, etc.) authenticate with your
+        ## homefree username + password.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.radicale.enable;

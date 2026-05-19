@@ -48,6 +48,10 @@ let
   ## and the headscale API key, in contrast, must be set deliberately.
   headplaneSecretsDir = "/var/lib/homefree-secrets/headscale";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   ## OIDC config is always rendered into the headplane YAML. The
   ## headplane.service unit gates on file presence via
   ## ConditionPathExists, so it stays inactive until
@@ -479,11 +483,19 @@ in
       ## (still root-only by default since other files are mode 600).
       chown root:${config.services.headscale.group} ${headplaneSecretsDir}
       chmod 750 ${headplaneSecretsDir}
-      if [ ! -s "${headplaneSecretsDir}/headplane-cookie-secret" ]; then
-        ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
-          > "${headplaneSecretsDir}/headplane-cookie-secret"
-      fi
-      chmod 600 "${headplaneSecretsDir}/headplane-cookie-secret"
+
+      ## Cookie secret, anchored into encrypted /etc/nixos/secrets so it
+      ## survives a restore (lib/secrets-anchor.nix). mkdirMode=null:
+      ## the dir mode/owner is set deliberately just above (0750
+      ## root:headscale) and must not be clobbered to 0700.
+      ${anchor.preamble}
+      ${anchor.anchorSecret {
+        service = "headscale";
+        key = "headplane-cookie-secret";
+        dir = headplaneSecretsDir;
+        mkdirMode = null;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
+      }}
 
       ## Render a runtime copy of /etc/headplane/config.yaml with
       ## the real OIDC client_id substituted in. Avoids the eval-time
@@ -744,7 +756,9 @@ in
       };
       sso = {
         kind = "native_oidc";
-        notes = "Headscale native OIDC + Headplane admin UI. Admin via homefree-admin role.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Headscale native OIDC + Headplane admin UI. Admin via
+        ## homefree-admin role.
       };
       reverse-proxy = {
         enable = true;

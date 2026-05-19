@@ -185,7 +185,9 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC. Homebox has no admin/user distinction — all SSO users are equal members.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC. Homebox has no admin/user distinction — all
+        ## SSO users are equal members.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.homebox.enable;

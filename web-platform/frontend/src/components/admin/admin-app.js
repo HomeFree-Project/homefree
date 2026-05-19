@@ -1670,6 +1670,14 @@ class AdminApp extends LitElement {
       };
     }
 
+    // The External Proxies module edits `service-config`; without
+    // this merge the edit lives only in pendingConfig and is dropped
+    // both from the displayed config (so a deleted row reappears) and
+    // from save. Whole-array replace — the module rebuilds the list.
+    if (this.pendingConfig['service-config'] !== undefined) {
+      merged['service-config'] = this.pendingConfig['service-config'];
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
@@ -2377,6 +2385,7 @@ class AdminApp extends LitElement {
                target="_blank" rel="noopener">
               <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
+              <span class="nav-item-arrow">↗</span>
             </a>
            </div>
           </nav>

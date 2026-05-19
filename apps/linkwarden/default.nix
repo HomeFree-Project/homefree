@@ -5,6 +5,10 @@ let
   containerDataPath = "/var/lib/linkwarden-podman";
   secretsDir = "/var/lib/homefree-secrets/linkwarden";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   port = 3005;
   database-name = "linkwarden";
   database-user = "linkwarden";
@@ -42,15 +46,18 @@ let
     } > ${containerDataPath}/ca-bundle.crt
     chmod 644 ${containerDataPath}/ca-bundle.crt
 
-    ## Auto-generate NEXTAUTH_SECRET on first boot. NextAuth uses this
-    ## to sign session JWTs — rotating it logs every user out, so we
-    ## persist it. 32 bytes of base64-encoded entropy is what NextAuth
-    ## recommends.
-    if [ ! -s ${secretsDir}/nextauth-secret ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 32 \
-        | tr -d '\n' > ${secretsDir}/nextauth-secret
-      chmod 600 ${secretsDir}/nextauth-secret
-    fi
+    ## NEXTAUTH_SECRET — NextAuth signs session JWTs with this;
+    ## rotating it logs every user out. Anchored into encrypted
+    ## /etc/nixos/secrets so it survives a restore
+    ## (lib/secrets-anchor.nix). 32 bytes of base64 entropy is what
+    ## NextAuth recommends.
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "linkwarden";
+      key = "nextauth-secret";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
+    }}
 
     install -m 600 /dev/null ${baseEnvFile}
     {
@@ -251,7 +258,9 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC via NextAuth. No OIDC->admin role mapping: first user in DB is admin, subsequent SSO users are regular.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC via NextAuth. No OIDC->admin role mapping:
+        ## first user in DB is admin, subsequent SSO users are regular.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.linkwarden.enable;

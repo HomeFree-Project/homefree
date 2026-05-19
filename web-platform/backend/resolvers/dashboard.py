@@ -6,14 +6,17 @@ Two layers:
   * Point-in-time readers (CPU / memory / disk / IPs / gateway / per-NIC
     counters / LAN clients). Cheap, called on demand by the API.
 
-  * A background sampler thread (StatsHistory) that wakes every
-    SAMPLE_INTERVAL seconds, takes a snapshot of throughput +
-    connectivity, and pushes it into a fixed-size in-memory ring buffer.
-    This is what backs the time-series charts. History is intentionally
-    *not* persisted — it resets on admin-api restart (including every
-    nixos-rebuild). That keeps the resolver dependency-free and avoids
-    disk writes; a few hours of in-RAM history is enough for an at-a-
-    glance dashboard.
+  * Time-series history (throughput + connectivity + CPU + memory). This
+    is *no longer* sampled inside admin-api. A standalone systemd
+    service — `homefree-dashboard-sampler` (web-platform/backend/
+    dashboard_sampler.py) — is the sole sampler and writer; it INSERTs
+    one row per tick into a SQLite DB. admin-api is a pure reader here:
+    `StatsHistory` below just runs indexed SELECTs against that DB.
+
+    This split is what makes the dashboard charts survive admin-api
+    restarts and blue/green colour flips: the sampler's lifetime is
+    independent of admin-api, so history is continuous and there is
+    exactly one writer (no last-writer-wins between two colours).
 """
 
 import json
@@ -22,15 +25,19 @@ import os
 import shutil
 import socket
 import subprocess
-import threading
 import time
-from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import psutil
 
 from services.config_reader import ConfigReader
+from services.dashboard_history_store import (
+    DashboardHistoryStore,
+    DEFAULT_DB_PATH,
+    HISTORY_SECONDS,
+    SAMPLE_INTERVAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +61,9 @@ def _ip_bin() -> str:
 
 IP_BIN = _ip_bin()
 
-# --- sampler tuning -------------------------------------------------------
-SAMPLE_INTERVAL = 10           # seconds between background samples
-HISTORY_SECONDS = 3 * 3600     # keep ~3 hours of history
-HISTORY_MAXLEN = HISTORY_SECONDS // SAMPLE_INTERVAL
-
-# Host to probe for connectivity. A TCP connect to a well-known anycast
-# resolver on :53 — succeeds fast when WAN is up, fails fast when not.
-# We deliberately avoid ICMP (needs raw sockets) and DNS resolution
-# (would also exercise the local resolver, muddying the signal).
-CONNECTIVITY_HOST = "1.1.1.1"
-CONNECTIVITY_PORT = 53
-CONNECTIVITY_TIMEOUT = 2.0
+# Time-series tuning (SAMPLE_INTERVAL / HISTORY_SECONDS) lives with the
+# sampler in services.dashboard_history_store and is imported above so
+# the resolver and the sampler service can never drift apart.
 
 DNSMASQ_LEASES = Path("/var/lib/dnsmasq/dnsmasq.leases")
 
@@ -480,154 +478,67 @@ class DashboardResolver:
 
 
 # =========================================================================
-# Background sampler — fixed-size in-memory ring buffer
+# Time-series history — SQLite reader
 # =========================================================================
 
 class StatsHistory:
-    """Periodically samples throughput + connectivity into a ring buffer.
+    """Read-only view over the dashboard history DB.
 
-    Thread-safe: the sampler thread writes under `_lock`, API handlers
-    read under the same lock. Each sample is a small dict, and the deque
-    is bounded, so worst-case memory is a few hundred KB.
+    The sampling and writing is done by the standalone
+    `homefree-dashboard-sampler` service (dashboard_sampler.py). This
+    class only runs SELECTs, so admin-api carries no sampler thread and
+    holds no in-process state — every restart and every blue/green flip
+    simply reattaches to the same DB with the full history intact.
+
+    All methods are best-effort: if the DB does not exist yet (sampler
+    has not had its first tick) or a read fails, they return empty/None
+    rather than raising, so the dashboard degrades gracefully.
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._samples: deque = deque(maxlen=HISTORY_MAXLEN)
-        # Per-interface running rates, updated each tick from counter deltas.
-        self._rates: Dict[str, Dict[str, float]] = {}
-        self._last_counters: Optional[Dict[str, Any]] = None
-        self._last_ts: Optional[float] = None
-        self._thread: Optional[threading.Thread] = None
-        self._stop = threading.Event()
-
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        # Prime cpu_percent so the first real reading isn't a bogus 0.
-        try:
-            psutil.cpu_percent(interval=None)
-        except Exception:
-            pass
-        self._thread = threading.Thread(
-            target=self._run, name="dashboard-sampler", daemon=True,
+    def __init__(self, db_path: str = DEFAULT_DB_PATH) -> None:
+        self._store = DashboardHistoryStore(
+            os.environ.get("HOMEFREE_DASHBOARD_DB", db_path)
         )
-        self._thread.start()
-        logger.info("dashboard: stats sampler started")
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def _run(self) -> None:
-        while not self._stop.wait(SAMPLE_INTERVAL):
-            try:
-                self._sample()
-            except Exception as e:
-                logger.error(f"dashboard: sampler tick failed: {e}")
-
-    def _sample(self) -> None:
-        now = time.time()
-        counters = psutil.net_io_counters(pernic=True)
-
-        # Throughput = counter delta / elapsed. First tick has no delta.
-        rates: Dict[str, Dict[str, float]] = {}
-        if self._last_counters and self._last_ts:
-            elapsed = max(now - self._last_ts, 1e-3)
-            for name, cur in counters.items():
-                if name == "lo":
-                    continue
-                prev = self._last_counters.get(name)
-                if not prev:
-                    continue
-                rx = max(cur.bytes_recv - prev.bytes_recv, 0) * 8 / elapsed
-                tx = max(cur.bytes_sent - prev.bytes_sent, 0) * 8 / elapsed
-                rates[name] = {"rx_bps": rx, "tx_bps": tx}
-        self._last_counters = counters
-        self._last_ts = now
-
-        connected, latency_ms = self._probe_connectivity()
-
-        try:
-            vm = psutil.virtual_memory()
-            cpu = psutil.cpu_percent(interval=None)
-        except Exception:
-            vm, cpu = None, 0.0
-
-        sample = {
-            "ts": int(now),
-            "connected": connected,
-            "latency_ms": latency_ms,
-            "cpu_percent": cpu,
-            "memory_percent": vm.percent if vm else 0.0,
-            # Per-interface bits/sec, rounded to keep the payload small.
-            "rates": {
-                name: {
-                    "rx_bps": round(r["rx_bps"]),
-                    "tx_bps": round(r["tx_bps"]),
-                }
-                for name, r in rates.items()
-            },
-        }
-
-        with self._lock:
-            self._samples.append(sample)
-            self._rates = rates
-
-    @staticmethod
-    def _probe_connectivity() -> tuple:
-        """TCP connect to a public anycast resolver. Returns (up, ms)."""
-        start = time.time()
-        try:
-            with socket.create_connection(
-                (CONNECTIVITY_HOST, CONNECTIVITY_PORT),
-                timeout=CONNECTIVITY_TIMEOUT,
-            ):
-                return True, round((time.time() - start) * 1000, 1)
-        except Exception:
-            return False, None
-
-    # --- readers --------------------------------------------------------
 
     def latest_rates(self) -> Dict[str, Dict[str, float]]:
-        with self._lock:
-            return {
-                name: {
-                    "rx_bps": round(r["rx_bps"]),
-                    "tx_bps": round(r["tx_bps"]),
-                }
-                for name, r in self._rates.items()
+        """Per-interface throughput from the most recent sample. At most
+        SAMPLE_INTERVAL seconds stale — fine for the overview panel."""
+        latest = self._store.latest_sample()
+        if not latest:
+            return {}
+        return {
+            name: {
+                "rx_bps": round(r.get("rx_bps", 0)),
+                "tx_bps": round(r.get("tx_bps", 0)),
             }
+            for name, r in (latest.get("rates") or {}).items()
+        }
 
     def latest_connectivity(self) -> Dict[str, Any]:
-        with self._lock:
-            if not self._samples:
-                return {"connected": None, "latency_ms": None}
-            last = self._samples[-1]
-            # Uptime ratio over the retained window — a quick "how stable
-            # has my link been" number for the dashboard header.
-            total = len(self._samples)
-            up = sum(1 for s in self._samples if s["connected"])
-            return {
-                "connected": last["connected"],
-                "latency_ms": last["latency_ms"],
-                "uptime_ratio": round(up / total, 4) if total else None,
-                "samples": total,
-            }
+        """Current link state plus an uptime ratio over the retained
+        window — a quick 'how stable has my link been' number."""
+        samples = self._store.get_samples(HISTORY_SECONDS)
+        if not samples:
+            return {"connected": None, "latency_ms": None}
+        last = samples[-1]
+        total = len(samples)
+        up = sum(1 for s in samples if s["connected"])
+        return {
+            "connected": last["connected"],
+            "latency_ms": last["latency_ms"],
+            "uptime_ratio": round(up / total, 4) if total else None,
+            "samples": total,
+        }
 
     def snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            samples = list(self._samples)
+        """Full retained window for the time-series charts."""
         return {
             "sample_interval": SAMPLE_INTERVAL,
             "window_seconds": HISTORY_SECONDS,
-            "samples": samples,
+            "samples": self._store.get_samples(HISTORY_SECONDS),
         }
 
 
-# Module-level singleton. simple_main.py calls _history.start() on
-# application startup.
+# Module-level singleton. Cheap to construct — opens no connection until
+# a method is called.
 _history = StatsHistory()
-
-
-def start_sampler() -> None:
-    _history.start()

@@ -68,6 +68,10 @@ let
   # written vs provision-script-written.
   zitadelSecretsDir = "/var/lib/homefree-secrets/zitadel";
 
+  # Anchors auto-generated secrets into the encrypted /etc/nixos/secrets
+  # store so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   # oauth2-proxy reads its three required secrets from per-secret files
   # under /var/lib/homefree-secrets/zitadel/. We synthesise an env file
   # at runtime rather than baking secrets into the unit.
@@ -168,13 +172,13 @@ let
       kind = "oci-container";
       mkContainer = mkOauth2ProxyContainer;
       ## Merged into each generated podman-oauth2-proxy-<colour>.service.
-      ## restartIfChanged=false is the critical property — the flip
-      ## owns succession; activation must NOT bounce the active colour.
+      ## NOTE: lib/blue-green.nix forces `restartIfChanged = false` AND
+      ## `stopIfChanged = false` on every colour unit — the flip owns
+      ## the full lifecycle, so we do NOT set them here.
       extraUnitConfig = colour: {
         after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
         requires = [ "zitadel-prepare-secrets.service" ];
         wants = [ "dns-ready.service" ];
-        restartIfChanged = false;
         serviceConfig.ExecStartPre = [
           "!${oauth2ProxySecretsCheck}"
           "!${pkgs.writeShellScript "oauth2-proxy-prestart" oauth2ProxyPreStart}"
@@ -566,70 +570,71 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
       };
+      ## Each secret is anchored into the encrypted /etc/nixos/secrets
+      ## store (lib/secrets-anchor.nix) so it survives a restore. The
+      ## anchored copy is authoritative: on a restore the secret is
+      ## decrypted back out rather than regenerated. Regenerating the
+      ## masterkey in particular would render the backed-up Zitadel
+      ## database permanently undecryptable.
       script = ''
-        set -eu
-        mkdir -p ${zitadelSecretsDir}
-        chmod 700 ${zitadelSecretsDir}
+        ${anchor.preamble}
 
-        if [ ! -s "${zitadelSecretsDir}/masterkey" ]; then
-          ## Zitadel's masterkey must be exactly 32 bytes. Hex output of
-          ## `openssl rand -hex 16` is 32 ASCII characters → 32 bytes,
-          ## and avoids the base64 padding/`=` issue that breaks
-          ## ZITADEL_MASTERKEY parsing in some shells.
-          ${pkgs.openssl}/bin/openssl rand -hex 16 \
-            > "${zitadelSecretsDir}/masterkey"
-        fi
-        chmod 600 "${zitadelSecretsDir}/masterkey"
+        ## masterkey — must be exactly 32 bytes. `openssl rand -hex 16`
+        ## is 32 ASCII chars → 32 bytes, and avoids the base64 padding
+        ## `=` issue that breaks ZITADEL_MASTERKEY parsing in some shells.
+        ${anchor.anchorSecret {
+          service = "zitadel";
+          key = "masterkey";
+          dir = zitadelSecretsDir;
+          generate = "${pkgs.openssl}/bin/openssl rand -hex 16";
+        }}
 
-        if [ ! -s "${zitadelSecretsDir}/oauth2-cookie-secret" ]; then
-          ${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32 \
-            > "${zitadelSecretsDir}/oauth2-cookie-secret"
-        fi
-        chmod 600 "${zitadelSecretsDir}/oauth2-cookie-secret"
+        ${anchor.anchorSecret {
+          service = "zitadel";
+          key = "oauth2-cookie-secret";
+          dir = zitadelSecretsDir;
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
+        }}
 
-        ## Auto-generate the initial admin password if not provided
-        ## by the web installer. Required so a fresh-rebuild path —
-        ## someone upgrading a pre-SSO HomeFree box without going
-        ## through the installer flow — produces a working Zitadel
-        ## bootstrap rather than landing on Zitadel's compiled-in
-        ## default ("RandomInitial1!" historically; not stable across
-        ## versions). On first generation we print a loud banner so
-        ## the operator can grab the password from the journal — the
-        ## file is root-only and they'll need to log in once to
-        ## change it. Subsequent rebuilds are no-op (password kept).
-        if [ ! -s "${zitadelSecretsDir}/admin-password" ]; then
-          ## Zitadel password policy default requires upper+lower+digit
-          ## and at least 8 chars. Base64-of-24-bytes is 32 mixed-case
-          ## alphanumerics — comfortably passes.
-          ${pkgs.openssl}/bin/openssl rand -base64 24 \
-            | tr -d '/+=' \
-            | head -c 24 \
-            > "${zitadelSecretsDir}/admin-password"
-          chmod 600 "${zitadelSecretsDir}/admin-password"
-
-          ## Journal banner. Visible via:
-          ##   sudo journalctl -u zitadel-prepare-secrets.service
-          ## The first interactive login at https://sso.<domain>/
-          ## will force a password change, after which this file is
-          ## stale (Zitadel doesn't sync changes back to disk).
-          PW=$(cat "${zitadelSecretsDir}/admin-password")
-          echo ""
-          echo "════════════════════════════════════════════════════════════════════════════════"
-          echo "  HomeFree SSO — Initial Zitadel admin password (FIRST LOGIN ONLY)"
-          echo "────────────────────────────────────────────────────────────────────────────────"
-          echo "  Username : ${config.homefree.system.adminUsername}"
-          echo "  Password : $PW"
-          echo ""
-          echo "  → Log in once at https://sso.${config.homefree.system.domain}/"
-          echo "  → Zitadel will prompt you to set a new password — pick one you'll remember."
-          echo ""
-          echo "  This is the only time the password appears in the log."
-          echo "  To retrieve it again before first login:"
-          echo "    sudo cat ${zitadelSecretsDir}/admin-password"
-          echo "════════════════════════════════════════════════════════════════════════════════"
-          echo ""
-        fi
-        chmod 600 "${zitadelSecretsDir}/admin-password"
+        ## admin-password — the initial Zitadel admin password. Normally
+        ## written by the web installer (install.py); auto-generated
+        ## here only on a fresh-rebuild path that skipped the installer,
+        ## so a pre-SSO box upgrade still produces a working bootstrap
+        ## rather than Zitadel's unstable compiled-in default.
+        ##
+        ## adoptExisting=false: after first login Zitadel forces a
+        ## password change and does NOT sync it back to this file, so
+        ## the on-disk value goes stale. We anchor it only when freshly
+        ## generated — never adopt a possibly-stale on-disk value into
+        ## the encrypted store. Base64-of-24-bytes minus /+= is mixed-
+        ## case alphanumeric, satisfying Zitadel's default policy.
+        ${anchor.anchorSecret {
+          service = "zitadel";
+          key = "admin-password";
+          dir = zitadelSecretsDir;
+          adoptExisting = false;
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
+          onGenerate = ''
+            ## Journal banner — visible via:
+            ##   sudo journalctl -u zitadel-prepare-secrets.service
+            PW=$(cat "${zitadelSecretsDir}/admin-password")
+            echo ""
+            echo "════════════════════════════════════════════════════════════════════════════════"
+            echo "  HomeFree SSO — Initial Zitadel admin password (FIRST LOGIN ONLY)"
+            echo "────────────────────────────────────────────────────────────────────────────────"
+            echo "  Username : ${config.homefree.system.adminUsername}"
+            echo "  Password : $PW"
+            echo ""
+            echo "  → Log in once at https://sso.${config.homefree.system.domain}/"
+            echo "  → Zitadel will prompt you to set a new password — pick one you'll remember."
+            echo ""
+            echo "  This is the only time the password appears in the log."
+            echo "  To retrieve it again before first login:"
+            echo "    sudo cat ${zitadelSecretsDir}/admin-password"
+            echo "════════════════════════════════════════════════════════════════════════════════"
+            echo ""
+          '';
+        }}
       '';
     };
 
@@ -688,7 +693,8 @@ in
         admin.show = true;
         sso = {
           kind = "infra";
-          notes = "Zitadel itself — this IS the SSO IdP.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## Zitadel itself — this IS the SSO IdP.
         };
         reverse-proxy = {
           enable = zitadelEnabled;
@@ -753,7 +759,8 @@ in
         admin.show = false;
         sso = {
           kind = "infra";
-          notes = "OAuth2 Proxy — SSO gate sidecar, not a consumer.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## OAuth2 Proxy — SSO gate sidecar, not a consumer.
         };
         reverse-proxy = {
           enable = true;

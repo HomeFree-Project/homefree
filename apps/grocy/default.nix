@@ -92,7 +92,12 @@ in
       inherit (config.homefree.service-options.grocy) label name project-name;
       sso = {
         kind = "none";
-        notes = "Grocy serves its REST API on the same host as the web UI (no API/UI split). Adding an outer SSO gate would break mobile and barcode-scanner clients that authenticate with Grocy's native API keys. Use Grocy's built-in user system.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Grocy serves its REST API on the same host as the web UI
+        ## (no API/UI split). Adding an outer SSO gate would break
+        ## mobile and barcode-scanner clients that authenticate with
+        ## Grocy's native API keys. Use Grocy's built-in user system.
       };
       systemd-service-names = [
         "podman-grocy"

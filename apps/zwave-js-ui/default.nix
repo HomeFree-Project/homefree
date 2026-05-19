@@ -164,7 +164,9 @@ in
         ];
         sso = {
           kind = "caddy_gated";
-          notes = "Outer gate is admin-only. Z-Wave JS UI's own login still appears inside; no native OIDC.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## Outer gate is admin-only. Z-Wave JS UI's own login still
+          ## appears inside; no native OIDC.
         };
         reverse-proxy = {
           enable = config.homefree.services.zwave-js-ui.enable;

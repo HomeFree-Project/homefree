@@ -31,7 +31,7 @@ from resolvers.config import ConfigResolver
 from resolvers.install import InstallResolver
 from resolvers.services import ServicesResolver
 from resolvers.abuse_blocking import AbuseBlockingResolver
-from resolvers.dashboard import DashboardResolver, start_sampler
+from resolvers.dashboard import DashboardResolver
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
@@ -439,12 +439,10 @@ async def clear_service_restart_flag():
     except Exception as e:
         logger.error(f"Error clearing service restart flag: {e}")
 
-    # Kick off the dashboard stats sampler. It runs as a daemon thread,
-    # filling an in-memory ring buffer that backs the dashboard charts.
-    try:
-        start_sampler()
-    except Exception as e:
-        logger.error(f"Error starting dashboard stats sampler: {e}")
+    # NOTE: dashboard time-series sampling is no longer done here. It
+    # runs in the standalone `homefree-dashboard-sampler` service so the
+    # charts survive admin-api restarts and blue/green flips. admin-api
+    # only reads that history DB (see resolvers/dashboard.py).
 
     # Pre-warm the backup repository path cache in a daemon thread so the
     # Restore tab's per-repository path summaries render without a wait.

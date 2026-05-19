@@ -9,10 +9,11 @@ import {
  *
  * At-a-glance health for the box: connectivity, public IPs, gateway,
  * per-interface throughput, CPU / memory / disk utilisation, and the
- * LAN client count. Time-series charts are backed by the admin-api's
- * in-memory sampler (resolvers/dashboard.py) — that history resets on
- * every admin-api restart, so an empty chart right after a rebuild is
- * expected, not a bug.
+ * LAN client count. Time-series charts are backed by the standalone
+ * homefree-dashboard-sampler service, which writes a SQLite history DB
+ * read by the admin-api. That sampler runs independently of admin-api,
+ * so the ~24h of history survives admin-api restarts and blue/green
+ * flips — the charts are populated immediately after a rebuild.
  *
  * Owns its own polling: overview every 5s, history every 15s (the
  * sampler only produces a new point every 10s, so 15s is plenty).

@@ -361,6 +361,7 @@ class UserApp extends LitElement {
                target="_blank" rel="noopener">
               <span class="nav-item-icon">${navIcon('manual')}</span>
               <span class="nav-item-text">Manual</span>
+              <span class="nav-item-arrow">↗</span>
             </a>
            </div>
           </nav>

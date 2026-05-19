@@ -32,6 +32,21 @@ let
     exec ${pythonEnv}/bin/python simple_main.py
   '';
 
+  # Dashboard sampler service package. A standalone metrics collector —
+  # the sole writer of the dashboard history DB. Runs independently of
+  # the admin-api blue/green colour units so the dashboard time-series
+  # charts survive admin-api restarts and flips. See
+  # web-platform/backend/dashboard_sampler.py.
+  dashboard-sampler = pkgs.writeShellScriptBin "homefree-dashboard-sampler" ''
+    #!/usr/bin/env bash
+    cd ${installerWebPath}/backend
+    exec ${pythonEnv}/bin/python dashboard_sampler.py
+  '';
+
+  # SQLite DB shared by the sampler (writer) and admin-api (reader).
+  dashboardDbDir = "/var/lib/homefree-dashboard";
+  dashboardDbPath = "${dashboardDbDir}/history.db";
+
   # Generate list of all available service labels (not option names)
   # This extracts labels from service option definitions
   all-services-list = lib.filter (label: label != null) (
@@ -579,14 +594,15 @@ let
 
   ## Shared builder for the two admin-api colour units. They are
   ## identical except for the port (which also makes the unit hashes
-  ## distinct). restartIfChanged = false: NixOS writes the updated
-  ## unit file but must NOT bounce the running process — the flip
-  ## owns succession. NOT wantedBy multi-user.target — the boot
-  ## oneshot admin-api-active.service starts the active colour only.
+  ## distinct). NOT wantedBy multi-user.target — the boot oneshot
+  ## admin-api-active.service starts the active colour only.
+  ## NOTE: lib/blue-green.nix forces `restartIfChanged = false` AND
+  ## `stopIfChanged = false` on every colour unit — switch-to-
+  ## configuration must neither restart nor stop a colour unit; the
+  ## flip owns the full lifecycle. We do NOT set them here.
   mkAdminApiUnit = colour: port: {
     description = "HomeFree Admin API Backend (${colour})";
     after = [ "network.target" ];
-    restartIfChanged = false;
 
     serviceConfig = {
       Type = "simple";
@@ -620,6 +636,9 @@ let
         "HOMEFREE_DEVELOPMENT=${if config.homefree.development then "1" else "0"}"
         # Per-colour listen port. admin-api-blue=8000, admin-api-green=8001.
         "HOMEFREE_ADMIN_API_PORT=${toString port}"
+        # Dashboard history DB — admin-api reads it; the standalone
+        # homefree-dashboard-sampler service writes it.
+        "HOMEFREE_DASHBOARD_DB=${dashboardDbPath}"
       ];
     };
   };
@@ -690,7 +709,9 @@ in
 
         sso = {
           kind = "caddy_gated";
-          notes = "HomeFree admin UI itself — Caddy SSO gate enforces oauth2-proxy + homefree-admin role.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## HomeFree admin UI itself — Caddy SSO gate enforces
+          ## oauth2-proxy + homefree-admin role.
         };
 
         reverse-proxy = {
@@ -811,7 +832,9 @@ in
 
         sso = {
           kind = "caddy_gated";
-          notes = "Per-user dashboard — oauth2-proxy gate only, no admin role required.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## Per-user dashboard — oauth2-proxy gate only, no admin role
+          ## required.
         };
 
         reverse-proxy = {
@@ -884,6 +907,9 @@ in
           # standby shows inactive, which is expected.
           "admin-api-blue"
           "admin-api-green"
+          # Standalone dashboard metrics sampler — writes the history
+          # DB the admin-api reads.
+          "homefree-dashboard-sampler"
           "caddy"
         ];
 
@@ -903,6 +929,57 @@ in
     system.activationScripts.setup-admin-config = {
       text = preStart;
       deps = [];
+    };
+
+    ## Dashboard sampler — standalone, minimal-privilege metrics
+    ## collector. It is the *sole* writer of the dashboard history DB.
+    ## Decoupled from the admin-api blue/green units on purpose: its
+    ## lifetime spans admin-api restarts and colour flips, so the
+    ## dashboard time-series charts have no gaps and there is exactly
+    ## one writer (no last-writer-wins between two colours). admin-api
+    ## reads the DB read-only.
+    users.users.homefree-dashboard = {
+      isSystemUser = true;
+      group = "homefree-dashboard";
+      description = "HomeFree dashboard metrics sampler";
+    };
+    users.groups.homefree-dashboard = { };
+
+    systemd.services.homefree-dashboard-sampler = {
+      description = "HomeFree Dashboard Metrics Sampler";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
+
+      serviceConfig = {
+        Type = "simple";
+        User = "homefree-dashboard";
+        Group = "homefree-dashboard";
+        ## StateDirectory creates /var/lib/homefree-dashboard owned by
+        ## the sampler user. Mode 0755 so the admin-api units (running
+        ## as root, which can read regardless) — and any future
+        ## non-root reader — can open the DB.
+        StateDirectory = "homefree-dashboard";
+        StateDirectoryMode = "0755";
+        WorkingDirectory = dashboardDbDir;
+        ExecStart = "${dashboard-sampler}/bin/homefree-dashboard-sampler";
+        Restart = "always";
+        RestartSec = "10s";
+        Environment = [
+          "HOMEFREE_DASHBOARD_DB=${dashboardDbPath}"
+        ];
+        ## Pure metrics collector — no privileges needed. psutil
+        ## counters, net_io_counters and the TCP connectivity probe
+        ## all work unprivileged. Lock the unit down.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_NETLINK" ];
+        SystemCallFilter = [ "@system-service" ];
+      };
     };
 
     ## NOTE: the admin-api blue/green flip — colour units, boot

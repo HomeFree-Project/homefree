@@ -34,10 +34,12 @@ SSO_KIND_BRIDGE = "basic_auth"
 def _resolve_sso(
     service_config: Dict[str, Any],
     global_provisioned: bool,
-) -> Tuple[str, str, bool]:
-    """Pull (kind, notes, provisioned) out of a service-config entry.
+) -> Tuple[str, str, bool, bool]:
+    """Pull (kind, notes, provisioned, applicable) out of a service-config entry.
 
-    kind / notes come directly from the Nix-emitted `sso` block.
+    kind / notes / applicable come from the Nix-emitted `sso` block.
+    `applicable` (only meaningful when kind == "none") distinguishes a
+    deliberate "SSO not applicable" posture from a pending integration.
     `provisioned` mirrors the same readiness logic the SSO endpoint uses:
       - native_oidc → per-service .provisioned sentinel in its secrets dir
       - caddy_gated / basic_auth → global sentinel (oauth2-proxy is up)
@@ -46,6 +48,9 @@ def _resolve_sso(
     sso = service_config.get("sso") or {}
     kind = sso.get("kind") or "none"
     notes = sso.get("notes") or ""
+    # Defaults true (Nix option default) — only false when the service
+    # explicitly opts out of SSO as not applicable.
+    applicable = sso.get("applicable", True)
     if kind == SSO_KIND_NATIVE:
         label = service_config.get("label", "")
         secrets_dir_name = sso.get("secrets-dir") or label
@@ -56,7 +61,7 @@ def _resolve_sso(
         provisioned = global_provisioned
     else:
         provisioned = False
-    return kind, notes, provisioned
+    return kind, notes, provisioned, applicable
 
 
 class ServicesResolver:
@@ -99,7 +104,7 @@ class ServicesResolver:
             else:
                 active_state, sub_state, unit_states = "inactive", "dead", []
 
-            sso_kind, sso_notes, sso_provisioned = _resolve_sso(
+            sso_kind, sso_notes, sso_provisioned, sso_applicable = _resolve_sso(
                 service_config, global_sso_provisioned
             )
 
@@ -118,6 +123,7 @@ class ServicesResolver:
                 sso_kind=sso_kind,
                 sso_notes=sso_notes,
                 sso_provisioned=sso_provisioned,
+                sso_applicable=sso_applicable,
             )
 
             services_status.append(service_status)
@@ -167,7 +173,7 @@ class ServicesResolver:
             else:
                 active_state, sub_state, unit_states = "unknown", "unknown", []
 
-            sso_kind, sso_notes, sso_provisioned = _resolve_sso(
+            sso_kind, sso_notes, sso_provisioned, sso_applicable = _resolve_sso(
                 service_config, global_sso_provisioned
             )
 
@@ -186,6 +192,7 @@ class ServicesResolver:
                 sso_kind=sso_kind,
                 sso_notes=sso_notes,
                 sso_provisioned=sso_provisioned,
+                sso_applicable=sso_applicable,
             )
 
             services_status.append(service_status)

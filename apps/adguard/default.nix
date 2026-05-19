@@ -179,34 +179,45 @@ let
 
   adguardSecretsDir = "/var/lib/homefree-secrets/adguard";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   preStart = ''
     mkdir -p ${containerDataPath}/conf
     mkdir -p ${containerDataPath}/work
     mkdir -p ${adguardSecretsDir}
     chmod 700 ${adguardSecretsDir}
 
+    ${anchor.preamble}
+
     ## ── Random per-install admin password ──────────────────────────
-    ## Generate once and reuse across restarts so existing sessions
-    ## (if any) don't get invalidated. Stored as plaintext in the
-    ## secrets dir (mode 0400) for emergency LAN access; the bcrypt
-    ## hash is what gets spliced into AdGuardHome.yaml.
-    if [ ! -s ${adguardSecretsDir}/admin-password ] \
-       || [ ! -s ${adguardSecretsDir}/admin-password.bcrypt ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 32 \
-        | tr -d '\n' \
-        > ${adguardSecretsDir}/admin-password
-      chmod 400 ${adguardSecretsDir}/admin-password
-      # htpasswd -bnBC 10 produces `username:$2y$10$...`; we want
-      # only the hash. -i reads from stdin; we use -b with the
-      # password on the command line because htpasswd doesn't
-      # accept a hash-only output mode.
-      HASH=$(${pkgs.apacheHttpd}/bin/htpasswd -bnBC 10 "" \
-        "$(cat ${adguardSecretsDir}/admin-password)" \
-        | tr -d '\n' \
-        | sed 's/^://')
-      printf '%s' "$HASH" > ${adguardSecretsDir}/admin-password.bcrypt
-      chmod 400 ${adguardSecretsDir}/admin-password.bcrypt
-    fi
+    ## The plaintext password is anchored into encrypted
+    ## /etc/nixos/secrets so it survives a restore
+    ## (lib/secrets-anchor.nix). Stored mode 0400 for emergency LAN
+    ## access; the bcrypt hash (spliced into AdGuardHome.yaml) is a
+    ## DERIVATIVE — re-derived via extraInstall whenever it is missing,
+    ## not anchored itself (its random salt would change every boot).
+    ${anchor.anchorSecret {
+      service = "adguard";
+      key = "admin-password";
+      dir = adguardSecretsDir;
+      mkdirMode = null;
+      mode = "400";
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
+      extraInstall = ''
+        if [ ! -s ${adguardSecretsDir}/admin-password.bcrypt ]; then
+          # htpasswd -bnBC 10 produces `username:$2y$10$...`; we want
+          # only the hash. -b takes the password on the command line.
+          HASH=$(${pkgs.apacheHttpd}/bin/htpasswd -bnBC 10 "" \
+            "$(cat ${adguardSecretsDir}/admin-password)" \
+            | tr -d '\n' \
+            | sed 's/^://')
+          printf '%s' "$HASH" > ${adguardSecretsDir}/admin-password.bcrypt
+          chmod 400 ${adguardSecretsDir}/admin-password.bcrypt
+        fi
+      '';
+    }}
 
     ## Splice the bcrypt hash into the generated YAML. We can't put
     ## the real hash in the Nix expression because (a) it's random per
@@ -424,7 +435,11 @@ in
       ];
       sso = {
         kind = "basic_auth";
-        notes = "AdGuard has no native OIDC. Caddy SSO gate validates the user, then injects an HTTP Basic Auth header with the AdGuard admin credential so the user never sees AdGuard's local login.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## AdGuard has no native OIDC. Caddy SSO gate validates the
+        ## user, then injects an HTTP Basic Auth header with the
+        ## AdGuard admin credential so the user never sees AdGuard's
+        ## local login.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.adguard.enable;

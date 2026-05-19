@@ -233,6 +233,24 @@ in
       ## service hasn't run yet, Caddy still starts.
       (lib.mkIf (config.homefree.services.adguard.enable or false)
         { EnvironmentFile = "-/run/caddy-secrets/adguard-basic-auth.env"; })
+
+      ## Graceful reload — drop the upstream NixOS module's `--force`.
+      ##
+      ## The module's default ExecReload is `caddy reload … --force`.
+      ## `--force` makes Caddy rebuild the FULL server on every reload,
+      ## tearing down and recreating the `:443` listener — a brief
+      ## connection-refused gap each time. Stacked across the 2-3
+      ## reloads a rebuild issues (switch-to-configuration + each
+      ## blue/green flip), that gap was observed as ~9s of `caddy=000`
+      ## on the admin path. Without `--force`, Caddy diffs the adapted
+      ## config and keeps unchanged listeners — a true graceful reload.
+      ## It still picks up real content changes (the file is re-read
+      ## and re-adapted every reload); `--force` only bypasses the
+      ## "adapted JSON identical" short-circuit, which we WANT.
+      {
+        ExecReload = lib.mkForce
+          "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile";
+      }
     ];
   };
 

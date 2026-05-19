@@ -132,7 +132,9 @@ in
       ];
       sso = {
         kind = "caddy_gated";
-        notes = "Outer gate admin-only. Screeenly is API-only — no inner login.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Outer gate admin-only. Screeenly is API-only — no inner
+        ## login.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.screeenly.enable;

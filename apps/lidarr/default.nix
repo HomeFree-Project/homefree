@@ -115,7 +115,13 @@ in
       inherit (config.homefree.service-options.lidarr) label name project-name;
       sso = {
         kind = "none";
-        notes = "Lidarr shares its REST API and web UI on a single host:port. Other *arr-stack services and external clients (Headphones, mobile apps) authenticate against the API with Lidarr's own API key — gating the host with SSO would break that cross-talk. Use Lidarr's built-in auth.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Lidarr shares its REST API and web UI on a single host:port.
+        ## Other *arr-stack services and external clients (Headphones,
+        ## mobile apps) authenticate against the API with Lidarr's own
+        ## API key — gating the host with SSO would break that
+        ## cross-talk. Use Lidarr's built-in auth.
       };
       systemd-service-names = [
         "podman-lidarr"

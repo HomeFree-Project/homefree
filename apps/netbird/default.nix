@@ -77,6 +77,10 @@ let
   enabled = netbirdCfg.enable;
   secretsDir = "/var/lib/homefree-secrets/netbird";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   ## Gating switched from "user filled in 4 nullable string options"
   ## to "the secrets exist on disk", since zitadel-provision.service
   ## now writes all four files for us. Same evaluation-time
@@ -133,18 +137,33 @@ let
     chmod 644 ${netbirdDataPath}/ca-bundle.crt
     cd ${netbirdDataPath}
 
-    if [ ! -s turn-secret ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 32 > turn-secret
-      chmod 600 turn-secret
-    fi
-    if [ ! -s turn-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 16 > turn-password
-      chmod 600 turn-password
-    fi
-    if [ ! -s relay-secret ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 32 > relay-secret
-      chmod 600 relay-secret
-    fi
+    ## TURN/relay secrets, anchored into encrypted /etc/nixos/secrets
+    ## so they survive a restore (lib/secrets-anchor.nix). Runtime
+    ## copies stay in netbirdDataPath where the management.json sed
+    ## block below reads them; mkdirMode=null because that dir is
+    ## created (and owned) earlier in this preStart.
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "netbird";
+      key = "turn-secret";
+      dir = netbirdDataPath;
+      mkdirMode = null;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+    }}
+    ${anchor.anchorSecret {
+      service = "netbird";
+      key = "turn-password";
+      dir = netbirdDataPath;
+      mkdirMode = null;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 16";
+    }}
+    ${anchor.anchorSecret {
+      service = "netbird";
+      key = "relay-secret";
+      dir = netbirdDataPath;
+      mkdirMode = null;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+    }}
 
     install -m 600 /dev/null ${netbirdDataPath}/management.json
     ${pkgs.gnused}/bin/sed \
@@ -847,7 +866,9 @@ SQL
         };
         sso = {
           kind = "native_oidc";
-          notes = "Native OIDC; uses a Zitadel machine-user PAT for backchannel user enumeration.";
+          ## Dev context (intentionally not surfaced in the admin UI):
+          ## Native OIDC; uses a Zitadel machine-user PAT for
+          ## backchannel user enumeration.
         };
         reverse-proxy = {
           enable = enabled;

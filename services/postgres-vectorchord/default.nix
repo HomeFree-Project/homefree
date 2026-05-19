@@ -173,7 +173,10 @@ in
       inherit (config.homefree.service-options.postgres-vectorchord) label name project-name;
       sso = {
         kind = "infra";
-        notes = "PostgreSQL with VectorChord extension — internal database backing Open WebUI's RAG store. No user-facing surface; auth is by Postgres role only.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## PostgreSQL with VectorChord extension — internal database
+        ## backing Open WebUI's RAG store. No user-facing surface;
+        ## auth is by Postgres role only.
       };
       systemd-service-names = [
         "podman-postgres-vectorchord"

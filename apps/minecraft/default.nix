@@ -423,7 +423,12 @@ in
       project-name = "Minecraft";
       sso = {
         kind = "none";
-        notes = "Minecraft uses the Minecraft protocol on raw TCP (default 25565), not HTTP. Player auth is handled by Mojang/Microsoft on the game client; the server has no web UI. SSO is not applicable.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Minecraft uses the Minecraft protocol on raw TCP (default
+        ## 25565), not HTTP. Player auth is handled by Mojang/Microsoft
+        ## on the game client; the server has no web UI. SSO is not
+        ## applicable.
       };
       systemd-service-names = [];
       reverse-proxy.enable = false;
@@ -443,7 +448,10 @@ in
       parent = "minecraft";  # Mark this as a child of the parent service
       sso = {
         kind = "none";
-        notes = "Minecraft protocol on raw TCP; no HTTP/OIDC surface. Player auth is Mojang/Microsoft-side.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Minecraft protocol on raw TCP; no HTTP/OIDC surface. Player
+        ## auth is Mojang/Microsoft-side.
       };
       systemd-service-names = [
         "podman-${instance-id}"

@@ -30,6 +30,10 @@ let
   containerDataPath = "/var/lib/snipeit";
   secretsDir = "/var/lib/homefree-secrets/snipe-it";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   ## Auto-generate the MySQL password on first boot when the user
   ## hasn't supplied one. Same pattern as nextcloud / mediawiki.
   ## When secrets.mysql-password IS set, prefer that file. Either
@@ -45,24 +49,27 @@ let
     mkdir -p ${containerDataPath}
     mkdir -p ${secretsDir}
 
-    ${lib.optionalString (userSuppliedMysqlPassword == null) ''
-      if [ ! -s ${mysqlPasswordFile} ]; then
-        ${pkgs.openssl}/bin/openssl rand -base64 32 \
-          | tr -d '/+=' | head -c 32 > ${mysqlPasswordFile}
-        chmod 600 ${mysqlPasswordFile}
-      fi
-    ''}
+    ${anchor.preamble}
+
+    ${lib.optionalString (userSuppliedMysqlPassword == null) (anchor.anchorSecret {
+      service = "snipe-it";
+      key = "mysql-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    })}
 
     ## Laravel APP_KEY — required by Snipe-IT's bootstrapping or the
-    ## container exits with "Please re-run with $APP_KEY". Persisted
-    ## (regenerating would invalidate encrypted columns and signed
-    ## cookies). Format: literal "base64:" prefix + 32 raw bytes of
+    ## container exits with "Please re-run with $APP_KEY". Regenerating
+    ## it invalidates every encrypted DB column and signed cookie, so
+    ## it is anchored into encrypted /etc/nixos/secrets to survive a
+    ## restore. Format: literal "base64:" prefix + 32 raw bytes of
     ## openssl-emitted base64, matching `php artisan key:generate`.
-    if [ ! -s ${secretsDir}/app-key ]; then
-      printf 'base64:%s' "$(${pkgs.openssl}/bin/openssl rand -base64 32)" \
-        > ${secretsDir}/app-key
-      chmod 600 ${secretsDir}/app-key
-    fi
+    ${anchor.anchorSecret {
+      service = "snipe-it";
+      key = "app-key";
+      dir = secretsDir;
+      generate = "sh -c 'printf \"base64:%s\" \"$(${pkgs.openssl}/bin/openssl rand -base64 32)\"'";
+    }}
 
     ## Synthesize the env file the container reads. Carries the two
     ## secrets that the container's Laravel bootstrap requires every
@@ -349,7 +356,12 @@ in
       inherit (config.homefree.service-options.snipe-it) label name project-name;
       sso = {
         kind = "none";
-        notes = "Snipe-IT supports SAML only — OIDC requires a third-party Laravel package not in the official image. SAML integration is a separate multi-day effort. Use Snipe-IT's built-in user system for now.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Snipe-IT supports SAML only — OIDC requires a third-party
+        ## Laravel package not in the official image. SAML integration
+        ## is a separate multi-day effort. Use Snipe-IT's built-in user
+        ## system for now.
       };
       systemd-service-names = [
         "podman-snipe-it"

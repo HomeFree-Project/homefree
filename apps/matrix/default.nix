@@ -9,6 +9,10 @@ let
   containerDataPath = "/var/lib/matrix-synapse-podman";
   secretsDir = "/var/lib/homefree-secrets/matrix";
 
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   port = 8008;
   database-name = "matrix-synapse";
   database-user = "matrix-synapse";
@@ -121,37 +125,70 @@ let
 
   homeserverYaml = (pkgs.formats.yaml {}).generate "homeserver.yaml" homeserverSettings;
 
+  ## Generator for the ed25519 signing key, in the line format synapse
+  ## expects: `ed25519 <key_id> <base64_data>`. A multi-line shell
+  ## body — wrapped in `sh -c` so anchorSecret's `generate` (a single
+  ## command whose stdout is the value) sees it as one command.
+  signingKeyGen = pkgs.writeShellScript "matrix-signing-key-gen" ''
+    KEY_ID="a_$(${pkgs.openssl}/bin/openssl rand -hex 3)"
+    KEY_B64=$(${pkgs.openssl}/bin/openssl genpkey -algorithm ed25519 -outform DER \
+      | tail -c 32 | ${pkgs.coreutils}/bin/base64 -w0 | tr -d '=')
+    echo "ed25519 $KEY_ID $KEY_B64"
+  '';
+
   preStart = ''
     mkdir -p ${containerDataPath}/media_store
     mkdir -p ${secretsDir}
 
-    ## Auto-generate registration_shared_secret on first boot.
-    ## Synapse needs this to support `register_new_matrix_user`.
-    ## Persist it so existing tokens stay valid across restarts.
-    if [ ! -s ${secretsDir}/registration-shared-secret ]; then
-      ${pkgs.openssl}/bin/openssl rand -hex 32 \
-        > ${secretsDir}/registration-shared-secret
-      chmod 600 ${secretsDir}/registration-shared-secret
-    fi
-    install -m 600 ${secretsDir}/registration-shared-secret \
-      ${containerDataPath}/registration-shared-secret
+    ${anchor.preamble}
 
-    ## Auto-generate admin account password on first boot.
-    if [ ! -s ${secretsDir}/admin-account-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 24 \
-        | tr -d '\n' > ${secretsDir}/admin-account-password
-      chmod 600 ${secretsDir}/admin-account-password
-    fi
+    ## registration_shared_secret — Synapse needs it for
+    ## `register_new_matrix_user`. Anchored so existing tokens stay
+    ## valid across a restore. Also installed into the container data
+    ## dir where synapse reads it.
+    ${anchor.anchorSecret {
+      service = "matrix";
+      key = "registration-shared-secret";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
+      extraInstall = ''
+        install -m 600 "$ANCHOR_SECRET_FILE" \
+          ${containerDataPath}/registration-shared-secret
+      '';
+    }}
 
-    ## Generate signing key on first boot. ed25519, base64-encoded,
-    ## format synapse expects: `ed25519 <key_id> <base64_data>`.
-    if [ ! -s ${containerDataPath}/homeserver.signing.key ]; then
-      KEY_ID="a_$(${pkgs.openssl}/bin/openssl rand -hex 3)"
-      KEY_B64=$(${pkgs.openssl}/bin/openssl genpkey -algorithm ed25519 -outform DER \
-        | tail -c 32 | ${pkgs.coreutils}/bin/base64 -w0 | tr -d '=')
-      echo "ed25519 $KEY_ID $KEY_B64" > ${containerDataPath}/homeserver.signing.key
-      chmod 600 ${containerDataPath}/homeserver.signing.key
+    ${anchor.anchorSecret {
+      service = "matrix";
+      key = "admin-account-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '\\n'";
+    }}
+
+    ## homeserver signing key — the homeserver's federation identity.
+    ## Regenerating it on a restore would permanently break federation,
+    ## so it MUST be anchored. Previously stored only in the (un-backed-
+    ## up) container data dir; now anchored under secretsDir and
+    ## installed into the container path on every boot.
+    ##
+    ## MIGRATION: an existing box has the key only in the container
+    ## data dir. Seed the secretsDir copy from there BEFORE anchoring,
+    ## so the anchor adopts the EXISTING key rather than generating a
+    ## new one (which would break federation).
+    if [ ! -s ${secretsDir}/homeserver-signing-key ] \
+       && [ -s ${containerDataPath}/homeserver.signing.key ]; then
+      install -m 600 ${containerDataPath}/homeserver.signing.key \
+        ${secretsDir}/homeserver-signing-key
     fi
+    ${anchor.anchorSecret {
+      service = "matrix";
+      key = "homeserver-signing-key";
+      dir = secretsDir;
+      generate = "${signingKeyGen}";
+      extraInstall = ''
+        install -m 600 "$ANCHOR_SECRET_FILE" \
+          ${containerDataPath}/homeserver.signing.key
+      '';
+    }}
 
     ## Ensure container's synapse user (uid 991) owns its data.
     ## Use ID 991 to match Docker image default (UID = 991, GID = 991
@@ -326,12 +363,12 @@ in
       ];
       sso = {
         kind = "none";
-        notes = ''
-          Matrix clients (Element, etc.) authenticate to Synapse over the
-          Matrix CS API with their own access tokens — they don't speak
-          OIDC at the HTTP gateway. Synapse supports OIDC natively for
-          new account creation; wiring that is a separate effort.
-        '';
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Matrix clients (Element, etc.) authenticate to Synapse over
+        ## the Matrix CS API with their own access tokens — they don't
+        ## speak OIDC at the HTTP gateway. Synapse supports OIDC
+        ## natively for new account creation; wiring that is a separate
+        ## effort, so SSO here is pending rather than not-applicable.
       };
       reverse-proxy = {
         enable = true;

@@ -79,6 +79,16 @@ class TableEditor extends LitElement {
     .bool-yes { color: var(--hf-accent); font-weight: 600; }
     .bool-no  { color: var(--hf-err);    font-weight: 600; }
 
+    /* Boolean columns render a single glyph — shrink them to content
+       and let the header text wrap rather than stretch the column (and
+       the whole table) to fit a long header on one line. */
+    th.col-bool, td.col-bool {
+      width: 1%;
+      white-space: normal;
+    }
+    th.col-bool { text-align: center; }
+    td.col-bool { text-align: center; }
+
     .actions-cell {
       text-align: right;
       white-space: nowrap;
@@ -158,12 +168,15 @@ class TableEditor extends LitElement {
       align-items: center;
       justify-content: center;
       z-index: 1000;
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(2px);
     }
 
+    /* Opaque card with a clearly visible frame — see confirm-dialog.js
+       for the rationale (lighter surface + stronger border so it reads
+       distinctly against the blurred overlay). */
     .modal {
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border);
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
       border-radius: 10px;
       padding: 24px;
       max-width: 500px;
@@ -418,7 +431,7 @@ class TableEditor extends LitElement {
         <table>
           <thead>
             <tr>
-              ${this.columns.map(col => html`<th>${col.label}</th>`)}
+              ${this.columns.map(col => html`<th class=${col.type === 'boolean' ? 'col-bool' : ''}>${col.label}</th>`)}
               <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
@@ -432,7 +445,7 @@ class TableEditor extends LitElement {
             ` : this.data.map((row, index) => html`
               <tr>
                 ${this.columns.map(col => html`
-                  <td>${this.renderCell(row, col)}</td>
+                  <td class=${col.type === 'boolean' ? 'col-bool' : ''}>${this.renderCell(row, col)}</td>
                 `)}
                 <td class="actions-cell">
                   <span class="row-actions">

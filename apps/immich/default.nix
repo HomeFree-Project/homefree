@@ -33,6 +33,10 @@ let
 
   immichSecretsDir = "/var/lib/homefree-secrets/immich";
   domain = config.homefree.system.domain;
+
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
   adminUser = config.homefree.system.adminUsername;
   adminEmail = config.homefree.system.adminEmail or "${adminUser}@${domain}";
 
@@ -65,11 +69,16 @@ let
     ## restarts (until SSO is fully wired and the token survives).
     ## The end-user is never shown this password — they log in via
     ## Zitadel.
-    if [ ! -s ${immichSecretsDir}/admin-password ]; then
-      ${pkgs.openssl}/bin/openssl rand -base64 24 \
-        > ${immichSecretsDir}/admin-password
-      chmod 600 ${immichSecretsDir}/admin-password
-    fi
+    ## Anchored into encrypted /etc/nixos/secrets so it survives a
+    ## restore (lib/secrets-anchor.nix); postStart re-authenticates
+    ## with it after restarts.
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "immich";
+      key = "admin-password";
+      dir = immichSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
+    }}
 
     ## Build a CA bundle the container can mount over its own
     ## /etc/ssl/certs/ca-certificates.crt so Immich's Node OIDC
@@ -522,7 +531,9 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Native OIDC; homefree-admin role maps to Immich admin via OAUTH_ADMIN_GROUP.";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Native OIDC; homefree-admin role maps to Immich admin via
+        ## OAUTH_ADMIN_GROUP.
       };
       reverse-proxy = {
         enable = config.homefree.service-options.immich.enable;

@@ -191,3 +191,6 @@ class ServiceStatus:
     sso_kind: str = "none"
     sso_notes: str = ""
     sso_provisioned: bool = False
+    # Only meaningful when sso_kind == "none": True ⇒ integration is
+    # pending, False ⇒ SSO deliberately not applicable to this service.
+    sso_applicable: bool = True

@@ -192,7 +192,10 @@ in
       ];
       sso = {
         kind = "native_oidc";
-        notes = "Vaultwarden 1.36+ native OIDC. Master password still required after SSO for vault decryption (E2E encryption — can't be bypassed).";
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Vaultwarden 1.36+ native OIDC. Master password still
+        ## required after SSO for vault decryption (E2E encryption —
+        ## can't be bypassed).
       };
       reverse-proxy = {
         enable = config.homefree.service-options.vaultwarden.enable;

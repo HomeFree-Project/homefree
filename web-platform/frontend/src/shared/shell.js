@@ -240,13 +240,15 @@ export const shellStyles = css`
     color: var(--hf-text);
   }
   /* Trailing arrow pushed to the right edge of the row; hidden when
-     the sidebar collapses (label text hides too). */
-  .nav-item-crosssite .nav-item-arrow {
+     the sidebar collapses (label text hides too). Applies to any
+     nav-item with an external-link arrow (Home/Admin crosssite links
+     and the Manual link). */
+  .nav-item .nav-item-arrow {
     margin-left: auto;
     font-size: 13px;
     opacity: 0.55;
   }
-  .sidebar.collapsed .nav-item-crosssite .nav-item-arrow {
+  .sidebar.collapsed .nav-item .nav-item-arrow {
     display: none;
   }
   .sidebar.collapsed .nav-item-text {

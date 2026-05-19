@@ -4,19 +4,21 @@ import '../../shared/form-field.js';
 import '../../shared/list-input.js';
 import '../../shared/progress-modal.js';
 import '../secrets-input.js';
+import { BackupJobControllerMixin } from '../../shared/backup-job-controller.js';
+import { navIcon } from '../../../shared/icons.js';
 
 /**
  * Backups configuration module.
  *
  * Handles local backups, Backblaze B2 cloud backups, and restore
  * operations. Long-running operations (restore, restore-all, trigger,
- * sync) are modelled as backend "jobs": the module kicks one off, then
- * a single poller watches /api/backups/jobs/current and tails the job
- * log, rendering a live progress overlay with a per-repository
- * checklist. The Restore tab renders its repository list immediately;
+ * sync) are modelled as backend "jobs" — the job state machine, the
+ * poller, and the progress banner/overlay are shared with the Status
+ * page via BackupJobControllerMixin (shared/backup-job-controller.js).
+ * The Restore tab renders its repository list immediately;
  * per-repository paths and snapshots load lazily on demand.
  */
-class BackupsModule extends LitElement {
+class BackupsModule extends BackupJobControllerMixin(LitElement) {
   static properties = {
     config: { type: Object },
     modified: { type: Boolean },
@@ -50,6 +52,10 @@ class BackupsModule extends LitElement {
     pathsReady: { type: Boolean },
     pathsProgress: { type: Object },
 
+    // Run tab: repository label -> its SOURCE directories, read from
+    // config (no restic). Keyed by bare label, e.g. "extra-path-2".
+    sourcePaths: { type: Object },
+
     // Snapshot picker (expanded repo)
     expandedRepo: { type: String },     // repo name currently expanded
     expandedSource: { type: String },   // 'local' | 'backblaze' shown in card
@@ -59,7 +65,9 @@ class BackupsModule extends LitElement {
 
     includeSystemConfig: { type: Boolean },
 
-    // The single active backend job, polled live
+    // The single active backend job, polled live. The job state and
+    // its render helpers come from BackupJobControllerMixin; these
+    // declarations keep them reactive on this subclass.
     currentJob: { type: Object },
     jobLog: { type: String },
     jobOverlayOpen: { type: Boolean }
@@ -140,8 +148,9 @@ class BackupsModule extends LitElement {
       margin-bottom: 10px;
     }
     .health-row:last-child { margin-bottom: 0; }
-    .health-row.ok  { border-left-color: var(--hf-ok); }
-    .health-row.err { border-left-color: var(--hf-err); }
+    .health-row.ok   { border-left-color: var(--hf-ok); }
+    .health-row.warn { border-left-color: var(--hf-warn); }
+    .health-row.err  { border-left-color: var(--hf-err); }
     .health-name {
       font-weight: 600;
       font-size: 14px;
@@ -160,6 +169,7 @@ class BackupsModule extends LitElement {
       margin-top: 6px;
       word-break: break-word;
     }
+    .health-failed.health-never { color: var(--hf-warn); }
     .health-badge {
       font-size: 12px;
       font-weight: 600;
@@ -168,6 +178,9 @@ class BackupsModule extends LitElement {
     }
     .health-badge.ok  {
       background: rgba(16,185,129,.15); color: var(--hf-ok);
+    }
+    .health-badge.warn {
+      background: rgba(245,158,11,.15); color: var(--hf-warn);
     }
     .health-badge.err {
       background: rgba(239,68,68,.15); color: var(--hf-err);
@@ -210,6 +223,20 @@ class BackupsModule extends LitElement {
     .btn-danger  { background: var(--hf-err); color: #fff; }
     .btn-danger:hover:not(:disabled) { background: #dc2626; }
     .btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+    /* per-service "back up now" list (Run tab) */
+    .svc-backup-list { display: grid; gap: 2px; margin-top: 6px; }
+    .svc-backup-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+    }
+    .svc-backup-row:nth-child(odd) { background: var(--hf-surface-2); }
+    .svc-backup-name { flex: 1; font-size: 14px; color: var(--hf-text); }
+    .svc-backup-actions { display: flex; gap: 6px; }
 
     .spinner {
       display: inline-block;
@@ -260,6 +287,16 @@ class BackupsModule extends LitElement {
     }
     .repo-group h4 {
       font-size: 15px; font-weight: 600; margin: 0 0 4px 0;
+      display: flex; align-items: center; gap: 8px;
+    }
+    /* Monochrome group-header icon — matches the sidebar nav icons:
+       inherits the heading text color, 18px square. */
+    .repo-group-icon {
+      display: inline-flex;
+      flex-shrink: 0;
+    }
+    .repo-group-icon svg {
+      width: 18px; height: 18px;
     }
     .repo-group .desc {
       font-size: 13px; color: var(--hf-text-muted); margin: 0 0 12px 0;
@@ -568,6 +605,8 @@ class BackupsModule extends LitElement {
     this.pathsReady = false;
     this.pathsProgress = { done: 0, total: 0, state: 'idle' };
 
+    this.sourcePaths = {};
+
     this.expandedRepo = null;
     this.expandedSource = null;
     this.snapshots = [];
@@ -587,15 +626,16 @@ class BackupsModule extends LitElement {
     this._jobLogOffset = 0;
     this._restoreAllConfirmText = '';
     this._servicesLoadedOnce = false;
+    // The Restore tab's snapshot path-warm and the Run tab's config
+    // path load are each started once, lazily, on first tab open.
+    this._pathsWarmStarted = false;
+    this._sourcePathsLoaded = false;
   }
 
   // ----------------------------------------------------------- lifecycle
 
   async connectedCallback() {
     super.connectedCallback();
-    // Stop polling before navigation to avoid leaking connections.
-    this._beforeUnload = () => this.stopJobPolling();
-    window.addEventListener('beforeunload', this._beforeUnload);
 
     await Promise.all([
       this.loadSecretsStatus(),
@@ -616,10 +656,6 @@ class BackupsModule extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._beforeUnload) {
-      window.removeEventListener('beforeunload', this._beforeUnload);
-    }
-    this.stopJobPolling();
     this.stopCanaryPolling();
     if (this._pathsPollTimer) {
       clearTimeout(this._pathsPollTimer);
@@ -628,85 +664,13 @@ class BackupsModule extends LitElement {
   }
 
   // ----------------------------------------------------------- job model
+  //
+  // The job state machine, poller, startJob() and banner/overlay
+  // renders come from BackupJobControllerMixin. This module only adds
+  // the page-specific follow-up that runs when a job finishes.
 
-  isJobActive(job) {
-    return !!job && (job.state === 'queued' || job.state === 'running');
-  }
-
-  async refreshCurrentJob() {
-    try {
-      const res = await fetch('/api/backups/jobs/current');
-      if (!res.ok) return;
-      const data = await res.json();
-      const prev = this.currentJob;
-      this.currentJob = data.job || null;
-
-      // A new job appeared or the tracked job changed: reset the log tail.
-      if (this.currentJob && (!prev || prev.id !== this.currentJob.id)) {
-        this._jobLogOffset = 0;
-        this.jobLog = '';
-      }
-      if (this.currentJob) {
-        await this.fetchJobLog(this.currentJob.id);
-      }
-
-      // Job just finished: stop polling, refresh derived data.
-      if (prev && this.isJobActive(prev) && !this.isJobActive(this.currentJob)) {
-        this.onJobFinished(this.currentJob || prev);
-      }
-    } catch (e) {
-      console.error('Error refreshing current job:', e);
-    }
-  }
-
-  async fetchJobLog(jobId) {
-    try {
-      const res = await fetch(
-        `/api/backups/jobs/${encodeURIComponent(jobId)}/log` +
-        `?offset=${this._jobLogOffset}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.lines) {
-        this.jobLog += data.lines;
-        this._jobLogOffset = data.offset;
-        // Keep the log panel scrolled to the newest output.
-        this.updateComplete.then(() => {
-          const el = this.renderRoot.querySelector('.log-view');
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      }
-    } catch (e) {
-      console.error('Error fetching job log:', e);
-    }
-  }
-
-  startJobPolling() {
-    if (this._jobPollTimer) return;
-    this._jobPollTimer = setInterval(() => {
-      this.refreshCurrentJob().then(() => {
-        if (!this.isJobActive(this.currentJob)) this.stopJobPolling();
-      });
-    }, 2000);
-  }
-
-  stopJobPolling() {
-    if (this._jobPollTimer) {
-      clearInterval(this._jobPollTimer);
-      this._jobPollTimer = null;
-    }
-  }
-
-  onJobFinished(job) {
-    this.stopJobPolling();
+  onJobFinishedHook(job) {
     const kind = job?.kind;
-    if (job?.state === 'failed') {
-      this.showNotification(
-        `${this.jobKindLabel(kind)} failed: ${job.error || 'see log'}`,
-        'error');
-    } else {
-      this.showNotification(
-        `${this.jobKindLabel(kind)} completed successfully`, 'success');
-    }
     // A restore changed on-disk data; refresh repo lists/paths.
     if (kind === 'restore' || kind === 'restore-all') {
       this.loadServices(true);
@@ -715,64 +679,6 @@ class BackupsModule extends LitElement {
     if (kind === 'backup' || kind === 'sync') {
       this.loadBackupHealth();
     }
-  }
-
-  jobKindLabel(kind) {
-    return {
-      'restore': 'Restore',
-      'restore-all': 'Full-system restore',
-      'backup': 'Local backup',
-      'sync': 'Backblaze backup'
-    }[kind] || 'Operation';
-  }
-
-  /**
-   * POST a job-starting endpoint, handling the 409 "busy" response.
-   * Returns the job object on success, or null (notification shown).
-   */
-  async startJob(url, body) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined
-      });
-      if (res.status === 409) {
-        const data = await res.json().catch(() => ({}));
-        const detail = data.detail || {};
-        this.showNotification(
-          detail.message ||
-          'The backup subsystem is busy. Try again once it is idle.',
-          'error');
-        // Refresh so the banner reflects whatever is actually running.
-        await this.refreshCurrentJob();
-        if (this.isJobActive(this.currentJob)) this.startJobPolling();
-        return null;
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        this.showNotification(
-          `Failed to start: ${this.describeError(data.detail)}`, 'error');
-        return null;
-      }
-      const data = await res.json();
-      this.currentJob = data.job || null;
-      this._jobLogOffset = 0;
-      this.jobLog = '';
-      this.jobOverlayOpen = true;
-      this.startJobPolling();
-      return data.job;
-    } catch (e) {
-      console.error('Error starting job:', e);
-      this.showNotification(`Error: ${e.message}`, 'error');
-      return null;
-    }
-  }
-
-  describeError(detail) {
-    if (!detail) return 'Unknown error';
-    if (typeof detail === 'string') return detail;
-    return detail.message || detail.error || JSON.stringify(detail);
   }
 
   // -------------------------------------------------------- data loading
@@ -860,7 +766,7 @@ class BackupsModule extends LitElement {
    * Load the repository list for the Restore tab. This is cheap (no
    * restic): paths are NOT fetched here - they load lazily per repo.
    */
-  async loadServices(force = false) {
+  async loadServices(force = false, { warmPaths = true } = {}) {
     this.repoListLoading = true;
     this.repoListError = '';
     try {
@@ -899,9 +805,14 @@ class BackupsModule extends LitElement {
       }
       this.lastServicesRefresh = Date.now();
       this._servicesLoadedOnce = true;
-      // Fill every repo's path summary in one batch call (skeletons
-      // show until it resolves). Fire-and-forget.
-      this.loadAllPaths(force);
+      // Warm the per-repo snapshot paths for the Restore tab. This is
+      // the slow part (a restic call per repo), so the Run tab opts
+      // out via warmPaths:false — it reads source paths from config
+      // instead (loadSourcePaths).
+      if (warmPaths) {
+        this._pathsWarmStarted = true;
+        this.loadAllPaths(force);
+      }
     } catch (e) {
       console.error('Error loading services:', e);
       this.repoListError = e.message || 'Failed to load repositories';
@@ -996,9 +907,44 @@ class BackupsModule extends LitElement {
 
   async handleTabChange(tab) {
     this.activeTab = tab;
-    if (tab === 'restore' && !this._servicesLoadedOnce) {
-      // Fire-and-forget: the tab renders immediately, the list fills in.
-      this.loadServices();
+    if (tab !== 'restore' && tab !== 'run') return;
+
+    // Both tabs need the repository lists (cheap; no restic). Load once.
+    // The Run tab opts out of the slow snapshot path-warm — it shows
+    // SOURCE paths from config instead. Each of the two follow-up loads
+    // is guarded by its own flag, so opening one tab first does not
+    // starve the other (e.g. Run-first must not skip Restore's warm).
+    if (!this._servicesLoadedOnce) {
+      this.loadServices(false, { warmPaths: tab === 'restore' });
+    } else if (tab === 'restore' && !this._pathsWarmStarted) {
+      // Run was opened first (lists already loaded, warm skipped) —
+      // start the snapshot warm now that Restore needs it.
+      this._pathsWarmStarted = true;
+      this.loadAllPaths(false);
+    }
+
+    // Run tab: load config-derived source paths once (instant).
+    if (tab === 'run' && !this._sourcePathsLoaded) {
+      this.loadSourcePaths();
+    }
+  }
+
+  /**
+   * Load each repository's SOURCE directories from config — what WILL
+   * be backed up. Cheap (no restic); the Run tab uses this to show
+   * real paths instantly instead of the slow snapshot warm.
+   */
+  async loadSourcePaths() {
+    this._sourcePathsLoaded = true;
+    try {
+      const res = await fetch('/api/backups/source-paths');
+      if (res.ok) {
+        const d = await res.json();
+        this.sourcePaths = d.paths || {};
+      }
+    } catch (e) {
+      console.error('Error loading source paths:', e);
+      // Non-fatal: rows fall back to showing the repo label.
     }
   }
 
@@ -1200,6 +1146,39 @@ class BackupsModule extends LitElement {
     );
   }
 
+  /**
+   * Back up a single repository to one source ('local'|'backblaze').
+   * `label` is the repository id used by the API (e.g. extra-path-5);
+   * the confirm dialog shows the resolved real path/name instead.
+   */
+  handleRunService(label, source) {
+    const sourceLabel = source === 'backblaze' ? 'Backblaze' : 'local';
+    // Prefer the real directory for extra-path repos; fall back to the
+    // repo id for service repos (which are already human-readable).
+    const paths = this.sourcePaths?.[label];
+    const display = (this.isExtraPathRepo(label) && paths && paths.length)
+      ? paths[0] : label;
+    this.confirmModal().show(
+      `Back Up ${display}`,
+      `Run the ${sourceLabel} backup for ${display} now.`,
+      'confirm',
+      {
+        confirmText: 'Run Backup',
+        cancelText: 'Cancel',
+        confirmVariant: 'primary',
+        details: [
+          { message: `Only ${display} is backed up — other `
+              + 'repositories are left untouched', type: 'info' },
+          { message: 'Runs in the background; you can leave this page',
+            type: 'info' }
+        ],
+        confirmCallback: () => this.startJob(
+          `/api/backups/services/${encodeURIComponent(label)}`
+          + `/trigger?source=${source}`, null)
+      }
+    );
+  }
+
   // -------------------------------------------------------------- helpers
 
   repoCount() {
@@ -1240,128 +1219,16 @@ class BackupsModule extends LitElement {
   }
 
   // --------------------------------------------------------- render: job
-
-  renderJobBanner() {
-    const job = this.currentJob;
-    if (!job) return '';
-    const active = this.isJobActive(job);
-    const isRestore = job.kind === 'restore' || job.kind === 'restore-all';
-    let cls = 'job-banner';
-    if (active && isRestore) cls += ' restore';
-    else if (!active) cls += (job.state === 'failed' ? ' failed' : ' done');
-
-    const done = job.repos.filter(r => r.state === 'done').length;
-    const failed = job.repos.filter(r => r.state === 'failed').length;
-    const total = job.repos.length;
-
-    let sub;
-    if (active) {
-      sub = job.current_repo
-        ? `Working on ${job.current_repo} — ${done}/${total} done`
-        : `${done}/${total} done`;
-    } else if (job.state === 'failed') {
-      sub = job.error || `${failed} repositor${failed === 1 ? 'y' : 'ies'} failed`;
-    } else {
-      sub = `${done}/${total} repositories completed`;
-    }
-
-    return html`
-      <div class=${cls} @click=${() => { this.jobOverlayOpen = true; }}>
-        ${active ? html`<span class="spinner lg"></span>`
-                 : html`<span>${job.state === 'failed' ? '✕' : '✓'}</span>`}
-        <div class="grow">
-          <div class="title">${this.jobKindLabel(job.kind)}
-            ${active ? 'in progress' : (job.state === 'failed'
-              ? 'failed' : 'complete')}</div>
-          <div class="sub">${sub}</div>
-        </div>
-        <span class="view">View details</span>
-      </div>
-    `;
-  }
-
-  renderJobOverlay() {
-    if (!this.jobOverlayOpen || !this.currentJob) return '';
-    const job = this.currentJob;
-    const active = this.isJobActive(job);
-    const done = job.repos.filter(r => r.state === 'done').length;
-    const failed = job.repos.filter(r => r.state === 'failed').length;
-    const total = job.repos.length;
-    const pct = total ? Math.round((done + failed) / total * 100) : 0;
-    const showChecklist = total > 1;
-
-    return html`
-      <div class="overlay" @click=${() => this.closeOverlayIfDone()}>
-        <div class="job-panel" @click=${(e) => e.stopPropagation()}>
-          <div class="job-panel-head">
-            ${active ? html`<span class="spinner lg"></span>`
-                     : html`<span style="font-size:20px;">
-                         ${job.state === 'failed' ? '✕' : '✓'}</span>`}
-            <span class="title">
-              ${this.jobKindLabel(job.kind)}
-              ${active ? 'in progress'
-                       : (job.state === 'failed' ? '— failed' : '— complete')}
-            </span>
-          </div>
-
-          <div class="job-panel-body">
-            ${showChecklist ? html`
-              <div class="progress-bar"><div style="width:${pct}%"></div></div>
-              <div class="repo-progress">
-                ${job.repos.map(r => html`
-                  <div class="progress-row ${r.state}">
-                    <span class="ico">${this.repoStateIcon(r.state)}</span>
-                    <span>${r.name}</span>
-                    ${r.error ? html`<span class="err">${r.error}</span>` : ''}
-                  </div>
-                `)}
-              </div>
-            ` : ''}
-
-            <div style="font-size:13px;color:var(--hf-text-muted);
-                        margin-bottom:6px;">Live log</div>
-            <div class="log-view">${this.jobLog ||
-              (active ? 'Waiting for output…' : '(no output)')}</div>
-
-            ${job.state === 'failed' && job.error ? html`
-              <div class="status-line err" style="margin-top:16px;">
-                ${job.error}
-              </div>` : ''}
-          </div>
-
-          <div class="job-panel-foot">
-            <span class="job-summary">
-              ${active
-                ? `${done}/${total} done${failed ? `, ${failed} failed` : ''}`
-                : (job.state === 'failed'
-                    ? `${failed} failed, ${done} succeeded`
-                    : `All ${total} completed`)}
-            </span>
-            <button class="btn ${active ? 'btn-secondary' : 'btn-primary'}"
-                    @click=${() => { this.jobOverlayOpen = false; }}>
-              ${active ? 'Run in background' : 'Close'}
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  closeOverlayIfDone() {
-    if (!this.isJobActive(this.currentJob)) this.jobOverlayOpen = false;
-  }
-
-  repoStateIcon(state) {
-    return { pending: '·', running: '⟳', done: '✓', failed: '✕' }[state]
-      || '·';
-  }
+  //
+  // renderJobBanner() and renderJobOverlay() are provided by
+  // BackupJobControllerMixin.
 
   // ----------------------------------------------------- render: config
 
   /**
-   * Status tab - the landing view. Answers "are my backups OK?" first:
+   * Status tab - the landing view. Answers "are my backups OK?":
    * the live job banner, the per-source Backup Health panel, and the
-   * Backup Self-Test.
+   * Backup Self-Test. On-demand triggering lives on the Run tab.
    */
   renderStatusTab() {
     return html`
@@ -1371,11 +1238,175 @@ class BackupsModule extends LitElement {
     `;
   }
 
+  // -------------------------------------------------------- render: run
+
+  /**
+   * Run tab - on-demand backups. Bulk triggers at the top, then a
+   * per-service list grouped like the Restore tab, each row showing
+   * the repository's real name / path. Scheduled backups still run
+   * nightly — this tab is for an immediate, ad-hoc run.
+   */
+  renderRunTab() {
+    const resticReady =
+      !!this.backupConfigStatus?.restic_password_configured;
+
+    if (!resticReady) {
+      return html`
+        ${this.renderJobBanner()}
+        <config-section title="Run Backups"
+          description="Start a backup now, in addition to the nightly schedule">
+          <div class="info-box warn-box">
+            <strong>⚠️ Restic password not configured</strong>
+            <div>Set the Restic backup password on the Configure tab
+              before running backups.</div>
+          </div>
+        </config-section>
+      `;
+    }
+
+    const b2Ready = !!this.backupConfigStatus?.backblaze_available;
+    const busy = this.actionsLocked;
+
+    return html`
+      ${this.renderJobBanner()}
+      <config-section
+        title="Run Backups"
+        description="Start a backup now, in addition to the nightly schedule"
+      >
+        <div class="btn-row">
+          <button
+            class="btn btn-secondary"
+            @click=${() => this.handleTriggerBackups()}
+            ?disabled=${busy}
+          >Run All Backups</button>
+          ${b2Ready ? html`
+            <button
+              class="btn btn-secondary"
+              @click=${() => this.handleBackupBackblaze()}
+              ?disabled=${busy}
+            >Back Up All to Backblaze</button>
+          ` : ''}
+        </div>
+        ${busy ? html`
+          <p style="font-size:13px;color:var(--hf-text-muted);
+                    margin-top:8px;">
+            A ${this.jobKindLabel(this.currentJob.kind).toLowerCase()} is
+            currently running — see the banner above.
+          </p>` : ''}
+
+        <h3 style="font-size:16px;font-weight:600;margin:24px 0 12px;">
+          Back up an individual repository
+        </h3>
+        ${this.repoListLoading && !this._servicesLoadedOnce ? html`
+          <div class="status-line muted">
+            <span class="spinner"></span>
+            Loading backup repositories…
+          </div>
+        ` : this.repoListError ? html`
+          <div class="status-line err">${this.repoListError}</div>
+        ` : html`
+          ${this.renderRunGroup('box', 'Services',
+              'Service data, databases, and application configuration',
+              this.localServices, this.backblazeServices)}
+          ${this.renderRunGroup('folder', 'Extra Paths',
+              'User-defined custom paths (e.g. NAS folders)',
+              this.localExtraPaths, this.backblazeExtraPaths)}
+          ${this.renderRunGroup('settings', 'System Configuration',
+              'Network and service configuration (/etc/nixos)',
+              this.localSystemConfig, this.backblazeSystemConfig)}
+          ${this.repoCount() === 0 ? html`
+            <div class="status-line muted">
+              No backup repositories found.
+            </div>` : ''}
+        `}
+      </config-section>
+    `;
+  }
+
+  /** A group of run-rows (Services / Extra Paths / System Config). */
+  renderRunGroup(iconId, title, desc, localRepos, bbRepos) {
+    if (localRepos.length === 0 && bbRepos.length === 0) return '';
+    // One row per repo: a repo backed up both locally and to Backblaze
+    // is a single entry with both trigger buttons.
+    const repos = [...new Set([...localRepos, ...bbRepos])].sort();
+    return html`
+      <div class="repo-group">
+        <h4><span class="repo-group-icon">${navIcon(iconId)}</span>${title}</h4>
+        <p class="desc">${desc}</p>
+        <div class="svc-backup-list">
+          ${repos.map(r => this.renderRunRow(r))}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * One repository in the Run tab: real name / path on the left,
+   * Local + Backblaze trigger buttons on the right. Flat — no
+   * expand/collapse (that is the Restore tab's renderRepoRow).
+   */
+  renderRunRow(repo) {
+    const busy = this.actionsLocked;
+    const sources = this.sourcesForRepo(repo);
+    const isExtra = this.isExtraPathRepo(repo);
+
+    // SOURCE directories from config (loadSourcePaths) — keyed by the
+    // bare repo label. No restic, resolves near-instantly.
+    const paths = this.sourcePaths[repo] || [];
+
+    // Service repos show the service name; extra-path repos show the
+    // actual backed-up directory (fall back to the label if config
+    // hasn't been read yet, or the repo has no recorded paths).
+    let title = repo;
+    if (isExtra && paths.length > 0) title = paths[0];
+
+    // Secondary line: for extra-path repos, "+N more"; for service
+    // repos, the source directories (skip the dump dirs we appended).
+    let summary = '';
+    if (isExtra && paths.length > 1) {
+      summary = `+${paths.length - 1} more path`
+        + (paths.length - 1 !== 1 ? 's' : '');
+    } else if (!isExtra && paths.length > 0) {
+      const dirs = paths.filter(
+        p => !p.startsWith('/var/backup/'));
+      if (dirs.length) {
+        const head = dirs.slice(0, 2).join(', ');
+        summary = dirs.length > 2
+          ? `${head} +${dirs.length - 2} more` : head;
+      }
+    }
+
+    return html`
+      <div class="svc-backup-row">
+        <div class="svc-backup-name">
+          <span title=${title}>${title}</span>
+          ${summary
+            ? html`<div class="repo-paths">${summary}</div>` : ''}
+        </div>
+        <div class="svc-backup-actions">
+          ${sources.includes('local') ? html`
+            <button
+              class="btn btn-secondary btn-sm"
+              title="Back up ${repo} to the local repository"
+              @click=${() => this.handleRunService(repo, 'local')}
+              ?disabled=${busy}
+            >Local</button>
+          ` : ''}
+          ${sources.includes('backblaze') ? html`
+            <button
+              class="btn btn-secondary btn-sm"
+              title="Back up ${repo} to Backblaze B2"
+              @click=${() => this.handleRunService(repo, 'backblaze')}
+              ?disabled=${busy}
+            >Backblaze</button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   renderConfigurationTab() {
     const { backups } = this.config;
-    // Single source of truth for "is restic configured", shared with the
-    // Restore tab: the backend actually stats the password file.
-    const resticReady = !!this.backupConfigStatus?.restic_password_configured;
 
     return html`
       ${this.renderJobBanner()}
@@ -1421,36 +1452,10 @@ class BackupsModule extends LitElement {
               ${backups['backblaze-enable']
                 ? 'offsite Backblaze B2 backups run after 4 AM. '
                 : ''}each service is a separate restic repository with
-              7-daily / 5-weekly / 10-yearly retention.</div>
+              7-daily / 5-weekly / 10-yearly retention.
+              To run a backup on demand, use the
+              <strong>Run</strong> tab.</div>
           </div>
-
-          <div class="btn-row">
-            <button
-              class="btn btn-primary"
-              @click=${() => this.handleTriggerBackups()}
-              ?disabled=${this.actionsLocked || !resticReady}
-            >▶️ Run Backup Now</button>
-
-            ${backups['backblaze-enable'] ? html`
-              <button
-                class="btn btn-primary"
-                @click=${() => this.handleBackupBackblaze()}
-                ?disabled=${this.actionsLocked || !resticReady}
-              >☁️ Back Up to Backblaze</button>
-            ` : ''}
-          </div>
-
-          ${!resticReady ? html`
-            <p style="font-size:13px;color:var(--hf-text-muted);
-                      margin-top:8px;">
-              ⚠️ Configure the Restic password below before running backups
-            </p>` : ''}
-          ${this.actionsLocked ? html`
-            <p style="font-size:13px;color:var(--hf-text-muted);
-                      margin-top:8px;">
-              A ${this.jobKindLabel(this.currentJob.kind).toLowerCase()} is
-              currently running — see the banner above.
-            </p>` : ''}
         ` : ''}
       </config-section>
 
@@ -1654,12 +1659,27 @@ class BackupsModule extends LitElement {
         </div>`;
     }
 
-    const healthy = data.failed === 0;
-    const cls = healthy ? 'ok' : 'err';
-    const summary = healthy
-      ? html`<span class="health-badge ok">✓ Healthy</span>`
-      : html`<span class="health-badge err">✗ ${data.failed}
+    // Three states, in priority order:
+    //   err   - one or more backups ran and errored (a real problem)
+    //   warn  - none errored, but some have never run yet (an unknown,
+    //           e.g. a freshly-provisioned box before its first window)
+    //   ok    - every backup has run and the last run succeeded
+    const failed = data.failed || 0;
+    const neverRun = data.never_run || 0;
+    let cls;
+    let summary;
+    if (failed > 0) {
+      cls = 'err';
+      summary = html`<span class="health-badge err">✗ ${failed}
           failed</span>`;
+    } else if (neverRun > 0) {
+      cls = 'warn';
+      summary = html`<span class="health-badge warn">⚠ ${neverRun}
+          never run</span>`;
+    } else {
+      cls = 'ok';
+      summary = html`<span class="health-badge ok">✓ Healthy</span>`;
+    }
 
     return html`
       <div class="health-row ${cls}">
@@ -1675,9 +1695,13 @@ class BackupsModule extends LitElement {
             ? html` · next ${this.formatFuture(data.next_run)}`
             : ''}
         </div>
-        ${!healthy && data.failed_services?.length ? html`
+        ${failed > 0 && data.failed_services?.length ? html`
           <div class="health-failed">
             Failed: ${data.failed_services.join(', ')}
+          </div>` : ''}
+        ${neverRun > 0 && data.never_run_services?.length ? html`
+          <div class="health-failed health-never">
+            Never run: ${data.never_run_services.join(', ')}
           </div>` : ''}
       </div>
     `;
@@ -1751,7 +1775,7 @@ class BackupsModule extends LitElement {
               || this.canaryStarting}
           >${running
             ? html`<span class="spinner"></span> Running…`
-            : (this.canaryStarting ? 'Starting…' : '🔬 Run Check Now')}
+            : (this.canaryStarting ? 'Starting…' : 'Run Check Now')}
           </button>
         </div>
       </config-section>
@@ -1860,7 +1884,7 @@ class BackupsModule extends LitElement {
           description="Restore data from backup repositories">
           <div class="status-line err">
             ⚠️ Restic password not configured. Configure it in the
-            Configuration tab before restoring.
+            Configure tab before restoring.
           </div>
         </config-section>
       `;
@@ -1888,13 +1912,13 @@ class BackupsModule extends LitElement {
           <div class="status-line err">${this.repoListError}</div>
         ` : html`
           ${this.renderPathsProgress()}
-          ${this.renderRepoGroup('📦 Services',
+          ${this.renderRepoGroup('box', 'Services',
               'Service data, databases, and application configuration',
               this.localServices, this.backblazeServices, false)}
-          ${this.renderRepoGroup('📁 Extra Paths',
+          ${this.renderRepoGroup('folder', 'Extra Paths',
               'User-defined custom paths (e.g. NAS folders)',
               this.localExtraPaths, this.backblazeExtraPaths, false)}
-          ${this.renderRepoGroup('⚙️ System Configuration',
+          ${this.renderRepoGroup('settings', 'System Configuration',
               'Restoring this overwrites /etc/nixos — network and service '
               + 'configuration.',
               this.localSystemConfig, this.backblazeSystemConfig, true)}
@@ -2032,14 +2056,16 @@ class BackupsModule extends LitElement {
     `;
   }
 
-  renderRepoGroup(title, desc, localRepos, bbRepos, isSystem) {
+  renderRepoGroup(iconId, title, desc, localRepos, bbRepos, isSystem) {
     if (localRepos.length === 0 && bbRepos.length === 0) return '';
     // One card per repo: a repo backed up both locally and to Backblaze
     // is a single entry, with the source chosen inside the card.
     const repos = [...new Set([...localRepos, ...bbRepos])].sort();
     return html`
       <div class="repo-group ${isSystem ? 'system' : ''}">
-        <h4 style=${isSystem ? 'color:var(--hf-warn);' : ''}>${title}</h4>
+        <h4 style=${isSystem ? 'color:var(--hf-warn);' : ''}>
+          <span class="repo-group-icon">${navIcon(iconId)}</span>${title}
+        </h4>
         <p class="desc">${desc}</p>
         ${isSystem ? html`
           <div class="status-line err" style="margin-bottom:12px;">
@@ -2219,20 +2245,26 @@ class BackupsModule extends LitElement {
             ? 'active' : ''}"
             @click=${() => this.handleTabChange('status')}
           >Status</button>
-          <button class="tab ${this.activeTab === 'configuration'
+          <button class="tab ${this.activeTab === 'run'
             ? 'active' : ''}"
-            @click=${() => this.handleTabChange('configuration')}
-          >Configuration</button>
+            @click=${() => this.handleTabChange('run')}
+          >Run</button>
           <button class="tab ${this.activeTab === 'restore' ? 'active' : ''}"
             @click=${() => this.handleTabChange('restore')}
           >Restore</button>
+          <button class="tab ${this.activeTab === 'configuration'
+            ? 'active' : ''}"
+            @click=${() => this.handleTabChange('configuration')}
+          >Configure</button>
         </div>
 
         ${this.activeTab === 'configuration'
           ? this.renderConfigurationTab()
           : this.activeTab === 'restore'
             ? this.renderRestoreTab()
-            : this.renderStatusTab()}
+            : this.activeTab === 'run'
+              ? this.renderRunTab()
+              : this.renderStatusTab()}
       </div>
 
       ${this.renderJobOverlay()}

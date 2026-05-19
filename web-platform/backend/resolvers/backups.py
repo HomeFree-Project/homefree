@@ -51,6 +51,17 @@ class ServicesResponse(BaseModel):
     error: Optional[str] = None
 
 
+class SourcePathsResponse(BaseModel):
+    """Repository label -> the SOURCE directories it backs up.
+
+    Read from config (service-config.json + homefree-config.json) with
+    no restic call - used by the Run tab to show real paths instantly.
+    """
+    success: bool
+    paths: Dict[str, List[str]] = {}
+    error: Optional[str] = None
+
+
 class SnapshotsResponse(BaseModel):
     success: bool
     snapshots: List[Dict[str, Any]]
@@ -112,7 +123,8 @@ class CanaryStatusResponse(BaseModel):
 class BackupHealthResponse(BaseModel):
     """Last-run health of scheduled backups, per source."""
     success: bool
-    # {total, ok, failed, failed_services, last_run, next_run}
+    # {total, ok, failed, never_run, failed_services,
+    #  never_run_services, last_run, next_run}
     local: Optional[Dict[str, Any]] = None
     # None when no Backblaze backup units exist
     backblaze: Optional[Dict[str, Any]] = None
@@ -227,6 +239,23 @@ async def list_services(source: str = "auto", force: bool = False):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list services: {str(e)}")
+
+
+@router.get("/source-paths", response_model=SourcePathsResponse)
+async def get_source_paths():
+    """Map each backup repository to its SOURCE directories.
+
+    Cheap config read (no restic) - the Run tab uses this to show real
+    paths (e.g. /mnt/ellis/Documents instead of extra-path-5) without
+    the per-repo snapshot lookups that /paths does.
+    """
+    try:
+        return SourcePathsResponse(**BackupOperations.get_source_paths())
+    except Exception as e:
+        logger.error(f"Error getting source paths: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get source paths: {str(e)}")
 
 
 @router.get("/services/{service}/snapshots", response_model=SnapshotsResponse)
@@ -418,6 +447,37 @@ async def backup_backblaze():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to trigger Backblaze backup: {str(e)}")
+
+
+@router.post("/services/{label}/trigger", response_model=JobResponse)
+async def trigger_service_backup(label: str, source: str = "local"):
+    """Run the backup for a single service now. Returns a job id.
+
+    Query param ``source`` selects the repository: "local" (default)
+    or "backblaze". Returns 409 if a backup/restore is already running.
+    """
+    if source not in ("local", "backblaze"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid source '{source}' "
+                   f"(expected 'local' or 'backblaze')")
+    try:
+        result = BackupOperations.trigger_service_backup(label, source)
+        if not result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error",
+                                  f"Failed to trigger backup for {label}"))
+        return JobResponse(**result)
+    except BackupBusy as busy:
+        raise _busy_http_error(busy)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering backup for {label}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger backup for {label}: {str(e)}")
 
 
 @router.get("/jobs/current", response_model=JobResponse)

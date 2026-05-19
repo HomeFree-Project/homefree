@@ -864,13 +864,28 @@
               '';
             };
 
+            applicable = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                Whether SSO is meaningfully applicable to this service.
+                Only consulted when kind = "none". Set false when a
+                service deliberately cannot/should not be SSO-gated
+                (no HTTP surface, API-key clients that OIDC would
+                break, etc.) — the admin UI then shows "not applicable"
+                rather than "not yet implemented". Leave true (default)
+                for integrations that are simply pending.
+              '';
+            };
+
             notes = lib.mkOption {
               type = lib.types.str;
               default = "";
               description = ''
-                Optional caveat / status note for the admin UI. Use this
-                for things like "Master password still required after SSO"
-                or "Outer gate admin-only; inner login still appears".
+                Developer-only caveat / status note. NOT surfaced in the
+                admin UI — keep human-facing rationale in a code comment
+                beside the sso block instead. Retained for any tooling
+                that still reads it.
               '';
             };
 

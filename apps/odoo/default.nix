@@ -134,7 +134,19 @@ in
     ];
     sso = {
       kind = "none";
-      notes = "Odoo 19 CE has no usable in-tree OIDC: `auth_oauth` is hardcoded to Google/Facebook/Odoo.com with implicit-flow only (no client_secret/token_endpoint/jwks_uri fields), and Odoo has no auth-disable or trusted-header mode, so caddy_gated is also out. A clean integration requires the third-party OCA `auth_oidc` module mounted into addons_path, a SQL provisioner inserting an auth_oauth_provider row with Zitadel's endpoints, and pre-creating every Odoo user with a matching email — even then the local /web/login form stays reachable. Deferred until Odoo usage justifies the moving parts. Use Odoo's built-in users for now.";
+      applicable = false;
+      ## Dev context (intentionally not surfaced in the admin UI):
+      ## Odoo 19 CE has no usable in-tree OIDC: `auth_oauth` is
+      ## hardcoded to Google/Facebook/Odoo.com with implicit-flow only
+      ## (no client_secret/token_endpoint/jwks_uri fields), and Odoo
+      ## has no auth-disable or trusted-header mode, so caddy_gated is
+      ## also out. A clean integration requires the third-party OCA
+      ## `auth_oidc` module mounted into addons_path, a SQL provisioner
+      ## inserting an auth_oauth_provider row with Zitadel's endpoints,
+      ## and pre-creating every Odoo user with a matching email — even
+      ## then the local /web/login form stays reachable. Deferred until
+      ## Odoo usage justifies the moving parts. Use Odoo's built-in
+      ## users for now.
     };
     reverse-proxy = {
       enable = true;

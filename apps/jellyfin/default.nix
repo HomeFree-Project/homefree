@@ -141,7 +141,14 @@ in
       inherit (config.homefree.service-options.jellyfin) label name project-name;
       sso = {
         kind = "none";
-        notes = "Jellyfin's mobile, TV, and desktop clients authenticate with Jellyfin's native username/password — they do not speak OIDC. A site-wide SSO gate would lock every client out. Native OIDC is plugin-based (Jellyfin.Plugin.SSO) and brittle to wire declaratively. Use Jellyfin's built-in users.";
+        applicable = false;
+        ## Dev context (intentionally not surfaced in the admin UI):
+        ## Jellyfin's mobile, TV, and desktop clients authenticate with
+        ## Jellyfin's native username/password — they do not speak
+        ## OIDC. A site-wide SSO gate would lock every client out.
+        ## Native OIDC is plugin-based (Jellyfin.Plugin.SSO) and
+        ## brittle to wire declaratively. Use Jellyfin's built-in
+        ## users.
       };
       systemd-service-names = [
         "podman-jellyfin"
