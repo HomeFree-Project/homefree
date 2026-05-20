@@ -33,6 +33,14 @@ class AdminApp extends LitElement {
     dirtyModules: { type: Object },    // Track which modules have unsaved changes
     config: { type: Object },          // Computed merged config (for backward compatibility)
     currentModule: { type: String },
+    /**
+     * Module-internal route — the part of the hash after the module
+     * ID. Example: `#/backups/configuration` → currentModule='backups',
+     * currentSubRoute='configuration'. Modules that don't have
+     * sub-state ignore this; modules that do (Backups tabs) read it as
+     * a prop and emit `sub-route-change` to update it.
+     */
+    currentSubRoute: { type: String },
     loading: { type: Boolean },
     error: { type: String },
     sidebarCollapsed: { type: Boolean },
@@ -298,7 +306,15 @@ class AdminApp extends LitElement {
     .content-area {
       flex: 1;
       overflow-y: auto;
-      padding: 24px;
+      /* Top padding lives on .content-area > * (the module), NOT on
+         the scroll container. CSS sticky pins to the container's
+         padding-edge — with padding-top here, a child using
+         position:sticky; top:0 would pin BELOW the padding strip, and
+         scrolled content would slide visibly into that strip above the
+         sticky bar. Putting the top gutter on the child keeps the
+         visual identical at scroll-top and lets sticky elements pin
+         flush against the top of the scroll viewport. */
+      padding: 0 24px 24px;
       background: var(--hf-bg);
     }
     /* Single content-width cap + viewport-centering for every admin
@@ -332,6 +348,11 @@ class AdminApp extends LitElement {
        document never scrolls (scrolling is on .content-area); if
        that ever changes, revisit this. */
     .content-area > * {
+      /* Top gutter moved off the scroll container so position:sticky
+         children can pin flush against the scrollport top. See the
+         .content-area block above. Sides + bottom stay on the
+         container so the gutters remain symmetric. */
+      padding-top: 24px;
       max-width: var(--hf-content-max);
       /* Floor is 0, not the gutter width. .content-area already
          provides a symmetric 24px (16px on mobile) of padding on
@@ -625,6 +646,7 @@ class AdminApp extends LitElement {
     this.config = {};  // Initialize merged config
     this.dirtyModules = new Set();
     this.currentModule = 'dashboard';
+    this.currentSubRoute = '';
     this.loading = true;
     this.error = null;
     /* On mobile (≤768px) the sidebar is an overlay and should start
@@ -945,11 +967,20 @@ class AdminApp extends LitElement {
 
   loadRouteFromHash() {
     const hash = window.location.hash.slice(2); // Remove '#/'
-    if (hash && this.modules.find(m => m.id === hash)) {
-      this.currentModule = hash;
-    } else if (!hash) {
+    // Split into module id + module-internal sub-route. Example:
+    //   #/backups/configuration → ['backups', 'configuration']
+    // The module ID is always the first segment; everything after is
+    // passed to the module as currentSubRoute. Unknown module IDs are
+    // ignored (the existing behavior — fall through to default).
+    const [moduleId, ...rest] = hash.split('/');
+    const subRoute = rest.join('/');
+    if (moduleId && this.modules.find(m => m.id === moduleId)) {
+      this.currentModule = moduleId;
+      this.currentSubRoute = subRoute;
+    } else if (!moduleId) {
       // Default to the dashboard landing page if no hash
       this.currentModule = 'dashboard';
+      this.currentSubRoute = '';
     }
   }
 
@@ -1139,6 +1170,10 @@ class AdminApp extends LitElement {
 
   handleModuleClick(moduleId) {
     this.currentModule = moduleId;
+    // Sidebar nav is an intentional jump — drop any sub-route so the
+    // landing tab is restored. A module that wants the sub-route to
+    // survive can opt out by intercepting this click.
+    this.currentSubRoute = '';
     // Update URL hash to maintain state
     window.location.hash = `#/${moduleId}`;
 
@@ -1152,6 +1187,22 @@ class AdminApp extends LitElement {
     // preference alone.
     if (this.isMobile) {
       this.sidebarCollapsed = true;
+    }
+  }
+
+  /**
+   * Sub-route change from inside a module (e.g. the Backups module
+   * switching tabs). Updates the hash without triggering a hashchange
+   * round-trip — replaceState skips it, so we don't run
+   * loadRouteFromHash recursively.
+   */
+  handleSubRouteChange(e) {
+    const sub = (e.detail && e.detail.subRoute) || '';
+    this.currentSubRoute = sub;
+    const moduleId = this.currentModule;
+    const newHash = sub ? `#/${moduleId}/${sub}` : `#/${moduleId}`;
+    if (window.location.hash !== newHash) {
+      window.history.replaceState(null, '', newHash);
     }
   }
 
@@ -2241,9 +2292,11 @@ class AdminApp extends LitElement {
           <backups-module
             .config=${this.config}
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
+            .subRoute=${this.currentSubRoute}
             @config-change=${this.handleConfigChange}
             @service-toggle=${this.handleServiceToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
+            @sub-route-change=${this.handleSubRouteChange}
           ></backups-module>
         `;
 

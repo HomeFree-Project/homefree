@@ -207,16 +207,64 @@ class UsersModule extends LitElement {
     .actions { display: flex; gap: 8px; }
     .row-actions { display: flex; gap: 6px; }
 
+    /* ---- Create/edit modal — mirrors shared/table-editor.js so every
+       list editor in the admin UI uses the same modal pattern
+       (friendlier on mobile than an inline form). The form body
+       itself keeps its two-column grid; on narrow screens the grid
+       collapses to one column via the media query at the bottom. */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(2px);
+    }
+    .modal {
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 10px;
+      padding: 24px;
+      max-width: 560px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--hf-shadow-lg);
+      color: var(--hf-text);
+    }
+    .modal-header {
+      margin: 0 0 16px 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--hf-text);
+    }
+    .modal-error {
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      border-left: 4px solid var(--hf-err);
+      background: rgba(239, 68, 68, 0.08);
+      color: var(--hf-err);
+      font-size: 13px;
+      border-radius: 6px;
+    }
+
     .edit-form, .create-form {
       display: grid;
       /* minmax(0, …) so fields shrink instead of overflowing. */
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 12px;
-      padding: 16px;
-      background: var(--hf-surface);
-      border-radius: 8px;
-      border: 1px solid var(--hf-border-2);
-      margin-bottom: 16px;
+      /* No outer card/padding now — the modal provides that frame. */
+      padding: 0;
+      background: transparent;
+      border: none;
+      margin-bottom: 0;
+    }
+    @media (max-width: 520px) {
+      .edit-form, .create-form {
+        grid-template-columns: minmax(0, 1fr);
+      }
     }
     .edit-form label, .create-form label {
       display: block;
@@ -598,7 +646,8 @@ class UsersModule extends LitElement {
           integrated app.
         </div>
 
-        ${this.error ? html`<div class="error">${this.error}</div>` : ''}
+        ${this.error && !this.showCreate && !this.editingId
+          ? html`<div class="error">${this.error}</div>` : ''}
 
         <config-section
           title="User list"
@@ -610,13 +659,13 @@ class UsersModule extends LitElement {
             </button>
           </div>
 
-          ${this.showCreate ? this._renderCreateForm() : ''}
-          ${this.editingId ? this._renderEditForm() : ''}
-
           ${this.loading && this.users.length === 0
             ? html`<p class="muted">Loading users…</p>`
             : this._renderTable()}
         </config-section>
+
+        ${this.showCreate ? this._renderCreateModal() : ''}
+        ${this.editingId ? this._renderEditModal() : ''}
       </div>
     `;
   }
@@ -624,12 +673,16 @@ class UsersModule extends LitElement {
   _renderTable() {
     const addBtn = html`
       <button class="add-row-btn"
+        ?disabled=${this.showCreate || this.editingId}
         @click=${() => {
-          this.showCreate = !this.showCreate;
+          // Modal-based create: clicking the footer button just opens
+          // the modal; the modal has its own Cancel.
+          this.showCreate = true;
           this.editingId = null;
           this.error = '';
+          this.form = this._blankCreateForm();
         }}
-      >${this.showCreate ? 'Cancel' : '+ Add user'}</button>
+      >+ Add user</button>
     `;
     if (this.users.length === 0) {
       return html`
@@ -709,18 +762,28 @@ class UsersModule extends LitElement {
     `;
   }
 
-  _renderCreateForm() {
+  _renderCreateModal() {
     const f = this.form;
+    const cancel = () => {
+      if (this.creating) return;
+      this.showCreate = false;
+      this.form = this._blankCreateForm();
+      this.error = '';
+    };
     return html`
-      <form class="create-form" @submit=${this._submitCreate}>
-        <div class="section-title first full">New user</div>
-        <div>
-          <label>Username</label>
-          <input type="text" required autofocus
-            .value=${f.username}
-            @input=${(e) => this._updateCreateField('username', e.target.value)}
-          />
-        </div>
+      <div class="modal-overlay" @click=${cancel}>
+        <div class="modal" @click=${(e) => e.stopPropagation()}>
+          <h3 class="modal-header">New user</h3>
+          ${this.error
+            ? html`<div class="modal-error">${this.error}</div>` : ''}
+          <form class="create-form" @submit=${this._submitCreate}>
+            <div>
+              <label>Username</label>
+              <input type="text" required autofocus
+                .value=${f.username}
+                @input=${(e) => this._updateCreateField('username', e.target.value)}
+              />
+            </div>
         <div>
           <label>Email</label>
           <input type="email" required
@@ -768,10 +831,8 @@ class UsersModule extends LitElement {
         </label>
         <div class="form-actions">
           <button type="button" class="btn"
-            @click=${() => {
-              this.showCreate = false;
-              this.form = this._blankCreateForm();
-            }}
+            ?disabled=${this.creating}
+            @click=${cancel}
           >Cancel</button>
           <button type="submit" class="btn primary"
             ?disabled=${!this._canCreate()}
@@ -782,21 +843,32 @@ class UsersModule extends LitElement {
             ${this.creating ? 'Creating…' : 'Create user'}
           </button>
         </div>
-      </form>
+          </form>
+        </div>
+      </div>
     `;
   }
 
-  _renderEditForm() {
+  _renderEditModal() {
     const f = this.editForm;
     if (!f) return '';
     const isMe = this._isMe({ username: f.username });
     const isProtected = this._isProtectedAdmin({ username: f.username });
+    const cancel = () => {
+      if (this.saving) return;
+      this._cancelEdit();
+      this.error = '';
+    };
     return html`
-      <form class="edit-form" @submit=${this._submitEdit}>
-        <div class="section-title first full">
-          Edit ${f.username}${isMe ? ' (you)' : ''}
-        </div>
-        <div>
+      <div class="modal-overlay" @click=${cancel}>
+        <div class="modal" @click=${(e) => e.stopPropagation()}>
+          <h3 class="modal-header">
+            Edit ${f.username}${isMe ? ' (you)' : ''}
+          </h3>
+          ${this.error
+            ? html`<div class="modal-error">${this.error}</div>` : ''}
+          <form class="edit-form" @submit=${this._submitEdit}>
+            <div>
           <label>First name</label>
           <input type="text"
             .value=${f.first_name}
@@ -869,9 +941,10 @@ class UsersModule extends LitElement {
         ` : ''}
 
         <div class="form-actions">
-          <button type="button" class="btn" @click=${this._cancelEdit}>
-            Cancel
-          </button>
+          <button type="button" class="btn"
+            ?disabled=${this.saving}
+            @click=${cancel}
+          >Cancel</button>
           <button type="submit" class="btn primary"
             ?disabled=${!this._canSaveEdit()}
             title=${!this._canSaveEdit() && this.editForm?.change_password
@@ -881,7 +954,9 @@ class UsersModule extends LitElement {
             ${this.saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
-      </form>
+          </form>
+        </div>
+      </div>
     `;
   }
 }

@@ -487,9 +487,22 @@ class BackupOperations:
                 # System configuration repo is always /etc/nixos.
                 paths["system-config"] = ["/etc/nixos"]
                 # extra-path-N: N is the index into extra-from-paths
-                # (services/backup/default.nix uses lib.imap0).
-                for i, p in enumerate(backups.get("extra-from-paths") or []):
-                    paths[f"extra-path-{i}"] = [p]
+                # (services/backup/default.nix uses lib.imap0). Indices
+                # are stable across enable/disable, so we iterate over
+                # every entry and only emit a mapping for enabled ones.
+                # Tolerate the legacy "string" shape for entries written
+                # before the schema was promoted to {path, enabled}.
+                for i, entry in enumerate(
+                        backups.get("extra-from-paths") or []):
+                    if isinstance(entry, str):
+                        path, enabled = entry, True
+                    elif isinstance(entry, dict):
+                        path = entry.get("path")
+                        enabled = entry.get("enabled", True)
+                    else:
+                        continue
+                    if path and enabled:
+                        paths[f"extra-path-{i}"] = [path]
 
             return {"success": True, "paths": paths}
         except json.JSONDecodeError as e:
@@ -939,6 +952,179 @@ class BackupOperations:
             # Native B2: usable as soon as credentials exist (no mount).
             "backblaze_available": backblaze_configured,
         }
+
+    @staticmethod
+    async def verify_backblaze_credentials(
+            bucket_override: Optional[str] = None) -> Dict[str, Any]:
+        """Verify Backblaze B2 credentials by calling b2_authorize_account.
+
+        Reads the admin-managed backblaze-id / backblaze-key secrets and
+        attempts to authorize against the B2 native API. If a bucket is
+        provided (or one is set in homefree-config.json), also verifies
+        the bucket is visible to this key. Inspects the key's
+        `capabilities` to confirm it can write+delete files (B2 enforces
+        these server-side, so this proves write access without performing
+        a write).
+
+        ``bucket_override`` lets the UI pass the pending bucket name (the
+        value typed in but not yet saved), so verify always checks what
+        the user is looking at rather than the last-applied config.
+
+        Returns: {success, account_id, bucket_ok, bucket_name,
+        writable, missing_capabilities, capabilities, error}.
+        Live check - no rebuild required.
+        """
+        import base64
+        import httpx
+
+        bb_id_path = Path("/var/lib/homefree-secrets/backup/backblaze-id")
+        bb_key_path = Path("/var/lib/homefree-secrets/backup/backblaze-key")
+        if not (bb_id_path.exists() and bb_id_path.stat().st_size > 0
+                and bb_key_path.exists() and bb_key_path.stat().st_size > 0):
+            return {
+                "success": False,
+                "error": "Backblaze credentials are not set. "
+                         "Set both the Application KeyID and Application "
+                         "Key first.",
+            }
+
+        bb_id = bb_id_path.read_text().strip()
+        bb_key = bb_key_path.read_text().strip()
+
+        bucket_name: Optional[str] = (
+            (bucket_override or "").strip() or None)
+        if bucket_name is None:
+            try:
+                if BackupOperations.HOMEFREE_CONFIG.exists():
+                    cfg = json.loads(
+                        BackupOperations.HOMEFREE_CONFIG.read_text())
+                    bucket_name = (
+                        (cfg.get("backups") or {}).get("backblaze-bucket")
+                        or None)
+            except Exception:
+                bucket_name = None
+
+        token = base64.b64encode(
+            f"{bb_id}:{bb_key}".encode()).decode()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as cx:
+                auth_resp = await cx.get(
+                    "https://api.backblazeb2.com/b2api/v3/"
+                    "b2_authorize_account",
+                    headers={"Authorization": f"Basic {token}"},
+                )
+                if auth_resp.status_code != 200:
+                    try:
+                        detail = auth_resp.json().get("message") \
+                            or auth_resp.text
+                    except Exception:
+                        detail = auth_resp.text
+                    return {
+                        "success": False,
+                        "error": (f"Authorization failed "
+                                  f"({auth_resp.status_code}): {detail}"),
+                    }
+                auth = auth_resp.json()
+                account_id = auth.get("accountId") or ""
+                api_info = auth.get("apiInfo") or {}
+                storage_api = api_info.get("storageApi") or {}
+                api_url = storage_api.get("apiUrl") or ""
+                api_token = auth.get("authorizationToken") or ""
+                allowed = storage_api.get("allowed") or {}
+                allowed_bucket = (
+                    allowed.get("bucketName") if isinstance(allowed, dict)
+                    else None)
+                allowed_bucket_id = (
+                    allowed.get("bucketId") if isinstance(allowed, dict)
+                    else None)
+                capabilities = (
+                    allowed.get("capabilities")
+                    if isinstance(allowed, dict) else None) or []
+
+                # B2 enforces these caps server-side, so the presence of
+                # all three is a reliable "this key can do a restic
+                # backup-and-prune" check without doing any writes.
+                # listFiles is also needed by restic to enumerate the
+                # repo before any operation.
+                required_caps = ("listFiles", "writeFiles", "deleteFiles")
+                missing_caps = [c for c in required_caps
+                                if c not in capabilities]
+                writable: Optional[bool] = (
+                    None if not capabilities else not missing_caps)
+                writable_error: Optional[str] = None
+                if missing_caps:
+                    writable_error = (
+                        f"Application key is missing required "
+                        f"capabilities: {', '.join(missing_caps)}. "
+                        f"Create a key with read+write access (or all "
+                        f"capabilities) for the bucket.")
+
+                bucket_ok: Optional[bool] = None
+                bucket_error: Optional[str] = None
+                if bucket_name:
+                    # If the key is restricted to a specific bucket,
+                    # b2_list_buckets only succeeds when the requested
+                    # bucket matches; an unrestricted key sees all
+                    # buckets and we can scan the response.
+                    list_payload: Dict[str, Any] = {
+                        "accountId": account_id,
+                        "bucketName": bucket_name,
+                    }
+                    if allowed_bucket_id and not allowed_bucket:
+                        # Restricted key: query by bucketId is required.
+                        list_payload = {
+                            "accountId": account_id,
+                            "bucketId": allowed_bucket_id,
+                        }
+                    list_resp = await cx.post(
+                        f"{api_url}/b2api/v3/b2_list_buckets",
+                        headers={"Authorization": api_token},
+                        json=list_payload,
+                    )
+                    if list_resp.status_code == 200:
+                        buckets = list_resp.json().get("buckets") or []
+                        found = next(
+                            (b for b in buckets
+                             if b.get("bucketName") == bucket_name),
+                            None)
+                        bucket_ok = found is not None
+                        if not bucket_ok:
+                            if allowed_bucket and \
+                                    allowed_bucket != bucket_name:
+                                bucket_error = (
+                                    f"This application key is restricted "
+                                    f"to bucket '{allowed_bucket}', but "
+                                    f"the configured bucket is "
+                                    f"'{bucket_name}'.")
+                            else:
+                                bucket_error = (
+                                    f"Bucket '{bucket_name}' was not "
+                                    f"found in this Backblaze account.")
+                    else:
+                        bucket_ok = False
+                        try:
+                            bucket_error = (
+                                list_resp.json().get("message")
+                                or list_resp.text)
+                        except Exception:
+                            bucket_error = list_resp.text
+
+                return {
+                    "success": True,
+                    "account_id": account_id,
+                    "bucket_name": bucket_name,
+                    "bucket_ok": bucket_ok,
+                    "bucket_error": bucket_error,
+                    "writable": writable,
+                    "writable_error": writable_error,
+                    "missing_capabilities": missing_caps,
+                    "capabilities": list(capabilities),
+                }
+        except httpx.HTTPError as e:
+            return {
+                "success": False,
+                "error": f"Could not reach Backblaze B2: {e}",
+            }
 
     # ----------------------------------------------------------- backups
 

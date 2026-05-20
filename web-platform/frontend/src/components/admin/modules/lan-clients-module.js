@@ -162,9 +162,8 @@ class LanClientsModule extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    /* Every row is exactly this tall — a normal row and its
-       edit-mode version both settle to this height, so flipping a
-       row into edit mode shifts nothing below it. */
+    /* Every row is exactly this tall — keeps the table grid stable
+       and predictable regardless of which row is selected. */
     td { height: 40px; }
     th {
       font-size: 11px;
@@ -216,49 +215,95 @@ class LanClientsModule extends LitElement {
       color: var(--hf-err);
     }
 
-    /* Inline edit row — the editable cells become inputs in place, so
-       the row stays column-aligned with the rest of the table. */
-    .edit-row td {
-      background: var(--hf-surface-2);
+    /* ---- Reservation edit modal — copies the look of
+       shared/table-editor.js's modal so every list editor in the admin
+       UI uses the same modal pattern (friendlier on mobile than an
+       inline form). */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(2px);
     }
-    /* An input that fills its table cell. border-box keeps the
-       padding/border inside the column width so nothing overflows. */
-    .cell-input {
+    .modal {
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 10px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      box-shadow: var(--hf-shadow-lg);
+      color: var(--hf-text);
+    }
+    .modal-header {
+      margin: 0 0 20px 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--hf-text);
+    }
+    .modal-body { margin-bottom: 24px; }
+    .modal-field { margin-bottom: 16px; }
+    .modal-field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--hf-text);
+      margin-bottom: 6px;
+    }
+    .modal-field.boolean { display: flex; align-items: center; gap: 8px; }
+    .modal-field.boolean label { margin: 0; order: 2; }
+    .modal-field.boolean input[type="checkbox"] {
+      margin: 0; width: 16px; height: 16px; flex-shrink: 0;
+    }
+    .modal-field input {
       width: 100%;
       box-sizing: border-box;
-      background: var(--hf-surface);
+      padding: 9px 12px;
+      font-size: 13px;
+      background: var(--hf-bg);
+      color: var(--hf-text);
       border: 1px solid var(--hf-border-2);
       border-radius: 6px;
-      color: var(--hf-text);
-      padding: 5px 8px;
-      font-size: 13px;
       font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    .cell-input.mono {
+    .modal-field input.mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .cell-input:focus {
+    .modal-field input:focus {
       outline: none;
       border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
-    /* Internet-access checkbox in the Type column. */
-    .wan-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      color: var(--hf-text);
-      cursor: pointer;
+    .modal-field .static-value {
+      padding: 9px 12px;
+      font-size: 13px;
+      background: var(--hf-surface);
+      color: var(--hf-text-muted);
+      border: 1px solid var(--hf-border);
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    /* Validation error — its own full-width row under the edit row.
-       height:auto so it sizes to the message, not the 40px row grid. */
-    .edit-error-row td {
-      height: auto;
-      background: var(--hf-surface-2);
+    .modal-error {
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      border-left: 4px solid var(--hf-err);
+      background: rgba(239, 68, 68, 0.08);
       color: var(--hf-err);
-      font-size: 12px;
-      white-space: normal;
-      padding-top: 0;
+      font-size: 13px;
+      border-radius: 6px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
     }
 
     /* Unified notification box — grey-tinted bg, colored left edge. */
@@ -532,55 +577,72 @@ class LanClientsModule extends LitElement {
 
   // --- render ------------------------------------------------------------
 
-  // Render the row being edited as a real per-column <tr>: the
-  // editable columns (Hostname, IP, internet-access) become inputs
-  // in place, the rest of the cells keep their normal read-only
-  // content, so the row stays aligned with the table around it.
-  // A second full-width <tr> carries any validation error.
-  _renderEditRow(row) {
+  /**
+   * Reservation edit/create modal. Opens whenever editMac is set —
+   * "Edit" on a reserved row, or "Make static" on a discovered row.
+   * Hostname + IP + internet-access are editable; MAC is shown as a
+   * read-only mono value so the user can see which device they're
+   * binding (it isn't user-editable — the reservation IS keyed by
+   * MAC). Validation errors render inline above the actions.
+   */
+  _renderEditModal() {
+    if (!this.editMac || !this.editForm) return '';
     const f = this.editForm;
+    const isNew = !this._staticIps().some(
+      s => s['mac-address'] === this.editMac);
     return html`
-      <tr class="edit-row">
-        <td>
-          <span class="dot ${row.online ? 'up' : 'down'}"></span>
-          ${row.online ? 'online' : 'offline'}
-        </td>
-        <td>
-          <input class="cell-input" type="text" .value=${f.hostname}
-                 placeholder="hostname"
-                 @input=${e => { this.editForm = { ...f, hostname: e.target.value }; }}>
-        </td>
-        <td>
-          <input class="cell-input mono" type="text" .value=${f.ip}
-                 placeholder="0.0.0.0"
-                 @input=${e => { this.editForm = { ...f, ip: e.target.value }; }}>
-        </td>
-        <td class="mono">${row.mac}</td>
-        <td>${row.static ? '— reserved —' : this._fmtExpiry(row.leaseExpiry)}</td>
-        <td>
-          <label class="wan-toggle" for="wan-access-${this.editMac}">
-            <input type="checkbox" id="wan-access-${this.editMac}"
-                   .checked=${f.wanAccess}
-                   @change=${e => { this.editForm = { ...f, wanAccess: e.target.checked }; }}>
-            Internet access
-          </label>
-        </td>
-        <td class="actions">
-          <button class="action-button primary" @click=${() => this._saveEdit()}>
-            Save
-          </button>
-          <button class="action-button" @click=${() => this._cancelEdit()}>
-            Cancel
-          </button>
-        </td>
-      </tr>
-      ${this.editError
-        ? html`
-            <tr class="edit-error-row">
-              <td colspan="7">${this.editError}</td>
-            </tr>
-          `
-        : ''}
+      <div class="modal-overlay" @click=${() => this._cancelEdit()}>
+        <div class="modal" @click=${e => e.stopPropagation()}>
+          <h3 class="modal-header">
+            ${isNew ? 'Reserve static address' : 'Edit static reservation'}
+          </h3>
+          <div class="modal-body">
+            ${this.editError
+              ? html`<div class="modal-error">${this.editError}</div>`
+              : ''}
+            <div class="modal-field">
+              <label>Hostname</label>
+              <input type="text" .value=${f.hostname}
+                     placeholder="hostname"
+                     @input=${e => {
+                       this.editForm = { ...f, hostname: e.target.value };
+                     }}>
+            </div>
+            <div class="modal-field">
+              <label>IP address</label>
+              <input class="mono" type="text" .value=${f.ip}
+                     placeholder="0.0.0.0"
+                     @input=${e => {
+                       this.editForm = { ...f, ip: e.target.value };
+                     }}>
+            </div>
+            <div class="modal-field">
+              <label>MAC address</label>
+              <div class="static-value">${this.editMac}</div>
+            </div>
+            <div class="modal-field boolean">
+              <input type="checkbox" id="wan-access-${this.editMac}"
+                     .checked=${f.wanAccess}
+                     @change=${e => {
+                       this.editForm = {
+                         ...f, wanAccess: e.target.checked };
+                     }}>
+              <label for="wan-access-${this.editMac}">
+                Allow internet access
+              </label>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="action-button" @click=${() => this._cancelEdit()}>
+              Cancel
+            </button>
+            <button class="action-button primary"
+                    @click=${() => this._saveEdit()}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
     `;
   }
 
@@ -706,13 +768,12 @@ class LanClientsModule extends LitElement {
                   </tr>
                 </thead>
                 <tbody>
-                  ${shown.map(row => this.editMac === row.mac
-                    ? this._renderEditRow(row)
-                    : this._renderRow(row))}
+                  ${shown.map(row => this._renderRow(row))}
                 </tbody>
               </table>
             `}
         </div>
+        ${this._renderEditModal()}
       </div>
     `;
   }

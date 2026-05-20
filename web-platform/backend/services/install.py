@@ -418,7 +418,15 @@ in
     backups = {
       enable = jsonData.backups.enable;
       to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;
-      extra-from-paths = jsonData.backups.extra-from-paths or [];
+      ## Each extra-from-paths entry is { path = ...; enabled = ...; }.
+      ## A bare string is normalized to { path = <str>; enabled = true; }
+      ## so older homefree-config.json files (pre-schema-change) keep
+      ## evaluating without a separate migration step.
+      extra-from-paths = map (entry:
+        if builtins.isString entry
+          then { path = entry; enabled = true; }
+          else { path = entry.path; enabled = entry.enabled or true; }
+      ) (jsonData.backups.extra-from-paths or []);
       backblaze = {
         enable = jsonData.backups.backblaze-enable;
         bucket = if jsonData.backups.backblaze-bucket == "" then null else jsonData.backups.backblaze-bucket;

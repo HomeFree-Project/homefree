@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/form-field.js';
-import '../../shared/list-input.js';
+import '../../shared/table-editor.js';
 import '../../shared/progress-modal.js';
 import '../secrets-input.js';
 import { BackupJobControllerMixin } from '../../shared/backup-job-controller.js';
@@ -23,6 +23,14 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     config: { type: Object },
     modified: { type: Boolean },
     activeTab: { type: String },
+    /**
+     * Module sub-route from the URL (admin-app passes the path segment
+     * after `#/backups/`). On change we map it onto activeTab; on tab
+     * click we emit `sub-route-change` so admin-app can update the
+     * hash. The empty string means "no sub-route set" → keep the
+     * default tab; an unknown value is ignored.
+     */
+    subRoute: { type: String },
     secretsStatus: { type: Object },
     backupConfigStatus: { type: Object },
     hasAuthorizedKeys: { type: Boolean },
@@ -70,7 +78,11 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     // declarations keep them reactive on this subclass.
     currentJob: { type: Object },
     jobLog: { type: String },
-    jobOverlayOpen: { type: Boolean }
+    jobOverlayOpen: { type: Boolean },
+
+    // Live Backblaze credential check (does NOT require a rebuild).
+    verifyingBackblaze: { type: Boolean, state: true },
+    backblazeVerifyResult: { type: Object, state: true }
   };
 
   static styles = css`
@@ -81,10 +93,30 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     .module-container { width: 100%; }
 
     /* ---- tabs ---- */
+    /* Sticky so the tab bar stays visible while the long Configure or
+       Run content scrolls. admin-app.js .content-area is the scroll
+       container; the 24px top gutter lives on .content-area > *
+       (this host element) so it scrolls with the content rather than
+       sitting fixed above the scrollport.
+
+       A sticky bar inside that gutter has to *extend itself* into the
+       gutter — otherwise it pins 24px below the scrollport top and
+       scrolled content shows through the strip above it. The
+       standard CSS sticky pattern handles this with a paired negative
+       top margin (to reach up to the host's top edge) and matching
+       top padding (so the tab buttons render at their original
+       position). Net layout is identical; the sticky strip now spans
+       the entire scrollport-top to its border-bottom. */
     .tabs {
+      position: sticky;
+      top: 0;
+      z-index: 5;
       display: flex;
       gap: 8px;
+      margin-top: -24px;
+      padding-top: 24px;
       margin-bottom: 24px;
+      background: var(--hf-bg);
       border-bottom: 2px solid var(--hf-border);
     }
     .tab {
@@ -121,10 +153,48 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     }
     .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
     .info-box ul { margin: 8px 0 0 20px; padding: 0; }
+    .info-box a { color: var(--hf-accent); text-decoration: none; }
+    .info-box a:hover { text-decoration: underline; }
 
     .warn-box {
       border-left-color: var(--hf-warn);
     }
+
+    /* Extra Backup Paths: help text lives above the embedded
+       <table-editor>. The table styling itself comes from the shared
+       component. */
+    .extra-paths-help {
+      font-size: 12.5px;
+      color: var(--hf-text-muted);
+      margin-bottom: 8px;
+    }
+
+    /* ---- visually distinct sub-card inside a config-section ---- */
+    .subsection {
+      margin-top: 24px;
+      padding: 18px 20px 4px;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
+      border-radius: 10px;
+    }
+    .subsection-header {
+      margin-bottom: 14px;
+    }
+    .subsection-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--hf-text);
+    }
+    .subsection-description {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--hf-text-muted);
+    }
+    .subsection-description a {
+      color: var(--hf-accent);
+      text-decoration: none;
+    }
+    .subsection-description a:hover { text-decoration: underline; }
 
     .status-line {
       display: flex;
@@ -586,6 +656,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     };
     this.modified = false;
     this.activeTab = 'status';
+    this.subRoute = '';
     this.secretsStatus = null;
     this.backupConfigStatus = null;
     this.hasAuthorizedKeys = false;
@@ -621,10 +692,14 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     this.jobLog = '';
     this.jobOverlayOpen = false;
 
+    this.verifyingBackblaze = false;
+    this.backblazeVerifyResult = null;
+
     // internal (non-reactive)
     this._jobPollTimer = null;
     this._pathsPollTimer = null;
     this._canaryPollTimer = null;
+    this._autoVerifyTimer = null;
     this._jobLogOffset = 0;
     this._restoreAllConfirmText = '';
     this._servicesLoadedOnce = false;
@@ -639,6 +714,12 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
   async connectedCallback() {
     super.connectedCallback();
 
+    // Adopt the URL's sub-route on initial mount. updated() also tracks
+    // later changes (back/forward navigation), but on first paint we
+    // want the right tab BEFORE the data-loading kicks off so
+    // tab-specific lazy loads (Run/Restore repo lists) fire early.
+    this._applySubRoute(this.subRoute);
+
     await Promise.all([
       this.loadSecretsStatus(),
       this.loadBackupConfigStatus(),
@@ -650,10 +731,50 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     if (this.isJobActive(this.currentJob)) {
       this.startJobPolling();
     }
+    // Auto-run Backblaze verify so the Configure tab does not display
+    // a "Verify required" warning when everything is already filled in
+    // — the user only had to click Verify the first time the inputs
+    // changed; reload should re-check without a click.
+    this._maybeAutoVerifyBackblaze();
     // If a self-test is running, poll until it finishes.
     if (this.canaryStatus?.running) {
       this.startCanaryPolling();
     }
+  }
+
+  /**
+   * Lit reactive update hook — runs after every property change.
+   * We watch `subRoute` so that back/forward navigation (which fires
+   * `hashchange` → admin-app re-derives currentSubRoute → this prop
+   * updates) restores the right tab without a click. Internal tab
+   * clicks update activeTab directly AND emit sub-route-change; the
+   * round-trip lands subRoute === activeTab, so the equality guard
+   * below skips a redundant re-apply.
+   */
+  updated(changed) {
+    if (changed.has('subRoute')) {
+      this._applySubRoute(this.subRoute);
+    }
+  }
+
+  /**
+   * Map a URL sub-route onto activeTab. An empty sub-route restores
+   * the default landing tab (Status) — that covers the user clicking
+   * the sidebar Backups item to come back to the module: admin-app
+   * clears currentSubRoute on sidebar nav, so we need to fall back
+   * here rather than leaving the previous tab selected.
+   *
+   * Unknown values are ignored so a stale or hand-typed hash does
+   * not blank out the page. Calls handleTabChange with silent=true
+   * so we do not echo the change back as a sub-route-change event
+   * (which would re-trigger admin-app → updated → this method).
+   */
+  _applySubRoute(sub) {
+    const target = sub || 'status';
+    const validTabs = new Set(['status', 'run', 'restore', 'configuration']);
+    if (!validTabs.has(target)) return;
+    if (this.activeTab === target) return;
+    this.handleTabChange(target, { silent: true });
   }
 
   disconnectedCallback() {
@@ -662,6 +783,10 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     if (this._pathsPollTimer) {
       clearTimeout(this._pathsPollTimer);
       this._pathsPollTimer = null;
+    }
+    if (this._autoVerifyTimer) {
+      clearTimeout(this._autoVerifyTimer);
+      this._autoVerifyTimer = null;
     }
   }
 
@@ -907,8 +1032,19 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
 
   // --------------------------------------------------------- interaction
 
-  async handleTabChange(tab) {
+  async handleTabChange(tab, { silent = false } = {}) {
     this.activeTab = tab;
+    // Tell admin-app to persist the choice in the URL. `silent` is
+    // set when the call came FROM the URL sync (initial mount or
+    // back/forward navigation) — re-emitting in that case would just
+    // re-write the same hash and risk a feedback loop.
+    if (!silent) {
+      this.dispatchEvent(new CustomEvent('sub-route-change', {
+        detail: { subRoute: tab },
+        bubbles: true,
+        composed: true,
+      }));
+    }
     if (tab !== 'restore' && tab !== 'run') return;
 
     // Both tabs need the repository lists (cheap; no restic). Load once.
@@ -996,14 +1132,236 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     cur[path[path.length - 1]] = value;
     this.config = newConfig;
     this.modified = true;
+    // Bucket changed -> any cached verify result is stale (it was
+    // resolved against the old bucket name). Debounce the auto-verify
+    // so we do not fire one POST per keystroke; the user usually pastes
+    // or types the bucket name, then we Verify against the settled
+    // value ~700ms after they stop typing.
+    if (field === 'backups.backblaze-bucket'
+        || field === 'backups.backblaze-enable') {
+      this.backblazeVerifyResult = null;
+      if (this._autoVerifyTimer) clearTimeout(this._autoVerifyTimer);
+      this._autoVerifyTimer = setTimeout(() => {
+        this._autoVerifyTimer = null;
+        this._maybeAutoVerifyBackblaze();
+      }, 700);
+    }
     this.dispatchEvent(new CustomEvent('config-change', {
       detail: { config: newConfig }, bubbles: true, composed: true
     }));
   }
 
-  handleSecretUpdated() {
-    this.loadSecretsStatus();
-    this.loadBackupConfigStatus();
+  async handleSecretUpdated() {
+    // Stored credentials changed - last verify result is stale.
+    this.backblazeVerifyResult = null;
+    // Refresh which secrets exist BEFORE auto-verify; the auto-verify
+    // gate checks secretsStatus and we want it reading the new truth.
+    await Promise.all([
+      this.loadSecretsStatus(),
+      this.loadBackupConfigStatus(),
+    ]);
+    this._maybeAutoVerifyBackblaze();
+  }
+
+  /**
+   * Fire a Verify automatically when bucket + both secrets are set
+   * and no result is currently cached. Skips when:
+   *   - the user is mid-verify already,
+   *   - any of the three inputs is empty (the General-section warning
+   *     panel handles that case),
+   *   - a cached result already exists (good or bad — we don't want
+   *     to clobber a real "creds invalid" message with another spin
+   *     of the same call on every render).
+   * Cached results ARE cleared in handleSecretUpdated and in
+   * handleFieldChange when the bucket or enable flag changes, so this
+   * helper will then naturally re-run.
+   */
+  _maybeAutoVerifyBackblaze() {
+    if (this.verifyingBackblaze) return;
+    if (this.backblazeVerifyResult) return;
+    const bucketSet = !!(this.config?.backups
+                         && this.config.backups['backblaze-bucket']);
+    const idSet = !!this.secretsStatus?.['backblaze-id'];
+    const keySet = !!this.secretsStatus?.['backblaze-key'];
+    if (!bucketSet || !idSet || !keySet) return;
+    this.handleVerifyBackblaze();
+  }
+
+  async handleVerifyBackblaze() {
+    this.verifyingBackblaze = true;
+    this.backblazeVerifyResult = null;
+    try {
+      // Send the *pending* bucket name so verify checks what the user
+      // sees on screen, not the last-saved value on disk.
+      const pendingBucket = (this.config?.backups
+                             && this.config.backups['backblaze-bucket'])
+                            || '';
+      const r = await fetch('/api/backups/backblaze/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket: pendingBucket }),
+      });
+      let data = null;
+      try { data = await r.json(); } catch (_) { data = null; }
+      if (!r.ok) {
+        this.backblazeVerifyResult = {
+          success: false,
+          error: (data && (data.detail || data.error))
+            || `Verify request failed (${r.status})`
+        };
+      } else {
+        this.backblazeVerifyResult = data || { success: false,
+          error: 'Empty response from verify endpoint' };
+      }
+    } catch (err) {
+      this.backblazeVerifyResult = {
+        success: false,
+        error: `Verify request failed: ${err.message || err}`
+      };
+    } finally {
+      this.verifyingBackblaze = false;
+    }
+  }
+
+  /**
+   * Verify button + last-check result.
+   *
+   * Renders only when both Backblaze secrets are set. Calls the live
+   * /api/backups/backblaze/verify endpoint - no rebuild needed.
+   */
+  renderBackblazeVerify() {
+    const idSet = !!this.secretsStatus?.['backblaze-id'];
+    const keySet = !!this.secretsStatus?.['backblaze-key'];
+    const bucketSet = !!(this.config?.backups
+                         && this.config.backups['backblaze-bucket']);
+    const ready = idSet && keySet && bucketSet && this.hasAuthorizedKeys;
+    if (!idSet || !keySet) {
+      return '';
+    }
+    const disabledHint = !bucketSet
+      ? 'Set a Backblaze Bucket Name above to enable verification.'
+      : (!this.hasAuthorizedKeys
+        ? 'Add an SSH authorized key in System settings first.'
+        : '');
+    const r = this.backblazeVerifyResult;
+    let resultBox = '';
+    if (r) {
+      if (r.success && r.bucket_ok !== false && r.writable !== false) {
+        const bucketLine = r.bucket_name
+          ? html`<div>Bucket <code>${r.bucket_name}</code> is
+              reachable with this key.</div>`
+          : html`<div>No bucket configured yet — credentials look
+              good, but set a Backblaze Bucket Name below to finish
+              setup.</div>`;
+        const writeLine = r.writable === true
+          ? html`<div>Key has the capabilities needed to write and
+              prune backups.</div>`
+          : '';
+        resultBox = html`
+          <div class="info-box" style="border-left-color: var(--hf-ok);
+                                       margin-top: 12px;">
+            <strong style="color: var(--hf-ok);">
+              ✓ Backblaze credentials verified
+            </strong>
+            ${bucketLine}
+            ${writeLine}
+          </div>`;
+      } else if (r.success && r.writable === false) {
+        // Auth + bucket may be fine, but the key can't write — restic
+        // would fail on the first backup. Treat as a hard failure.
+        resultBox = html`
+          <div class="info-box warn-box" style="margin-top: 12px;">
+            <strong>⚠️ Key is read-only for this bucket</strong>
+            <div>${r.writable_error
+              || 'This application key cannot write or delete files. '
+                 + 'Restic backups would fail.'}</div>
+            ${r.missing_capabilities && r.missing_capabilities.length
+              ? html`<div>Missing capabilities:
+                  <code>${r.missing_capabilities.join(', ')}</code></div>`
+              : ''}
+          </div>`;
+      } else if (r.success && r.bucket_ok === false) {
+        resultBox = html`
+          <div class="info-box warn-box" style="margin-top: 12px;">
+            <strong>⚠️ Credentials work, but the bucket check
+              failed</strong>
+            <div>${r.bucket_error
+              || `Bucket '${r.bucket_name}' could not be verified.`}</div>
+          </div>`;
+      } else {
+        resultBox = html`
+          <div class="info-box" style="border-left-color: var(--hf-err);
+                                       margin-top: 12px;">
+            <strong style="color: var(--hf-err);">
+              ✗ Backblaze credentials did not verify
+            </strong>
+            <div>${r.error || 'Unknown error.'}</div>
+          </div>`;
+      }
+    }
+    return html`
+      <div class="btn-row" style="margin-top: 4px; align-items: center;">
+        <button
+          class="btn btn-secondary btn-sm"
+          ?disabled=${!ready || this.verifyingBackblaze}
+          @click=${() => this.handleVerifyBackblaze()}
+          title="Live-check the saved Application KeyID / Application Key
+                 against Backblaze B2"
+        >
+          ${this.verifyingBackblaze ? 'Verifying…' : 'Verify Credentials'}
+        </button>
+        ${disabledHint ? html`
+          <span style="font-size: 12.5px; color: var(--hf-text-muted);">
+            ${disabledHint}
+          </span>` : ''}
+      </div>
+      ${resultBox}
+    `;
+  }
+
+  /**
+   * Render the Extra Backup Paths table via the shared <table-editor>.
+   *
+   * Each row is { path, enabled }. The list index is the restic repo
+   * label (extra-path-N), so disabling (Enabled = ✗) keeps the slot in
+   * place. Deleting a row shifts later indices and orphans their
+   * existing restic repos — accepted risk (the table-editor's Delete
+   * confirm dialog warns generically; the index/label tradeoff is
+   * documented in services/backup/default.nix).
+   *
+   * Tolerates legacy string entries written before the schema
+   * promotion: we normalize at the boundary so the table-editor sees
+   * uniform objects, and `module.nix` independently coerces strings
+   * to {path, enabled:true} on the Nix side.
+   */
+  renderExtraPaths(entries) {
+    const rows = (entries || []).map((entry) => (
+      typeof entry === 'string'
+        ? { path: entry, enabled: true }
+        : { path: entry.path || '', enabled: entry.enabled !== false }
+    ));
+    const columns = [
+      { key: 'path', label: 'Path', type: 'text',
+        placeholder: '/mnt/ellis/Documents' },
+      { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
+    ];
+    return html`
+      <div class="extra-paths-help">
+        HomeFree service data is already backed up automatically; use
+        this for user files (Documents, Photos, etc.). Disabling an
+        entry stops scheduled backups for that path but keeps its
+        existing restic repository intact, so re-enabling later
+        resumes against the same snapshot history.
+      </div>
+      <table-editor
+        .columns=${columns}
+        .data=${rows}
+        .neutralBooleans=${true}
+        addLabel="Add Entry"
+        @data-change=${(e) => this.handleFieldChange(
+          'backups.extra-from-paths', e.detail.data)}
+      ></table-editor>
+    `;
   }
 
   showNotification(message, type = 'info') {
@@ -1410,61 +1768,74 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
   renderConfigurationTab() {
     const { backups } = this.config;
 
+    // Remote-backup readiness gates the warning under the toggle.
+    // "Ready" means: bucket name set AND both credentials saved AND
+    // the last live verify came back fully green (auth + bucket +
+    // write capabilities). The verify result is cleared whenever any
+    // of those inputs change, so a stale ✓ cannot leak through.
+    const remoteEnabled = !!backups['backblaze-enable'];
+    const bucketSet = !!backups['backblaze-bucket'];
+    const idSet = !!this.secretsStatus?.['backblaze-id'];
+    const keySet = !!this.secretsStatus?.['backblaze-key'];
+    // Inputs missing for remote backups. The actual Verify pass/fail
+    // surfaces next to the Verify button in renderBackblazeVerify, so
+    // this banner stays focused on "what does the user still need to
+    // fill in?" — auto-verify handles the rest once everything's set.
+    const v = this.backblazeVerifyResult;
+    const remoteWarnings = [];
+    let remoteVerifyFailed = false;
+    if (remoteEnabled) {
+      if (!bucketSet) remoteWarnings.push('a bucket name');
+      if (!idSet) remoteWarnings.push('an Application KeyID');
+      if (!keySet) remoteWarnings.push('an Application Key');
+      // A verify result exists AND it didn't fully pass — show a
+      // distinct banner pointing the user at the diagnostic details
+      // in the Remote Backups section.
+      if (bucketSet && idSet && keySet && v
+          && (!v.success || v.bucket_ok === false
+              || v.writable === false)) {
+        remoteVerifyFailed = true;
+      }
+    }
+
     return html`
       ${this.renderJobBanner()}
 
-      <config-section
-        title="Local Backups"
-        description="Automatic encrypted backups to a local storage device using Restic"
-      >
+      <config-section title="General">
         <form-field
           label="Enable Local Backups"
           type="boolean"
           .value=${backups.enable}
-          help="Enable automatic backups of service data"
+          help="Back up to a local storage device on this machine"
           @field-change=${(e) =>
             this.handleFieldChange('backups.enable', e.detail.value)}
         ></form-field>
 
         <form-field
-          label="Backup Directory"
-          type="text"
-          .value=${backups['to-path']}
-          placeholder="/var/lib/backups"
-          help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
+          label="Enable Remote Backups"
+          type="boolean"
+          .value=${backups['backblaze-enable']}
+          help="Also send encrypted backups to off-site cloud storage"
           @field-change=${(e) =>
-            this.handleFieldChange('backups.to-path', e.detail.value)}
+            this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
         ></form-field>
-
-        <list-input
-          label="Extra Backup Paths"
-          itemType="path"
-          .value=${backups['extra-from-paths'] || []}
-          description="Additional directories to include in backups. HomeFree service data is backed up automatically; use this for user files (Documents, Photos, etc.)."
-          placeholder="/mnt/ellis/Documents"
-          @list-changed=${(e) =>
-            this.handleFieldChange('backups.extra-from-paths', e.detail.value)}
-        ></list-input>
-
-        ${backups.enable ? html`
-          <div class="info-box">
-            <strong>ℹ️ Backup Information</strong>
-            <div>HomeFree uses Restic for encrypted, deduplicated backups.
-              Local backups run automatically after 2 AM daily (staggered);
-              ${backups['backblaze-enable']
-                ? 'offsite Backblaze B2 backups run after 4 AM. '
-                : ''}each service is a separate restic repository with
-              7-daily / 5-weekly / 10-yearly retention.
-              To run a backup on demand, use the
-              <strong>Run</strong> tab.</div>
+        ${remoteEnabled && remoteWarnings.length ? html`
+          <div class="info-box warn-box">
+            <strong>⚠️ Remote backups are not ready yet</strong>
+            <div>Configure ${this._listAnd(remoteWarnings)} in the
+              <strong>Remote Backups</strong> section below. Until then,
+              the nightly remote backup will fail.</div>
           </div>
-        ` : ''}
-      </config-section>
+        ` : (remoteEnabled && remoteVerifyFailed ? html`
+          <div class="info-box warn-box">
+            <strong>⚠️ Remote credentials did not verify</strong>
+            <div>The bucket name or credentials in the
+              <strong>Remote Backups</strong> section below were
+              rejected by Backblaze B2. Open that section for the
+              detailed error and fix the failing input.</div>
+          </div>
+        ` : '')}
 
-      <config-section
-        title="Backup Secrets"
-        description="Encryption password and cloud storage credentials"
-      >
         ${!this.hasAuthorizedKeys ? html`
           <div class="info-box warn-box">
             <strong>⚠️ SSH Key Required</strong>
@@ -1477,20 +1848,102 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
         <secrets-input
           serviceLabel="backup"
           secretKey="restic-password"
-          label="Restic Password"
+          label="Backup Encryption Password"
           description="Encryption password for backup repositories (required for backups and restores)"
           .exists=${this.secretsStatus?.['restic-password'] || false}
           ?disabled=${!this.hasAuthorizedKeys}
           @secret-updated=${() => this.handleSecretUpdated()}
         ></secrets-input>
+        <div class="info-box warn-box">
+          <strong>⚠️ Save this password somewhere safe</strong>
+          <div>The encryption password protects every backup. Store it in
+            a password manager or another safe place <em>outside</em> this
+            machine — if you lose it, your backups cannot be
+            recovered.</div>
+        </div>
+      </config-section>
 
-        ${backups['backblaze-enable'] ? html`
+      <config-section
+        title="Local Backups"
+        description="Automatic encrypted backups to a local storage device using Restic"
+      >
+        <form-field
+          label="Backup Directory"
+          type="text"
+          .value=${backups['to-path']}
+          placeholder="/var/lib/backups"
+          help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.to-path', e.detail.value)}
+        ></form-field>
+
+        ${backups.enable ? html`
+          <div class="info-box">
+            <strong>ℹ️ Backup Information</strong>
+            <div>HomeFree uses Restic for encrypted, deduplicated backups.
+              Local backups run automatically after 2 AM daily (staggered);
+              ${backups['backblaze-enable']
+                ? 'remote backups run after 4 AM. '
+                : ''}each service is a separate restic repository with
+              7-daily / 5-weekly / 10-yearly retention.
+              To run a backup on demand, use
+              the&nbsp;<strong>Run</strong>&nbsp;tab.</div>
+          </div>
+        ` : ''}
+      </config-section>
+
+      <config-section
+        title="Remote Backups"
+        description="Off-site encrypted backups to cloud storage"
+      >
+        <div class="info-box">
+          <strong>ℹ️ Remote backups use Backblaze B2 Cloud Storage</strong>
+          <div>To use it:
+            <ul>
+              <li>Create a B2 account at
+                <a href="https://www.backblaze.com/" target="_blank"
+                   rel="noopener noreferrer">backblaze.com</a></li>
+              <li>Create a bucket for your backups</li>
+              <li>Generate application keys with read/write access</li>
+              <li>Fill in the bucket name and credentials below</li>
+            </ul>
+          </div>
+        </div>
+
+        <form-field
+          label="Backblaze Bucket Name"
+          type="text"
+          .value=${backups['backblaze-bucket']}
+          placeholder="my-homefree-backups"
+          help="B2 bucket name for storing backups"
+          .error=${backups['backblaze-enable']
+            && !backups['backblaze-bucket']
+            ? 'A bucket name is required when remote backups are enabled.'
+            : ''}
+          @field-change=${(e) =>
+            this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
+        ></form-field>
+
+        <div class="subsection">
+          <div class="subsection-header">
+            <div class="subsection-title">Backblaze B2 Credentials</div>
+            <div class="subsection-description">
+              Application Key for your
+              <a href="https://www.backblaze.com/" target="_blank"
+                 rel="noopener noreferrer">Backblaze</a>
+              B2 account. Create one under
+              <em>Application Keys</em> in the B2 console.
+            </div>
+          </div>
           <secrets-input
             serviceLabel="backup"
             secretKey="backblaze-id"
-            label="Backblaze Account ID"
-            description="Your Backblaze B2 account ID"
+            label="Backblaze Application KeyID"
+            description="Your Backblaze B2 Application KeyID"
             .exists=${this.secretsStatus?.['backblaze-id'] || false}
+            ?missing=${remoteEnabled
+              && !this.secretsStatus?.['backblaze-id']}
+            missingMessage="Set the Application KeyID to enable remote backups."
             ?disabled=${!this.hasAuthorizedKeys}
             @secret-updated=${() => this.handleSecretUpdated()}
           ></secrets-input>
@@ -1500,48 +1953,34 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
             label="Backblaze Application Key"
             description="Your Backblaze B2 application key"
             .exists=${this.secretsStatus?.['backblaze-key'] || false}
+            ?missing=${remoteEnabled
+              && !this.secretsStatus?.['backblaze-key']}
+            missingMessage="Set the Application Key to enable remote backups."
             ?disabled=${!this.hasAuthorizedKeys}
             @secret-updated=${() => this.handleSecretUpdated()}
           ></secrets-input>
-        ` : ''}
+
+          ${this.renderBackblazeVerify()}
+        </div>
       </config-section>
 
       <config-section
-        title="Backblaze B2 Cloud Backups"
-        description="Off-site encrypted backups to Backblaze B2 cloud storage"
+        title="Extra Backup Paths"
+        description="Additional directories to include in scheduled backups"
       >
-        <form-field
-          label="Enable Backblaze Backups"
-          type="boolean"
-          .value=${backups['backblaze-enable']}
-          help="Send encrypted backups to Backblaze B2 cloud storage"
-          @field-change=${(e) =>
-            this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
-        ></form-field>
-        <form-field
-          label="Backblaze Bucket Name"
-          type="text"
-          .value=${backups['backblaze-bucket']}
-          placeholder="my-homefree-backups"
-          help="B2 bucket name for storing backups"
-          @field-change=${(e) =>
-            this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
-        ></form-field>
-
-        ${backups['backblaze-enable'] ? html`
-          <div class="info-box">
-            <strong>ℹ️ Backblaze Configuration</strong>
-            <div>To use Backblaze B2:
-              <ul>
-                <li>Create a B2 account at backblaze.com</li>
-                <li>Create a bucket for your backups</li>
-                <li>Generate application keys with read/write access</li>
-                <li>Configure credentials above in Backup Secrets</li>
-              </ul>
-            </div>
-          </div>` : ''}
+        ${this.renderExtraPaths(backups['extra-from-paths'] || [])}
       </config-section>
     `;
+  }
+
+  /** Oxford-comma join: ["a"] → "a"; ["a","b"] → "a and b";
+   *  ["a","b","c"] → "a, b, and c". Used by the General-section
+   *  "Remote backups are not ready yet" warning. */
+  _listAnd(items) {
+    if (!items || items.length === 0) return '';
+    if (items.length === 1) return items[0];
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
   }
 
   /**

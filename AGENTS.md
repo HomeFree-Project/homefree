@@ -77,6 +77,20 @@ separate deployments. It is *not* one machine's config.
    (`web-platform/frontend/src/vendor/`) and the Inter font
    (`src/assets/fonts/`); follow that pattern for anything new.
 
+9. **Fix root causes, not symptoms — and ask before working around.**
+   When something breaks, find the real cause and fix it there. Do
+   not paper over a problem with negative margins, `!important`,
+   per-page CSS resets, ad-hoc `try/except`, hard-coded fallbacks,
+   skipped tests, or duplicate logic that just sidesteps the issue.
+   If a proper fix would touch shared/global code and a localised
+   workaround tempts you, STOP and ask the maintainer first —
+   describe the root cause, the proposed real fix, the workaround
+   alternative, and let them choose. A workaround applied without
+   permission is a regression: it hides the underlying bug and
+   accumulates as tech debt. Confirmation also applies to "small"
+   hacks (a one-line override, a stub return, a hard-coded value to
+   unblock a build) — ask first.
+
 ## How services are structured
 
 - Each app/infra module is one directory under `apps/` or `services/`,

@@ -1407,7 +1407,38 @@
       };
 
       extra-from-paths = lib.mkOption {
-        type = lib.types.listOf lib.types.path;
+        ## A bare string is coerced into { path = <str>; enabled = true; }
+        ## so older homefree-configuration.nix files (which pass the raw
+        ## JSON string array straight through) keep evaluating against
+        ## the promoted schema until they get regenerated. Without this
+        ## the submodule type rejects the string and the error path
+        ## attempts to render the path literal under pure-eval, which
+        ## blows up with `access to absolute path ... is forbidden`.
+        ##
+        ## `path` is `str`, not `lib.types.path`, for the same reason:
+        ## restic only needs the text — the path is opened at runtime,
+        ## not imported into the system closure.
+        type = lib.types.listOf (lib.types.coercedTo
+          lib.types.str
+          (s: { path = s; enabled = true; })
+          (lib.types.submodule {
+            options = {
+              path = lib.mkOption {
+                type = lib.types.str;
+                description = "Source directory to back up";
+              };
+              enabled = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = ''
+                  Whether this path is currently included in scheduled
+                  backups. A disabled entry keeps its slot in the list
+                  so its restic repository label (extra-path-N) stays
+                  stable when it is re-enabled.
+                '';
+              };
+            };
+          }));
         default = [];
         description = "Extra list of custom paths to backup";
       };
@@ -1477,9 +1508,22 @@
           }
           {
             path = "extra-from-paths";
-            type = "listOf str";
+            type = "listOf submodule";
             default = [];
             description = "Additional custom paths to include in backups";
+            submodule-fields = [
+              {
+                path = "path";
+                type = "str";
+                description = "Source directory to back up";
+              }
+              {
+                path = "enabled";
+                type = "bool";
+                default = true;
+                description = "Whether this path is included in scheduled backups";
+              }
+            ];
           }
           {
             path = "backblaze";

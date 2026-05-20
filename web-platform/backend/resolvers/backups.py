@@ -43,6 +43,23 @@ class BackupConfigStatusResponse(BaseModel):
     backblaze_available: bool
 
 
+class BackblazeVerifyResponse(BaseModel):
+    """Result of a live Backblaze B2 credential check."""
+    success: bool
+    account_id: Optional[str] = None
+    bucket_name: Optional[str] = None
+    # None when no bucket is configured (auth-only check)
+    bucket_ok: Optional[bool] = None
+    bucket_error: Optional[str] = None
+    # Whether the key has the capabilities needed to write+delete.
+    # None when the auth response did not include a capabilities list.
+    writable: Optional[bool] = None
+    writable_error: Optional[str] = None
+    missing_capabilities: List[str] = []
+    capabilities: List[str] = []
+    error: Optional[str] = None
+
+
 class ServicesResponse(BaseModel):
     success: bool
     services: List[str]
@@ -202,6 +219,38 @@ async def get_backup_config_status():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get backup configuration status: {str(e)}")
+
+
+class BackblazeVerifyRequest(BaseModel):
+    """Optional payload for the live Backblaze verify call.
+
+    ``bucket`` lets the UI pass the pending (not-yet-saved) bucket name
+    so verify checks what is on screen rather than the last-applied
+    homefree-config.json. Falls back to the saved config when omitted.
+    """
+    bucket: Optional[str] = None
+
+
+@router.post("/backblaze/verify", response_model=BackblazeVerifyResponse)
+async def verify_backblaze(request: Optional[BackblazeVerifyRequest] = None):
+    """Live-check the stored Backblaze B2 credentials.
+
+    Calls the B2 native API with the saved keyID/applicationKey and, if
+    a bucket is provided in the request or saved in
+    homefree-config.json, also checks the bucket is visible and that
+    the key has write+delete capabilities. Does NOT require a rebuild -
+    reads the secrets that are already on disk.
+    """
+    try:
+        bucket_override = request.bucket if request else None
+        result = await BackupOperations.verify_backblaze_credentials(
+            bucket_override=bucket_override)
+        return BackblazeVerifyResponse(**result)
+    except Exception as e:
+        logger.error(f"Error verifying Backblaze credentials: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify Backblaze credentials: {str(e)}")
 
 
 @router.get("/services", response_model=ServicesResponse)

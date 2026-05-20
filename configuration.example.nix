@@ -999,19 +999,24 @@ in
       enable = true;
       to-path = "/mnt/ellis/Backups/homefree";
       # Note: /etc/nixos is always backed up automatically
+      ## Each entry is { path; enabled (default true) }. Order matters
+      ## — the index is baked into the restic repo label
+      ## (extra-path-N). To stop backing up a path without losing its
+      ## existing offsite snapshots, set `enabled = false` and leave
+      ## the entry in place; the slot stays reserved.
       extra-from-paths = [
-        "/mnt/ellis/Code"
-        "/mnt/ellis/Companies"
-        "/mnt/ellis/Documents"
-        "/mnt/ellis/Kat"
-        "/mnt/ellis/Private"
-        "/mnt/ellis/Projects"
-        "/mnt/ellis/Recipes"
-        "/mnt/ellis/Backup_nas.hbk"
-        "/mnt/ellis/Backups/oneplus7pro-backup-apps"
-        "/mnt/ellis/Backups/oneplus7pro-backup-signal"
-        "/mnt/nas-home/erahhal/Photos"
-        # "/mnt/homeassistant-backups"
+        { path = "/mnt/ellis/Code"; }
+        { path = "/mnt/ellis/Companies"; }
+        { path = "/mnt/ellis/Documents"; }
+        { path = "/mnt/ellis/Kat"; }
+        { path = "/mnt/ellis/Private"; }
+        { path = "/mnt/ellis/Projects"; }
+        { path = "/mnt/ellis/Recipes"; }
+        { path = "/mnt/ellis/Backup_nas.hbk"; }
+        { path = "/mnt/ellis/Backups/oneplus7pro-backup-apps"; }
+        { path = "/mnt/ellis/Backups/oneplus7pro-backup-signal"; }
+        { path = "/mnt/nas-home/erahhal/Photos"; }
+        # { path = "/mnt/homeassistant-backups"; enabled = false; }
       ];
       backblaze = {
         enable = true;

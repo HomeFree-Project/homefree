@@ -20,10 +20,16 @@ let
     }) config.homefree.service-config)
     ## Backup the system config
     ++ [{ label = "system-config"; paths = [ "/etc/nixos" ]; }]
-    ## Backup each extra path individually
-    ++ (lib.imap0 (index: path: {
+    ## Backup each extra path individually. Iterate over the FULL list
+    ## (including disabled entries) so the index → label mapping
+    ## (extra-path-N) never shifts when an entry is disabled or
+    ## re-enabled; an existing restic repository keeps its identity.
+    ## A disabled entry yields an empty `paths` list, which the
+    ## `filtered-backup-from-paths` filter below drops, so no backup
+    ## unit is generated for it.
+    ++ (lib.imap0 (index: entry: {
       label = "extra-path-${toString index}";
-      paths = [ path ];
+      paths = if entry.enabled then [ entry.path ] else [];
     }) config.homefree.backups.extra-from-paths);
   ## filter out any entries without backup paths
   filtered-backup-from-paths = lib.filter (entry: (lib.length entry.paths) > 0) backup-from-paths-all;

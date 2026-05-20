@@ -15,6 +15,11 @@ class SecretsInput extends LitElement {
     required: { type: Boolean },
     disabled: { type: Boolean },
     exists: { type: Boolean },  // Whether secret is currently set
+    // When true AND the secret is not yet set, the card draws a warning
+    // ring + inline "required" message. Used by the consumer to flag
+    // fields that must be filled in for a feature to work.
+    missing: { type: Boolean },
+    missingMessage: { type: String },
     inputValue: { type: String, state: true },
     showValue: { type: Boolean, state: true },
     saving: { type: Boolean, state: true }
@@ -36,6 +41,18 @@ class SecretsInput extends LitElement {
     .secret-field.disabled {
       opacity: 0.6;
       cursor: not-allowed;
+    }
+
+    /* Highlight when the consumer flags this field as required-but-unset. */
+    .secret-field.missing {
+      border-color: var(--hf-warn);
+      box-shadow: 0 0 0 1px var(--hf-warn) inset;
+    }
+
+    .missing-message {
+      margin-top: 10px;
+      font-size: 12.5px;
+      color: var(--hf-warn);
     }
 
     .field-header {
@@ -204,6 +221,8 @@ class SecretsInput extends LitElement {
     this.required = false;
     this.disabled = false;
     this.exists = false;
+    this.missing = false;
+    this.missingMessage = '';
     this.inputValue = '';
     this.showValue = false;
     this.saving = false;
@@ -308,8 +327,11 @@ class SecretsInput extends LitElement {
   }
 
   render() {
+    const showMissing = this.missing && !this.exists;
     return html`
-      <div class="secret-field ${this.disabled ? 'disabled' : ''}">
+      <div class="secret-field
+                  ${this.disabled ? 'disabled' : ''}
+                  ${showMissing ? 'missing' : ''}">
         <div class="field-header">
           <div class="field-label">
             ${this.label}
@@ -366,6 +388,12 @@ class SecretsInput extends LitElement {
         ${this.disabled ? html`
           <div class="warning-message">
             ⚠️ Secrets management is disabled. Please add an SSH authorized key in the System page to enable secrets.
+          </div>
+        ` : ''}
+
+        ${showMissing ? html`
+          <div class="missing-message">
+            ⚠️ ${this.missingMessage || 'This value is required.'}
           </div>
         ` : ''}
       </div>
