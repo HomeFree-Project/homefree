@@ -348,6 +348,11 @@ export const getDashboardOverview = () => get('/api/dashboard/overview');
 export const getDashboardHistory = () => get('/api/dashboard/history');
 export const getLanClients = () => get('/api/dashboard/lan-clients');
 
+// Hardware — per-drive SMART + sensor snapshot, plus drive-temperature
+// history. Backs the Hardware admin page.
+export const getHardwareOverview = () => get('/api/hardware/overview');
+export const getDriveTempHistory = () => get('/api/hardware/drive-temp-history');
+
 // Filesystem
 export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);
 export const createFolder = (path) => post('/api/filesystem/mkdir', { path });

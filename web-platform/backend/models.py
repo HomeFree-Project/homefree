@@ -17,6 +17,39 @@ class DiskInfo:
 
 
 @dataclass
+class PhysicalDriveInfo:
+    """SMART-derived health for one physical block device.
+
+    Mirrors the dict shape returned by resolvers.physical_drives so
+    the type surface stays consistent with DiskInfo. The resolver
+    returns plain dicts (built straight from smartctl --json output)
+    rather than dataclass instances, for parity with the rest of
+    DashboardResolver — this is purely a schema reference for callers
+    that want a typed view.
+    """
+    device: str
+    model: str
+    vendor: str
+    size_bytes: int
+    drive_class: str               # hdd | ssd | nvme
+    transport: Optional[str]       # usb | sata | nvme | …
+    temp_c: Optional[int]
+    temp_status: str               # ok | warn | err | unknown
+    temp_warn_c: int
+    temp_err_c: int
+    power_on_hours: Optional[int]
+    smart_passed: Optional[bool]
+    smart_available: bool
+    smart_error: Optional[str]
+    reallocated_sectors: Optional[int]
+    pending_sectors: Optional[int]
+    uncorrectable_sectors: Optional[int]
+    life_used_percent: Optional[int]
+    available_spare_percent: Optional[int]
+    wear_status: str               # ok | warn | err | unknown
+
+
+@dataclass
 class SystemCapabilities:
     """Hardware capabilities relevant to disk setup and encryption.
 

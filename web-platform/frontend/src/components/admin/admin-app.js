@@ -7,6 +7,7 @@ import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../s
 import { shellStyles } from '../../shared/shell.js';
 import { navIcon } from '../../shared/icons.js';
 import './modules/dashboard-module.js';
+import './modules/hardware-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/lan-clients-module.js';
@@ -726,6 +727,11 @@ class AdminApp extends LitElement {
       {
         id: 'system',
         title: 'Host',
+        section: 'System'
+      },
+      {
+        id: 'hardware',
+        title: 'Hardware',
         section: 'System'
       },
       {
@@ -2227,6 +2233,11 @@ class AdminApp extends LitElement {
             @config-change=${this.handleConfigChange}
             @ssh-keys-changed=${this.handleSSHKeysChanged}
           ></system-module>
+        `;
+
+      case 'hardware':
+        return html`
+          <hardware-module></hardware-module>
         `;
 
       case 'network':

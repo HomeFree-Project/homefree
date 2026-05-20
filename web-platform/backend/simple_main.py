@@ -33,6 +33,7 @@ from resolvers.install import InstallResolver
 from resolvers.services import ServicesResolver
 from resolvers.abuse_blocking import AbuseBlockingResolver
 from resolvers.dashboard import DashboardResolver
+from resolvers.hardware import HardwareResolver
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
@@ -1031,6 +1032,32 @@ async def get_dashboard_lan_clients():
         return JSONResponse(content=await asyncio.to_thread(DashboardResolver.get_lan_clients))
     except Exception as e:
         logger.error(f"dashboard lan-clients: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hardware/overview")
+async def get_hardware_overview():
+    """Per-drive SMART + motherboard sensor snapshot for the Hardware page.
+
+    Runs in a worker thread because the resolver may shell out to
+    smartctl per drive (cached for 60s by PhysicalDrivesResolver) — a
+    USB-bridged drive can wedge briefly and we don't want the asyncio
+    loop frozen."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(HardwareResolver.get_overview))
+    except Exception as e:
+        logger.error(f"hardware overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hardware/drive-temp-history")
+async def get_hardware_drive_temp_history():
+    """24h of per-drive temperature samples written by the
+    homefree-drive-temp-sampler service."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(HardwareResolver.get_drive_temp_history))
+    except Exception as e:
+        logger.error(f"hardware drive-temp-history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

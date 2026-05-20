@@ -43,9 +43,24 @@ let
     exec ${pythonEnv}/bin/python dashboard_sampler.py
   '';
 
+  # Drive-temperature sampler package. Same standalone pattern as the
+  # dashboard sampler, but runs as root because smartctl needs
+  # CAP_SYS_RAWIO to open block devices. PATH augmented with the
+  # system profile so `smartctl` and `lsblk` are reachable — the
+  # default unit PATH is too restricted to find them.
+  drive-temp-sampler = pkgs.writeShellScriptBin "homefree-drive-temp-sampler" ''
+    #!/usr/bin/env bash
+    export PATH="/run/current-system/sw/bin:$PATH"
+    cd ${installerWebPath}/backend
+    exec ${pythonEnv}/bin/python drive_temp_sampler.py
+  '';
+
   # SQLite DB shared by the sampler (writer) and admin-api (reader).
   dashboardDbDir = "/var/lib/homefree-dashboard";
   dashboardDbPath = "${dashboardDbDir}/history.db";
+
+  driveTempDbDir = "/var/lib/homefree-drive-temps";
+  driveTempDbPath = "${driveTempDbDir}/history.db";
 
   # Generate list of all available service labels (not option names)
   # This extracts labels from service option definitions
@@ -910,6 +925,9 @@ in
           # Standalone dashboard metrics sampler — writes the history
           # DB the admin-api reads.
           "homefree-dashboard-sampler"
+          # Standalone drive-temperature sampler — writes the per-drive
+          # temperature history DB the Hardware page reads.
+          "homefree-drive-temp-sampler"
           "caddy"
         ];
 
@@ -979,6 +997,43 @@ in
         ProtectControlGroups = true;
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_NETLINK" ];
         SystemCallFilter = [ "@system-service" ];
+      };
+    };
+
+    ## Drive-temperature sampler — separate root-privileged unit. Lives
+    ## apart from the dashboard sampler so that one stays unprivileged.
+    ## smartctl needs CAP_SYS_RAWIO; we keep it as full root rather than
+    ## granting a fine-grained capability because the per-tick subprocess
+    ## already inherits root and the unit is otherwise locked down.
+    systemd.services.homefree-drive-temp-sampler = {
+      description = "HomeFree Drive Temperature Sampler";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "local-fs.target" ];
+
+      serviceConfig = {
+        Type = "simple";
+        ## Root: smartctl needs CAP_SYS_RAWIO to open /dev/sdX.
+        User = "root";
+        Group = "root";
+        StateDirectory = "homefree-drive-temps";
+        StateDirectoryMode = "0755";
+        WorkingDirectory = driveTempDbDir;
+        ExecStart = "${drive-temp-sampler}/bin/homefree-drive-temp-sampler";
+        Restart = "always";
+        RestartSec = "10s";
+        Environment = [
+          "HOMEFREE_DRIVE_TEMP_DB=${driveTempDbPath}"
+        ];
+        ## Locked down despite running as root. smartctl is the only
+        ## thing that needs raw device access; everything else is
+        ## sqlite and sysfs reads.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
       };
     };
 
