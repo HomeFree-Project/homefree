@@ -232,3 +232,20 @@ class SystemResolver:
                 success=False,
                 message=f"Failed to reboot: {str(e)}"
             )
+
+    @staticmethod
+    def poweroff() -> MutationResult:
+        """Power off the system"""
+        try:
+            logger.info("Powering off system...")
+            run_privileged(["systemctl", "poweroff"], check=True)
+            return MutationResult(
+                success=True,
+                message="System is powering off..."
+            )
+        except Exception as e:
+            logger.error(f"Failed to power off: {e}")
+            return MutationResult(
+                success=False,
+                message=f"Failed to power off: {str(e)}"
+            )

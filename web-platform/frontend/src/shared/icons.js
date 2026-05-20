@@ -61,6 +61,10 @@ const ACTION_PATHS = {
   play: svg`<polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/>`,
   restart: svg`<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>`,
   stop: svg`<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>`,
+  // Lucide `power` — vertical line with an open arc beneath, the
+  // universal power-button glyph. Used for the Hardware page's
+  // shutdown button.
+  poweroff: svg`<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>`,
   'external-link': svg`<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`,
 };
 

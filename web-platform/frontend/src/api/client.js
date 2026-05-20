@@ -352,6 +352,19 @@ export const getLanClients = () => get('/api/dashboard/lan-clients');
 // history. Backs the Hardware admin page.
 export const getHardwareOverview = () => get('/api/hardware/overview');
 export const getDriveTempHistory = () => get('/api/hardware/drive-temp-history');
+export const getSensorTempHistory = () => get('/api/hardware/sensor-temp-history');
+
+// Firmware — fwupd. Read state lives inside getHardwareOverview() under
+// the `firmware` key; these endpoints are the action surface.
+export const refreshFirmwareMetadata = () => post('/api/firmware/refresh', {});
+export const updateFirmware = (deviceIds) =>
+  post('/api/firmware/update', { device_ids: deviceIds });
+export const getFirmwareUpdateStatus = () => get('/api/firmware/update-status');
+
+// Power off — confirmation-gated by the caller (see confirmDialog).
+// rebootSystem is already exported above in the "System Control"
+// section (used by the installer's "reboot after install" button).
+export const powerOffSystem = () => post('/api/system/poweroff', {});
 
 // Filesystem
 export const browsePath = (path) => get(`/api/filesystem/browse?path=${encodeURIComponent(path)}`);

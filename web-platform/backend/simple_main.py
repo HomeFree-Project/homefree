@@ -10,7 +10,7 @@ import sys
 import logging
 import json
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 # Ensure backend directory is in Python path for module imports
@@ -34,6 +34,8 @@ from resolvers.services import ServicesResolver
 from resolvers.abuse_blocking import AbuseBlockingResolver
 from resolvers.dashboard import DashboardResolver
 from resolvers.hardware import HardwareResolver
+from resolvers.firmware import FirmwareResolver
+from services.fwupd_job import FwupdJob
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
@@ -1058,6 +1060,71 @@ async def get_hardware_drive_temp_history():
         return JSONResponse(content=await asyncio.to_thread(HardwareResolver.get_drive_temp_history))
     except Exception as e:
         logger.error(f"hardware drive-temp-history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hardware/sensor-temp-history")
+async def get_hardware_sensor_temp_history():
+    """24h of per-hwmon-sensor temperature samples. Written by the
+    homefree-dashboard-sampler (no privileges needed for sysfs reads)
+    into the same DB that backs the dashboard charts."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(HardwareResolver.get_sensor_temp_history))
+    except Exception as e:
+        logger.error(f"hardware sensor-temp-history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class FirmwareUpdateRequest(BaseModel):
+    device_ids: List[str]
+
+
+@app.post("/api/firmware/refresh")
+async def post_firmware_refresh():
+    """Refresh fwupd metadata from configured remotes (mostly LVFS).
+    A no-op if metadata is already current — exit code 2 is treated as
+    success by the resolver."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(FirmwareResolver.refresh_metadata))
+    except Exception as e:
+        logger.error(f"firmware refresh: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/firmware/update")
+async def post_firmware_update(req: FirmwareUpdateRequest):
+    """Kick off a firmware update for one or more devices. Runs in a
+    transient systemd unit so it survives admin-api restarts; the
+    frontend polls /api/firmware/update-status for progress."""
+    try:
+        return JSONResponse(
+            content=await asyncio.to_thread(FirmwareResolver.update, req.device_ids),
+        )
+    except Exception as e:
+        logger.error(f"firmware update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/firmware/update-status")
+async def get_firmware_update_status():
+    """Status of the current / most recent firmware update job.
+    Same { running, output, exit_code } shape as the rebuild-status
+    endpoint, so the frontend can model both the same way."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(FwupdJob.get_status))
+    except Exception as e:
+        logger.error(f"firmware update-status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/poweroff")
+async def post_system_poweroff():
+    """Power off the host immediately. Same caveats as /reboot."""
+    try:
+        result = await asyncio.to_thread(SystemResolver.poweroff)
+        return JSONResponse(content={"success": result.success, "message": result.message})
+    except Exception as e:
+        logger.error(f"system poweroff: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -57,7 +57,7 @@ class DashboardHistoryStore:
         return conn
 
     def init_schema(self) -> None:
-        """Create the table if absent. Called once by the sampler at
+        """Create the tables if absent. Called once by the sampler at
         startup (the writer owns schema creation)."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
@@ -74,6 +74,27 @@ class DashboardHistoryStore:
                 """
             )
             # PRIMARY KEY on ts already gives an index for range scans.
+            # Motherboard sensor temperatures — one row per (sensor, ts).
+            # Sensor identity is the tuple (driver, label) the kernel
+            # exposes via /sys/class/hwmon; we join them with `:` into a
+            # stable key so adding/removing sensors doesn't require a
+            # schema change. Same dashboard-sampler tick writes both this
+            # table and `samples`, so the cadence matches CPU/memory.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sensor_temps (
+                    ts          INTEGER NOT NULL,
+                    sensor      TEXT NOT NULL,
+                    kind        TEXT NOT NULL,
+                    temp_c      REAL,
+                    PRIMARY KEY (sensor, ts)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sensor_temps_ts "
+                "ON sensor_temps(ts)"
+            )
 
     # --- writer side (sampler only) -------------------------------------
 
@@ -98,12 +119,30 @@ class DashboardHistoryStore:
                 ),
             )
 
+    def insert_sensor_temps(
+        self, ts: int, readings: List[Dict[str, Any]]
+    ) -> None:
+        """Append one tick's worth of sensor readings. Each reading is
+        {sensor, kind, temp_c}. One transaction per tick — all sensors
+        written atomically together."""
+        if not readings:
+            return
+        rows = [(ts, r["sensor"], r["kind"], r.get("temp_c")) for r in readings]
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO sensor_temps "
+                "(ts, sensor, kind, temp_c) VALUES (?, ?, ?, ?)",
+                rows,
+            )
+
     def prune(self, window_seconds: int = HISTORY_SECONDS) -> None:
         """Drop rows older than the retention window. Called by the
-        sampler periodically — keeps the DB bounded."""
+        sampler periodically — keeps the DB bounded. Both tables are
+        pruned with the same cutoff."""
         cutoff = int(time.time()) - window_seconds
         with self._connect() as conn:
             conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+            conn.execute("DELETE FROM sensor_temps WHERE ts < ?", (cutoff,))
 
     # --- reader side (admin-api) ----------------------------------------
 
@@ -147,6 +186,39 @@ class DashboardHistoryStore:
                 }
             )
         return out
+
+    def get_sensor_temp_history(
+        self, window_seconds: int = HISTORY_SECONDS
+    ) -> Dict[str, Any]:
+        """Per-sensor temperature samples within the window.
+
+        Returns {by_sensor: {key: [{ts, temp_c}, ...]}, kinds: {key: 'cpu'}}
+        — keeping the kind out of the per-row payload to save bytes,
+        since it's constant per sensor key.
+        """
+        if not Path(self.db_path).exists():
+            return {"by_sensor": {}, "kinds": {}}
+        cutoff = int(time.time()) - window_seconds
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT sensor, kind, ts, temp_c
+                    FROM sensor_temps
+                    WHERE ts >= ?
+                    ORDER BY sensor ASC, ts ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
+        except sqlite3.Error as e:
+            logger.warning("dashboard history: sensor read failed: %s", e)
+            return {"by_sensor": {}, "kinds": {}}
+        by_sensor: Dict[str, List[Dict[str, Any]]] = {}
+        kinds: Dict[str, str] = {}
+        for sensor, kind, ts, temp_c in rows:
+            by_sensor.setdefault(sensor, []).append({"ts": ts, "temp_c": temp_c})
+            kinds[sensor] = kind
+        return {"by_sensor": by_sensor, "kinds": kinds}
 
     def latest_sample(self) -> Optional[Dict[str, Any]]:
         """Most recent sample, or None when the DB is empty."""

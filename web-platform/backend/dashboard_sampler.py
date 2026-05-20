@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional
 
 import psutil
 
+from services import hwmon
 from services.dashboard_history_store import (
     DashboardHistoryStore,
     DEFAULT_DB_PATH,
@@ -160,6 +161,23 @@ class Sampler:
             },
         }
         self._store.insert_sample(sample)
+
+        # Motherboard sensor temps — pure sysfs reads, no privileges
+        # needed. Written into the same DB on the same cadence so the
+        # Hardware page's sensor charts share the dashboard window.
+        try:
+            sensors = hwmon.scan()
+            readings = [
+                {
+                    "sensor": s["key"],
+                    "kind": s["kind"],
+                    "temp_c": s["temp_c"],
+                }
+                for s in sensors
+            ]
+            self._store.insert_sensor_temps(int(now), readings)
+        except Exception as e:
+            logger.error("sensor temp write failed: %s", e)
 
 
 def main() -> int:
