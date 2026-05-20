@@ -337,6 +337,33 @@ in
     };
   };
 
+  ## headscale fetches the public DERPMap from controlplane.tailscale.com
+  ## at startup (derp.urls), which needs working external DNS. Without
+  ## ordering, the unit races AdGuard's image-pull window and dies with
+  ## "lookup controlplane.tailscale.com: no such host" — 5 restarts in
+  ## ~30 s hits start-limit-hit and the unit stays dead until manual
+  ## intervention. `dns-ready.service` is the system-wide gate for this
+  ## (see services/unbound/default.nix and
+  ## docs/agent-notes/dns-ready-ordering.md); just `after`/`wants` it,
+  ## same pattern as Caddy and every container app.
+  ##
+  ## `wants`, not `requires` — a DNS restart later in the system's life
+  ## should not drag headscale down with it. `requires` would cascade
+  ## a transient DNS-stack restart into a VPN-coordinator outage.
+  ##
+  ## Also bump the start-limit window so a slow first boot (Docker Hub
+  ## pull + DERPMap fetch can together exceed the default 5×5 s window)
+  ## doesn't permanently fail the unit.
+  systemd.services.headscale = lib.mkIf headscaleEnabled {
+    after = [ "dns-ready.service" ];
+    wants = [ "dns-ready.service" ];
+    serviceConfig = {
+      RestartSec = lib.mkForce "15s";
+      StartLimitBurst = lib.mkForce 10;
+      StartLimitIntervalSec = lib.mkForce 300;
+    };
+  };
+
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
   ##
   ## authKeyFile is pinned to a stable path that headscale-mint-tailscale-key.service

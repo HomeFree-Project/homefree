@@ -35,3 +35,14 @@ in the same rebuild transaction is then ordered after the *re-run*.
 
 Just `after`/`requires` `dns-ready.service` — the re-arming is handled
 centrally. Do not re-implement a per-app DNS wait.
+
+## When adding a non-container service that does outbound name lookups on start
+
+Same gate. `headscale.service` is the canonical example: it fetches
+`https://controlplane.tailscale.com/derpmap/default` synchronously at
+startup, and without the gate it races AdGuard's first-boot image-pull
+window (~90 s on a cold cache), fails 5× in 31 s, and hits
+`start-limit-hit` permanently. Container vs. non-container is
+irrelevant — the gate is about any startup path that needs working
+external DNS. Use `wants` + `after`, not `requires`, so a later DNS
+restart doesn't cascade-stop a long-running daemon.

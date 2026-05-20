@@ -76,7 +76,11 @@ class MountsModule extends LitElement {
     // <table-editor> only supports `text` and `boolean` field types;
     // free-form text with a clear placeholder is fine for fs-type and
     // nfs-version (the schema validates the enum on the Nix side).
+    // `enabled` defaults true so new rows start active; toggling off
+    // keeps the row but excludes it from fileSystems on the next rebuild
+    // (handy when the backing host is offline and would hang on access).
     const columns = [
+      { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
       { key: 'mount-point', label: 'Mount Point', type: 'text', placeholder: '/mnt/ellis' },
       { key: 'device', label: 'Device', type: 'text', placeholder: '10.0.0.42:/volume1/ellis' },
       { key: 'fs-type', label: 'FS Type', type: 'text', placeholder: 'nfs' },
@@ -96,6 +100,10 @@ class MountsModule extends LitElement {
           on, the share is mounted on first access and unmounted after
           <code>idle-timeout</code> seconds of inactivity. For NFS, the
           device is in the form <code>&lt;host&gt;:&lt;export&gt;</code>.
+          Untick <strong>Enabled</strong> to keep the row but skip the
+          mount on the next rebuild — useful when the backing host is
+          offline (an unreachable NFS export hangs anything that touches
+          the mount point).
         </div>
 
         <config-section
@@ -106,6 +114,7 @@ class MountsModule extends LitElement {
             .columns=${columns}
             .data=${mounts}
             addLabel="Add Mount"
+            .neutralBooleans=${true}
             @data-change=${this.handleMountsChange}
           ></table-editor>
         </config-section>

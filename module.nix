@@ -548,6 +548,7 @@
       default = [];
       example = [
         {
+          enabled = true;
           mount-point = "/mnt/ellis";
           device = "10.0.0.42:/volume1/ellis";
           fs-type = "nfs";
@@ -558,6 +559,18 @@
       ];
       type = with lib.types; listOf (submodule {
         options = {
+          enabled = lib.mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              When false, the mount is excluded from `fileSystems` entirely
+              and is not surfaced to the kernel. Use to temporarily disable
+              a mount whose backing host is offline (an unreachable NFS
+              server hangs anything that touches the path) without losing
+              the row's configuration.
+            '';
+          };
+
           mount-point = lib.mkOption {
             type = str;
             description = "Absolute path where the filesystem is mounted (e.g. /mnt/ellis).";

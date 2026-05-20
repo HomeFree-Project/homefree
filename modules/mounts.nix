@@ -2,7 +2,11 @@
 
 let
   inherit (lib) mkIf;
-  mounts = config.homefree.mounts;
+  # Drop disabled rows before they reach fileSystems. A disabled entry
+  # keeps its row in homefree-config.json (so the admin UI can re-enable
+  # it later) but does not produce a kernel mount, and does not count
+  # toward `anyNfs` — disabling every NFS row also turns off rpcbind.
+  mounts = lib.filter (m: m.enabled or true) config.homefree.mounts;
   anyNfs = lib.any (m: m.fs-type == "nfs") mounts;
 
   mkMountOptions = m:

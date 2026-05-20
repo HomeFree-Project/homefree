@@ -366,6 +366,22 @@ class ServicesModule extends LitElement {
     .toggle-container .toggle-switch {
       margin-left: auto;
     }
+    /* When the service is exposed to the internet the row gets a
+       warn-tinted band so the security-relevant state is obvious at a
+       glance, matching the amber used by status-badge.degraded and
+       sso-pill.warn. Negative margin lets the band span the card's
+       inner padding without widening the card. */
+    .toggle-container.public-on {
+      background: rgba(245,158,11,0.13);
+      color: var(--hf-warn);
+      margin: 0 -10px;
+      padding: 6px 10px;
+      border-radius: 8px;
+    }
+    .toggle-container.public-on .toggle-label {
+      color: var(--hf-warn);
+      font-weight: 600;
+    }
 
     .toggle-label {
       font-size: 13px;
@@ -1011,7 +1027,7 @@ class ServicesModule extends LitElement {
         ` : html`
           <div class="card-footer">
             <div class="toggle-container">
-              <span class="toggle-label">Enable</span>
+              <span class="toggle-label">Enabled</span>
               <label class="toggle-switch">
                 <input
                   type="checkbox"
@@ -1029,8 +1045,8 @@ class ServicesModule extends LitElement {
             </div>
 
             ${isEnabled ? html`
-              <div class="toggle-container">
-                <span class="toggle-label">Expose to internet</span>
+              <div class="toggle-container ${isPublic ? 'public-on' : ''}">
+                <span class="toggle-label">Exposed to internet</span>
                 <label class="toggle-switch">
                   <input
                     type="checkbox"

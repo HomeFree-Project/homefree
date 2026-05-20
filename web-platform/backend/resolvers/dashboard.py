@@ -19,6 +19,7 @@ Two layers:
     exactly one writer (no last-writer-wins between two colours).
 """
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -30,6 +31,38 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import psutil
+
+# A stuck NFS server can wedge a statvfs() call indefinitely (the
+# `hard` mount option means the RPC retries forever; `psutil.disk_usage`
+# is a thin wrapper around statvfs and offers no timeout). If that call
+# runs on the asyncio event loop it freezes the entire admin-api.
+# Every disk_usage() in this module goes through `_disk_usage_safe`,
+# which runs it in a worker thread with a hard wall-clock timeout —
+# on timeout we return None and the panel shows "stale" instead.
+_DISK_USAGE_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="disk_usage_safe"
+)
+_DISK_USAGE_TIMEOUT_S = 2.0
+
+
+def _disk_usage_safe(path: str) -> Optional[Any]:
+    """`psutil.disk_usage(path)` with a hard timeout. None on timeout/error."""
+    fut = _DISK_USAGE_POOL.submit(psutil.disk_usage, path)
+    try:
+        return fut.result(timeout=_DISK_USAGE_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        # The worker thread is still wedged in the kernel — leak it.
+        # A new submission will spawn a fresh worker (pool maxes at 2,
+        # so the second wedge is still bounded). The pool deliberately
+        # has no `cancel_futures=True` semantics here.
+        logger.warning(
+            "dashboard: disk_usage(%s) timed out after %ss — NFS server stuck?",
+            path, _DISK_USAGE_TIMEOUT_S,
+        )
+        return None
+    except (PermissionError, OSError) as e:
+        logger.debug(f"dashboard: disk_usage({path}) failed: {e}")
+        return None
 
 from services.config_reader import ConfigReader
 from services.dashboard_history_store import (
@@ -145,7 +178,13 @@ class DashboardResolver:
 
     @staticmethod
     def _disks() -> List[Dict[str, Any]]:
-        """Usage per mounted, real (non-virtual) filesystem."""
+        """Usage per mounted, real, *local* filesystem.
+
+        Network filesystems (NFS/CIFS/sshfs/…) are excluded here on
+        purpose: their statvfs can wedge for minutes if the server is
+        unreachable, and they have their own panel (`_network_mounts`)
+        which calls `_disk_usage_safe` with a hard timeout.
+        """
         out: List[Dict[str, Any]] = []
         skip_fstypes = {
             "tmpfs", "devtmpfs", "squashfs", "overlay", "ramfs",
@@ -154,11 +193,13 @@ class DashboardResolver:
             "pstore", "bpf", "hugetlbfs", "securityfs", "fusectl", "efivarfs",
         }
         for part in psutil.disk_partitions(all=False):
-            if part.fstype.lower() in skip_fstypes:
+            fstype = part.fstype.lower()
+            if fstype in skip_fstypes:
                 continue
-            try:
-                usage = psutil.disk_usage(part.mountpoint)
-            except (PermissionError, OSError):
+            if fstype in DashboardResolver._NETWORK_FSTYPES:
+                continue
+            usage = _disk_usage_safe(part.mountpoint)
+            if usage is None:
                 continue
             out.append({
                 "mountpoint": part.mountpoint,
@@ -231,32 +272,50 @@ class DashboardResolver:
         for m in configured:
             mp = m.get("mount-point") or ""
             automount = m.get("automount", True)
+            enabled = m.get("enabled", True)
             mounted = mp in live
+            # A disabled row is intentionally absent from the kernel mount
+            # table; flag it explicitly so the dashboard doesn't report it
+            # as "not mounted" (which reads like a fault) — see
+            # modules/mounts.nix where the disabled rows are filtered out
+            # before fileSystems is built.
+            if not enabled:
+                status = "disabled"
+            elif mounted:
+                status = "mounted"
+            elif automount:
+                status = "idle"
+            else:
+                status = "not mounted"
             entry: Dict[str, Any] = {
                 "mountpoint": mp,
                 "device": m.get("device") or "",
                 "fstype": m.get("fs-type") or "nfs",
                 "automount": automount,
+                "enabled": enabled,
                 "mounted": mounted,
-                "status": "mounted" if mounted
-                          else "idle" if automount
-                          else "not mounted",
+                "status": status,
                 "total": None, "used": None, "free": None, "percent": None,
             }
             # Capacity is only knowable while actually mounted. Skip the
             # statvfs on idle automounts — touching the path would force
             # a mount, which is a surprising side effect for a dashboard.
+            # `_disk_usage_safe` runs the statvfs in a worker thread with
+            # a hard timeout: a stuck NFS server (the kernel's `hard`
+            # mount default) returns None here instead of wedging the
+            # admin-api event loop. The entry is still emitted so the UI
+            # can show "mounted but unresponsive" — flagged by `stale`.
             if mounted:
-                try:
-                    usage = psutil.disk_usage(mp)
+                usage = _disk_usage_safe(mp)
+                if usage is not None:
                     entry.update({
                         "total": usage.total,
                         "used": usage.used,
                         "free": usage.free,
                         "percent": usage.percent,
                     })
-                except (PermissionError, OSError) as e:
-                    logger.debug(f"dashboard: disk_usage({mp}) failed: {e}")
+                else:
+                    entry["status"] = "stale"
             out.append(entry)
 
         out.sort(key=lambda d: d["mountpoint"])

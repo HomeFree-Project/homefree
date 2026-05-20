@@ -163,6 +163,10 @@ class DashboardModule extends LitElement {
     }
     .dot.up   { background: var(--hf-ok); }
     .dot.down { background: var(--hf-err); }
+    /* Neutral state — not running, but not a fault (e.g. a mount the
+       admin has intentionally disabled). Muted gray so the row doesn't
+       read as an error. */
+    .dot.idle { background: var(--hf-text-muted); }
 
     .chart-svg { width: 100%; height: auto; display: block; }
     .axis-label {
@@ -653,8 +657,12 @@ class DashboardModule extends LitElement {
                 <td>${m.mountpoint}</td>
                 <td class="card-sub" style="margin:0">${m.device || '—'}</td>
                 <td>
-                  <span class="dot ${m.mounted ? 'up' : 'down'}"></span>
-                  ${m.status}${m.automount && !m.mounted ? ' (automount)' : ''}
+                  <span class="dot ${
+                    m.enabled === false ? 'idle'
+                    : m.mounted ? 'up'
+                    : 'down'
+                  }"></span>
+                  ${m.status}${m.automount && !m.mounted && m.enabled !== false ? ' (automount)' : ''}
                 </td>
                 <td class="num">${m.used != null ? this._fmtBytes(m.used) : '—'}</td>
                 <td class="num">${m.total != null ? this._fmtBytes(m.total) : '—'}</td>

@@ -261,13 +261,8 @@ in
   ## Was added for a reason - watch for issues after disabling.
   systemd.services.unbound = {
     # partOf = [ "caddy.service" ];
-    before = [ "caddy.service" ] ++ (if config.homefree.services.adguard.enable == true then [ "adguardhome-podman.service" ] else []);
+    before = [ "caddy.service" ] ++ (if config.homefree.services.adguard.enable == true then [ "podman-adguardhome.service" ] else []);
   };
-
-  ## Restart Adguard DNS with caddy changes
-  systemd.services.adguardhome = if config.homefree.services.adguard.enable == true then {
-    partOf = [ "unbound.service" ];
-  } else {};
 
   services.caddy = {
     enable = true;

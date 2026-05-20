@@ -117,43 +117,74 @@ let
   ## only has to keep `active-color` current (which it does). No
   ## drop-in, no `daemon-reload`, no helper — one fewer moving part.
 
-  ## Shell body of the supervisor loop. It is deliberately START-ONLY:
-  ## every few seconds it reads the `active-color` pointer and
-  ## `systemctl start`s that colour if it is not running. That is its
-  ## ENTIRE job — keep the active colour alive (against a
-  ## `local-fs.target` cycle, a crash, an OOM kill, anything).
+  ## Shell body of the supervisor loop. It is deliberately START-ONLY
+  ## with respect to the standby colour — it never touches it. Its job
+  ## is to keep the ACTIVE colour serving traffic, in two ways:
   ##
-  ## It must NOT stop the standby colour. An earlier version did, to
-  ## "tidy up", and it caused a TOCTOU race against the flip: a flip
-  ## intentionally runs BOTH colours during its handover (it starts the
-  ## standby, health-gates it, only then retires the old colour). A
-  ## flip-lock file was tried to make the supervisor stand down, but
-  ## the supervisor's check-then-stop is not atomic — the flip could
-  ## create the lock and start the standby in the gap between the
-  ## supervisor's lock check and its `stop`, so the supervisor stopped
-  ## the colour the flip had just started (observed live: a flip's
-  ## health-gate timed out because the supervisor killed the standby
-  ## under it). A start-only supervisor has no such conflict: it never
-  ## touches the standby, so there is nothing to race. The flip itself
-  ## stops the old colour at commit (step 7), and its failure paths
-  ## stop the standby — stopping is wholly the flip's job. A standby
-  ## left running by a crashed flip merely idles on its port (nothing
-  ## routes to it) until the next flip; harmless.
+  ##  1. If the active colour's unit is not `active`, start it. This
+  ##     catches a colour killed by `local-fs.target` cycling, a crash,
+  ##     an OOM kill, etc.
+  ##
+  ##  2. If the active colour's unit IS `active` but the health probe
+  ##     fails for N consecutive ticks, restart it. This catches the
+  ##     "alive but wedged" case — the kernel/systemd think the process
+  ##     is running, but the user-space loop is stuck (e.g. an asyncio
+  ##     event loop blocked in a synchronous syscall that never
+  ##     returns, such as `statvfs` on a dead NFS server with `hard`
+  ##     mount semantics). Without this, the unit looks healthy to
+  ##     systemd while every incoming request piles up unanswered, and
+  ##     the only recovery is a manual restart.
+  ##
+  ## It must NOT stop or restart the STANDBY colour. An earlier version
+  ## tried, to "tidy up", and it caused a TOCTOU race against the flip:
+  ## a flip intentionally runs BOTH colours during its handover (start
+  ## standby → health-gate → retire old colour). A flip-lock file was
+  ## tried, but the supervisor's check-then-stop is not atomic — the
+  ## flip could create the lock and start the standby in the gap, so
+  ## the supervisor stopped the colour the flip had just started
+  ## (observed live: a flip's health-gate timed out because the
+  ## supervisor killed the standby under it). A supervisor that touches
+  ## only the active colour has no such conflict.
   ##
   ## `active-color` is re-read every tick, so a committed flip is
-  ## picked up with no supervisor restart. `systemctl start` on an
-  ## already-running unit is a harmless no-op.
+  ## picked up with no supervisor restart. `systemctl start`/`restart`
+  ## on a unit in the matching state is harmless. The unhealthy-streak
+  ## counter is reset whenever `active-color` changes — a flip's
+  ## transient probe failures on the just-promoted colour don't count
+  ## against the new colour.
   activeSupervisorScript = ''
     sysctl=${pkgs.systemd}/bin/systemctl
+    last_color=""
+    unhealthy_streak=0
     while :; do
       active_color="$(${pkgs.coreutils}/bin/cat ${stateDir}/active-color 2>/dev/null || echo blue)"
       case "$active_color" in
-        green) want=${unitName "green"} ;;
-        *)     want=${unitName "blue"}  ;;
+        green) want=${unitName "green"} ; port=${toString greenPort} ;;
+        *)     want=${unitName "blue"}  ; port=${toString bluePort}  ;;
       esac
+
+      # Pointer changed under us (a flip just committed). Reset the
+      # streak so a few transient probe failures on the new colour —
+      # while its TCP listener is still settling — don't trigger a
+      # spurious restart.
+      if [ "$active_color" != "$last_color" ]; then
+        unhealthy_streak=0
+        last_color="$active_color"
+      fi
+
       if [ "$($sysctl is-active "$want" 2>/dev/null)" != "active" ]; then
         echo "${name}-active: $want (active colour) not running — starting it"
         $sysctl start "$want" 2>/dev/null || true
+        unhealthy_streak=0
+      elif ${healthProbe}; then
+        unhealthy_streak=0
+      else
+        unhealthy_streak=$((unhealthy_streak + 1))
+        if [ "$unhealthy_streak" -ge 3 ]; then
+          echo "${name}-active: $want active but unhealthy for $unhealthy_streak ticks — restarting it"
+          $sysctl restart "$want" 2>/dev/null || true
+          unhealthy_streak=0
+        fi
       fi
       ${pkgs.coreutils}/bin/sleep 3
     done

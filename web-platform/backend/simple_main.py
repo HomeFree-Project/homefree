@@ -4,6 +4,7 @@ HomeFree Web Installer Backend - REST API
 Simplified version without strawberry-graphql dependency
 """
 
+import asyncio
 import os
 import sys
 import logging
@@ -997,9 +998,15 @@ async def post_abuse_blocking_unban(body: AbuseBlockingUnbanRequest, request: Re
 @app.get("/api/dashboard/overview")
 async def get_dashboard_overview():
     """One-shot system overview: CPU, memory, disks, NICs, IPs, gateway,
-    connectivity, LAN client count. Powers the admin dashboard page."""
+    connectivity, LAN client count. Powers the admin dashboard page.
+
+    Runs in a worker thread: the resolver does several blocking
+    syscalls (statvfs, subprocess `ip`, `/proc/mounts`) and one of
+    those — statvfs over an NFS mount — has wedged the event loop
+    in the past when the NAS went unreachable. Off-loading guarantees
+    the rest of the API stays responsive."""
     try:
-        return JSONResponse(content=DashboardResolver.get_overview())
+        return JSONResponse(content=await asyncio.to_thread(DashboardResolver.get_overview))
     except Exception as e:
         logger.error(f"dashboard overview: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1010,7 +1017,7 @@ async def get_dashboard_history():
     """Time-series samples (throughput, connectivity, CPU, memory) from
     the in-memory ring buffer. Resets on admin-api restart."""
     try:
-        return JSONResponse(content=DashboardResolver.get_history())
+        return JSONResponse(content=await asyncio.to_thread(DashboardResolver.get_history))
     except Exception as e:
         logger.error(f"dashboard history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1021,7 +1028,7 @@ async def get_dashboard_lan_clients():
     """LAN client inventory: DHCP leases merged with the kernel
     neighbour table. Backs the dedicated LAN Clients admin page."""
     try:
-        return JSONResponse(content=DashboardResolver.get_lan_clients())
+        return JSONResponse(content=await asyncio.to_thread(DashboardResolver.get_lan_clients))
     except Exception as e:
         logger.error(f"dashboard lan-clients: {e}")
         raise HTTPException(status_code=500, detail=str(e))
