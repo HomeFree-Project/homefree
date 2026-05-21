@@ -19,7 +19,16 @@ class TableEditor extends LitElement {
     addLabel: { type: String },
     // When true, an unset boolean renders the ✗ in muted gray instead
     // of red — for tables where "false" is a neutral choice, not a fault.
-    neutralBooleans: { type: Boolean }
+    neutralBooleans: { type: Boolean },
+    // The deployed (last-applied) rows, in the SAME display shape as `data`
+    // (the parent maps both through the same transform). A `data` row not
+    // present here (by value) is flagged as an undeployed add/change. When
+    // null/omitted, no row highlighting is done (backward compatible).
+    appliedData: { type: Array },
+    // Optional stable-identity column (e.g. "label"). When set, a row whose
+    // identity still exists is treated as a MODIFICATION (highlighted amber by
+    // _rowUndeployed), not a remove+add. Without it, rows match by whole value.
+    rowKey: { type: String }
   };
 
   static styles = css`
@@ -84,6 +93,38 @@ class TableEditor extends LitElement {
 
     tr:hover {
       background: var(--hf-surface-2);
+    }
+
+    /* Row whose value differs from the deployed config (added or changed but
+       not yet applied). Amber left bar + soft tint — matches the per-field
+       highlight; amber = pending, green stays the Apply action. Static. */
+    tr.row-undeployed td {
+      background: var(--hf-warn-soft);
+    }
+    tr.row-undeployed td:first-child {
+      box-shadow: inset 3px 0 0 0 var(--hf-warn);
+    }
+
+    /* Removed-but-not-yet-applied row: struck through, dimmed, amber bar.
+       The actions cell (Restore button) is exempt from the strike-through. */
+    tr.row-removed td {
+      background: var(--hf-warn-soft);
+      color: var(--hf-text-subtle);
+      text-decoration: line-through;
+    }
+    tr.row-removed td.actions-cell {
+      text-decoration: none;
+    }
+    tr.row-removed td:first-child {
+      box-shadow: inset 3px 0 0 0 var(--hf-warn);
+    }
+
+    /* Modal checkbox is wrapped in its <label> so the text toggles it. */
+    .modal-field.boolean label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
     }
 
     /* Boolean-column cell markers: green check / red cross. */
@@ -312,6 +353,52 @@ class TableEditor extends LitElement {
     this.editingRow = null;
     this.editingIndex = -1;
     this.showModal = false;
+    this.appliedData = null;
+    this.rowKey = null;
+  }
+
+  // Stable JSON key for value-equality that ignores object key order (the
+  // parent builds `data` and `appliedData` from the same transform, but the
+  // underlying stored objects may serialize keys in a different order).
+  _stableKey(v) {
+    return JSON.stringify(v, (k, val) =>
+      (val && typeof val === 'object' && !Array.isArray(val))
+        ? Object.keys(val).sort().reduce((o, kk) => { o[kk] = val[kk]; return o; }, {})
+        : val);
+  }
+
+  // True when `row` is not present (by value) in the deployed `appliedData`,
+  // i.e. it was added or changed since the last apply. No baseline → false.
+  _rowUndeployed(row) {
+    if (!Array.isArray(this.appliedData)) return false;
+    const key = this._stableKey(row);
+    return !this.appliedData.some(a => this._stableKey(a) === key);
+  }
+
+  // Deployed rows no longer present in `data` — removed but not yet applied.
+  // Rendered as struck-through ghost rows so a removal stays visible (and
+  // restorable) until Apply.
+  _removedRows() {
+    if (!Array.isArray(this.appliedData) || !Array.isArray(this.data)) return [];
+    // With a stable identity column, a row whose identity still exists is a
+    // MODIFICATION (shown amber by _rowUndeployed), not a removal — only
+    // entries whose identity is gone get ghosted. Without rowKey, fall back to
+    // whole-value matching (a modify then unavoidably looks like remove+add).
+    if (this.rowKey) {
+      const liveIds = new Set(this.data.map(r => r && r[this.rowKey]));
+      return this.appliedData.filter(a => a && !liveIds.has(a[this.rowKey]));
+    }
+    const live = new Set(this.data.map(r => this._stableKey(r)));
+    return this.appliedData.filter(a => !live.has(this._stableKey(a)));
+  }
+
+  // Re-add a removed (ghost) row to the live list.
+  restoreRow(row) {
+    this.dispatchEvent(new CustomEvent('data-change', {
+      detail: { data: [...this.data, row] },
+      bubbles: true,
+      composed: true
+    }));
   }
 
   openAddModal() {
@@ -416,12 +503,14 @@ class TableEditor extends LitElement {
             ${this.columns.map(col => html`
               <div class="modal-field ${col.type === 'boolean' ? 'boolean' : ''}">
                 ${col.type === 'boolean' ? html`
-                  <input
-                    type="checkbox"
-                    .checked=${this.editingRow[col.key]}
-                    @change=${(e) => this.handleFieldChange(col.key, e.target.checked)}
-                  />
-                  <label>${col.label}</label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      .checked=${this.editingRow[col.key]}
+                      @change=${(e) => this.handleFieldChange(col.key, e.target.checked)}
+                    />
+                    <span>${col.label}</span>
+                  </label>
                 ` : html`
                   <label>${col.label}</label>
                   <input
@@ -445,6 +534,7 @@ class TableEditor extends LitElement {
   }
 
   render() {
+    const removed = this._removedRows();
     return html`
       <div class="table-editor">
         <div class="table-container">
@@ -456,14 +546,15 @@ class TableEditor extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.data.length === 0 ? html`
+            ${this.data.length === 0 && removed.length === 0 ? html`
               <tr>
                 <td colspan="${this.columns.length + 1}" class="empty-state">
                   No items yet. Click "${this.addLabel}" to add one.
                 </td>
               </tr>
-            ` : this.data.map((row, index) => html`
-              <tr>
+            ` : ''}
+            ${this.data.map((row, index) => html`
+              <tr class=${this._rowUndeployed(row) ? 'row-undeployed' : ''}>
                 ${this.columns.map(col => html`
                   <td class=${col.type === 'boolean' ? 'col-bool' : ''}>${this.renderCell(row, col)}</td>
                 `)}
@@ -480,6 +571,24 @@ class TableEditor extends LitElement {
                       @click=${() => this.deleteRow(index)}
                     >
                       Delete
+                    </button>
+                  </span>
+                </td>
+              </tr>
+            `)}
+            ${removed.map(row => html`
+              <tr class="row-removed" title="Removed — Apply to deploy">
+                ${this.columns.map(col => html`
+                  <td class=${col.type === 'boolean' ? 'col-bool' : ''}>${this.renderCell(row, col)}</td>
+                `)}
+                <td class="actions-cell">
+                  <span class="row-actions">
+                    <button
+                      class="btn-row"
+                      title="Restore this entry"
+                      @click=${() => this.restoreRow(row)}
+                    >
+                      ↩ Restore
                     </button>
                   </span>
                 </td>

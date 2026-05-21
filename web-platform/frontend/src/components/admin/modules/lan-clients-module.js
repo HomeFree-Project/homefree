@@ -25,6 +25,7 @@ class LanClientsModule extends LitElement {
   static properties = {
     serverConfig: { type: Object },
     pendingConfig: { type: Object },
+    appliedConfig: { attribute: false },  // deployed baseline for row highlight
     data: { type: Object, state: true },
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
@@ -344,6 +345,7 @@ class LanClientsModule extends LitElement {
     super();
     this.serverConfig = null;
     this.pendingConfig = null;
+    this.appliedConfig = null;
     this.data = null;
     this.loading = true;
     this.error = '';
@@ -438,6 +440,10 @@ class LanClientsModule extends LitElement {
       const existing = byMac.get(mac);
       if (existing) {
         existing.static = s;
+        // The reservation's hostname is the user's configured value — prefer
+        // it over the (possibly stale/empty) discovery hostname so editing the
+        // hostname is reflected in the list.
+        if (s.hostname) existing.hostname = s.hostname;
       } else {
         // Reserved device that isn't currently talking — still listed
         // so its reservation can be edited or removed.
@@ -661,12 +667,36 @@ class LanClientsModule extends LitElement {
     `;
   }
 
+  // Deployed reservations (baseline), normalized like _staticIps(). null when
+  // there's no baseline yet → no highlight.
+  _appliedStaticIps() {
+    if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return null;
+    const raw = this.appliedConfig?.network?.['static-ips'];
+    if (!Array.isArray(raw)) return [];
+    return raw.map(e => ({
+      'mac-address': (e['mac-address'] || '').toLowerCase(),
+      hostname: e.hostname || '',
+      ip: e.ip || '',
+      'wan-access': e['wan-access'] !== false,
+    }));
+  }
+
+  // True when this row's reservation was added/changed since the last apply.
+  _reservationUndeployed(row) {
+    if (!row.static) return false;
+    const applied = this._appliedStaticIps();
+    if (!applied) return false;
+    const key = JSON.stringify(row.static);
+    return !applied.some(a => JSON.stringify(a) === key);
+  }
+
   _renderRow(row) {
     const isStatic = !!row.static;
     const noInternet = isStatic && row.static['wan-access'] === false;
+    const undeployed = this._reservationUndeployed(row);
 
     return html`
-      <tr>
+      <tr style=${undeployed ? 'background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);' : ''}>
         <td>
           <span class="dot ${row.online ? 'up' : 'down'}"></span>
           ${row.online ? 'online' : 'offline'}

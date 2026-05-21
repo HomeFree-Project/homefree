@@ -304,6 +304,7 @@ export const previewConfigChanges = (config) => post('/api/config/preview', conf
 export const saveConfigChanges = (config) => post('/api/config/save', config);
 export const applyConfigChanges = (config) => post('/api/config/apply', config);
 export const getConfigDirty = () => get('/api/config/dirty');
+export const getAppliedConfig = () => get('/api/config/applied');
 export const getRebuildStatus = () => get('/api/config/rebuild-status');
 // System updates — check for and pull in a newer homefree-base commit.
 export const checkSystemUpdates = () => get('/api/system/updates/check');

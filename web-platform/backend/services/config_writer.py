@@ -7,6 +7,9 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 import shutil
 import json
+import os
+import stat
+import tempfile
 from datetime import datetime
 from services.secrets_manager import SecretsManager
 
@@ -151,8 +154,12 @@ class ConfigWriter:
                 logger.warning(f"Failed to write secret files: {error}")
                 # Continue anyway - secrets might not be configured yet
 
-            # Write updated config with pretty formatting
-            ConfigWriter.CONFIG_FILE.write_text(
+            # Write updated config with pretty formatting, ATOMICALLY. The
+            # admin UI now polls /api/config/current while this runs; a plain
+            # write_text() truncates-then-writes, so a concurrent reader could
+            # observe an empty/partial file and report a bogus parse error (and
+            # a crash mid-write would corrupt the source-of-truth config).
+            ConfigWriter._atomic_write(
                 json.dumps(current_config, indent=2, sort_keys=False) + '\n'
             )
             logger.info("Configuration file updated successfully")
@@ -161,6 +168,38 @@ class ConfigWriter:
         except Exception as e:
             logger.error(f"Error writing config file: {e}")
             return False
+
+    @staticmethod
+    def _atomic_write(text: str):
+        """
+        Write CONFIG_FILE atomically: write a sibling temp file, fsync it, then
+        os.replace() (an atomic rename on the same filesystem). A concurrent
+        reader therefore always sees either the old or the new complete file,
+        never a torn half-write. The new file's mode is matched to the old
+        one's so permissions don't silently change.
+        """
+        target = ConfigWriter.CONFIG_FILE
+        mode = None
+        if target.exists():
+            mode = stat.S_IMODE(os.stat(target).st_mode)
+
+        fd, tmp = tempfile.mkstemp(
+            dir=str(target.parent), prefix=".homefree-config.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            if mode is not None:
+                os.chmod(tmp, mode)
+            os.replace(tmp, target)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _backup_config():

@@ -37,6 +37,7 @@ class AppCard extends LitElement {
     href: { type: String },
     enabled: { type: Boolean, reflect: true },
     compact: { type: Boolean, reflect: true },
+    undeployed: { type: Boolean, reflect: true },  // has unapplied config changes
     _hasBody: { type: Boolean, state: true },
     _hasHeader: { type: Boolean, state: true },
     _hasStatus: { type: Boolean, state: true },
@@ -80,6 +81,14 @@ class AppCard extends LitElement {
 
     :host([enabled]) .card {
       background: var(--hf-surface-2);
+    }
+
+    /* A service with undeployed (changed-but-not-applied) config — amber wash
+       + left bar. Placed after the enabled rule so it wins the background. */
+    :host([undeployed]) .card {
+      background: var(--hf-warn-soft);
+      border-color: var(--hf-warn);
+      box-shadow: inset 3px 0 0 0 var(--hf-warn);
     }
 
     /* Link mode (Home launcher) — lift slightly on hover. */

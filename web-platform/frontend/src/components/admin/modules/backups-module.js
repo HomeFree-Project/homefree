@@ -21,6 +21,8 @@ import { navIcon } from '../../../shared/icons.js';
 class BackupsModule extends BackupJobControllerMixin(LitElement) {
   static properties = {
     config: { type: Object },
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
+    appliedConfig: { attribute: false },    // deployed baseline for row highlight
     modified: { type: Boolean },
     activeTab: { type: String },
     /**
@@ -655,6 +657,8 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       }
     };
     this.modified = false;
+    this.undeployedPaths = new Set();
+    this.appliedConfig = null;
     this.activeTab = 'status';
     this.subRoute = '';
     this.secretsStatus = null;
@@ -1124,6 +1128,11 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
     await this.loadSnapshots(repo, source);
   }
 
+  // True when `path` (a dotted config path) holds a change not yet deployed.
+  _undeployed(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
   handleFieldChange(field, value) {
     const newConfig = { ...this.config };
     const path = field.split('.');
@@ -1335,11 +1344,13 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
    * to {path, enabled:true} on the Nix side.
    */
   renderExtraPaths(entries) {
-    const rows = (entries || []).map((entry) => (
+    const toRow = (entry) => (
       typeof entry === 'string'
         ? { path: entry, enabled: true }
         : { path: entry.path || '', enabled: entry.enabled !== false }
-    ));
+    );
+    const rows = (entries || []).map(toRow);
+    const appliedRows = (this.appliedConfig?.backups?.['extra-from-paths'] || []).map(toRow);
     const columns = [
       { key: 'path', label: 'Path', type: 'text',
         placeholder: '/mnt/ellis/Documents' },
@@ -1356,6 +1367,8 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       <table-editor
         .columns=${columns}
         .data=${rows}
+        .appliedData=${appliedRows}
+        .rowKey=${'path'}
         .neutralBooleans=${true}
         addLabel="Add Entry"
         @data-change=${(e) => this.handleFieldChange(
@@ -1807,6 +1820,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
           type="boolean"
           .value=${backups.enable}
           help="Back up to a local storage device on this machine"
+          ?undeployed=${this._undeployed('backups.enable')}
           @field-change=${(e) =>
             this.handleFieldChange('backups.enable', e.detail.value)}
         ></form-field>
@@ -1816,6 +1830,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
           type="boolean"
           .value=${backups['backblaze-enable']}
           help="Also send encrypted backups to off-site cloud storage"
+          ?undeployed=${this._undeployed('backups.backblaze-enable')}
           @field-change=${(e) =>
             this.handleFieldChange('backups.backblaze-enable', e.detail.value)}
         ></form-field>
@@ -1873,6 +1888,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
           .value=${backups['to-path']}
           placeholder="/var/lib/backups"
           help="Path to local backup storage. To target an NFS share, add it in the Mounts module first."
+          ?undeployed=${this._undeployed('backups.to-path')}
           @field-change=${(e) =>
             this.handleFieldChange('backups.to-path', e.detail.value)}
         ></form-field>
@@ -1920,6 +1936,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
             && !backups['backblaze-bucket']
             ? 'A bucket name is required when remote backups are enabled.'
             : ''}
+          ?undeployed=${this._undeployed('backups.backblaze-bucket')}
           @field-change=${(e) =>
             this.handleFieldChange('backups.backblaze-bucket', e.detail.value)}
         ></form-field>
@@ -2191,6 +2208,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
           type="boolean"
           .value=${pending}
           help="Adds a small test service that verifies backups daily"
+          ?undeployed=${dirty}
           @field-change=${(e) =>
             this.handleSelfTestToggle(e.detail.value)}
         ></form-field>
@@ -2297,6 +2315,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
         .value=${current}
         .options=${b2Ready ? options : options.slice(0, 1)}
         help="Which backup source the daily self-test backs up and restores"
+        ?undeployed=${this._undeployed('services.backup-canary.selftest-source')}
         @field-change=${(e) =>
           this.handleSelfTestSourceChange(e.detail.value)}
       ></form-field>

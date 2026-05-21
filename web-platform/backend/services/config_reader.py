@@ -38,3 +38,22 @@ class ConfigReader:
         except Exception as e:
             logger.error(f"Error reading config file: {e}")
             return {}
+
+    @staticmethod
+    def read_config_strict() -> Dict[str, Any]:
+        """
+        Read configuration from homefree-config.json, RAISING on a parse error.
+
+        Unlike read_config() — which swallows a malformed file and returns {},
+        a safe default for best-effort callers — this variant lets a
+        json.JSONDecodeError propagate so the API can tell the UI that the
+        on-disk file is broken (e.g. a hand-edit typo) instead of silently
+        returning {} and blanking the displayed config.
+
+        Returns {} only when the file genuinely does not exist.
+        Raises json.JSONDecodeError when the file exists but is not valid JSON.
+        """
+        if not ConfigReader.CONFIG_FILE.exists():
+            logger.warning(f"Config file not found: {ConfigReader.CONFIG_FILE}")
+            return {}
+        return json.loads(ConfigReader.CONFIG_FILE.read_text())

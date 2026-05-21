@@ -442,6 +442,9 @@ in
     ## emitted by their respective .nix files — those entries are
     ## merged with these via NixOS list-merge semantics.
     service-config = map (e: {
+      ## One "enabled" drives both flags: the top-level enable (catalog +
+      ## restart-policy) and reverse-proxy.enable (Caddy routing + DNS).
+      enable = e.enable or true;
       label = e.label;
       name = e.name or e.label;
       reverse-proxy = {

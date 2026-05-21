@@ -20,6 +20,8 @@ const DNS_CERT_SECRET_KEY = 'api-token';
 class DnsModule extends LitElement {
   static properties = {
     config: { type: Object },
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
+    appliedConfig: { attribute: false },    // deployed baseline for row highlight
     modified: { type: Boolean },
     hasAuthorizedKeys: { type: Boolean },
     secretsStatus: { type: Object, state: true }
@@ -87,6 +89,8 @@ class DnsModule extends LitElement {
       }
     };
     this.modified = false;
+    this.undeployedPaths = new Set();
+    this.appliedConfig = null;
     this.hasAuthorizedKeys = false;
     // Map of "<label>": { "<key>": boolean } — which secrets are set.
     this.secretsStatus = {};
@@ -144,6 +148,11 @@ class DnsModule extends LitElement {
     }));
   }
 
+  // True when `path` (a dotted config path) holds a change not yet deployed.
+  _undeployed(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
   handleDnsOverridesChange(e) {
     this.handleFieldChange('dns.overrides', e.detail.data);
   }
@@ -176,10 +185,12 @@ class DnsModule extends LitElement {
 
     // For zones we model `domains` as text inside the table-editor
     // (it doesn't support array fields) and split/join on write/read.
-    const zoneRows = (dynamicDns.zones || []).map(z => ({
+    const toZoneRow = (z) => ({
       ...z,
       domains: Array.isArray(z.domains) ? z.domains.join(', ') : (z.domains || '')
-    }));
+    });
+    const zoneRows = (dynamicDns.zones || []).map(toZoneRow);
+    const appliedZoneRows = (this.appliedConfig?.dns?.['dynamic-dns']?.zones || []).map(toZoneRow);
     const zoneColumns = [
       { key: 'zone', label: 'Zone', type: 'text', placeholder: 'example.com' },
       { key: 'protocol', label: 'Protocol', type: 'text', placeholder: 'hetzner' },
@@ -207,6 +218,7 @@ class DnsModule extends LitElement {
           <table-editor
             .columns=${dnsOverrideColumns}
             .data=${dns.overrides || []}
+            .appliedData=${this.appliedConfig?.dns?.overrides || []}
             addLabel="Add DNS Override"
             @data-change=${this.handleDnsOverridesChange}
           ></table-editor>
@@ -233,6 +245,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.interval || '10m'}
               placeholder="10m"
               help="How often ddclient re-checks the WAN IP (systemd time spec)."
+              ?undeployed=${this._undeployed('dns.dynamic-dns.interval')}
               @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.interval', e.detail.value)}
             ></form-field>
           </div>
@@ -244,6 +257,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.usev4 || ''}
               placeholder="webv4, webv4=ipinfo.io/ip"
               help="ddclient's 'use=' directive for IPv4."
+              ?undeployed=${this._undeployed('dns.dynamic-dns.usev4')}
               @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.usev4', e.detail.value)}
             ></form-field>
 
@@ -253,6 +267,7 @@ class DnsModule extends LitElement {
               .value=${dynamicDns.usev6 || ''}
               placeholder="webv6, webv6=v6.ipinfo.io/ip"
               help="ddclient's 'use=' directive for IPv6."
+              ?undeployed=${this._undeployed('dns.dynamic-dns.usev6')}
               @field-change=${(e) => this.handleFieldChange('dns.dynamic-dns.usev6', e.detail.value)}
             ></form-field>
           </div>
@@ -260,6 +275,8 @@ class DnsModule extends LitElement {
           <table-editor
             .columns=${zoneColumns}
             .data=${zoneRows}
+            .appliedData=${appliedZoneRows}
+            .rowKey=${'zone'}
             addLabel="Add Zone"
             @data-change=${this.handleZonesChange}
           ></table-editor>
@@ -306,6 +323,7 @@ class DnsModule extends LitElement {
               .value=${certMgmt.provider || ''}
               placeholder="hetzner"
               help="Currently supported: hetzner. Leave blank to disable wildcard certs."
+              ?undeployed=${this._undeployed('dns.cert-management.provider')}
               @field-change=${(e) => this.handleFieldChange('dns.cert-management.provider', e.detail.value || null)}
             ></form-field>
           </div>

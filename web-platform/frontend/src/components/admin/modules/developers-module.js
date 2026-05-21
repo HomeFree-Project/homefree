@@ -36,6 +36,7 @@ function emitSaveStatus(el, status, error = '') {
  */
 class DevelopersModule extends LitElement {
   static properties = {
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
     flakes: { type: Array, state: true },
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
@@ -275,6 +276,7 @@ class DevelopersModule extends LitElement {
     this.baseLoading = true;
     this.baseOfficialUrl = '';
     this.baseEnabled = false;
+    this.undeployedPaths = new Set();
     this.baseType = 'local';
     this.baseLocalUrl = '';
     this.baseRemoteUrl = '';
@@ -899,9 +901,27 @@ class DevelopersModule extends LitElement {
     `;
   }
 
+  // Coarse "undeployed" flag for the Custom Flakes section: true when the
+  // developers section of the on-disk config differs from the deployed one.
+  // The backend reports the flakes array / base-override as whole-value paths
+  // under "developers", so this is section-level, not per-row.
+  _developersUndeployed() {
+    if (!this.undeployedPaths) return false;
+    for (const p of this.undeployedPaths) {
+      if (p === 'developers' || p.startsWith('developers.')) return true;
+    }
+    return false;
+  }
+
   render() {
     return html`
       <div class="module-container">
+        ${this._developersUndeployed() ? html`
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:var(--hf-warn-soft);border:1px solid var(--hf-warn);color:var(--hf-warn);font-size:13px;font-weight:500;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--hf-warn);flex-shrink:0;"></span>
+            <span>Undeployed flake changes — click Apply in the sidebar to deploy.</span>
+          </div>
+        ` : ''}
         ${this._renderBasePanel()}
 
         <div class="info-box">

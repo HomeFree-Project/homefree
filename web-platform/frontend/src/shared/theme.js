@@ -31,6 +31,8 @@ export const themeVars = css`
     --hf-accent-glow:  rgba(52, 211, 153, 0.28);
     --hf-ok:           #34d399;
     --hf-warn:         #f59e0b;
+    --hf-warn-soft:    rgba(245, 158, 11, 0.15);
+    --hf-warn-glow:    rgba(245, 158, 11, 0.28);
     --hf-err:          #ef4444;
     --hf-focus-ring:   rgba(52, 211, 153, 0.4);
     --hf-shadow:       0 1px 3px rgba(0, 0, 0, 0.4);

@@ -26,6 +26,8 @@ class ServicesModule extends LitElement {
     secretsStatus: { type: Object },     // Status of which secrets are set
     optionsSchema: { type: Object },     // Service options schema for all services
     hasAuthorizedKeys: { type: Boolean }, // Whether SSH keys are configured (from parent)
+    undeployedPaths: { attribute: false }, // Set<dotted-path> not yet deployed
+    appliedConfig: { attribute: false },   // deployed baseline (reserved)
     // The open config modal, or null. { id: expandId, view: 'details' | 'config' }.
     // Only one modal is open at a time (no stacking).
     openModal: { type: Object, state: true },
@@ -397,6 +399,14 @@ class ServicesModule extends LitElement {
       visibility: hidden;
       width: 32px;
       height: 32px;
+    }
+    /* Gear/Config button when the service has changed-but-unapplied options
+       inside its config modal — amber border + tint points you to it. */
+    .hf-btn.config-changed,
+    .hf-btn.config-changed:hover {
+      border-color: var(--hf-warn);
+      background: var(--hf-warn-soft);
+      color: var(--hf-warn);
     }
 
     /* ---- Config modal -----------------------------------------------
@@ -927,6 +937,8 @@ class ServicesModule extends LitElement {
     this.secretsStatus = {};
     this.optionsSchema = {};
     this.hasAuthorizedKeys = false;
+    this.undeployedPaths = new Set();
+    this.appliedConfig = null;
     this.openModal = null;
     this.pendingActions = {};
     this.actionErrors = {};
@@ -1116,6 +1128,22 @@ class ServicesModule extends LitElement {
       detail: { serviceLabel, isPublic },
       bubbles: true,
       composed: true
+    }));
+  }
+
+  // External-proxy services (no systemd units) carry their enable/public in
+  // their service-config entry, not services.<label>. Route the toggle there
+  // so it actually takes effect (and doesn't write dead config that the
+  // catalog ignores). admin-app updates the matching service-config[] row.
+  _emitExternalToggle(label, field, value) {
+    // Optimistic local update so the toggle reflects immediately.
+    this.services = this.services.map(s =>
+      s.label === label ? { ...s, [field === 'enable' ? 'enabled' : 'public']: value } : s
+    );
+    this.dispatchEvent(new CustomEvent('external-proxy-toggle', {
+      detail: { label, field, value },
+      bubbles: true,
+      composed: true,
     }));
   }
 
@@ -1349,6 +1377,64 @@ class ServicesModule extends LitElement {
      <app-card>s rendered by renderServiceCard, so their inner elements
      (status pill, lifecycle buttons, toggles, Details/Config) line up
      with the single-service cards in the list. */
+  // True when any undeployed change lives under this service's subtree
+  // (services.<label>.* incl. enable/public/options/instances). Drives the
+  // card-level amber dot so changes show on the card face — not just in nav.
+  // Instance children live in the parent's `instances` array, so attribute
+  // them to the parent.
+  _serviceUndeployed(service) {
+    // External proxies keep their config in service-config (not
+    // services.<label>), so compare this entry against the deployed snapshot.
+    if (service.external) return this._externalEntryChanged(service);
+    const paths = this.undeployedPaths;
+    if (!paths || !paths.size) return false;
+    const prefix = `services.${service.parent || service.label}`;
+    for (const p of paths) {
+      if (p === prefix || p.startsWith(prefix + '.')) return true;
+    }
+    return false;
+  }
+
+  // True when an external proxy's service-config entry differs from the
+  // deployed snapshot (by label). Used for the card highlight, since external
+  // changes land in service-config and the array is diffed whole-value.
+  _externalEntryChanged(service) {
+    if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return false;
+    const byLabel = (cfg) => ((cfg && cfg['service-config']) || [])
+      .find(e => e && e.label === service.label);
+    const cur = byLabel(this.pendingConfig) || byLabel(this.serverConfig);
+    const dep = byLabel(this.appliedConfig);
+    const stable = (o) => o === undefined ? undefined : JSON.stringify(o, (k, v) =>
+      (v && typeof v === 'object' && !Array.isArray(v))
+        ? Object.keys(v).sort().reduce((a, kk) => { a[kk] = v[kk]; return a; }, {})
+        : v);
+    return stable(cur) !== stable(dep);
+  }
+
+  // True when an exact dotted config path holds an undeployed change — used to
+  // flag the specific changed option inside the config modal.
+  _pathChanged(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
+  // True when a service has a changed-but-unapplied CONFIG OPTION — a change
+  // that lives INSIDE the gear/Config modal, as opposed to the enable/public
+  // toggles or the instances list. Drives the gear-button highlight so you can
+  // tell which service's config modal to open.
+  _serviceConfigChanged(service) {
+    const paths = this.undeployedPaths;
+    if (!paths || !paths.size) return false;
+    const prefix = `services.${service.label}.`;
+    for (const p of paths) {
+      if (!p.startsWith(prefix)) continue;
+      const sub = p.slice(prefix.length).split('.')[0];
+      if (sub && sub !== 'enable' && sub !== 'public' && sub !== 'instances') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   renderInstanceGroup(service) {
     const childServices = this.getChildServices(service.label);
     const isEnabled = service.enabled;
@@ -1370,7 +1456,10 @@ class ServicesModule extends LitElement {
       (instancesOption.type === 'listOf submodule' || (instancesOption.type || '').includes('listOf'));
 
     return html`
-      <div class="instance-group ${isEnabled ? 'enabled' : ''}">
+      <div class="instance-group ${isEnabled ? 'enabled' : ''}"
+           style=${this._serviceUndeployed(service)
+             ? 'background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);'
+             : ''}>
         <div class="instance-group-head">
           <div class="icon">
             <img src="/icons/${service.label}.svg" alt="" @error=${(e) => { e.target.style.display = 'none'; }} />
@@ -1393,7 +1482,7 @@ class ServicesModule extends LitElement {
             </div>
             ${hasParentConfig ? html`
               <button
-                class="hf-btn hf-btn-icon"
+                class="hf-btn hf-btn-icon ${this._serviceConfigChanged(service) ? 'config-changed' : ''}"
                 title="Config"
                 aria-label="${service.name} config"
                 aria-haspopup="dialog"
@@ -1524,6 +1613,7 @@ class ServicesModule extends LitElement {
     return html`
       <app-card
         ?enabled=${isEnabled}
+        ?undeployed=${this._serviceUndeployed(service)}
         .label=${service.parent || service.label}
         .name=${service.name}
         .subtitle=${service.project_name || ''}
@@ -1554,7 +1644,9 @@ class ServicesModule extends LitElement {
                   type="checkbox"
                   .checked=${isEnabled}
                   @change=${(e) => {
-                    if (service.parent) {
+                    if (service.external) {
+                      this._emitExternalToggle(service.label, 'enable', e.target.checked);
+                    } else if (service.parent) {
                       this.handleInstanceToggle(service.parent, service.label, e.target.checked);
                     } else {
                       this.handleServiceToggle(service.label, e.target.checked);
@@ -1572,7 +1664,9 @@ class ServicesModule extends LitElement {
                     type="checkbox"
                     .checked=${isPublic}
                     @change=${(e) => {
-                      if (service.parent) {
+                      if (service.external) {
+                        this._emitExternalToggle(service.label, 'public', e.target.checked);
+                      } else if (service.parent) {
                         this.handleInstancePublicToggle(service.parent, service.label, e.target.checked);
                       } else {
                         this.handlePublicToggle(service.label, e.target.checked);
@@ -1600,7 +1694,7 @@ class ServicesModule extends LitElement {
           <div class="head-buttons">
             ${hasConfigEditable ? html`
               <button
-                class="hf-btn hf-btn-icon"
+                class="hf-btn hf-btn-icon ${this._serviceConfigChanged(service) ? 'config-changed' : ''}"
                 title="Config"
                 aria-label="Config"
                 aria-haspopup="dialog"
@@ -1984,6 +2078,7 @@ class ServicesModule extends LitElement {
                 .submoduleFields=${optionDef['submodule-fields'] || []}
                 .enumValues=${optionDef['enum-values'] || []}
                 .uiHint=${optionDef['ui-hint'] || null}
+                ?undeployed=${this._pathChanged(`services.${service.label}.${optionKey}`)}
                 @option-changed=${(e) => this.handleOptionChanged(service.label, e.detail.optionKey, e.detail.value)}
               ></service-option-input>
             `;

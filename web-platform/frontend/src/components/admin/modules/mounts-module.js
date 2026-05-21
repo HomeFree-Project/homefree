@@ -10,6 +10,7 @@ import '../../shared/table-editor.js';
 class MountsModule extends LitElement {
   static properties = {
     config: { type: Object },
+    appliedConfig: { attribute: false },  // deployed baseline for row highlight
     modified: { type: Boolean }
   };
 
@@ -54,6 +55,7 @@ class MountsModule extends LitElement {
   constructor() {
     super();
     this.config = { mounts: [] };
+    this.appliedConfig = null;
     this.modified = false;
   }
 
@@ -71,6 +73,7 @@ class MountsModule extends LitElement {
 
   render() {
     const mounts = this.config.mounts || [];
+    const appliedMounts = this.appliedConfig?.mounts || [];
 
     // Column definitions for the mount table. The underlying
     // <table-editor> only supports `text` and `boolean` field types;
@@ -113,6 +116,8 @@ class MountsModule extends LitElement {
           <table-editor
             .columns=${columns}
             .data=${mounts}
+            .appliedData=${appliedMounts}
+            .rowKey=${'mount-point'}
             addLabel="Add Mount"
             .neutralBooleans=${true}
             @data-change=${this.handleMountsChange}

@@ -233,3 +233,8 @@ class ServiceStatus:
     # Only meaningful when sso_kind == "none": True ⇒ integration is
     # pending, False ⇒ SSO deliberately not applicable to this service.
     sso_applicable: bool = True
+    # True for catalog-only "External Proxies" vhosts (a top-level
+    # service-config entry with no systemd units). Their enable/public live in
+    # the service-config entry itself — NOT services.<label> — so the admin UI
+    # routes their toggles there instead of writing a dead services.<label>.
+    external: bool = False

@@ -13,6 +13,7 @@ import '../../shared/table-editor.js';
 class ProxiedDomainsModule extends LitElement {
   static properties = {
     config: { type: Object },
+    appliedConfig: { attribute: false },  // deployed baseline for row highlight
     modified: { type: Boolean }
   };
 
@@ -49,6 +50,7 @@ class ProxiedDomainsModule extends LitElement {
   constructor() {
     super();
     this.config = { 'proxied-domains': [] };
+    this.appliedConfig = null;
     this.modified = false;
   }
 
@@ -84,12 +86,14 @@ class ProxiedDomainsModule extends LitElement {
   }
 
   render() {
-    const rows = (this.config['proxied-domains'] || []).map(r => ({
+    const toRow = (r) => ({
       ...r,
       domains: Array.isArray(r.domains) ? r.domains.join(', ') : (r.domains || ''),
       'http-port':  r['http-port']  == null ? '' : r['http-port'],
       'https-port': r['https-port'] == null ? '' : r['https-port']
-    }));
+    });
+    const rows = (this.config['proxied-domains'] || []).map(toRow);
+    const appliedRows = (this.appliedConfig?.['proxied-domains'] || []).map(toRow);
 
     const columns = [
       { key: 'domains', label: 'Domains (comma-sep)', type: 'text', placeholder: 'example.com, *.example.com' },
@@ -125,6 +129,7 @@ class ProxiedDomainsModule extends LitElement {
           <table-editor
             .columns=${columns}
             .data=${rows}
+            .appliedData=${appliedRows}
             addLabel="Add Domain"
             @data-change=${this.handleChange}
           ></table-editor>

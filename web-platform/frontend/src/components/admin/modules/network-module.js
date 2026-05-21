@@ -12,6 +12,7 @@ import { getNetworkInterfaces } from '../../../api/client.js';
 class NetworkModule extends LitElement {
   static properties = {
     config: { type: Object },
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
     interfaces: { type: Array },
     modified: { type: Boolean }
   };
@@ -81,6 +82,7 @@ class NetworkModule extends LitElement {
     };
     this.interfaces = [];
     this.modified = false;
+    this.undeployedPaths = new Set();
   }
 
   async connectedCallback() {
@@ -135,6 +137,11 @@ class NetworkModule extends LitElement {
     }));
   }
 
+  // True when `path` (a dotted config path) holds a change not yet deployed.
+  _undeployed(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
   render() {
     const { network } = this.config;
 
@@ -156,6 +163,7 @@ class NetworkModule extends LitElement {
             type="boolean"
             .value=${network['router-enable']}
             help="Enable HomeFree to act as a router with NAT and firewall"
+            ?undeployed=${this._undeployed('network.router-enable')}
             @field-change=${(e) => this.handleFieldChange('network.router-enable', e.detail.value)}
           ></form-field>
 
@@ -168,6 +176,7 @@ class NetworkModule extends LitElement {
               placeholder="Select WAN interface..."
               help="Interface connected to your modem/ISP"
               required
+              ?undeployed=${this._undeployed('network.wan-interface')}
               @field-change=${(e) => this.handleFieldChange('network.wan-interface', e.detail.value)}
             ></form-field>
 
@@ -179,6 +188,7 @@ class NetworkModule extends LitElement {
               placeholder="Select LAN interface..."
               help="Interface connected to your local network"
               required
+              ?undeployed=${this._undeployed('network.lan-interface')}
               @field-change=${(e) => this.handleFieldChange('network.lan-interface', e.detail.value)}
             ></form-field>
           </div>
@@ -197,6 +207,7 @@ class NetworkModule extends LitElement {
               placeholder="10.0.0.1"
               help="IP address of this router on the LAN"
               required
+              ?undeployed=${this._undeployed('network.lan-address')}
               @field-change=${(e) => this.handleFieldChange('network.lan-address', e.detail.value)}
             ></form-field>
 
@@ -207,6 +218,7 @@ class NetworkModule extends LitElement {
               placeholder="10.0.0.0/24"
               help="Network subnet in CIDR notation"
               required
+              ?undeployed=${this._undeployed('network.lan-subnet')}
               @field-change=${(e) => this.handleFieldChange('network.lan-subnet', e.detail.value)}
             ></form-field>
           </div>
@@ -219,6 +231,7 @@ class NetworkModule extends LitElement {
               placeholder="10.0.0.100"
               help="First IP in DHCP pool"
               required
+              ?undeployed=${this._undeployed('network.dhcp-range-start')}
               @field-change=${(e) => this.handleFieldChange('network.dhcp-range-start', e.detail.value)}
             ></form-field>
 
@@ -229,6 +242,7 @@ class NetworkModule extends LitElement {
               placeholder="10.0.0.200"
               help="Last IP in DHCP pool"
               required
+              ?undeployed=${this._undeployed('network.dhcp-range-end')}
               @field-change=${(e) => this.handleFieldChange('network.dhcp-range-end', e.detail.value)}
             ></form-field>
           </div>
@@ -246,6 +260,7 @@ class NetworkModule extends LitElement {
               .value=${network['wan-bitrate-mbps-down']}
               placeholder="100"
               help="Your ISP's download speed (optional)"
+              ?undeployed=${this._undeployed('network.wan-bitrate-mbps-down')}
               @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-down', e.detail.value ? parseInt(e.detail.value) : null)}
             ></form-field>
 
@@ -255,6 +270,7 @@ class NetworkModule extends LitElement {
               .value=${network['wan-bitrate-mbps-up']}
               placeholder="20"
               help="Your ISP's upload speed (optional)"
+              ?undeployed=${this._undeployed('network.wan-bitrate-mbps-up')}
               @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-up', e.detail.value ? parseInt(e.detail.value) : null)}
             ></form-field>
           </div>
@@ -270,6 +286,7 @@ class NetworkModule extends LitElement {
             type="boolean"
             .value=${network['enable-unbound-adblock']}
             help="Leave off if AdGuard Home is enabled."
+            ?undeployed=${this._undeployed('network.enable-unbound-adblock')}
             @field-change=${(e) => this.handleFieldChange('network.enable-unbound-adblock', e.detail.value)}
           ></form-field>
         </config-section>

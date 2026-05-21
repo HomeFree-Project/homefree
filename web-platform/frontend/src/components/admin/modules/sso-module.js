@@ -24,6 +24,7 @@ import { getSsoState, reprovisionSso } from '../../../api/client.js';
 class SsoModule extends LitElement {
   static properties = {
     config: { type: Object },
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
     state: { type: Object, state: true },
     loading: { type: Boolean, state: true },
     reprovisioning: { type: Boolean, state: true },
@@ -133,6 +134,14 @@ class SsoModule extends LitElement {
     }
     .toggle.on::after { left: 18px; }
 
+    /* A setting row with an undeployed change — amber bar + tint. */
+    .status-row.undeployed {
+      background: var(--hf-warn-soft);
+      box-shadow: inset 3px 0 0 0 var(--hf-warn);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
     .actions { margin-top: 16px; display: flex; gap: 12px; }
 
     button.btn {
@@ -162,6 +171,7 @@ class SsoModule extends LitElement {
   constructor() {
     super();
     this.config = null;
+    this.undeployedPaths = new Set();
     this.state = null;
     this.loading = true;
     this.reprovisioning = false;
@@ -232,6 +242,11 @@ class SsoModule extends LitElement {
     return this.config?.sso?.allowUserRegistration === true;
   }
 
+  // True when a dotted config path holds an undeployed change.
+  _changed(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
   _toggleAllowRegistration() {
     const next = JSON.parse(JSON.stringify(this.config || {}));
     if (!next.sso) next.sso = {};
@@ -271,7 +286,7 @@ class SsoModule extends LitElement {
           title="Sign-in options"
           description="Knobs that change what appears on the Zitadel sign-in page."
         >
-          <div class="status-row" style="justify-content: space-between;">
+          <div class="status-row ${this._changed('sso.allowUserRegistration') ? 'undeployed' : ''}" style="justify-content: space-between;">
             <div>
               <div style="font-weight: 500; color: var(--hf-text);">
                 Allow user self-registration

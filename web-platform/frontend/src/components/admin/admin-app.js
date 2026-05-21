@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
+import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getAppliedConfig, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
 import { confirmDialog, alertDialog } from '../shared/confirm-dialog.js';
 import { themeVars } from '../../shared/theme.js';
@@ -65,6 +65,9 @@ class AdminApp extends LitElement {
     saveStatus: { type: String },          // 'idle' | 'saving' | 'saved' | 'error'
     saveError: { type: String },           // First error message from a failed save, if any
     hasUnappliedChanges: { type: Boolean }, // Whether there are unapplied changes on disk
+    dirtyReason: { type: String },          // Why the config is dirty (drives the Apply note)
+    undeployedPaths: { state: true },       // Set of dotted config paths not yet deployed
+    appliedConfig: { state: true },          // Last-DEPLOYED config — baseline for per-row list highlight
     updateAvailable: { type: Boolean },    // System closure changed since page-load — UI is stale
     currentUser: { type: Object },         // {username, is_admin_user, admin_username} from /api/users/me
     userMenuOpen: { type: Boolean, state: true },
@@ -97,6 +100,30 @@ class AdminApp extends LitElement {
     .sidebar.collapsed .sidebar-footer {
       padding: 8px;
     }
+    /* Small note above the Apply button naming WHY there are undeployed
+       changes. Hidden when the sidebar is collapsed (no room for text). */
+    .sidebar-footer .apply-note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--hf-warn);
+      margin-bottom: 8px;
+      padding: 0 2px;
+      line-height: 1.3;
+    }
+    .sidebar-footer .apply-note-dot,
+    .sidebar-footer .apply-badge-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    /* The button itself stays the accent CTA; emphasis is modulated by
+       opacity + a glow ring so the spinner/contrast context is unchanged.
+       Resting (nothing to deploy) is de-emphasized; has-changes lights up. */
     .sidebar-footer .apply-btn {
       width: 100%;
       padding: 10px 14px;
@@ -111,10 +138,23 @@ class AdminApp extends LitElement {
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: opacity 0.15s;
+      opacity: 0.6;
+      transition: opacity 0.15s, box-shadow 0.15s;
+    }
+    .sidebar-footer .apply-btn.has-changes {
+      opacity: 1;
+      box-shadow: 0 0 0 3px var(--hf-accent-glow);
+    }
+    .sidebar-footer .apply-btn .apply-badge-dot {
+      background: #06281c;
+      animation: applyPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes applyPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
     .sidebar-footer .apply-btn:hover:not(:disabled) {
-      opacity: 0.9;
+      opacity: 1;
     }
     .sidebar-footer .apply-btn:disabled {
       opacity: 0.5;
@@ -170,6 +210,31 @@ class AdminApp extends LitElement {
       border-radius: 50%;
       background: currentColor;
       flex-shrink: 0;
+    }
+
+    /* Amber dot on a nav item / section header whose page has undeployed
+       changes — the per-page rollup of the field/row highlights. */
+    .nav-change-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--hf-warn);
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .nav-section-title .nav-change-dot {
+      display: inline-block;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .sidebar.collapsed .nav-item {
+      position: relative;
+    }
+    .sidebar.collapsed .nav-item .nav-change-dot {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      margin-left: 0;
     }
 
     .save-spinner {
@@ -698,6 +763,19 @@ class AdminApp extends LitElement {
 
     // Apply / dirty state
     this.hasUnappliedChanges = false;
+    this.dirtyReason = '';
+    // Paths (dotted) whose on-disk value differs from the last DEPLOYED
+    // (built) config — from /api/config/dirty. Union'd with local unsaved
+    // edits into `undeployedPaths`, which drives the per-field highlight.
+    this.deployedChangedPaths = new Set();
+    this.undeployedPaths = new Set();
+    // Last-deployed (built) config snapshot — the baseline list editors diff
+    // their rows against to mark added/changed entries. Refreshed on load and
+    // after each rebuild (it only changes when a rebuild succeeds).
+    this.appliedConfig = null;
+    // True while the on-disk config is unparseable; gates the parse-error
+    // modal (show once) and blocks auto-save from writing onto a broken base.
+    this._configParseError = false;
     this.dirtyPollInterval = null;
 
     // System closure tracking — detects when the deployed code changed
@@ -925,9 +1003,16 @@ class AdminApp extends LitElement {
       return;
     }
 
-    // Initial dirty check + periodic refresh for the Apply button enabled state
+    // Initial dirty check + periodic refresh for the Apply button enabled
+    // state. The same tick also re-reads the on-disk config so external edits
+    // (a hand-edit to /etc/nixos/homefree-config.json, or another admin tab)
+    // flow back INTO the UI — disk is the source of truth, both directions.
+    this.refreshConfigFromDisk();
     this.checkConfigDirty();
-    this.dirtyPollInterval = setInterval(() => this.checkConfigDirty(), 5000);
+    this.dirtyPollInterval = setInterval(() => {
+      this.refreshConfigFromDisk();
+      this.checkConfigDirty();
+    }, 5000);
 
     // Capture the system closure id at page-load time, then poll for
     // changes. When it shifts, the deployed UI is newer than what this
@@ -998,6 +1083,15 @@ class AdminApp extends LitElement {
   async loadConfig() {
     try {
       this.serverConfig = await getCurrentConfig();
+      // Deployed baseline for per-row list highlighting. Best-effort: keep the
+      // previous value on failure rather than dropping highlights.
+      try {
+        this.appliedConfig = await getAppliedConfig();
+      } catch (e) {
+        if (e && e.name !== 'AbortError') {
+          console.warn('Failed to load applied config:', e.message);
+        }
+      }
       // Initialize pending config as empty on first load
       // Pending changes will be added as user makes modifications
       if (Object.keys(this.pendingConfig).length === 0) {
@@ -1446,6 +1540,31 @@ class AdminApp extends LitElement {
     this.scheduleAutoSave();
   }
 
+  // Enable/public for an EXTERNAL-proxy service lives in its service-config
+  // entry (the single source of truth — Caddy/DNS read reverse-proxy.enable,
+  // the catalog reads reverse-proxy.public), NOT services.<label>. So route
+  // the App Configuration toggle to update the matching service-config row,
+  // keeping it minimal (default-stripped) to match the External Proxies form.
+  handleExternalProxyToggle(e) {
+    const { label, field, value } = e.detail;  // field: 'enable' | 'public'
+    const list = (this.getMergedConfig()['service-config'] || []).map(entry => {
+      if (!entry || entry.label !== label) return entry;
+      const next = { ...entry };
+      const isDefault = field === 'enable' ? value === true : value === false;
+      if (isDefault) {
+        delete next[field];
+      } else {
+        next[field] = value;
+      }
+      return next;
+    });
+    this.pendingConfig = { ...this.pendingConfig, 'service-config': list };
+    this.dirtyModules.add('extra-proxies');
+    this.updateMergedConfig();
+    this.requestUpdate();
+    this.scheduleAutoSave();
+  }
+
   handleServicePublicToggle(e) {
     const { serviceLabel, isPublic } = e.detail;
 
@@ -1826,6 +1945,18 @@ class AdminApp extends LitElement {
       merged['service-config'] = this.pendingConfig['service-config'];
     }
 
+    // Mounts and Proxied Domains edit their whole array via config-change and
+    // (unlike System/DNS/Backups) do NOT mutate serverConfig in place, so
+    // without an explicit merge here their edits live only in pendingConfig
+    // and never reach the rendered config — a newly-added row silently
+    // vanishes on save. Whole-array replace, same as `service-config`.
+    if (this.pendingConfig.mounts !== undefined) {
+      merged.mounts = this.pendingConfig.mounts;
+    }
+    if (this.pendingConfig['proxied-domains'] !== undefined) {
+      merged['proxied-domains'] = this.pendingConfig['proxied-domains'];
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
@@ -1846,6 +1977,7 @@ class AdminApp extends LitElement {
    */
   updateMergedConfig() {
     this.config = this.getMergedConfig();
+    this.recomputeUndeployedPaths();
   }
 
   /**
@@ -1957,17 +2089,174 @@ class AdminApp extends LitElement {
     }
   }
 
+  // Re-read the on-disk config and reflect external edits back into the UI
+  // (disk is the source of truth, both directions). A malformed file surfaces
+  // a modal ONCE and keeps the last-good config — the admin UI is the recovery
+  // surface and must never blank.
+  async refreshConfigFromDisk() {
+    // Do NOT pull disk over the UI while the user has unsaved edits. The
+    // legacy config modules (System/Network/DNS/Backups) store their in-flight
+    // edit by mutating `serverConfig`'s nested objects in place (their merge
+    // path relies on it), so replacing serverConfig here would silently revert
+    // the field the user is editing. Disk→UI sync resumes once edits are
+    // applied (dirtyModules cleared). The intended case — hand-editing the
+    // file while NOT editing in the UI — is unaffected (the UI is clean then).
+    if (this.dirtyModules.size > 0 || this._saveInFlight
+        || this.saveStatus === 'saving' || this._saveTimer != null) {
+      return;
+    }
+    try {
+      const fresh = await getCurrentConfig();
+      this._configParseError = false;  // good read clears the latch
+      if (JSON.stringify(fresh) !== JSON.stringify(this.serverConfig)) {
+        this.serverConfig = fresh;
+        this.updateMergedConfig();
+        this.requestUpdate();
+      }
+    } catch (error) {
+      if (error && error.status === 422) {
+        if (!this._configParseError) {
+          this._configParseError = true;
+          alertDialog({
+            title: 'Config file has a syntax error',
+            message: (error.body && error.body.detail)
+              ? error.body.detail
+              : 'The on-disk homefree-config.json is not valid JSON. Your current view is unchanged — fix the file (or edit via the admin pages) to continue.',
+            confirmText: 'Dismiss',
+            variant: 'danger',
+          });
+        }
+      } else if (error.name !== 'AbortError') {
+        console.warn('Failed to refresh config from disk:', error.message);
+      }
+    }
+  }
+
   async checkConfigDirty() {
     try {
       const result = await getConfigDirty();
+      // These are reactive (or, for undeployedPaths, only reassigned on a real
+      // change) so Lit re-renders only when something actually changed — no
+      // unconditional requestUpdate that would churn focused inputs every 5s.
       this.hasUnappliedChanges = !!result.dirty;
-      this.requestUpdate();
+      this.dirtyReason = result.reason || '';
+      this.deployedChangedPaths = new Set(result.changedPaths || []);
+      this.recomputeUndeployedPaths();
     } catch (error) {
       // Don't spam logs while admin-api is restarting
       if (error.name !== 'AbortError') {
         console.warn('Failed to check config dirty state:', error.message);
       }
     }
+  }
+
+  // Union the deployed-vs-disk changed paths (backend) with the user's local
+  // unsaved edits (disk-vs-UI) so a field lights up the instant it's edited,
+  // before the debounced save + next poll catch up. Both mean "not deployed".
+  recomputeUndeployedPaths() {
+    const merged = this.getMergedConfig() || {};
+    let paths;
+    if (this.appliedConfig && Object.keys(this.appliedConfig).length) {
+      // Authoritative AND immediate: diff the current UI state (merged) against
+      // the DEPLOYED config. No backend round-trip, so reverting a field to its
+      // deployed value clears the highlight at once — not after the next 5s
+      // poll (which is why a revert used to stay yellow until reload).
+      const applied = { ...this.appliedConfig };
+      delete applied.developers;   // owned by Custom Flakes; stripped from merged
+      paths = new Set(this._diffPaths(applied, merged));
+    } else {
+      // No deployed baseline yet (fresh box) — fall back to the backend's
+      // changedPaths unioned with the local disk-vs-UI diff.
+      paths = new Set(this.deployedChangedPaths);
+      const server = { ...(this.serverConfig || {}) };
+      delete server.developers;
+      for (const p of this._diffPaths(server, merged)) paths.add(p);
+    }
+    // Only reassign when the set actually changed. Otherwise the 5s dirty poll
+    // would hand every child a brand-new Set each tick — forcing needless
+    // re-renders that can disrupt a focused text input.
+    const cur = this.undeployedPaths;
+    if (!cur || cur.size !== paths.size || [...paths].some(p => !cur.has(p))) {
+      this.undeployedPaths = paths;
+    }
+  }
+
+  // Dotted leaf paths where `b` differs from `a`. Mirrors the backend's
+  // compute_changed_paths: objects recurse; arrays/scalars compare
+  // whole-value (an array is one path, so a reorder isn't N changes).
+  _diffPaths(a, b) {
+    const out = [];
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    const walk = (x, y, prefix) => {
+      if (isObj(x) && isObj(y)) {
+        const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+        for (const k of keys) {
+          walk(x[k], y[k], prefix ? `${prefix}.${k}` : k);
+        }
+      } else if (JSON.stringify(x) !== JSON.stringify(y) && prefix) {
+        out.push(prefix);
+      }
+    };
+    walk(a || {}, b || {}, '');
+    return out;
+  }
+
+  // Map the backend dirty `reason` to a short, friendly label for the Apply
+  // note + tooltip.
+  _dirtyReasonLabel() {
+    switch (this.dirtyReason) {
+      case 'differs': return 'Configuration changed';
+      case 'flake source changed': return 'Flake source changed';
+      case 'build inputs changed': return 'System inputs changed';
+      case 'last rebuild failed': return 'Last rebuild failed — retry';
+      case 'system update pending': return 'System update pending';
+      case 'config parse error': return 'Config file has a syntax error';
+      case 'no applied marker': return 'Not yet deployed';
+      default: return 'Undeployed changes';
+    }
+  }
+
+  // Map a dotted config path to the nav module that owns it. Sub-path aware:
+  // several pages share a top-level section — network.* is split across
+  // Network / LAN Clients / Network Traffic, and services.* across App
+  // Configuration / Backups (the backup self-test). Keep in sync with the
+  // modules' edited paths.
+  pathOwnerModuleId(path) {
+    if (!path) return null;
+    const seg = path.split('.');
+    switch (seg[0]) {
+      case 'system': return 'system';
+      case 'dns': return 'dns';
+      case 'mounts': return 'mounts';
+      case 'service-config': return 'extra-proxies';
+      case 'proxied-domains': return 'proxied-domains';
+      case 'backups': return 'backups';
+      case 'sso': return 'sso';
+      case 'developers': return 'developers';
+      case 'network':
+        if (seg[1] === 'static-ips') return 'lan-clients';
+        if (seg[1] === 'abuseBlockCidrs') return 'abuse-blocking';
+        return 'network';
+      case 'services':
+        return seg[1] === 'backup-canary' ? 'backups' : 'apps';
+      default: return null;
+    }
+  }
+
+  // Set of nav module ids with undeployed changes — drives the left-nav dots.
+  changedModuleIds() {
+    const ids = new Set();
+    for (const p of (this.undeployedPaths || [])) {
+      const id = this.pathOwnerModuleId(p);
+      if (id) ids.add(id);
+    }
+    // Flake-source / build-input divergence isn't a config path; attribute it
+    // to the Custom Flakes page.
+    if (this.dirtyReason === 'flake source changed' ||
+        this.dirtyReason === 'build inputs changed') {
+      ids.add('developers');
+    }
+    return ids;
   }
 
   /**
@@ -2036,6 +2325,23 @@ class AdminApp extends LitElement {
         await this.autoSave();
       }
 
+      // Build-only: Apply rebuilds whatever is on disk (the flush above put our
+      // edits there). If the on-disk file is broken or the flush failed, disk
+      // won't match the UI — bail clearly instead of building a stale/broken
+      // config (the backend would reject it anyway).
+      if (this._configParseError) {
+        this.showToast('Fix the configuration file syntax error before applying.', 'error', 7000);
+        this.rebuildStatus = { running: false, message: '', lastUpdate: null };
+        return;
+      }
+      if (this.saveStatus === 'error') {
+        this.showToast('Could not save your changes to disk — not applying.', 'error', 7000);
+        this.rebuildStatus = { running: false, message: '', lastUpdate: null };
+        return;
+      }
+
+      // Validate what we're about to build (after the flush, the merged config
+      // equals what's on disk). Warnings are surfaced but don't block.
       const configToApply = this.getMergedConfig();
 
       const validation = await validateConfig(configToApply);
@@ -2051,7 +2357,11 @@ class AdminApp extends LitElement {
         this.showToast(`Warning: ${firstWarning}`, 'warning', 5000);
       }
 
-      const result = await applyConfigChanges(configToApply);
+      // Send an empty object — the backend rebuilds the on-disk config (single
+      // source of truth) and ignores any payload. This is what makes Apply
+      // unable to revert an out-of-band hand-edit to the file. ({} avoids any
+      // empty-body ambiguity with the JSON Content-Type the client sets.)
+      const result = await applyConfigChanges({});
 
       if (!result.success) {
         this.showToast(`Failed to apply: ${result.message || 'Unknown error'}`, 'error', 7000);
@@ -2296,6 +2606,7 @@ class AdminApp extends LitElement {
           <lan-clients-module
             .serverConfig=${this.serverConfig}
             .pendingConfig=${this.pendingConfig}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></lan-clients-module>
         `;
@@ -2304,6 +2615,8 @@ class AdminApp extends LitElement {
         return html`
           <system-module
             .config=${this.config}
+            .undeployedPaths=${this.undeployedPaths}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
             @ssh-keys-changed=${this.handleSSHKeysChanged}
           ></system-module>
@@ -2318,6 +2631,7 @@ class AdminApp extends LitElement {
         return html`
           <network-module
             .config=${this.config}
+            .undeployedPaths=${this.undeployedPaths}
             @config-change=${this.handleConfigChange}
           ></network-module>
         `;
@@ -2327,6 +2641,8 @@ class AdminApp extends LitElement {
           <dns-module
             .config=${this.config}
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
+            .undeployedPaths=${this.undeployedPaths}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></dns-module>
         `;
@@ -2335,6 +2651,7 @@ class AdminApp extends LitElement {
         return html`
           <mounts-module
             .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></mounts-module>
         `;
@@ -2343,6 +2660,7 @@ class AdminApp extends LitElement {
         return html`
           <extra-proxies-module
             .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></extra-proxies-module>
         `;
@@ -2351,6 +2669,7 @@ class AdminApp extends LitElement {
         return html`
           <proxied-domains-module
             .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></proxied-domains-module>
         `;
@@ -2360,9 +2679,12 @@ class AdminApp extends LitElement {
           <services-module
             .serverConfig=${this.serverConfig}
             .pendingConfig=${this.pendingConfig}
+            .appliedConfig=${this.appliedConfig}
+            .undeployedPaths=${this.undeployedPaths}
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             @service-toggle=${this.handleServiceToggle}
             @service-public-toggle=${this.handleServicePublicToggle}
+            @external-proxy-toggle=${this.handleExternalProxyToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
             @instance-toggle=${this.handleInstanceToggle}
             @instance-public-toggle=${this.handleInstancePublicToggle}
@@ -2378,6 +2700,8 @@ class AdminApp extends LitElement {
             .config=${this.config}
             .hasAuthorizedKeys=${this.hasAuthorizedKeys}
             .subRoute=${this.currentSubRoute}
+            .undeployedPaths=${this.undeployedPaths}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
             @service-toggle=${this.handleServiceToggle}
             @service-option-changed=${this.handleServiceOptionChanged}
@@ -2389,6 +2713,7 @@ class AdminApp extends LitElement {
         return html`
           <sso-module
             .config=${this.config}
+            .undeployedPaths=${this.undeployedPaths}
             @config-change=${this.handleConfigChange}
           ></sso-module>
         `;
@@ -2435,6 +2760,7 @@ class AdminApp extends LitElement {
       case 'developers':
         return html`
           <developers-module
+            .undeployedPaths=${this.undeployedPaths}
             @updates-applied=${this.checkConfigDirty}
           ></developers-module>
         `;
@@ -2444,6 +2770,7 @@ class AdminApp extends LitElement {
           <abuse-blocking-module
             .serverConfig=${this.serverConfig}
             .pendingConfig=${this.pendingConfig}
+            .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></abuse-blocking-module>
         `;
@@ -2492,6 +2819,7 @@ class AdminApp extends LitElement {
     // Group modules by section. The finish-setup module is pinned at the
     // TOP of the nav as its own highlighted item (not inside a section), so
     // it is excluded from the section grouping here.
+    const changedIds = this.changedModuleIds();
     const sections = {};
     this.getVisibleModules()
       .filter(module => module.id !== 'finish-setup')
@@ -2561,7 +2889,10 @@ class AdminApp extends LitElement {
               </div>
             ` : ''}
             ${Object.entries(sections).map(([section, modules]) => html`
-              <div class="nav-section-title">${section}</div>
+              <div class="nav-section-title">
+                ${section}
+                ${modules.some(m => changedIds.has(m.id)) ? html`<span class="nav-change-dot"></span>` : ''}
+              </div>
               ${modules.map(module => html`
                 <div
                   class="nav-item ${this.currentModule === module.id ? 'active' : ''} ${module.id === 'build-logs' && (this.statusFlashing || this.statusNeedsAttention) ? 'flashing' : ''}"
@@ -2569,6 +2900,7 @@ class AdminApp extends LitElement {
                 >
                   <span class="nav-item-icon">${navIcon(module.id)}</span>
                   <span class="nav-item-text">${module.title}</span>
+                  ${changedIds.has(module.id) ? html`<span class="nav-change-dot" title="Undeployed changes"></span>` : ''}
                   ${module.id === 'build-logs' ? html`
                     <span class="status-badge ${this.getStatusBadgeClass()}">
                       ${this.rebuildStatus.running ? html`<div class="spinner-tiny"></div>` : ''}
@@ -2584,17 +2916,25 @@ class AdminApp extends LitElement {
                flex: 1 so the footer naturally lands here. Title shows
                "Apply" when collapsed since the text is hidden. -->
           <div class="sidebar-footer">
+            ${this.hasUnappliedChanges && !this.rebuildStatus.running && !this.sidebarCollapsed ? html`
+              <div class="apply-note">
+                <span class="apply-note-dot"></span>
+                <span>${this._dirtyReasonLabel()}</span>
+              </div>
+            ` : ''}
             <button
-              class="apply-btn"
+              class="apply-btn ${this.hasUnappliedChanges ? 'has-changes' : ''}"
               @click=${this.handleApplyChanges}
               ?disabled=${this.rebuildStatus.running}
               title=${this.rebuildStatus.running
                 ? 'Rebuild in progress — wait for it to finish before applying again'
-                : 'Apply pending configuration'}
+                : (this.hasUnappliedChanges
+                    ? `Undeployed changes: ${this._dirtyReasonLabel()}`
+                    : 'Rebuild the current on-disk configuration')}
             >
               ${this.rebuildStatus.running
                 ? html`<span class="btn-spinner"></span><span class="apply-btn-text">Applying…</span>`
-                : html`<span class="apply-btn-text">Apply</span>${this.sidebarCollapsed ? html`✓` : ''}`}
+                : html`${this.hasUnappliedChanges ? html`<span class="apply-badge-dot"></span>` : ''}<span class="apply-btn-text">Apply</span>${this.sidebarCollapsed ? html`✓` : ''}`}
             </button>
           </div>
         </div>

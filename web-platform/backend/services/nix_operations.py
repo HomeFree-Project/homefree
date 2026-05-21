@@ -10,6 +10,7 @@ from enum import Enum
 import tempfile
 import os
 import json
+import hashlib
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,17 @@ class NixOperations:
     REBUILD_OFFSET_FILE = REBUILD_STATE_DIR / "rebuild.offset"
     SERVICE_STATE_FILE = REBUILD_STATE_DIR / "service-state.json"
     APPLIED_CONFIG_FILE = REBUILD_STATE_DIR / "applied-config.json"
+    # Snapshot of the flake build-input file hashes the system was last built
+    # against. Lets the dirty-state endpoint detect divergence in the flake
+    # source / custom flakes (Custom Flakes section) even when it was hand-
+    # edited directly rather than through homefree-config.json.
+    APPLIED_BUILD_INPUTS_FILE = REBUILD_STATE_DIR / "applied-build-inputs.json"
+    # Files under /etc/nixos that, if changed, change the build output but are
+    # NOT part of homefree-config.json. flake.lock covers remote homefree-base
+    # / custom-flake revision bumps (re-pinned at rebuild by
+    # _refresh_local_inputs); flake.nix + custom-flakes.nix cover the flake
+    # source + which custom flakes compose into the build.
+    BUILD_INPUT_FILES = ["flake.nix", "custom-flakes.nix", "flake.lock"]
 
     # Transient systemd unit name used for the rebuild. Running the rebuild
     # under its own systemd cgroup decouples it from admin-api's lifecycle —
@@ -1071,6 +1083,11 @@ class NixOperations:
         except Exception as e:
             logger.error(f"Error marking config applied: {e}")
 
+        # Snapshot the flake build-input hashes too, so the dirty-state
+        # endpoint can detect a changed flake source / custom flakes. Taken
+        # post-build, so it reflects the post-_refresh_local_inputs flake.lock.
+        NixOperations._mark_build_inputs_applied()
+
         # Also snapshot the homefree-base flake revision the system was just
         # built against, so the System Updates page / dirty-state endpoint can
         # tell whether a pending version update has actually been applied.
@@ -1086,6 +1103,91 @@ class NixOperations:
         except Exception as e:
             logger.error(f"Error marking flake revision applied: {e}")
 
+    @staticmethod
+    def _build_inputs_manifest() -> Dict[str, str]:
+        """
+        sha256 of each flake build-input file under /etc/nixos. Missing files
+        are omitted (so adding/removing one registers as a change).
+        """
+        manifest: Dict[str, str] = {}
+        for name in NixOperations.BUILD_INPUT_FILES:
+            p = NixOperations.FLAKE_DIR / name
+            try:
+                if p.exists():
+                    manifest[name] = hashlib.sha256(p.read_bytes()).hexdigest()
+            except Exception as e:
+                logger.warning(f"Could not hash build input {name}: {e}")
+        return manifest
+
+    @staticmethod
+    def _mark_build_inputs_applied():
+        """Snapshot the current flake build-input hashes as the applied baseline."""
+        try:
+            manifest = NixOperations._build_inputs_manifest()
+            NixOperations.APPLIED_BUILD_INPUTS_FILE.parent.mkdir(
+                parents=True, exist_ok=True
+            )
+            NixOperations.APPLIED_BUILD_INPUTS_FILE.write_text(
+                json.dumps(manifest, indent=2)
+            )
+            logger.info("Marked build inputs as applied")
+        except Exception as e:
+            logger.error(f"Error marking build inputs applied: {e}")
+
+    @staticmethod
+    def build_inputs_dirty() -> Optional[str]:
+        """
+        Human-readable reason if the flake build inputs differ from the applied
+        snapshot, else None. Returns None when no snapshot exists yet (a box
+        upgraded into this feature before its first rebuild) so we don't flash a
+        spurious "everything changed" — the homefree-config.json compare still
+        covers the common Custom-Flakes cases.
+        """
+        try:
+            if not NixOperations.APPLIED_BUILD_INPUTS_FILE.exists():
+                return None
+            applied = json.loads(NixOperations.APPLIED_BUILD_INPUTS_FILE.read_text())
+            current = NixOperations._build_inputs_manifest()
+            if current == applied:
+                return None
+            changed = {
+                n for n in (set(applied) | set(current))
+                if applied.get(n) != current.get(n)
+            }
+            # Only flake.lock moved → a revision re-pin; flake.nix /
+            # custom-flakes.nix moved → the flake source / custom flake set.
+            if changed <= {"flake.lock"}:
+                return "build inputs changed"
+            return "flake source changed"
+        except Exception as e:
+            logger.warning(f"Could not check build-inputs dirty state: {e}")
+            return None
+
+    @staticmethod
+    def compute_changed_paths(current: Any, applied: Any) -> List[str]:
+        """
+        Dotted leaf paths where `current` differs from `applied`. Objects
+        recurse; arrays and scalars compare whole-value (an array is reported as
+        a single path so a reorder doesn't mark every element changed). Used to
+        highlight which UI fields hold undeployed changes.
+        """
+        paths: List[str] = []
+        missing = object()
+
+        def walk(cur, app, prefix):
+            if isinstance(cur, dict) and isinstance(app, dict):
+                for key in (set(cur) | set(app)):
+                    child = f"{prefix}.{key}" if prefix else key
+                    walk(cur.get(key, missing), app.get(key, missing), child)
+            elif cur != app and prefix:
+                paths.append(prefix)
+
+        walk(
+            current if isinstance(current, dict) else {},
+            applied if isinstance(applied, dict) else {},
+            "",
+        )
+        return paths
 
     @staticmethod
     def _sync_config() -> Dict[str, Any]:

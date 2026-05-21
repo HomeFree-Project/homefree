@@ -2753,7 +2753,17 @@ async def get_current_config():
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        config = ConfigReader.read_config()
+        try:
+            config = ConfigReader.read_config_strict()
+        except json.JSONDecodeError as e:
+            # The on-disk config is malformed (e.g. a hand-edit typo). Surface
+            # it as 422 so the UI shows a modal and KEEPS its last-good config
+            # instead of blanking the screen. This is an expected,
+            # user-recoverable state — not a 500.
+            raise HTTPException(
+                status_code=422,
+                detail=f"homefree-config.json is not valid JSON: {e}",
+            )
         return JSONResponse(content=config)
     except HTTPException:
         raise
@@ -2792,6 +2802,37 @@ async def validate_config(config: dict):
         return JSONResponse(content=to_dict(result))
     except Exception as e:
         logger.error(f"Error validating config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/applied")
+async def get_applied_config():
+    """
+    Return the last-DEPLOYED (built) config snapshot, or {} if none yet.
+
+    This is /var/lib/homefree-admin/applied-config.json — written at the end of
+    each successful rebuild. The UI diffs the current config against it to mark
+    which list rows / fields hold changes that haven't been applied.
+    """
+    try:
+        from services.mode import ModeService
+        from services.nix_operations import NixOperations
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        applied_path = NixOperations.APPLIED_CONFIG_FILE
+        if not applied_path.exists():
+            return JSONResponse(content={})
+        try:
+            return JSONResponse(content=json.loads(applied_path.read_text()))
+        except json.JSONDecodeError:
+            # A corrupt marker just means "no usable baseline" — the UI then
+            # highlights nothing rather than everything.
+            return JSONResponse(content={})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading applied config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/config/diff")
@@ -2879,13 +2920,24 @@ async def preview_config_changes(config: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config/apply")
-async def apply_config_changes(config: dict):
-    """Apply configuration changes with nixos-rebuild switch"""
+async def apply_config_changes(config: dict | None = None):
+    """
+    Apply configuration by rebuilding the CURRENT on-disk config.
+
+    Build-only against disk: /etc/nixos/homefree-config.json is the single
+    source of truth. UI edits reach disk via /api/config/save (auto-save)
+    BEFORE this is called, so this endpoint deliberately IGNORES any request
+    body and rebuilds whatever is on disk. This is what makes Apply unable to
+    revert an out-of-band hand-edit — the previous behaviour wrote the
+    client's page-load snapshot back over disk and then built that snapshot.
+    """
     try:
         from services.mode import ModeService
+        from services.config_reader import ConfigReader
         from services.config_writer import ConfigWriter
         from services.nix_operations import NixOperations
         from services.validation import ValidationService
+        from models import ApplyResult
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
@@ -2893,44 +2945,47 @@ async def apply_config_changes(config: dict):
         # Check if a rebuild is already running
         rebuild_status = NixOperations.get_rebuild_status()
         if rebuild_status['running']:
-            from models import ApplyResult
-            result = ApplyResult(
+            return JSONResponse(content=to_dict(ApplyResult(
                 success=False,
                 message="A rebuild is already in progress. Please wait for it to complete."
-            )
-            return JSONResponse(content=to_dict(result))
+            )))
 
-        # Validate first
-        is_valid, errors = ValidationService.validate_config(config)
+        # Read the on-disk config (the source of truth). A malformed file is a
+        # user-recoverable error — report it instead of building a broken config.
+        try:
+            disk_config = ConfigReader.read_config_strict()
+        except json.JSONDecodeError as e:
+            return JSONResponse(content=to_dict(ApplyResult(
+                success=False,
+                message=f"On-disk homefree-config.json is not valid JSON: {e}"
+            )))
 
+        # Validate what we are about to build
+        is_valid, errors = ValidationService.validate_config(disk_config)
         if not is_valid:
-            from models import ApplyResult
-            result = ApplyResult(
+            return JSONResponse(content=to_dict(ApplyResult(
                 success=False,
                 message=f"Validation failed: {', '.join(errors)}"
-            )
-            return JSONResponse(content=to_dict(result))
+            )))
 
-        # Write config
-        if not ConfigWriter.write_config(config):
-            from models import ApplyResult
-            result = ApplyResult(
+        # Re-materialise SOPS secret files and inject secret paths by writing
+        # the on-disk config back through ConfigWriter. Feeding it the freshly
+        # read disk config makes the value-merge a no-op (disk over disk) while
+        # preserving the secret side-effects the build relies on — and it never
+        # uses a client snapshot, so it cannot clobber a hand-edit.
+        if not ConfigWriter.write_config(disk_config):
+            return JSONResponse(content=to_dict(ApplyResult(
                 success=False,
                 message="Failed to write configuration file"
-            )
-            return JSONResponse(content=to_dict(result))
+            )))
 
         # Start rebuild
         rebuild_result = NixOperations.rebuild_switch()
-
-        from models import ApplyResult
-        result = ApplyResult(
+        return JSONResponse(content=to_dict(ApplyResult(
             success=rebuild_result['success'],
             message=rebuild_result['message'],
             pid=rebuild_result.get('pid')
-        )
-
-        return JSONResponse(content=to_dict(result))
+        )))
 
     except HTTPException:
         raise
@@ -2996,6 +3051,7 @@ async def get_config_dirty():
     """
     try:
         from services.mode import ModeService
+        from services.nix_operations import NixOperations
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
@@ -3004,17 +3060,42 @@ async def get_config_dirty():
         applied_path = Path("/var/lib/homefree-admin/applied-config.json")
 
         if not config_path.exists():
-            return JSONResponse(content={"dirty": False, "reason": "no config file"})
+            return JSONResponse(content={"dirty": False, "reason": "no config file", "changedPaths": []})
 
         current = config_path.read_text()
 
+        # A malformed on-disk config is dirty AND flagged so the UI can warn.
+        # (The /api/config/current poll surfaces the parse detail in a modal;
+        # here we just keep the Apply button honest.)
+        try:
+            current_json = json.loads(current)
+        except json.JSONDecodeError:
+            return JSONResponse(content={"dirty": True, "reason": "config parse error", "changedPaths": []})
+
         if not applied_path.exists():
             # No applied marker yet — assume dirty so the user can apply once.
-            return JSONResponse(content={"dirty": True, "reason": "no applied marker"})
+            return JSONResponse(content={"dirty": True, "reason": "no applied marker", "changedPaths": []})
 
-        applied = applied_path.read_text()
-        if current != applied:
-            return JSONResponse(content={"dirty": True, "reason": "differs"})
+        try:
+            applied_json = json.loads(applied_path.read_text())
+        except json.JSONDecodeError:
+            # Corrupt applied marker — treat as not-yet-applied so Apply works.
+            return JSONResponse(content={"dirty": True, "reason": "no applied marker", "changedPaths": []})
+
+        # Compare SEMANTICALLY (parsed), not as raw text. A no-op round-trip —
+        # adding then removing a list row, a key reorder, or a re-serialization
+        # by ConfigWriter — leaves the meaning unchanged and must NOT report
+        # dirty. changedPaths (same diff) drives the per-field highlight.
+        changed_paths = NixOperations.compute_changed_paths(current_json, applied_json)
+        if current_json != applied_json:
+            return JSONResponse(content={"dirty": True, "reason": "differs", "changedPaths": changed_paths})
+
+        # Config matches applied, but the flake build inputs (the flake source /
+        # custom flakes) may have diverged — e.g. a direct hand-edit to
+        # flake.nix or custom-flakes.nix. Those are not in homefree-config.json.
+        flake_reason = NixOperations.build_inputs_dirty()
+        if flake_reason:
+            return JSONResponse(content={"dirty": True, "reason": flake_reason, "changedPaths": changed_paths})
 
         # Config matches the last applied snapshot — but if the most recent
         # rebuild attempt failed, the system isn't actually in the desired
@@ -3028,6 +3109,7 @@ async def get_config_dirty():
                     return JSONResponse(content={
                         "dirty": True,
                         "reason": "last rebuild failed",
+                        "changedPaths": changed_paths,
                     })
             except Exception as e:
                 logger.warning(f"Could not parse latest-status.json: {e}")
@@ -3038,19 +3120,20 @@ async def get_config_dirty():
         # System Updates page, even though homefree-config.json is unchanged.
         try:
             from services.system_updates import SystemUpdates
-            current = SystemUpdates.get_current()
+            sys_current = SystemUpdates.get_current()
             applied_rev_path = SystemUpdates.APPLIED_FLAKE_REV_FILE
-            if current and applied_rev_path.exists():
+            if sys_current and applied_rev_path.exists():
                 applied_rev = applied_rev_path.read_text().strip()
-                if applied_rev and applied_rev != current["rev"]:
+                if applied_rev and applied_rev != sys_current["rev"]:
                     return JSONResponse(content={
                         "dirty": True,
                         "reason": "system update pending",
+                        "changedPaths": changed_paths,
                     })
         except Exception as e:
             logger.warning(f"Could not check flake rev dirty state: {e}")
 
-        return JSONResponse(content={"dirty": False, "reason": "in sync"})
+        return JSONResponse(content={"dirty": False, "reason": "in sync", "changedPaths": []})
 
     except HTTPException:
         raise

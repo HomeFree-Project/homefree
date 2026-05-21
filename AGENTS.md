@@ -192,6 +192,14 @@ Situational knowledge — read the linked note when working in that area:
   design tokens, `actionIcon`/`navIcon`) instead of inventing a new
   one-off per task. A genuinely new pattern is a maintainer decision.
   → `docs/agent-notes/ui-consistency-and-mobile.md`
+- **Config source-of-truth + undeployed-change indication** — disk
+  (`homefree-config.json`) is the source of truth; Apply is *build-only against
+  disk* (ignores its body); the UI flags anything differing from the deployed
+  snapshot (`applied-config.json`) via a semantic diff. Adding a new editable
+  section means updating `admin-app.getMergedConfig` (or edits silently vanish);
+  External Proxies' enable/public live in their `service-config` entry, never
+  `services.<label>`; per-row highlighting needs a `table-editor` `rowKey`.
+  → `docs/agent-notes/undeployed-change-indication.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

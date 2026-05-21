@@ -12,6 +12,7 @@ import '../../shared/table-editor.js';
 class ExtraProxiesModule extends LitElement {
   static properties = {
     config: { type: Object },
+    appliedConfig: { attribute: false },  // deployed baseline for row highlight
     modified: { type: Boolean }
   };
 
@@ -48,6 +49,7 @@ class ExtraProxiesModule extends LitElement {
   constructor() {
     super();
     this.config = { 'service-config': [] };
+    this.appliedConfig = null;
     this.modified = false;
   }
 
@@ -60,7 +62,7 @@ class ExtraProxiesModule extends LitElement {
         : (typeof row.subdomains === 'string'
             ? row.subdomains.split(',').map(s => s.trim()).filter(Boolean)
             : []);
-      return {
+      const entry = {
         ...row,
         port: row.port === '' || row.port == null ? 80 : Number(row.port),
         // The help box promises subdomains defaults to [label] when
@@ -70,6 +72,14 @@ class ExtraProxiesModule extends LitElement {
           ? parsedSubdomains
           : (row.label ? [row.label] : [])
       };
+      // Keep the entry minimal: store enable/public only when they differ
+      // from their defaults (enable=true, public=false). This matches the
+      // deployed shape — so toggling to a default value isn't read as an
+      // undeployed change — and keeps this form and the App Configuration
+      // toggle in the same representation.
+      if (entry.enable !== false) delete entry.enable;
+      if (!entry.public) delete entry.public;
+      return entry;
     });
 
     const newConfig = { ...this.config, 'service-config': data };
@@ -83,12 +93,19 @@ class ExtraProxiesModule extends LitElement {
   }
 
   render() {
-    const rows = (this.config['service-config'] || []).map(r => ({
+    const toRow = (r) => ({
       ...r,
+      enable: r.enable !== false,   // absent => enabled (the default)
+      public: !!r.public,
       subdomains: Array.isArray(r.subdomains) ? r.subdomains.join(', ') : (r.subdomains || '')
-    }));
+    });
+    const rows = (this.config['service-config'] || []).map(toRow);
+    // Deployed rows in the same shape, so table-editor can flag added/changed
+    // rows (those not present in the last-applied config).
+    const appliedRows = (this.appliedConfig?.['service-config'] || []).map(toRow);
 
     const columns = [
+      { key: 'enable', label: 'Enabled', type: 'boolean', default: true },
       { key: 'label', label: 'Label', type: 'text', placeholder: 'envoy' },
       { key: 'name', label: 'Display Name', type: 'text', placeholder: 'Enphase Solar' },
       { key: 'host', label: 'Backend Host', type: 'text', placeholder: 'envoy.lan or 10.0.0.43' },
@@ -126,6 +143,8 @@ class ExtraProxiesModule extends LitElement {
           <table-editor
             .columns=${columns}
             .data=${rows}
+            .appliedData=${appliedRows}
+            .rowKey=${'label'}
             .neutralBooleans=${true}
             addLabel="Add Entry"
             @data-change=${this.handleProxiesChange}

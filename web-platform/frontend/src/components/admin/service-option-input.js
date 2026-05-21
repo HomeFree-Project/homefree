@@ -21,6 +21,7 @@ class ServiceOptionInput extends LitElement {
     submoduleFields: { type: Array },  // For listOf submodule types
     enumValues: { type: Array },  // For enum types
     uiHint: { type: Object },  // UI rendering hints
+    undeployed: { type: Boolean, reflect: true },  // changed but not applied
     fileBrowserOpen: { type: Boolean, state: true }  // Track file browser modal state
   };
 
@@ -41,6 +42,14 @@ class ServiceOptionInput extends LitElement {
     .option-field.disabled {
       opacity: 0.6;
       cursor: not-allowed;
+    }
+
+    /* This option changed but isn't applied yet — amber field + left bar so
+       you can see WHICH option differs inside the config modal. */
+    :host([undeployed]) .option-field {
+      border-color: var(--hf-warn);
+      background: var(--hf-warn-soft);
+      box-shadow: inset 3px 0 0 0 var(--hf-warn);
     }
 
     .field-header {

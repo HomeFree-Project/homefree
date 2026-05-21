@@ -15,7 +15,11 @@ class FormField extends LitElement {
     required: { type: Boolean },
     disabled: { type: Boolean },
     help: { type: String },
-    error: { type: String }
+    error: { type: String },
+    // True when this field's value differs from the last DEPLOYED (built)
+    // value — i.e. it holds a change that hasn't been applied yet. Reflected
+    // so the host can be styled via :host([undeployed]).
+    undeployed: { type: Boolean, reflect: true }
   };
 
   static styles = css`
@@ -103,6 +107,16 @@ class FormField extends LitElement {
       gap: 8px;
     }
 
+    /* The whole control is a <label> so a click on the text toggles the box. */
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      margin: 0;
+      font-weight: 500;
+    }
+
     input[type="checkbox"] {
       width: 16px;
       height: 16px;
@@ -126,6 +140,25 @@ class FormField extends LitElement {
       color: var(--hf-err);
       margin-top: 6px;
     }
+
+    /* Undeployed (changed-but-not-yet-applied) field: amber-tint the title AND
+       the input so it's hard to miss. Amber (not the green accent) reads as
+       "pending/attention" — green stays reserved for the Apply action. Static
+       — motion is reserved for the Apply button. Inputs keep their :focus
+       ring. */
+    :host([undeployed]) label {
+      background: var(--hf-warn-soft);
+      border-radius: 4px;
+      padding: 3px 6px;
+    }
+
+    :host([undeployed]) input[type="text"]:not(:focus),
+    :host([undeployed]) input[type="email"]:not(:focus),
+    :host([undeployed]) input[type="number"]:not(:focus),
+    :host([undeployed]) select:not(:focus) {
+      border-color: var(--hf-warn);
+      background: var(--hf-warn-soft);
+    }
   `;
 
   constructor() {
@@ -139,6 +172,7 @@ class FormField extends LitElement {
     this.disabled = false;
     this.help = '';
     this.error = '';
+    this.undeployed = false;
   }
 
   handleInput(e) {
@@ -161,15 +195,19 @@ class FormField extends LitElement {
 
   renderInput() {
     if (this.type === 'boolean') {
+      // Input INSIDE the label so clicking the text toggles the box (a bare
+      // sibling <label> with no for/id doesn't).
       return html`
         <div class="checkbox-wrapper">
-          <input
-            type="checkbox"
-            .checked=${this.value}
-            ?disabled=${this.disabled}
-            @change=${this.handleInput}
-          />
-          <label>${this.label}</label>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              .checked=${this.value}
+              ?disabled=${this.disabled}
+              @change=${this.handleInput}
+            />
+            <span>${this.label}</span>
+          </label>
         </div>
       `;
     }

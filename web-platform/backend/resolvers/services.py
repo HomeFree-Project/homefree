@@ -167,6 +167,18 @@ class ServicesResolver:
         homefree_config = ServicesResolver._read_homefree_config()
         services_config_map = ServicesResolver._read_service_config_map()
 
+        # External-proxy entries (homefree.service-config in the LIVE on-disk
+        # config) keyed by label. These hold the user's enable/public for
+        # External Proxies. The catalog (services_config_map) is the DEPLOYED
+        # render and only updates on rebuild, so for external services we read
+        # enable/public from here — otherwise a pending toggle reverts on
+        # reload because the catalog still shows the last-built value.
+        disk_service_config = {
+            e.get("label"): e
+            for e in (homefree_config.get("service-config") or [])
+            if isinstance(e, dict) and e.get("label")
+        }
+
         # Global SSO bootstrap sentinel — checked once per request and
         # shared across every caddy_gated / basic_auth service.
         global_sso_provisioned = os.path.exists(SSO_GLOBAL_SENTINEL)
@@ -237,6 +249,11 @@ class ServicesResolver:
             parent = service_config.get("parent", None)
             url = service_config_data.get("url", None)
 
+            # An External Proxies vhost: a top-level catalog entry (no parent)
+            # with no systemd units. Its enable/public live in the
+            # service-config entry, so the UI routes its toggles there.
+            is_external = parent is None and not systemd_service_names
+
             # Determine enabled state based on whether this is a child instance or special service
             if parent:
                 # This is a child instance - need to check its enable state from parent's instances array
@@ -256,9 +273,16 @@ class ServicesResolver:
                     enabled = True  # Default to enabled if instance not found
                     public = False
             else:
-                # These are special services (admin, landing-page, etc.) - assume always enabled
-                enabled = True
-                public = service_config.get("reverse-proxy", {}).get("public", False)
+                # External-proxy / special catalog entries. enable + public are
+                # the single source of truth in the service-config entry — NOT
+                # services.<label>. Prefer the LIVE on-disk entry so a pending
+                # toggle shows immediately; fall back to the deployed catalog's
+                # reverse-proxy (covers special services like admin/landing,
+                # which aren't in the user's service-config[]).
+                disk_entry = disk_service_config.get(service_label, {})
+                rp = service_config.get("reverse-proxy", {})
+                enabled = disk_entry.get("enable", rp.get("enable", True))
+                public = disk_entry.get("public", rp.get("public", False))
 
             # Get runtime status from systemd
             if systemd_service_names:
@@ -286,6 +310,7 @@ class ServicesResolver:
                 sso_notes=sso_notes,
                 sso_provisioned=sso_provisioned,
                 sso_applicable=sso_applicable,
+                external=is_external,
             )
 
             services_status.append(service_status)

@@ -31,6 +31,7 @@ class AbuseBlockingModule extends LitElement {
   static properties = {
     serverConfig: { type: Object },
     pendingConfig: { type: Object },
+    appliedConfig: { attribute: false },  // deployed baseline for row highlight
     status: { type: Object, state: true },
     banned: { type: Object, state: true },
     counters: { type: Object, state: true },
@@ -534,15 +535,43 @@ class AbuseBlockingModule extends LitElement {
   // Returns a normalised array of records. Tolerates an older
   // plain-string list shape (pre-migration config) by coercing each
   // string to an enabled record.
-  _getCidrList() {
-    const raw = this.pendingConfig?.network?.abuseBlockCidrs
-             ?? this.serverConfig?.network?.abuseBlockCidrs;
+  _normalizeCidrs(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.map(e =>
       typeof e === 'string'
         ? { cidr: e, enabled: true, comment: '' }
         : { cidr: e.cidr, enabled: e.enabled !== false, comment: e.comment || '' }
     );
+  }
+
+  _getCidrList() {
+    return this._normalizeCidrs(
+      this.pendingConfig?.network?.abuseBlockCidrs
+        ?? this.serverConfig?.network?.abuseBlockCidrs
+    );
+  }
+
+  // Deployed CIDR list (baseline for the per-row "undeployed" highlight).
+  _appliedCidrList() {
+    return this._normalizeCidrs(this.appliedConfig?.network?.abuseBlockCidrs);
+  }
+  _hasBaseline() {
+    return !!this.appliedConfig && Object.keys(this.appliedConfig).length > 0;
+  }
+  _cidrKey(e) {
+    return JSON.stringify([e.cidr, e.enabled, e.comment]);
+  }
+  // True when this CIDR entry (value) isn't in the deployed list — added/changed.
+  _cidrUndeployed(e) {
+    if (!this._hasBaseline()) return false;
+    const key = this._cidrKey(e);
+    return !this._appliedCidrList().some(a => this._cidrKey(a) === key);
+  }
+  // Deployed CIDRs no longer in the live list — removed but not yet applied.
+  _removedCidrs() {
+    if (!this._hasBaseline()) return [];
+    const live = new Set(this._getCidrList().map(e => e.cidr));
+    return this._appliedCidrList().filter(a => !live.has(a.cidr));
   }
 
   _emitCidrUpdate(newList) {
@@ -1232,7 +1261,7 @@ class AbuseBlockingModule extends LitElement {
             </thead>
             <tbody>
               ${list.map(e => html`
-                <tr style=${e.enabled ? '' : 'opacity: 0.55;'}>
+                <tr style=${(e.enabled ? '' : 'opacity: 0.55;') + (this._cidrUndeployed(e) ? 'background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);' : '')}>
                   <td class="nowrap">
                     <input
                       type="checkbox"
@@ -1254,6 +1283,21 @@ class AbuseBlockingModule extends LitElement {
                   <td class="nowrap">
                     <button class="action-button danger" @click=${() => this._removeCidr(e.cidr)}>
                       Remove
+                    </button>
+                  </td>
+                </tr>
+              `)}
+              ${this._removedCidrs().map(e => html`
+                <tr title="Removed — Apply to deploy"
+                    style="background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);">
+                  <td class="nowrap"></td>
+                  <td class="mono nowrap" style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.cidr}</td>
+                  <td style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.comment || ''}</td>
+                  <td class="nowrap">
+                    <button class="action-button"
+                            title="Restore this range"
+                            @click=${() => this._emitCidrUpdate([...this._getCidrList(), e])}>
+                      ↩ Restore
                     </button>
                   </td>
                 </tr>

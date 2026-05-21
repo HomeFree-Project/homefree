@@ -17,6 +17,8 @@ import {
 class SystemModule extends LitElement {
   static properties = {
     config: { type: Object },
+    undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
+    appliedConfig: { attribute: false },    // deployed baseline for row highlight
     timezones: { type: Array },
     locales: { type: Array },
     countries: { type: Array },
@@ -164,6 +166,8 @@ class SystemModule extends LitElement {
     this.currencies = [];
     this.languages = [];
     this.modified = false;
+    this.undeployedPaths = new Set();
+    this.appliedConfig = null;
     this.newSshKey = '';
     this.elevationLookupBusy = false;
     this.elevationLookupError = '';
@@ -257,6 +261,13 @@ class SystemModule extends LitElement {
     }));
   }
 
+  // True when `path` (a dotted config path) holds a change not yet deployed —
+  // drives the per-field accent highlight. Same path string the field's
+  // @field-change uses, so the two stay in lockstep.
+  _undeployed(path) {
+    return this.undeployedPaths?.has(path) || false;
+  }
+
   async addSshKey() {
     if (!this.newSshKey.trim()) {
       await alertDialog({ message: 'Please enter an SSH key.' });
@@ -336,6 +347,7 @@ class SystemModule extends LitElement {
             placeholder="homefree"
             help="Name of this system on your network"
             required
+            ?undeployed=${this._undeployed('system.hostName')}
             @field-change=${(e) => this.handleFieldChange('system.hostName', e.detail.value)}
           ></form-field>
 
@@ -346,6 +358,7 @@ class SystemModule extends LitElement {
               .value=${system.domain}
               placeholder="homefree.host"
               help="Public domain for HTTPS services"
+              ?undeployed=${this._undeployed('system.domain')}
               @field-change=${(e) => this.handleFieldChange('system.domain', e.detail.value)}
             ></form-field>
 
@@ -355,6 +368,7 @@ class SystemModule extends LitElement {
               .value=${system.localDomain}
               placeholder="lan"
               help="Domain suffix for local network"
+              ?undeployed=${this._undeployed('system.localDomain')}
               @field-change=${(e) => this.handleFieldChange('system.localDomain', e.detail.value)}
             ></form-field>
           </div>
@@ -379,6 +393,8 @@ class SystemModule extends LitElement {
           <table-editor
             .columns=${additionalDomainsColumns}
             .data=${(system.additionalDomains || []).map(d => ({ domain: d }))}
+            .appliedData=${(this.appliedConfig?.system?.additionalDomains || []).map(d => ({ domain: d }))}
+            .rowKey=${'domain'}
             addLabel="Add Domain"
             @data-change=${this.handleAdditionalDomainsChange}
           ></table-editor>
@@ -397,6 +413,7 @@ class SystemModule extends LitElement {
               .options=${this.timezones}
               placeholder="Select timezone..."
               required
+              ?undeployed=${this._undeployed('system.timeZone')}
               @field-change=${(e) => this.handleFieldChange('system.timeZone', e.detail.value)}
             ></form-field>
 
@@ -407,6 +424,7 @@ class SystemModule extends LitElement {
               .options=${this.countries}
               placeholder="Select country..."
               help="ISO 3166-1 alpha-2 country code"
+              ?undeployed=${this._undeployed('system.countryCode')}
               @field-change=${(e) => this.handleFieldChange('system.countryCode', e.detail.value)}
             ></form-field>
           </div>
@@ -420,6 +438,7 @@ class SystemModule extends LitElement {
               placeholder="Select locale..."
               help="POSIX system locale (formatting, sorting)"
               required
+              ?undeployed=${this._undeployed('system.defaultLocale')}
               @field-change=${(e) => this.handleFieldChange('system.defaultLocale', e.detail.value)}
             ></form-field>
 
@@ -430,6 +449,7 @@ class SystemModule extends LitElement {
               .options=${this.languages}
               placeholder="Select language..."
               help="UI language for apps that have their own (BCP 47)"
+              ?undeployed=${this._undeployed('system.language')}
               @field-change=${(e) => this.handleFieldChange('system.language', e.detail.value)}
             ></form-field>
           </div>
@@ -441,6 +461,7 @@ class SystemModule extends LitElement {
               .value=${system.keyMap}
               .options=${keyboardOptions}
               required
+              ?undeployed=${this._undeployed('system.keyMap')}
               @field-change=${(e) => this.handleFieldChange('system.keyMap', e.detail.value)}
             ></form-field>
 
@@ -451,6 +472,7 @@ class SystemModule extends LitElement {
               .options=${this.currencies}
               placeholder="Select currency..."
               help="ISO 4217 currency code"
+              ?undeployed=${this._undeployed('system.currency')}
               @field-change=${(e) => this.handleFieldChange('system.currency', e.detail.value)}
             ></form-field>
           </div>
@@ -477,6 +499,7 @@ class SystemModule extends LitElement {
                 type="number"
                 .value=${system.elevation == null ? '' : String(system.elevation)}
                 placeholder="0"
+                ?undeployed=${this._undeployed('system.elevation')}
                 @field-change=${(e) => {
                   const v = e.detail.value;
                   this.handleFieldChange('system.elevation', v === '' || v == null ? null : parseInt(v, 10));
@@ -500,6 +523,7 @@ class SystemModule extends LitElement {
               type="select"
               .value=${system.unitSystem || 'metric'}
               .options=${unitSystemOptions}
+              ?undeployed=${this._undeployed('system.unitSystem')}
               @field-change=${(e) => this.handleFieldChange('system.unitSystem', e.detail.value)}
             ></form-field>
           </div>
@@ -517,6 +541,7 @@ class SystemModule extends LitElement {
             placeholder="admin"
             help="Username for system administrator"
             required
+            ?undeployed=${this._undeployed('system.adminUsername')}
             @field-change=${(e) => this.handleFieldChange('system.adminUsername', e.detail.value)}
           ></form-field>
 
@@ -526,6 +551,7 @@ class SystemModule extends LitElement {
             .value=${system.adminEmail}
             placeholder="admin@example.com"
             help="Email for git commits and notifications"
+            ?undeployed=${this._undeployed('system.adminEmail')}
             @field-change=${(e) => this.handleFieldChange('system.adminEmail', e.detail.value)}
           ></form-field>
 
