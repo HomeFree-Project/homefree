@@ -37,6 +37,7 @@ function emitSaveStatus(el, status, error = '') {
 class DevelopersModule extends LitElement {
   static properties = {
     undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
+    appliedConfig: { attribute: false },    // deployed baseline (per-flake diff)
     flakes: { type: Array, state: true },
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
@@ -265,6 +266,33 @@ class DevelopersModule extends LitElement {
     }
     .muted { color: var(--hf-text-muted); font-size: 13px; }
     .toggle-switch { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* Undeployed-change treatment — the app-wide amber convention
+       (--hf-warn / --hf-warn-soft): an edit not yet applied. The base-repo
+       toggle/URL ALSO rewrite flake.nix; that side is flagged separately by
+       the backend build-inputs check, so here we mirror only the
+       homefree-config.json developers.* diff. */
+    .toggle-switch.changed {
+      background: var(--hf-warn-soft);
+      border: 1px solid var(--hf-warn);
+      border-radius: 6px;
+      padding: 4px 10px;
+    }
+    .type-toggle.changed { border-color: var(--hf-warn); }
+    label.field.changed .lbl {
+      display: inline-block;
+      background: var(--hf-warn-soft);
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+    label.field.changed input[type=text] {
+      background: var(--hf-warn-soft);
+      border-color: var(--hf-warn);
+    }
+    .flake-row.changed {
+      background: var(--hf-warn-soft);
+      border-color: var(--hf-warn);
+    }
   `;
 
   constructor() {
@@ -277,6 +305,7 @@ class DevelopersModule extends LitElement {
     this.baseOfficialUrl = '';
     this.baseEnabled = false;
     this.undeployedPaths = new Set();
+    this.appliedConfig = null;
     this.baseType = 'local';
     this.baseLocalUrl = '';
     this.baseRemoteUrl = '';
@@ -631,7 +660,7 @@ class DevelopersModule extends LitElement {
         ${this.baseErrors.map((m) => html`<div class="error">${m}</div>`)}
         ${this.baseWarnings.map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
 
-        <label class="toggle-switch" style="margin-bottom:14px">
+        <label class="toggle-switch ${this._baseFieldChanged('enabled') ? 'changed' : ''}" style="margin-bottom:14px">
           <input
             type="checkbox"
             .checked=${this.baseEnabled}
@@ -647,7 +676,7 @@ class DevelopersModule extends LitElement {
               be visible unless the alternate repository is disabled.
             </div>
 
-            <div class="type-toggle">
+            <div class="type-toggle ${this._baseFieldChanged('type') ? 'changed' : ''}">
               <button
                 class=${this.baseType === 'local' ? 'active' : ''}
                 @click=${() => this._setBaseType('local')}
@@ -660,7 +689,7 @@ class DevelopersModule extends LitElement {
 
             ${this.baseType === 'local'
               ? html`
-                <label class="field">
+                <label class="field ${this._baseFieldChanged('localUrl') ? 'changed' : ''}">
                   <span class="lbl">Local HomeFree repository</span>
                   <div class="input-with-browse">
                     <input
@@ -683,7 +712,7 @@ class DevelopersModule extends LitElement {
                 </label>
               `
               : html`
-                <label class="field">
+                <label class="field ${this._baseFieldChanged('remoteUrl') ? 'changed' : ''}">
                   <span class="lbl">Repository URL</span>
                   <input
                     type="text"
@@ -876,7 +905,7 @@ class DevelopersModule extends LitElement {
     }
     return html`
       ${this.flakes.map((f) => html`
-        <div class="flake-row">
+        <div class="flake-row ${this._flakeChanged(f) ? 'changed' : ''}">
           <div class="meta">
             <div class="name">
               ${f.name}
@@ -911,6 +940,30 @@ class DevelopersModule extends LitElement {
       if (p === 'developers' || p.startsWith('developers.')) return true;
     }
     return false;
+  }
+
+  // True when one Alternate-HomeFree-base field differs from the deployed
+  // config — drives the per-control amber. The toggle/type/URL also rewrite
+  // flake.nix, but that side of the change is caught independently by the
+  // backend's build-inputs check (surfaced as the Custom Flakes nav badge);
+  // here we mirror the homefree-config.json developers.homefree-base.<field> diff.
+  _baseFieldChanged(field) {
+    return this.undeployedPaths?.has('developers.homefree-base.' + field) || false;
+  }
+
+  // True when a registered flake differs from its deployed entry (newly added
+  // or modified), matched by stable id. list_flakes() returns the rows verbatim
+  // from developers.flakes, so the applied snapshot is the identical shape and a
+  // JSON compare is exact. Falls back to the section-level flag when there's no
+  // deployed baseline (fresh box).
+  _flakeChanged(flake) {
+    const appliedFlakes = this.appliedConfig?.developers?.flakes;
+    if (!Array.isArray(appliedFlakes)) {
+      return this.undeployedPaths?.has('developers.flakes') || false;
+    }
+    const prior = appliedFlakes.find((f) => f && f.id === flake.id);
+    if (!prior) return true;
+    return JSON.stringify(prior) !== JSON.stringify(flake);
   }
 
   render() {

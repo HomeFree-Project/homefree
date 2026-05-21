@@ -2166,22 +2166,32 @@ class AdminApp extends LitElement {
   // before the debounced save + next poll catch up. Both mean "not deployed".
   recomputeUndeployedPaths() {
     const merged = this.getMergedConfig() || {};
+    // `developers` (custom flakes + alternate-base repo) is stripped from the
+    // merged/save config on purpose — the Custom Flakes page owns it via its
+    // own /api/developers/* endpoints, so the global Apply must never submit a
+    // stale page-load snapshot. But its ON-DISK value still differs from the
+    // deployed snapshot until the next rebuild, and we DO want to flag that
+    // (per-control amber, nav badge, pending-changes list). Re-add it for
+    // INDICATION ONLY, sourced from serverConfig (the live disk value the 5s
+    // poll refreshes) — never the stale pending snapshot.
+    const current = { ...merged };
+    if (this.serverConfig && this.serverConfig.developers !== undefined) {
+      current.developers = this.serverConfig.developers;
+    }
     let paths;
     if (this.appliedConfig && Object.keys(this.appliedConfig).length) {
-      // Authoritative AND immediate: diff the current UI state (merged) against
-      // the DEPLOYED config. No backend round-trip, so reverting a field to its
+      // Authoritative AND immediate: diff the current UI state against the
+      // DEPLOYED config. No backend round-trip, so reverting a field to its
       // deployed value clears the highlight at once — not after the next 5s
       // poll (which is why a revert used to stay yellow until reload).
-      const applied = { ...this.appliedConfig };
-      delete applied.developers;   // owned by Custom Flakes; stripped from merged
-      paths = new Set(this._diffPaths(applied, merged));
+      paths = new Set(this._diffPaths(this.appliedConfig, current));
     } else {
       // No deployed baseline yet (fresh box) — fall back to the backend's
-      // changedPaths unioned with the local disk-vs-UI diff.
+      // changedPaths unioned with the local disk-vs-UI diff. (developers is
+      // equal on both sides here, so it contributes nothing — the backend's
+      // changedPaths already carries it.)
       paths = new Set(this.deployedChangedPaths);
-      const server = { ...(this.serverConfig || {}) };
-      delete server.developers;
-      for (const p of this._diffPaths(server, merged)) paths.add(p);
+      for (const p of this._diffPaths(this.serverConfig || {}, current)) paths.add(p);
     }
     // Only reassign when the set actually changed. Otherwise the 5s dirty poll
     // would hand every child a brand-new Set each tick — forcing needless
@@ -2800,6 +2810,7 @@ class AdminApp extends LitElement {
         return html`
           <developers-module
             .undeployedPaths=${this.undeployedPaths}
+            .appliedConfig=${this.appliedConfig}
             @updates-applied=${this.checkConfigDirty}
           ></developers-module>
         `;

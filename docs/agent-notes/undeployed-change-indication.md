@@ -68,6 +68,22 @@ are easy to break and several were learned the hard way.
   REASSIGNS `serverConfig` — e.g. the disk→UI poll — must be gated on "no
   unsaved edits" (`dirtyModules`/save state) or it reverts the field being
   edited.
+- **`developers` is the one section that writes BUILD FILES outside
+  `homefree-config.json`.** Registering a flake / enabling the alternate base
+  repo rewrites `flake.nix` + `custom-flakes.nix` AND records `developers.*` in
+  the config, so it has TWO change signals: (1) the structured controls
+  (enable / type / URL / flake registration) are mirrored in `developers.*` and
+  drive the per-control amber + nav badge + pending list — but `getMergedConfig`
+  STRIPS `developers` (the global Apply must never resubmit a stale flakes
+  snapshot), so `recomputeUndeployedPaths` re-adds it FOR INDICATION ONLY from
+  `serverConfig.developers` (the live disk value), never the pending snapshot;
+  (2) flake-file / `flake.lock` / local-flake-*content* changes don't touch
+  `developers.*` at all — they are caught by `build_inputs_dirty` (above) and
+  attributed to Custom Flakes via `changedModuleIds`/`pendingChanges`. The two
+  cover the section between them. (For contrast: **Users** edits go straight to
+  the Zitadel API and apply *live* — nothing is deploy-gated, nothing to mark;
+  **SSO** toggles are ordinary `sso.*` config, deploy-gated like everything
+  else, with the Zitadel client provisioned from that config on rebuild.)
 
 ## Wiring indication for a NEW control
 
