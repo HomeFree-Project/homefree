@@ -10,6 +10,16 @@ import {
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
+// Drives the admin top-bar "Saving…/Saved" pill from this out-of-band
+// module (it persists via its own endpoints, not the merged-config
+// auto-save). admin-app listens for the bubbling, composed `save-status`
+// event. Kept inline (not a shared file) so it ships in this already-
+// tracked module rather than a separate file that can miss the build.
+function emitSaveStatus(el, status, error = '') {
+  el.dispatchEvent(new CustomEvent('save-status', {
+    detail: { status, error }, bubbles: true, composed: true,
+  }));
+}
 
 /**
  * Developers module — register custom Nix flakes.
@@ -49,13 +59,16 @@ class DevelopersModule extends LitElement {
     baseOfficialUrl: { type: String, state: true },
     baseEnabled: { type: Boolean, state: true },
     baseType: { type: String, state: true },
-    baseUrl: { type: String, state: true },
+    // Both kinds are kept independently so toggling the type doesn't
+    // discard the other's value — both round-trip to config; the active
+    // type selects which one is applied to the build.
+    baseLocalUrl: { type: String, state: true },
+    baseRemoteUrl: { type: String, state: true },
     baseSaving: { type: Boolean, state: true },
     baseProbing: { type: Boolean, state: true },
     baseProbeResult: { type: Object, state: true },
     baseErrors: { type: Array, state: true },
     baseWarnings: { type: Array, state: true },
-    baseNotice: { type: String, state: true },
     baseBrowserOpen: { type: Boolean, state: true },
   };
 
@@ -263,13 +276,13 @@ class DevelopersModule extends LitElement {
     this.baseOfficialUrl = '';
     this.baseEnabled = false;
     this.baseType = 'local';
-    this.baseUrl = '';
+    this.baseLocalUrl = '';
+    this.baseRemoteUrl = '';
     this.baseSaving = false;
     this.baseProbing = false;
     this.baseProbeResult = null;
     this.baseErrors = [];
     this.baseWarnings = [];
-    this.baseNotice = '';
     this.baseBrowserOpen = false;
     this._resetForm();
   }
@@ -288,10 +301,11 @@ class DevelopersModule extends LitElement {
       this.baseEnabled = !!data.enabled;
       this.baseType = data.type || 'local';
       // Local entries are stored git+file://-prefixed; show the bare path.
-      const url = data.url || '';
-      this.baseUrl = (this.baseType === 'local' && url.startsWith('git+file://'))
-        ? url.slice('git+file://'.length)
-        : url;
+      const local = data.localUrl || '';
+      this.baseLocalUrl = local.startsWith('git+file://')
+        ? local.slice('git+file://'.length)
+        : local;
+      this.baseRemoteUrl = data.remoteUrl || '';
     } catch (e) {
       this.error = e.message || 'Failed to load the alternate-base setting.';
     } finally {
@@ -351,8 +365,10 @@ class DevelopersModule extends LitElement {
   }
 
   _setType(type) {
+    // Keep whatever the user has typed — the same input box serves both
+    // kinds; only the placeholder/label/hint change. Clearing on toggle
+    // was the annoyance. The probe result is type-specific, so drop it.
     this.formType = type;
-    this.formUrl = '';
     this.probeResult = null;
   }
 
@@ -387,6 +403,7 @@ class DevelopersModule extends LitElement {
     this.formErrors = [];
     this.error = '';
     this.notice = '';
+    emitSaveStatus(this, 'saving');
     try {
       const result = await saveDeveloperFlake({
         id: this.editingId || undefined,
@@ -401,10 +418,12 @@ class DevelopersModule extends LitElement {
       this._resetForm();
       await this.loadFlakes();
       this._notifyDirty();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       // The backend returns 400 with { errors: [...] } on validation failure;
       // fetchAPI surfaces that body on the thrown error.
       this.formErrors = (e.body && e.body.errors) || [e.message || 'Failed to register flake.'];
+      emitSaveStatus(this, 'error', this.formErrors[0]);
     } finally {
       this.saving = false;
     }
@@ -428,13 +447,16 @@ class DevelopersModule extends LitElement {
 
   async _toggleEnabled(flake) {
     this.error = '';
+    emitSaveStatus(this, 'saving');
     try {
       await saveDeveloperFlake({ ...flake, enabled: !flake.enabled });
       await this.loadFlakes();
       this._notifyDirty();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = (e.body && e.body.errors && e.body.errors.join(' '))
         || e.message || 'Failed to update flake.';
+      emitSaveStatus(this, 'error', this.error);
     }
   }
 
@@ -448,13 +470,16 @@ class DevelopersModule extends LitElement {
     if (!ok) return;
     this.error = '';
     this.notice = '';
+    emitSaveStatus(this, 'saving');
     try {
-      const result = await deleteDeveloperFlake(flake.id);
-      this.notice = result.message || 'Flake removed. Click Apply Changes to rebuild.';
+      await deleteDeveloperFlake(flake.id);
+      // No success notice — the top-bar "Saved" pill is the feedback.
       await this.loadFlakes();
       this._notifyDirty();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = e.message || 'Failed to remove flake.';
+      emitSaveStatus(this, 'error', this.error);
     }
   }
 
@@ -475,10 +500,16 @@ class DevelopersModule extends LitElement {
   // is not persisted — it just reveals the field — so it cannot fail
   // the backend's enabled-needs-a-URL check.
 
+  // The URL for the currently-selected type — what gets validated and
+  // applied to the build.
+  get _activeBaseUrl() {
+    return this.baseType === 'remote' ? this.baseRemoteUrl : this.baseLocalUrl;
+  }
+
   // True when there is something coherent to persist: either the
-  // override is off, or it is on AND a URL has been entered.
+  // override is off, or it is on AND the active URL has been entered.
   get _baseReadyToPersist() {
-    return !this.baseEnabled || !!(this.baseUrl || '').trim();
+    return !this.baseEnabled || !!(this._activeBaseUrl || '').trim();
   }
 
   async _persistBase() {
@@ -486,26 +517,28 @@ class DevelopersModule extends LitElement {
     this.baseSaving = true;
     this.baseErrors = [];
     this.baseWarnings = [];
-    this.baseNotice = '';
     this.error = '';
+    emitSaveStatus(this, 'saving');
     try {
       const result = await saveHomefreeBase({
         enabled: this.baseEnabled,
         type: this.baseType,
-        url: this.baseUrl,
+        localUrl: this.baseLocalUrl,
+        remoteUrl: this.baseRemoteUrl,
       });
       // The backend always saves the setting; an invalid path/URL comes
       // back as warnings (the repo is saved but not applied), not errors.
+      // No success notice — the top-bar "Saved" pill is the feedback;
+      // only warnings (saved-but-not-applied) get a bar of their own.
       this.baseWarnings = result.warnings || [];
-      this.baseNotice = this.baseWarnings.length
-        ? ''
-        : (result.message || 'Saved. Click Apply Changes to rebuild.');
       this.baseProbeResult = null;
       await this.loadBaseOverride();
       this._notifyDirty();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.baseErrors = (e.body && e.body.errors)
         || [e.message || 'Failed to save the alternate base repository.'];
+      emitSaveStatus(this, 'error', this.baseErrors[0]);
     } finally {
       this.baseSaving = false;
     }
@@ -521,15 +554,14 @@ class DevelopersModule extends LitElement {
   _setBaseType(type) {
     if (this.baseType === type) return;
     this.baseType = type;
-    this.baseUrl = '';
     this.baseProbeResult = null;
-    // A type switch clears the URL — persist so a stale URL of the other
-    // kind doesn't linger (no-op if enabled, since URL is now empty).
+    // Both URLs are kept; persist so the active type is recorded. The
+    // other kind's value stays in config, ready when toggled back.
     this._persistBase();
   }
 
   _handleBasePathSelected(e) {
-    this.baseUrl = e.detail.path;
+    this.baseLocalUrl = e.detail.path;
     this.baseBrowserOpen = false;
     this._persistBase();
   }
@@ -540,7 +572,7 @@ class DevelopersModule extends LitElement {
   }
 
   async _probeBase() {
-    if (!this.baseUrl) {
+    if (!this._activeBaseUrl) {
       this.baseErrors = ['Enter a repository path or URL before validating.'];
       return;
     }
@@ -550,7 +582,7 @@ class DevelopersModule extends LitElement {
     try {
       this.baseProbeResult = await validateHomefreeBase({
         type: this.baseType,
-        url: this.baseUrl,
+        url: this._activeBaseUrl,
       });
     } catch (e) {
       this.baseErrors = [e.message || 'Could not probe the repository.'];
@@ -562,7 +594,13 @@ class DevelopersModule extends LitElement {
   _renderBaseProbe() {
     const p = this.baseProbeResult;
     if (!p) return '';
+    const normalized = p.normalizedUrl && p.normalizedUrl !== (this._activeBaseUrl || '').trim()
+      ? p.normalizedUrl
+      : '';
     return html`
+      ${normalized
+        ? html`<div class="notice">Interpreted as <code>${normalized}</code></div>`
+        : ''}
       ${(p.errors || []).map((m) => html`<div class="error">${m}</div>`)}
       ${(p.warnings || []).map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
       ${p.valid && (p.errors || []).length === 0 && (p.warnings || []).length === 0
@@ -588,9 +626,6 @@ class DevelopersModule extends LitElement {
           managing everything from this admin panel.
         </p>
 
-        ${this.baseNotice
-          ? html`<div class="notice"><strong>Done.</strong> ${this.baseNotice}</div>`
-          : ''}
         ${this.baseErrors.map((m) => html`<div class="error">${m}</div>`)}
         ${this.baseWarnings.map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
 
@@ -628,9 +663,9 @@ class DevelopersModule extends LitElement {
                   <div class="input-with-browse">
                     <input
                       type="text"
-                      .value=${this.baseUrl}
+                      .value=${this.baseLocalUrl}
                       placeholder="/home/you/homefree"
-                      @input=${(e) => { this.baseUrl = e.target.value; }}
+                      @input=${(e) => { this.baseLocalUrl = e.target.value; }}
                       @change=${this._onBaseUrlCommit}
                       @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
                     />
@@ -650,9 +685,9 @@ class DevelopersModule extends LitElement {
                   <span class="lbl">Repository URL</span>
                   <input
                     type="text"
-                    .value=${this.baseUrl}
+                    .value=${this.baseRemoteUrl}
                     placeholder="github:owner/homefree"
-                    @input=${(e) => { this.baseUrl = e.target.value; }}
+                    @input=${(e) => { this.baseRemoteUrl = e.target.value; }}
                     @change=${this._onBaseUrlCommit}
                     @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
                   />
@@ -681,7 +716,7 @@ class DevelopersModule extends LitElement {
             <div class="actions">
               <button
                 class="btn"
-                ?disabled=${this.baseProbing || !this.baseUrl}
+                ?disabled=${this.baseProbing || !this._activeBaseUrl}
                 @click=${this._probeBase}
               >${this.baseProbing ? 'Validating…' : 'Validate'}</button>
               ${this.baseSaving
@@ -695,7 +730,7 @@ class DevelopersModule extends LitElement {
       ${this.baseBrowserOpen ? html`
         <file-browser
           ?open=${this.baseBrowserOpen}
-          .currentPath=${this.baseUrl || '/home'}
+          .currentPath=${this.baseLocalUrl || '/home'}
           @path-selected=${this._handleBasePathSelected}
           @close=${() => { this.baseBrowserOpen = false; }}
         ></file-browser>
@@ -706,7 +741,13 @@ class DevelopersModule extends LitElement {
   _renderProbe() {
     const p = this.probeResult;
     if (!p) return '';
+    const normalized = p.normalizedUrl && p.normalizedUrl !== (this.formUrl || '').trim()
+      ? p.normalizedUrl
+      : '';
     return html`
+      ${normalized
+        ? html`<div class="notice">Interpreted as <code>${normalized}</code></div>`
+        : ''}
       ${(p.errors || []).map((m) => html`<div class="error">${m}</div>`)}
       ${(p.warnings || []).map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
       ${p.valid && (p.errors || []).length === 0 && (p.warnings || []).length === 0
@@ -741,42 +782,27 @@ class DevelopersModule extends LitElement {
           />
         </label>
 
-        ${this.formType === 'local'
-          ? html`
-            <label class="field">
-              <span class="lbl">Local flake repository</span>
-              <div class="input-with-browse">
-                <input
-                  type="text"
-                  .value=${this.formUrl}
-                  placeholder="/home/you/my-flake"
-                  @input=${(e) => { this.formUrl = e.target.value; }}
-                />
-                <button class="btn" @click=${() => { this.fileBrowserOpen = true; }}>
-                  📁 Browse
-                </button>
-              </div>
-              <span class="hint">
-                A git repository on this machine containing a flake.nix.
-                Stored as a git+file:// flake reference.
-              </span>
-            </label>
-          `
-          : html`
-            <label class="field">
-              <span class="lbl">Flake URL</span>
-              <input
-                type="text"
-                .value=${this.formUrl}
-                placeholder="github:owner/repo"
-                @input=${(e) => { this.formUrl = e.target.value; }}
-              />
-              <span class="hint">
-                A flake reference, e.g. github:owner/repo, gitlab:owner/repo
-                or git+https://example.com/repo.git
-              </span>
-            </label>
-          `}
+        <label class="field">
+          <span class="lbl">${this.formType === 'local' ? 'Local flake repository' : 'Flake URL'}</span>
+          <div class="input-with-browse">
+            <input
+              type="text"
+              .value=${this.formUrl}
+              placeholder=${this.formType === 'local' ? '/home/you/my-flake' : 'github:owner/repo'}
+              @input=${(e) => { this.formUrl = e.target.value; }}
+            />
+            ${this.formType === 'local' ? html`
+              <button class="btn" @click=${() => { this.fileBrowserOpen = true; }}>
+                📁 Browse
+              </button>
+            ` : ''}
+          </div>
+          <span class="hint">
+            ${this.formType === 'local'
+              ? 'A git repository on this machine containing a flake.nix. Stored as a git+file:// flake reference.'
+              : 'A flake reference, e.g. github:owner/repo, gitlab:owner/repo or git+https://example.com/repo.git'}
+          </span>
+        </label>
 
         <button class="advanced-toggle" @click=${() => { this.showAdvanced = !this.showAdvanced; }}>
           ${this.showAdvanced ? '▾ Hide advanced' : '▸ Advanced'}

@@ -99,3 +99,46 @@ that contacts a podman-hosted backend needs both
 `after=podman-<name>.service` **and** a runtime HTTP/TCP readiness probe
 (poll-curl loop). See `dns-ready-ordering.md` for the DNS case and
 `apps/immich` (`dependsOn`) for cross-container ordering.
+
+The same gap applies to **non-container `Type=simple` daemons**.
+`headscale.service` is `Type=simple`, so systemd marks it "started" the
+instant the process forks — ~11 s *before* it opens its DB and binds its
+gRPC/HTTP listener. A oneshot ordered `after headscale.service` that
+drives the headscale CLI (`headscale-mint-tailscale-key`,
+`headscale-mint-api-key`) races that gap: the CLI hits a not-yet-bound
+socket and dies with `context deadline exceeded` (its own 10 s timeout).
+At *boot* the oneshot retries and eventually wins, but on a
+`nixos-rebuild switch` a failed oneshot makes `switch-to-configuration`
+return **exit 4** — a red rebuild for a transient race. Fix: a bounded
+readiness poll at the top of the script (poll a cheap read-only CLI call
+like `users list` until it answers) — see the shared `waitForHeadscale`
+snippet in `apps/headscale/default.nix`. `after`/`requires` alone is not
+enough for a `Type=simple` daemon with a slow listener bind.
+
+## `StartLimitBurst` / `StartLimitIntervalSec` belong in `unitConfig`, not `serviceConfig`
+
+In systemd, the `[Unit]` and `[Service]` sections each have their own
+directives. `StartLimitBurst`, `StartLimitIntervalSec`,
+`StartLimitAction` are **`[Unit]`** directives. `Restart`, `RestartSec`,
+`TimeoutStartSec`, `ExecStart*` etc. are `[Service]`.
+
+NixOS routes module fields verbatim: `systemd.services.foo.unitConfig.X`
+goes into `[Unit]`, `systemd.services.foo.serviceConfig.Y` goes into
+`[Service]`. Putting a `[Unit]`-section key under `serviceConfig`
+renders it into the wrong section and systemd **silently** ignores it:
+
+```
+Unknown key 'StartLimitIntervalSec' in section [Service], ignoring.
+```
+
+The unit then runs with the systemd default (5×10s). This bites because
+the override "applied" cleanly (no eval error, the line is in the
+generated unit file), but the runtime behaviour is unchanged. Look for
+the warning in `journalctl -b -u <name>.service`.
+
+`modules/service-restart-policy.nix` gets this right; ad-hoc overrides
+in app modules historically did not. When tuning a service's
+start-limit window, always:
+
+- `RestartSec` → `serviceConfig`
+- `StartLimitBurst`, `StartLimitIntervalSec` → `unitConfig`

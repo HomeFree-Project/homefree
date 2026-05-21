@@ -49,6 +49,18 @@ class DashboardModule extends LitElement {
       gap: 12px;
       margin-bottom: 16px;
     }
+    /* The three summary cards line up 3-up directly above the History
+       charts — identical column count, gap and 900px fold — so
+       Connectivity / CPU / Memory each sit exactly above their chart.
+       Each card is then ⅓ of the container, wide enough that the
+       subtitles no longer wrap, so the row height never changes. */
+    .summary-cards {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .summary-cards { grid-template-columns: 1fr; }
+    }
     .card {
       background: var(--hf-surface);
       border: 1px solid var(--hf-border);
@@ -174,12 +186,22 @@ class DashboardModule extends LitElement {
       font-size: 10px;
       font-family: inherit;
     }
+    /* Placeholder occupies the *same* box the chart will, so swapping
+       placeholder → SVG causes no reflow. The line/area charts use a
+       600×150 viewBox (rendered height = width ÷ 4); the connectivity
+       strip is shorter (600×50). aspect-ratio reserves that height
+       responsively at every width. */
     .chart-empty {
       font-size: 12px;
       color: var(--hf-text-muted);
-      padding: 48px 0;
       text-align: center;
+      width: 100%;
+      aspect-ratio: 600 / 150;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
+    .chart-empty.strip { aspect-ratio: 600 / 50; }
     .legend {
       display: flex;
       gap: 16px;
@@ -232,7 +254,37 @@ class DashboardModule extends LitElement {
       font-size: 13px;
       margin-bottom: 16px;
     }
-    .loading { color: var(--hf-text-muted); font-size: 13px; padding: 24px 0; }
+
+    /* Skeleton placeholders shown on first load while overview data is
+       still null. Same shimmer the Network Traffic / Hardware pages use
+       so all admin skeletons look identical. */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--hf-surface-3) 25%,
+        var(--hf-border-2) 37%,
+        var(--hf-surface-3) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      vertical-align: middle;
+    }
+    .skeleton-title       { width: 180px; height: 15px; }
+    .skeleton-sub         { width: 110px; height: 11px; margin-top: 6px; }
+    .skeleton-cell        { width: 60px;  height: 13px; }
+    .skeleton-card-value  { width: 48px;  height: 26px; }
+    .skeleton-meter       { width: 100%;  height: 8px;  border-radius: 4px; }
+    /* In-card bars must leave the card the exact height it will be once
+       filled, or the card shrinks on load. Keep each bar a fraction of
+       its line's font-size so it sits *within* the real text line-box
+       (never inflating it), and drop the sub bar's standalone top margin
+       since .card-sub already spaces it (else it double-counts). */
+    .card-value .skeleton-card-value { height: 0.8em; }
+    .card-sub   .skeleton-sub        { height: 0.8em; margin-top: 0; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to   { background-position: 0 0; }
+    }
   `;
 
   constructor() {
@@ -314,6 +366,20 @@ class DashboardModule extends LitElement {
     if (pct >= 90) return 'err';
     if (pct >= 75) return 'warn';
     return '';
+  }
+
+  // Skeleton table rows for first-load placeholders. nCols = number of
+  // cells per row; nRows = how many placeholder rows to show.
+  _renderSkeletonRows(nCols, nRows) {
+    const cols = Array.from({ length: nCols });
+    const rows = Array.from({ length: nRows });
+    return rows.map(() => html`
+      <tr>
+        ${cols.map(() => html`
+          <td><span class="skeleton skeleton-cell"></span></td>
+        `)}
+      </tr>
+    `);
   }
 
   // --- SVG line/area chart ----------------------------------------------
@@ -407,7 +473,7 @@ class DashboardModule extends LitElement {
    */
   _renderUptimeBar(samples, spanSec) {
     if (samples.length < 2) {
-      return html`<div class="chart-empty">Collecting data…</div>`;
+      return html`<div class="chart-empty strip">Collecting data…</div>`;
     }
     const W = 600;
     const H = 34;
@@ -439,6 +505,20 @@ class DashboardModule extends LitElement {
   // --- render sections ---------------------------------------------------
 
   _renderSummaryCards() {
+    if (this.overview == null) {
+      const labels = ['Connectivity', 'CPU', 'Memory'];
+      return html`
+        <div class="cards summary-cards">
+          ${labels.map(label => html`
+            <div class="card">
+              <div class="card-label">${label}</div>
+              <div class="card-value"><span class="skeleton skeleton-card-value"></span></div>
+              <div class="card-sub"><span class="skeleton skeleton-sub"></span></div>
+            </div>
+          `)}
+        </div>
+      `;
+    }
     const o = this.overview;
     const conn = o.connectivity || {};
     const connected = conn.connected;
@@ -447,7 +527,7 @@ class DashboardModule extends LitElement {
     const mem = o.memory || {};
 
     return html`
-      <div class="cards">
+      <div class="cards summary-cards">
         <div class="card">
           <div class="card-label">Connectivity</div>
           <div class="card-value ${connected === false ? 'err' : connected ? 'ok' : ''}">
@@ -490,6 +570,27 @@ class DashboardModule extends LitElement {
   }
 
   _renderNetworkInfo() {
+    if (this.overview == null) {
+      const labels = [
+        'WAN interface', 'Public IPv4', 'Public IPv6', 'Gateway (IPv4)',
+        'Gateway (IPv6)', 'LAN interface', 'LAN IPv4', 'LAN IPv6',
+      ];
+      return html`
+        <div class="panel">
+          <div class="panel-title">Network</div>
+          <table>
+            <tbody>
+              ${labels.map(label => html`
+                <tr>
+                  <th>${label}</th>
+                  <td><span class="skeleton skeleton-cell"></span></td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
     const o = this.overview;
     const addrs = o.addresses || {};
     const wan = addrs.wan;
@@ -541,6 +642,17 @@ class DashboardModule extends LitElement {
   }
 
   _renderSystemCards() {
+    if (this.overview == null) {
+      return html`
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">LAN Clients</div>
+            <div class="card-value"><span class="skeleton skeleton-card-value"></span></div>
+            <div class="card-sub"><span class="skeleton skeleton-sub"></span></div>
+          </div>
+        </div>
+      `;
+    }
     const o = this.overview;
     return html`
       <div class="cards">
@@ -556,9 +668,10 @@ class DashboardModule extends LitElement {
   _renderInterfaceThroughput() {
     // Only the WAN and LAN interfaces matter here — other NICs (bridges,
     // veths, etc.) just clutter the view.
-    const ifaces = (this.overview.interfaces || [])
+    const loading = this.overview == null;
+    const ifaces = loading ? [] : (this.overview.interfaces || [])
       .filter(i => i.role === 'wan' || i.role === 'lan');
-    if (ifaces.length === 0) return '';
+    if (!loading && ifaces.length === 0) return '';
     return html`
       <div class="panel">
         <div class="panel-title">
@@ -575,7 +688,7 @@ class DashboardModule extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${ifaces.map(i => html`
+            ${loading ? this._renderSkeletonRows(4, 2) : ifaces.map(i => html`
               <tr>
                 <td>${i.role.toUpperCase()} (${i.name})</td>
                 <td>
@@ -594,8 +707,9 @@ class DashboardModule extends LitElement {
   }
 
   _renderDisks() {
-    const disks = this.overview.disks || [];
-    if (disks.length === 0) return '';
+    const loading = this.overview == null;
+    const disks = loading ? [] : (this.overview.disks || []);
+    if (!loading && disks.length === 0) return '';
     return html`
       <div class="panel">
         <div class="panel-title">Disk Usage</div>
@@ -610,7 +724,18 @@ class DashboardModule extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${disks.map(d => html`
+            ${loading ? Array.from({ length: 3 }).map(() => html`
+              <tr>
+                <td><span class="skeleton skeleton-cell"></span></td>
+                <td><span class="skeleton skeleton-cell"></span></td>
+                <td class="num"><span class="skeleton skeleton-cell"></span></td>
+                <td class="num"><span class="skeleton skeleton-cell"></span></td>
+                <td>
+                  <span class="skeleton skeleton-meter"></span>
+                  <div class="card-sub"><span class="skeleton skeleton-sub"></span></div>
+                </td>
+              </tr>
+            `) : disks.map(d => html`
               <tr>
                 <td>${d.mountpoint}</td>
                 <td>${d.fstype}</td>
@@ -632,6 +757,11 @@ class DashboardModule extends LitElement {
   }
 
   _renderNetworkMounts() {
+    // Network mounts are an optional panel — empty on most boxes. Render
+    // nothing (no skeleton) until overview loads, so a box without mounts
+    // never flashes a skeleton that then collapses. With real mounts the
+    // panel appears at the bottom, growing downward with no upward shift.
+    if (this.overview == null) return '';
     const mounts = this.overview.network_mounts || [];
     if (mounts.length === 0) return '';
     return html`
@@ -707,7 +837,8 @@ class DashboardModule extends LitElement {
 
     // Per-interface throughput series, keyed off the WAN/LAN interface
     // names from the overview so each chart shows one real interface.
-    const ifaces = this.overview.interfaces || [];
+    const loading = this.overview == null;
+    const ifaces = (this.overview && this.overview.interfaces) || [];
     const wanName = (ifaces.find(i => i.role === 'wan') || {}).name;
     const lanName = (ifaces.find(i => i.role === 'lan') || {}).name;
     const rxFor = (name) => samples.map(s => ((s.rates || {})[name] || {}).rx_bps || 0);
@@ -738,7 +869,8 @@ class DashboardModule extends LitElement {
               ],
               { formatY: fmtBits, spanSec },
             )
-          : html`<div class="chart-empty">No ${role} interface configured</div>`}
+          : html`<div class="chart-empty">${
+              loading ? 'Collecting data…' : `No ${role} interface configured`}</div>`}
         <div class="legend">
           <span class="rx">Download</span>
           <span class="tx">Upload</span>
@@ -810,11 +942,10 @@ class DashboardModule extends LitElement {
   }
 
   render() {
-    if (this.loading && !this.overview) {
-      return html`<div class="module-container">
-        <div class="loading">Loading dashboard…</div>
-      </div>`;
-    }
+    // The shell paints immediately; each section renders skeleton
+    // placeholders while overview is null (matching the Network Traffic
+    // and Hardware pages). Only a *failed* first load short-circuits to
+    // the error box rather than leaving skeletons up forever.
     if (this.error && !this.overview) {
       return html`<div class="module-container">
         <div class="error-message"><strong>Error:</strong> ${this.error}</div>

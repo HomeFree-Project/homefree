@@ -407,6 +407,22 @@ in
     restartTriggers = [
       (builtins.toJSON config.services.unbound.settings)
     ];
+    ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives;
+    ## putting them under serviceConfig renders them into [Service] where
+    ## systemd silently ignores them ("Unknown key '...' in section [Service]").
+    ## They must go under unitConfig to take effect.
+    ##
+    ## Bumped from the default-ish 5×60s to 30×600s so a cold-boot pull-retry
+    ## window (~7.5 min at RestartSec=15s) can ride out the period during
+    ## which unbound's upstream DoT path (TCP/853 to public resolvers) is
+    ## not yet reachable post-`network-online.target`. The previous values
+    ## were never effective anyway because of the section-placement bug, so
+    ## adguardhome was inheriting systemd defaults; this both fixes the
+    ## placement and chooses values that actually survive a cold-cache boot.
+    unitConfig = {
+      StartLimitBurst = 30;
+      StartLimitIntervalSec = 600;
+    };
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
       # Cleanup any leftover DNS proxy processes on service stop/restart/failure
@@ -420,11 +436,8 @@ in
       ];
       ## Bump ulimit
       LimitNOFILE = 65535;
-      ## Limit restart attempts to prevent socat accumulation
-      StartLimitBurst = 5;
-      StartLimitIntervalSec = 60;
       Restart = lib.mkForce "on-failure";
-      RestartSec = 10;
+      RestartSec = 15;
     };
   };
 

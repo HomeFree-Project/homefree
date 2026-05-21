@@ -38,6 +38,38 @@ let
 
   headscaleEnabled = config.homefree.service-options.headscale.enable;
 
+  ## headscale.service is Type=simple: systemd marks it "started" the
+  ## instant the process forks, which is *before* it has opened its DB
+  ## and bound the gRPC/HTTP listener (observed ~11s of setup — DERP
+  ## region init etc. — between fork and "listening and serving HTTP").
+  ## Any oneshot ordered `after headscale.service` that drives the
+  ## headscale CLI therefore races that gap: the CLI connects to a
+  ## not-yet-listening socket and dies with "context deadline exceeded"
+  ## (its own 10s client timeout). At boot the oneshot just retries and
+  ## eventually wins, but on a `nixos-rebuild switch` a failed oneshot
+  ## makes switch-to-configuration return exit 4. The fix is a bounded
+  ## readiness poll: hammer a cheap, side-effect-free CLI call (`users
+  ## list`) until it succeeds before doing real work. This is the
+  ## process-readiness-vs-unit-started pattern from
+  ## docs/agent-notes/systemd-unit-patterns.md, applied to a daemon
+  ## rather than a podman container. Shared by both mint units.
+  waitForHeadscale = ''
+    ## Wait up to ~120s for headscale to actually answer its API. We
+    ## poll `users list` (read-only, no side effects) rather than trust
+    ## systemd's "started". Falls through with a loud message if it
+    ## never comes up — the caller's subsequent CLI call will then fail
+    ## for real and surface the underlying problem.
+    for i in $(${pkgs.coreutils}/bin/seq 1 60); do
+      if ${pkgs.headscale}/bin/headscale users list -o json >/dev/null 2>&1; then
+        break
+      fi
+      if [ "$i" = 60 ]; then
+        echo "wait-for-headscale: headscale API still not answering after ~120s; proceeding anyway" >&2
+      fi
+      ${pkgs.coreutils}/bin/sleep 2
+    done
+  '';
+
   headplane-port = 3009;
 
   ## Per-secret files for SOPS-managed secrets — same pattern as
@@ -359,6 +391,13 @@ in
     wants = [ "dns-ready.service" ];
     serviceConfig = {
       RestartSec = lib.mkForce "15s";
+    };
+    ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives in
+    ## systemd, not [Service]. Putting them under serviceConfig renders them
+    ## into the wrong section and systemd silently ignores them
+    ## ("Unknown key 'StartLimitIntervalSec' in section [Service], ignoring.").
+    ## They must go under unitConfig to actually take effect.
+    unitConfig = {
       StartLimitBurst = lib.mkForce 10;
       StartLimitIntervalSec = lib.mkForce 300;
     };
@@ -582,6 +621,7 @@ in
     };
     script = ''
       set -eu
+      ${waitForHeadscale}
       mkdir -p ${headplaneSecretsDir}
       KEY_FILE=${headplaneSecretsDir}/headscale-api-key
 
@@ -641,6 +681,7 @@ in
     };
     script = ''
       set -eu
+      ${waitForHeadscale}
       mkdir -p ${headplaneSecretsDir}
       KEY_FILE=${headplaneSecretsDir}/tailscale-key
       USERNAME=server

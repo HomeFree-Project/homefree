@@ -91,6 +91,31 @@ separate deployments. It is *not* one machine's config.
    hacks (a one-line override, a stub return, a hard-coded value to
    unblock a build) — ask first.
 
+10. **NEVER ship a broken admin/home UI — it is the recovery surface.**
+    The web UI is how the box is operated *and* repaired; if it
+    white-screens, there is no in-product way back. Recovery then means
+    SSH into the box and `nixos-rebuild` from the CLI — and on a real
+    deployment that box may be remote, headless, or unreachable, so a
+    broken UI can be a hard outage. Treat any UI regression as
+    severity-1. Concretely:
+    - A single missing/!untracked frontend module white-screens the
+      *entire* SPA: the browser fetches the absent `.js`, gets an
+      empty/404 body with MIME `""`, and blocks the ES module — every
+      page dies, not just the new one. This is the most common way the
+      UI breaks, and it is rule 2 (stage every new file) — verify the
+      new file is **git-tracked in the tree the box actually builds
+      from**, not merely present on disk. `git add` ≠ synced; a file
+      rsynced to the box but unstaged in the box's flake repo is invisible
+      to the Nix path import.
+    - A frontend change is **not done** until it has been built and
+      loaded the way the box serves it. The frontend is served as raw,
+      unbundled ES modules (`environment.etc."homefree-installer/frontend"
+      .source = ./frontend`), so a bad import is caught only at runtime in
+      the browser — never assume "it parsed locally" means "it loads on
+      the box."
+    - If you have already caused a UI breakage, say so loudly and treat
+      restoring the UI as the top priority over any other in-flight work.
+
 ## How services are structured
 
 - Each app/infra module is one directory under `apps/` or `services/`,
@@ -138,6 +163,29 @@ Situational knowledge — read the linked note when working in that area:
   snapshot, and `flake update <input>` will NOT re-hash a dirty tree.
   The lock node must be stripped and re-locked, or edits silently don't
   take effect. → `docs/agent-notes/flake-lock-local-input-refresh.md`
+- **`homefree-configuration.nix` is generated** — the
+  `/etc/nixos/homefree-configuration.nix` on a deployed box is
+  regenerated from `HOMEFREE_CONFIG_TEMPLATE` inside
+  `web-platform/backend/services/install.py` by `sync-template.py` on
+  every rebuild (CLI and UI). Editing only the deployed file is a time
+  bomb — it survives until any other template change makes them drift,
+  then is overwritten with no warning. Schema-loader patches go in
+  install.py.
+  → `docs/agent-notes/homefree-configuration-nix-is-generated.md`
+- **Lit tagged-template backticks** — never put a backtick inside a
+  `css\`...\`` or `html\`...\`` template body (including inside a CSS
+  `/* ... */` comment); it closes the template and the trailing text
+  parses as JS. Fails as `SyntaxError` (parse-time) or `TypeError: ...
+  is not a function` (runtime, parse looks clean). Use plain words or
+  single quotes for inline emphasis instead.
+  → `docs/agent-notes/lit-tagged-template-backticks.md`
+- **UI consistency + mobile** — every layout/UI change must work at
+  phone width (add a `@media` fold when the desktop layout doesn't
+  collapse gracefully), and must reuse the established pattern (the
+  canonical button/modal styles, `--hf-content-max` width cap, `--hf-*`
+  design tokens, `actionIcon`/`navIcon`) instead of inventing a new
+  one-off per task. A genuinely new pattern is a maintainer decision.
+  → `docs/agent-notes/ui-consistency-and-mobile.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

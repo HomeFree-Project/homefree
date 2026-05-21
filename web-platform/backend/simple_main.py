@@ -3258,10 +3258,13 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
         url = (req.url or "").strip()
         if req.type == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
+        elif req.type == "remote" and url:
+            url = DevelopersService._normalize_remote_url(url)
 
-        return JSONResponse(content=DevelopersService.probe_flake(
-            url, req.moduleAttr or "default"
-        ))
+        result = DevelopersService.probe_flake(url, req.moduleAttr or "default")
+        # Surface the canonical form so the UI can show "interpreted as".
+        result["normalizedUrl"] = url
+        return JSONResponse(content=result)
 
     except HTTPException:
         raise
@@ -3271,10 +3274,17 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
 
 
 class HomefreeBaseOverrideRequest(BaseModel):
-    """Set the alternate HomeFree base repository."""
+    """Set the alternate HomeFree base repository.
+
+    Both URLs are persisted so toggling the type never discards the
+    other's value; the active `type` selects which is applied. `url` is
+    retained for back-compat with older clients that sent a single value.
+    """
     enabled: bool
     type: str  # "local" | "remote"
-    url: Optional[str] = ""
+    localUrl: Optional[str] = None
+    remoteUrl: Optional[str] = None
+    url: Optional[str] = None
 
 
 class HomefreeBaseProbeRequest(BaseModel):
@@ -3347,8 +3357,13 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
         url = (req.url or "").strip()
         if req.type == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
+        elif req.type == "remote" and url:
+            url = DevelopersService._normalize_remote_url(url)
 
-        return JSONResponse(content=DevelopersService.probe_base_override(url))
+        result = DevelopersService.probe_base_override(url)
+        # Surface the canonical form so the UI can show "interpreted as".
+        result["normalizedUrl"] = url
+        return JSONResponse(content=result)
 
     except HTTPException:
         raise

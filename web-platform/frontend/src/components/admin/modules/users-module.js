@@ -7,6 +7,16 @@ import {
   getCurrentUser, updateUser, setUserPassword, changeOwnPassword,
 } from '../../../api/client.js';
 import { validatePassword, loadPasswordPolicy, DEFAULT_POLICY } from '../../../shared/password-policy.js';
+// Drives the admin top-bar "Saving…/Saved" pill from this out-of-band
+// module (user CRUD persists via its own endpoints, not the merged-config
+// auto-save). admin-app listens for the bubbling, composed `save-status`
+// event. Kept inline (not a shared file) so it ships in this already-
+// tracked module rather than a separate file that can miss the build.
+function emitSaveStatus(el, status, error = '') {
+  el.dispatchEvent(new CustomEvent('save-status', {
+    detail: { status, error }, bubbles: true, composed: true,
+  }));
+}
 
 /**
  * Users admin module — wraps the Zitadel management API behind the
@@ -441,13 +451,16 @@ class UsersModule extends LitElement {
     this.users = this.users.map(u =>
       u.id === user.id ? { ...u, is_admin: next } : u
     );
+    emitSaveStatus(this, 'saving');
     try {
       await setUserAdmin(user.id, next);
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = `Failed to update admin: ${this._errMsg(e)}`;
       this.users = this.users.map(u =>
         u.id === user.id ? { ...u, is_admin: !next } : u
       );
+      emitSaveStatus(this, 'error', this.error);
     }
   }
 
@@ -462,11 +475,14 @@ class UsersModule extends LitElement {
       variant: 'danger',
     });
     if (!ok) return;
+    emitSaveStatus(this, 'saving');
     try {
       await deleteUser(user.id);
       this.users = this.users.filter(u => u.id !== user.id);
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = `Failed to delete user: ${this._errMsg(e)}`;
+      emitSaveStatus(this, 'error', this.error);
     }
   }
 
@@ -515,6 +531,7 @@ class UsersModule extends LitElement {
 
     this.saving = true;
     this.error = '';
+    emitSaveStatus(this, 'saving');
     try {
       // Profile updates (name/email).
       const patch = {};
@@ -542,8 +559,10 @@ class UsersModule extends LitElement {
 
       this._cancelEdit();
       await this.refresh();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = `Failed to save: ${this._errMsg(e)}`;
+      emitSaveStatus(this, 'error', this.error);
     } finally {
       this.saving = false;
     }
@@ -567,6 +586,7 @@ class UsersModule extends LitElement {
     }
     this.creating = true;
     this.error = '';
+    emitSaveStatus(this, 'saving');
     try {
       const r = await createUser({
         username: f.username,
@@ -580,8 +600,10 @@ class UsersModule extends LitElement {
       this.form = this._blankCreateForm();
       this.showCreate = false;
       await this.refresh();
+      emitSaveStatus(this, 'saved');
     } catch (e) {
       this.error = `Failed to create user: ${this._errMsg(e)}`;
+      emitSaveStatus(this, 'error', this.error);
     } finally {
       this.creating = false;
     }

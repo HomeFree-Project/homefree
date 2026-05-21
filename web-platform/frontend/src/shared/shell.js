@@ -11,10 +11,12 @@ import { css } from 'lit';
 //   │  -Item   │                            │
 //   └──────────┴────────────────────────────┘
 //
-// Sidebar holds intra-site navigation (admin: modules / home: pages).
-// Topbar holds the current page title on the left and the user-menu
-// on the right. The user-menu carries cross-SITE links — Admin,
-// Manual — plus Profile & password and Sign out.
+// Sidebar holds intra-site navigation ONLY (admin: modules / home:
+// pages). Topbar holds the current page title on the left and, on the
+// right, the surface switcher (cross-SURFACE links — Home / Admin /
+// Manual; see surface-switcher.js) followed by the user-menu (Profile
+// & password, Sign out). Cross-surface links are deliberately kept out
+// of the nav rail so "leaves this surface" reads as distinct.
 //
 // Usage from a host LitElement:
 //   1. Include shellStyles in static styles (plus themeVars,
@@ -95,6 +97,9 @@ export const shellStyles = css`
     white-space: nowrap;
     color: var(--hf-text);
     letter-spacing: -0.01em;
+    /* Clicking the title collapses the sidebar (same as the button). */
+    cursor: pointer;
+    user-select: none;
   }
   .collapse-btn {
     background: var(--hf-surface-2);
@@ -226,33 +231,9 @@ export const shellStyles = css`
     background: rgba(245, 191, 66, 0.22);
     border-left-color: #f5bf42;
   }
-  /* Cross-site nav item — a link OUT of the current app (Home portal
-     -> Admin, Admin -> Home portal). A very subtle surface tint plus a
-     trailing arrow marks it as leaving the current page. No active
-     left-bar — it is a link, never a selected state. Pinned at the top
-     of the nav menu. */
-  .nav-item-crosssite {
-    background: var(--hf-surface-2);
-    color: var(--hf-text);
-    font-weight: 600;
-    margin: 0 0 8px 0;
-  }
-  .nav-item-crosssite:hover {
-    background: var(--hf-surface-3);
-    color: var(--hf-text);
-  }
-  /* Trailing arrow pushed to the right edge of the row; hidden when
-     the sidebar collapses (label text hides too). Applies to any
-     nav-item with an external-link arrow (Home/Admin crosssite links
-     and the Manual link). */
-  .nav-item .nav-item-arrow {
-    margin-left: auto;
-    font-size: 13px;
-    opacity: 0.55;
-  }
-  .sidebar.collapsed .nav-item .nav-item-arrow {
-    display: none;
-  }
+  /* Cross-surface links (Home / Admin / Manual) live in the top-bar
+     surface switcher (surface-switcher.js), NOT here — the nav rail is
+     in-site only. */
   .sidebar.collapsed .nav-item-text {
     display: none;
   }

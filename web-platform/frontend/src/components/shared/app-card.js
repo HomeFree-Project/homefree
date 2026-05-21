@@ -39,6 +39,7 @@ class AppCard extends LitElement {
     compact: { type: Boolean, reflect: true },
     _hasBody: { type: Boolean, state: true },
     _hasHeader: { type: Boolean, state: true },
+    _hasStatus: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -53,7 +54,13 @@ class AppCard extends LitElement {
       background: var(--hf-surface);
       border: 1px solid var(--hf-border);
       border-radius: 12px;
-      padding: 18px;
+      /* Admin cards (non-compact) carry status + toggles + the
+         Details/Config buttons but no inline config body, so they can be
+         tight — keeps the one-per-row list from running tall. Symmetric
+         padding now that the phantom .body margin (whitespace-only slot)
+         is gone. The Home launcher keeps its roomier padding via the
+         compact override. */
+      padding: 11px 14px;
       color: inherit;
       text-decoration: none;
       display: flex;
@@ -64,6 +71,11 @@ class AppCard extends LitElement {
       height: 100%;
       box-sizing: border-box;
       transition: border-color 0.2s, transform 0.2s, background 0.2s;
+    }
+
+    /* Home launcher tiles keep the original roomier padding. */
+    :host([compact]) .card {
+      padding: 18px;
     }
 
     :host([enabled]) .card {
@@ -94,9 +106,27 @@ class AppCard extends LitElement {
        (status badge + action icons on the admin card). margin-left:auto
        pushes it past the flexible .titles column. Empty on the Home
        launcher, where it collapses to nothing. When the row wraps it
-       sits on its own line; margin-left:auto then right-aligns it. */
+       sits on its own line; margin-left:auto then right-aligns it.
+       max-width:100% + min-width:0 caps the slot to the card width on
+       a wrapped line, so slotted content with flex-wrap can fold inside
+       the card instead of overflowing to the right. */
     .head-aside {
       margin-left: auto;
+      flex-shrink: 0;
+      max-width: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    /* Status slot — a fixed cell between the icon and the title. The
+       admin Apps card slots its status pill here so the pill's LEFT edge
+       is constant across cards (it no longer rides the variable-width,
+       right-anchored header cluster, which is what kept the pills from
+       lining up). flex-shrink:0 keeps it at its natural/fixed width; the
+       title column (.titles flex:1) absorbs the rest. Empty and collapsed
+       on the Home launcher, which slots nothing here. */
+    .head-status {
       flex-shrink: 0;
       display: flex;
       align-items: center;
@@ -137,22 +167,40 @@ class AppCard extends LitElement {
        The 140px min-width is the wrap trigger: on a card too narrow to
        seat icon + 140px title + the header slot, flexbox wraps the
        header slot to its own line instead of crushing the title to
-       nothing. The name still ellipsis-truncates inside this column. */
+       nothing. The name still ellipsis-truncates inside this column.
+
+       .titles is itself a wrapping flex row (column-direction by
+       default would stack name above subtitle). With row-wrap, the
+       name and a slotted subtitle (e.g. the service URL on the admin
+       card) sit on the same line when there's room and the subtitle
+       wraps below the name only when the column gets too narrow. The
+       legacy .sub paragraph still flows below the name because it
+       takes width:100% via the rule on .sub itself. */
     .titles {
       flex: 1;
       min-width: 140px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      column-gap: 8px;
+      row-gap: 2px;
     }
     .name {
       font-weight: 600;
       font-size: 0.96rem;
       letter-spacing: -0.01em;
-      margin: 0 0 2px;
+      margin: 0;
       color: var(--hf-text);
       /* Admin cards are wide — a long name ellipsis-truncates on one
-         line so the row geometry stays predictable. */
+         line so the row geometry stays predictable. As a flex item in
+         the wrapping .titles row, flex-shrink:0 keeps the name at its
+         natural width so any slotted subtitle wraps to its own line
+         instead of competing for room and triggering early ellipsis. */
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      max-width: 100%;
+      flex: 0 0 auto;
     }
     /* Compact (Home launcher) tiles are narrow, so truncating clips a
        third of the names. Let the name wrap to at most two lines and
@@ -172,6 +220,10 @@ class AppCard extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      /* In the .titles flex-wrap row, force the legacy string subtitle
+         onto its own line below name + any inline slotted subtitle. */
+      flex: 0 0 100%;
+      min-width: 0;
     }
 
     /* Slotted admin content (status, toggles, buttons) sits below the
@@ -192,16 +244,35 @@ class AppCard extends LitElement {
     this.compact = false;
     this._hasBody = false;
     this._hasHeader = false;
+    this._hasStatus = false;
+  }
+
+  /** Whether a slot holds real content — element nodes or non-blank
+      text. assignedNodes counts the whitespace text nodes that Lit
+      leaves between conditional `${...}` slots, so an "empty" slot that
+      only renders '' still looked occupied; that falsely set _hasBody and
+      left a 14px margin-top gap at the bottom of the card. Filter those
+      out so the flag reflects visible content only. */
+  _slotHasContent(slot) {
+    return slot.assignedNodes({ flatten: true }).some(
+      (n) => n.nodeType === Node.ELEMENT_NODE ||
+             (n.nodeType === Node.TEXT_NODE && n.textContent.trim() !== '')
+    );
   }
 
   /** Track whether the default slot has any assigned content. */
   _onSlotChange(e) {
-    this._hasBody = e.target.assignedNodes({ flatten: true }).length > 0;
+    this._hasBody = this._slotHasContent(e.target);
   }
 
   /** Track whether the named `header` slot has any assigned content. */
   _onHeaderSlotChange(e) {
-    this._hasHeader = e.target.assignedNodes({ flatten: true }).length > 0;
+    this._hasHeader = this._slotHasContent(e.target);
+  }
+
+  /** Track whether the named `status` slot has any assigned content. */
+  _onStatusSlotChange(e) {
+    this._hasStatus = this._slotHasContent(e.target);
   }
 
   /** Two-letter initials fallback, derived from the display name. */
@@ -236,9 +307,13 @@ class AppCard extends LitElement {
             @error=${this._onIconError}
           />
         </div>
+        <div class="head-status" style=${this._hasStatus ? '' : 'display: none;'}>
+          <slot name="status" @slotchange=${this._onStatusSlotChange}></slot>
+        </div>
         <div class="titles">
           <p class="name">${this.name || this.label}</p>
           ${sub ? html`<p class="sub">${sub}</p>` : ''}
+          <slot name="subtitle"></slot>
         </div>
         <div class="head-aside" style=${this._hasHeader ? '' : 'display: none;'}>
           <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>

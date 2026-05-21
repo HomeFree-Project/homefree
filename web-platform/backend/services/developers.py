@@ -72,10 +72,21 @@ RESERVED_INPUT_NAMES = {
 ALLOWED_LOCAL_ROOTS = ["/home", "/mnt", "/var/lib", "/media", "/srv", "/opt"]
 
 # Recognised remote flake-ref URL prefixes.
+# Flake-ref prefixes accepted for a remote entry AFTER normalization.
+# A bare https:// / http:// is intentionally absent: Nix would treat it
+# as a TARBALL fetch, not a git repo, so _normalize_remote_url rewrites
+# it (to a github:/gitlab: shorthand or a git+https:// ref) before it is
+# ever validated or stored.
 _REMOTE_PREFIXES = (
     "github:", "gitlab:", "sourcehut:", "git+https://", "git+ssh://",
-    "git+http://", "https://", "http://", "path:", "flake:", "tarball+https://",
+    "git+http://", "path:", "flake:", "tarball+https://",
 )
+
+# References _normalize_remote_url leaves untouched (already fetchable).
+_FLAKE_REF_PREFIXES = _REMOTE_PREFIXES + ("git+file://", "tarball+http://")
+
+# scp-style SSH shorthand: user@host:path  (e.g. git@github.com:o/r.git).
+_SCP_SSH_RE = re.compile(r"^(?P<user>[^@/]+)@(?P<host>[^:/]+):(?P<path>.+)$")
 
 _INPUT_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
@@ -104,18 +115,31 @@ class DevelopersService:
         Return the alternate-HomeFree-base setting, always including the
         official URL for the UI to show when the override is disabled.
 
-        Shape: { enabled, type, url, officialUrl }. Defaults to a disabled
-        local override when nothing has been configured.
+        Shape: { enabled, type, localUrl, remoteUrl, officialUrl }. Both
+        URLs are returned so the UI can keep each kind independently and
+        the active `type` selects which one is applied. Defaults to a
+        disabled local override when nothing has been configured.
         """
         config = ConfigReader.read_config()
         developers = config.get("developers") or {}
         override = developers.get("homefree-base")
         if not isinstance(override, dict):
             override = {}
+        ftype = override.get("type") or "local"
+        local_url = override.get("localUrl")
+        remote_url = override.get("remoteUrl")
+        # Back-compat: older configs stored a single `url` for the active
+        # type only. Map it onto the matching kind so it isn't lost.
+        if local_url is None and remote_url is None and override.get("url"):
+            if ftype == "remote":
+                remote_url = override.get("url")
+            else:
+                local_url = override.get("url")
         return {
             "enabled": bool(override.get("enabled", False)),
-            "type": override.get("type") or "local",
-            "url": override.get("url") or "",
+            "type": ftype,
+            "localUrl": local_url or "",
+            "remoteUrl": remote_url or "",
             "officialUrl": OFFICIAL_HOMEFREE_URL,
         }
 
@@ -219,6 +243,52 @@ class DevelopersService:
                 "requires the directory to be a git repo."
             )
         return errors
+
+    @staticmethod
+    def _normalize_remote_url(url: str) -> str:
+        """
+        Rewrite a remote flake reference into a form Nix accepts, so the
+        admin can paste what a forge's "Clone" button gives them.
+
+        - Already-fetchable refs (github:, git+ssh://, …) are left as-is.
+        - github.com / gitlab.com HTTPS URLs become the idiomatic shorthand
+          (github:owner/repo) — public-repo friendly and what most mean.
+        - Any other http(s) URL gets a `git+` prefix; a bare https:// is a
+          TARBALL fetch in Nix, not a git repo.
+        - ssh:// and scp-style `git@host:path` become git+ssh://, preserving
+          the user's SSH-key transport (don't shorten SSH to github:, which
+          would switch a private repo to token auth).
+        Anything unrecognised is returned unchanged for validation to flag.
+        """
+        u = (url or "").strip()
+        if not u or u.startswith(_FLAKE_REF_PREFIXES):
+            return u
+
+        # github.com / gitlab.com HTTPS web/clone URL -> shorthand.
+        m = re.match(
+            r"^https?://(?:www\.)?(?P<forge>github|gitlab)\.com/"
+            r"(?P<owner>[^/]+)/(?P<repo>[^/#?]+)",
+            u,
+        )
+        if m:
+            repo = m.group("repo")
+            if repo.endswith(".git"):
+                repo = repo[:-4]
+            return f"{m.group('forge')}:{m.group('owner')}/{repo}"
+
+        # ssh:// or any other http(s) git URL -> add the git+ fetcher prefix.
+        if u.startswith(("https://", "http://", "ssh://")):
+            return "git+" + u
+
+        # scp-style SSH: git@host:owner/repo.git -> git+ssh://git@host/owner/repo.git
+        scp = _SCP_SSH_RE.match(u)
+        if scp:
+            return (
+                f"git+ssh://{scp.group('user')}@{scp.group('host')}"
+                f"/{scp.group('path')}"
+            )
+
+        return u
 
     @staticmethod
     def probe_flake(url: str, module_attr: str = "default") -> Dict[str, Any]:
@@ -791,30 +861,52 @@ class DevelopersService:
         Returns { success, message, override?, warnings?, errors? }.
         """
         ftype = entry.get("type") or "local"
-        url = (entry.get("url") or "").strip()
+
+        # Both kinds are stored so toggling the type never discards the
+        # other's value. Back-compat: an old client may still send a
+        # single `url` for the active type.
+        local_url = entry.get("localUrl")
+        remote_url = entry.get("remoteUrl")
+        if local_url is None and remote_url is None and entry.get("url") is not None:
+            if ftype == "remote":
+                remote_url = entry.get("url")
+            else:
+                local_url = entry.get("url")
+        local_url = (local_url or "").strip()
+        remote_url = (remote_url or "").strip()
         # For a local override the frontend sends a bare filesystem path;
         # store it as a git+file:// flake reference, mirroring custom flakes.
-        if ftype == "local" and url and not url.startswith("git+file://"):
-            url = "git+file://" + url
+        # A remote ref is normalized into a form Nix accepts.
+        if local_url and not local_url.startswith("git+file://"):
+            local_url = "git+file://" + local_url
+        if remote_url:
+            remote_url = DevelopersService._normalize_remote_url(remote_url)
+
+        # The active type selects which URL is validated and applied.
+        active_url = remote_url if ftype == "remote" else local_url
 
         # `stored` is kept verbatim in homefree-config.json so the UI
-        # always shows the admin exactly what they entered.
+        # always shows the admin exactly what they entered — both kinds.
         stored = {
             "enabled": bool(entry.get("enabled", False)),
             "type": ftype,
-            "url": url,
+            "localUrl": local_url,
+            "remoteUrl": remote_url,
         }
 
-        # Validate. Failures become warnings, not blockers.
-        ok, problems = DevelopersService.validate_base_override(stored)
+        # Validate the active URL. Failures become warnings, not blockers.
+        ok, problems = DevelopersService.validate_base_override(
+            {"enabled": stored["enabled"], "type": ftype, "url": active_url}
+        )
 
-        # `effective` is what actually gets written into flake.nix. If the
-        # override is enabled but its URL did not validate, fall back to
-        # disabled so a broken URL never reaches the build.
+        # `effective` is what actually gets written into flake.nix (it uses
+        # a single `url`). If the override is enabled but its active URL did
+        # not validate, fall back to disabled so a broken URL never reaches
+        # the build.
         if stored["enabled"] and not ok:
-            effective = {"enabled": False, "type": ftype, "url": url}
+            effective = {"enabled": False, "type": ftype, "url": active_url}
         else:
-            effective = dict(stored)
+            effective = {"enabled": stored["enabled"], "type": ftype, "url": active_url}
 
         write_ok, err = DevelopersService.write_base_override(stored, effective)
         if not write_ok:
@@ -852,9 +944,12 @@ class DevelopersService:
         ftype = entry.get("type")
         url = (entry.get("url") or "").strip()
         # For local flakes the frontend sends a bare filesystem path; we
-        # store it as a git+file:// flake reference.
+        # store it as a git+file:// flake reference. For remote refs we
+        # normalize what the user pasted into a form Nix accepts.
         if ftype == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
+        elif ftype == "remote" and url:
+            url = DevelopersService._normalize_remote_url(url)
 
         input_name = (entry.get("inputName") or "").strip()
         if not input_name and name:

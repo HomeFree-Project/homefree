@@ -96,8 +96,9 @@ export const userMenuStyles = css`
 `;
 
 // The popover is account-only: "Profile & password" and "Sign out".
-// Cross-site navigation (Home / Admin / Manual) lives in each
-// surface's left nav, not here.
+// Cross-surface navigation (Home / Admin / Manual) lives in the
+// top-bar surface switcher (surface-switcher.js), not here and not in
+// the left nav.
 export function renderUserMenu({
   currentUser,
   open,

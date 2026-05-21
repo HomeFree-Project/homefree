@@ -58,6 +58,14 @@ class HardwareModule extends LitElement {
       margin: 28px 0 12px;
     }
     h2:first-child { margin-top: 0; }
+    /* The floating .page-header (absolute, top-right) is the literal
+       first child of .module-container, which means :first-child no
+       longer fires for the *real* first section (the firmware h2 or
+       a banner above it). Zero the top margin on whichever element
+       immediately follows the floating header. */
+    .page-header + h2,
+    .page-header + .reboot-banner,
+    .page-header + .ok-banner { margin-top: 0; }
 
     .cards {
       display: grid;
@@ -223,20 +231,22 @@ class HardwareModule extends LitElement {
     }
     .loading { color: var(--hf-text-muted); font-size: 13px; padding: 24px 0; }
 
-    /* Page-header row — page title + compact power buttons aligned to
-       the right. */
+    /* The module-container is the positioning anchor for the floating
+       power-button cluster (.page-header). Must not be the default
+       'static' or the absolute positioning anchors to the viewport. */
+    .module-container { position: relative; }
+
+    /* Restart / Power-off buttons. Absolutely positioned in the
+       module's top-right corner so they don't push the Firmware
+       section down with an empty row above it. */
     .page-header {
+      position: absolute;
+      top: 0;
+      right: 0;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 8px;
-    }
-    .page-header h1 {
-      font-size: 22px;
-      font-weight: 600;
-      color: var(--hf-text);
-      margin: 0;
+      gap: 8px;
+      z-index: 1;
     }
     .header-actions {
       display: flex;
@@ -272,6 +282,28 @@ class HardwareModule extends LitElement {
     .icon-action.busy {
       border-color: var(--hf-accent);
       color: var(--hf-accent);
+    }
+
+    /* The Restart / Power-off buttons in the floating page-header
+       are easy to miss tucked in the corner — give them a yellow
+       tint by default (using the warn token, which already
+       contrasts well against both light and dark theme surfaces)
+       so the user notices they exist. Hover/danger states still
+       override via the existing :hover and .danger rules. */
+    .page-header .icon-action {
+      color: var(--hf-warn);
+      border-color: var(--hf-warn);
+    }
+    .page-header .icon-action:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-warn) 14%, transparent);
+      color: var(--hf-warn);
+    }
+    /* Power-off keeps its danger hover (red), since the act of
+       shutting down is more severe than the act of restarting. */
+    .page-header .icon-action.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--hf-err) 14%, transparent);
+      border-color: var(--hf-err);
+      color: var(--hf-err);
     }
     .icon-action:disabled {
       opacity: 0.5;
@@ -416,6 +448,30 @@ class HardwareModule extends LitElement {
       color: var(--hf-text-muted);
       font-style: italic;
     }
+
+    /* Skeleton placeholders shown on first load while each section's
+       data is still null. Same shimmer the abuse-blocking page uses
+       so all admin skeletons look identical. */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--hf-surface-3) 25%,
+        var(--hf-border-2) 37%,
+        var(--hf-surface-3) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      vertical-align: middle;
+    }
+    .skeleton-title       { width: 180px; height: 15px; }
+    .skeleton-sub         { width: 110px; height: 11px; margin-top: 6px; }
+    .skeleton-cell        { width: 60px;  height: 13px; }
+    .skeleton-card-value  { width: 48px;  height: 26px; }
+    .skeleton-meter       { width: 100%;  height: 8px;  border-radius: 4px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to   { background-position: 0 0; }
+    }
   `;
 
   constructor() {
@@ -505,9 +561,57 @@ class HardwareModule extends LitElement {
     return `${years} y`;
   }
 
+  // Skeleton table rows for first-load placeholders. nCols = number of
+  // cells per row; nRows = how many placeholder rows to show.
+  _renderSkeletonRows(nCols, nRows) {
+    const cols = Array.from({ length: nCols });
+    const rows = Array.from({ length: nRows });
+    return rows.map(() => html`
+      <tr>
+        ${cols.map(() => html`
+          <td><span class="skeleton skeleton-cell"></span></td>
+        `)}
+      </tr>
+    `);
+  }
+
   // --- sensors panel -------------------------------------------------
 
   _renderSensors() {
+    // First load: paint section shell + skeleton cards + skeleton table.
+    // Use the same kind set as a real render — even before we know
+    // what sensors this host has, the page is almost always going to
+    // show CPU/Memory/NVMe/GPU and the layout settles into the same
+    // 4-card row.
+    if (this.overview == null) {
+      const placeholderKinds = ['CPU Temp', 'Memory Temp', 'NVMe Controller Temp', 'GPU Temp'];
+      return html`
+        <h2>Sensors</h2>
+        <div class="cards">
+          ${placeholderKinds.map(label => html`
+            <div class="card">
+              <div class="card-label">${label}</div>
+              <div class="card-value"><span class="skeleton skeleton-card-value"></span></div>
+              <div class="card-sub"><span class="skeleton skeleton-sub"></span></div>
+            </div>
+          `)}
+        </div>
+        <div class="panel">
+          <div class="panel-title">All sensors <span class="hint">live · /sys/class/hwmon</span></div>
+          <table>
+            <thead>
+              <tr>
+                <th>Driver</th>
+                <th>Label</th>
+                <th>Kind</th>
+                <th class="num">Temperature</th>
+              </tr>
+            </thead>
+            <tbody>${this._renderSkeletonRows(4, 5)}</tbody>
+          </table>
+        </div>
+      `;
+    }
     const sensors = (this.overview && this.overview.sensors) || [];
     if (sensors.length === 0) return '';
 
@@ -601,6 +705,29 @@ class HardwareModule extends LitElement {
   // --- physical drives table -----------------------------------------
 
   _renderPhysicalDrives() {
+    if (this.overview == null) {
+      return html`
+        <h2>Physical Drives</h2>
+        <div class="panel">
+          <div class="panel-title">SMART overview <span class="hint">cached 60s</span></div>
+          <table>
+            <thead>
+              <tr>
+                <th>Device</th>
+                <th>Model</th>
+                <th>Class</th>
+                <th class="num">Size</th>
+                <th style="width:22%">Temperature</th>
+                <th class="num">Power-on</th>
+                <th style="width:22%">Wear / Health</th>
+                <th>SMART</th>
+              </tr>
+            </thead>
+            <tbody>${this._renderSkeletonRows(8, 4)}</tbody>
+          </table>
+        </div>
+      `;
+    }
     const drives = (this.overview && this.overview.physical_drives) || [];
     if (drives.length === 0) {
       return html`
@@ -980,7 +1107,6 @@ class HardwareModule extends LitElement {
     const poweroffBusy = this.actionBusy === 'poweroff';
     return html`
       <div class="page-header">
-        <h1>Hardware</h1>
         <div class="header-actions">
           <button
             class="icon-action ${restartBusy ? 'busy' : ''}"
@@ -1079,7 +1205,30 @@ class HardwareModule extends LitElement {
 
   _renderFirmware() {
     const fw = (this.overview && this.overview.firmware) || null;
-    if (!fw) return '';
+    if (!fw) {
+      // First-load skeleton: paint the section shell so the rest of
+      // the page lays out in its final position, with shimmering
+      // placeholders inside the panel.
+      return html`
+        <h2>Firmware</h2>
+        <div class="panel">
+          <div class="firmware-actions">
+            <button class="text-button" disabled>Check for updates</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Device</th>
+                <th>Current</th>
+                <th>Update</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${this._renderSkeletonRows(4, 3)}</tbody>
+          </table>
+        </div>
+      `;
+    }
 
     if (!fw.available) {
       return html`
@@ -1270,20 +1419,15 @@ class HardwareModule extends LitElement {
   }
 
   render() {
-    if (this.loading && !this.overview) {
-      return html`<div class="module-container">
-        <div class="loading">Loading hardware…</div>
-      </div>`;
-    }
-    if (this.error && !this.overview) {
-      return html`<div class="module-container">
-        <div class="error-message"><strong>Error:</strong> ${this.error}</div>
-      </div>`;
-    }
-
+    // Shell paints immediately; each section shows skeleton placeholders
+    // while its data is still null. Background polls just swap data in —
+    // no spinner blocks the layout, no skeleton flicker on refresh.
     return html`
       <div class="module-container">
         ${this._renderHeader()}
+        ${this.error && !this.overview ? html`
+          <div class="error-message"><strong>Error:</strong> ${this.error}</div>
+        ` : ''}
         ${this._renderFirmware()}
         ${this._renderSensors()}
         ${this._renderPhysicalDrives()}

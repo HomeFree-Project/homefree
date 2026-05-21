@@ -93,14 +93,29 @@ in
     ## — exactly the window this gate must cover.
     dnsUnits = [ "unbound.service" ]
       ++ lib.optional (config.homefree.services.adguard.enable) "podman-adguardhome.service";
+    ## `partOf` is intentionally narrower than `dnsUnits`: only
+    ## `unbound.service` triggers re-arming. A restart of unbound on a
+    ## rebuild reflects a real config change (proxied-zone rewrite), and
+    ## the wait loop should re-run so downstream container apps see the
+    ## new resolver before they start. But propagating restarts from
+    ## `podman-adguardhome.service` would cause a transient adguard
+    ## restart-cycle (e.g. cold-boot image pull failing 5× over 50s
+    ## before its start-limit cools off) to SIGTERM dns-ready every 10s
+    ## — observed on a real boot where unbound's upstream DoT was still
+    ## warming up. dns-ready's wait loop should run uninterrupted in
+    ## that window, not get torn down by an upstream container's flap.
+    ## adguardhome being a *dependency* (`after`/`wants`) is still
+    ## enforced via `dnsUnits` above.
+    partOfUnits = [ "unbound.service" ];
   in {
     description = "Wait for DNS services to be ready";
     after = [ "network.target" "network-online.target" ] ++ dnsUnits;
     wants = [ "network-online.target" ] ++ dnsUnits;
-    ## partOf: a restart of a DNS unit propagates a restart to dns-ready,
-    ## re-running the wait loop. See the comment block above for why this
-    ## is partOf and not bindsTo.
-    partOf = dnsUnits;
+    ## partOf: a restart of unbound propagates a restart to dns-ready,
+    ## re-running the wait loop. See the comment block above for why
+    ## this is partOf and not bindsTo, and why podman-adguardhome is
+    ## intentionally excluded.
+    partOf = partOfUnits;
     wantedBy = [ "multi-user.target" ];
 
     serviceConfig = {

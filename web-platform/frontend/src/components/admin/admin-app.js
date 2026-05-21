@@ -1,9 +1,10 @@
 import { LitElement, html, css } from 'lit';
 import { getCurrentConfig, validateConfig, previewConfigChanges, applyConfigChanges, getServiceState, saveConfigChanges, getConfigDirty, getClosureId, getCurrentUser, getMode } from '../../api/client.js';
 import { handleSignOut } from '../../shared/auth.js';
-import { confirmDialog } from '../shared/confirm-dialog.js';
+import { confirmDialog, alertDialog } from '../shared/confirm-dialog.js';
 import { themeVars } from '../../shared/theme.js';
 import { userMenuStyles, renderUserMenu, profileUrlForCurrentBox } from '../../shared/user-menu.js';
+import { surfaceSwitcherStyles, renderSurfaceSwitcher } from '../../shared/surface-switcher.js';
 import { shellStyles } from '../../shared/shell.js';
 import { navIcon } from '../../shared/icons.js';
 import './modules/dashboard-module.js';
@@ -67,9 +68,10 @@ class AdminApp extends LitElement {
     updateAvailable: { type: Boolean },    // System closure changed since page-load — UI is stale
     currentUser: { type: Object },         // {username, is_admin_user, admin_username} from /api/users/me
     userMenuOpen: { type: Boolean, state: true },
+    switcherOpen: { type: Boolean, state: true }, // Top-bar surface-switcher popover (narrow widths)
   };
 
-  static styles = [themeVars, userMenuStyles, shellStyles, css`
+  static styles = [themeVars, userMenuStyles, surfaceSwitcherStyles, shellStyles, css`
     :host {
       display: block;
       width: 100%;
@@ -550,7 +552,9 @@ class AdminApp extends LitElement {
     .update-banner {
       height: 40px;
       background: var(--hf-accent);
-      color: white;
+      /* Near-black on the emerald bar — same text-on-accent colour the
+         primary button uses. White was unreadable here. */
+      color: #06281c;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -572,9 +576,9 @@ class AdminApp extends LitElement {
     }
 
     .update-banner-btn {
-      background: rgba(255, 255, 255, 0.18);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      color: white;
+      background: rgba(0, 0, 0, 0.12);
+      border: 1px solid rgba(0, 0, 0, 0.28);
+      color: #06281c;
       padding: 4px 12px;
       border-radius: 4px;
       font-size: 12px;
@@ -584,7 +588,7 @@ class AdminApp extends LitElement {
     }
 
     .update-banner-btn:hover {
-      background: rgba(255, 255, 255, 0.3);
+      background: rgba(0, 0, 0, 0.2);
     }
 
     /* Setup-incomplete warning banner. Same geometry as .update-banner
@@ -678,6 +682,7 @@ class AdminApp extends LitElement {
     this.serviceReloading = false;
     this.currentUser = null;
     this.userMenuOpen = false;
+    this.switcherOpen = false;
     this._closeUserMenuOnOutsideClick = null;
     this.serviceReloadMessage = '';
     this.serviceStateCheckInterval = null;
@@ -1296,6 +1301,33 @@ class AdminApp extends LitElement {
     }
   }
 
+  /** Toggle the top-bar surface switcher popover (narrow widths).
+   *  Mirrors toggleUserMenu() — outside-click dismisses it. */
+  toggleSwitcher(e) {
+    if (e) e.stopPropagation();
+    this.switcherOpen = !this.switcherOpen;
+    if (this.switcherOpen) {
+      this._closeSwitcherOnOutsideClick = (evt) => {
+        const path = evt.composedPath();
+        const trigger = this.renderRoot?.querySelector('.surface-switcher-wrap');
+        if (trigger && !path.includes(trigger)) {
+          this.switcherOpen = false;
+          document.removeEventListener('mousedown',
+            this._closeSwitcherOnOutsideClick, true);
+          this._closeSwitcherOnOutsideClick = null;
+        }
+      };
+      setTimeout(() => {
+        document.addEventListener('mousedown',
+          this._closeSwitcherOnOutsideClick, true);
+      }, 0);
+    } else if (this._closeSwitcherOnOutsideClick) {
+      document.removeEventListener('mousedown',
+        this._closeSwitcherOnOutsideClick, true);
+      this._closeSwitcherOnOutsideClick = null;
+    }
+  }
+
   getCurrentModuleTitle() {
     const module = this.modules.find(m => m.id === this.currentModule);
     return module ? module.title : 'HomeFree Admin';
@@ -1325,14 +1357,11 @@ class AdminApp extends LitElement {
             Saved
           </span>
         `;
-      case 'error':
-        return html`
-          <span class="save-indicator error" title="${this.saveError}">
-            <span class="save-dot"></span>
-            Save error: ${this.saveError || 'unknown'}
-          </span>
-        `;
+      // 'error' deliberately renders nothing here — a failed save is
+      // surfaced as a dismissable modal (see _showSaveError), not in the
+      // top-bar pill, which only ever shows progress (saving/saved).
       case 'idle':
+      case 'error':
       default:
         return '';
     }
@@ -1835,6 +1864,49 @@ class AdminApp extends LitElement {
     this._saveTimer = setTimeout(() => this.autoSave(), this.SAVE_DEBOUNCE_MS);
   }
 
+  // Drive the top-bar pill from a module that persisted out of band (its
+  // own endpoint, not the merged-config auto-save). Mirrors autoSave's
+  // pill behaviour, including the 1800ms "Saved" fade. The emitting side
+  // is a small inline `emitSaveStatus` in each such module (e.g.
+  // developers-module, users-module) that dispatches a bubbling,
+  // composed `save-status` event.
+  // A failed auto-save is shown as a dismissable modal (the canonical
+  // single-button alert), not in the top-bar pill. The pending in-memory
+  // changes are kept (saveStatus stays 'error', so Apply force-saves
+  // first), so dismissing the modal loses nothing.
+  _showSaveError(message) {
+    alertDialog({
+      title: 'Save failed',
+      message: message || 'Your change could not be saved. It is still pending — editing again will retry.',
+      confirmText: 'Dismiss',
+      variant: 'danger',
+    });
+  }
+
+  handleSaveStatus(e) {
+    const { status } = e.detail || {};
+    // The pill only ever shows progress. Out-of-band modules surface
+    // their OWN inline error on failure, so an 'error' status just clears
+    // the pill here — it neither shows in the pill nor pops the global
+    // save-error modal (that modal is the auto-save path's feedback).
+    this.saveStatus = (status === 'saving' || status === 'saved') ? status : 'idle';
+    if (this._savedFlashTimer) {
+      clearTimeout(this._savedFlashTimer);
+      this._savedFlashTimer = null;
+    }
+    if (status === 'saved') {
+      // A real out-of-band write means new content on disk → Apply enabled.
+      this.hasUnappliedChanges = true;
+      this._savedFlashTimer = setTimeout(() => {
+        if (this.saveStatus === 'saved') {
+          this.saveStatus = 'idle';
+          this.requestUpdate();
+        }
+      }, 1800);
+    }
+    this.requestUpdate();
+  }
+
   async autoSave() {
     if (this._saveInFlight) {
       // Coalesce: schedule one trailing save once the current one returns
@@ -1867,11 +1939,13 @@ class AdminApp extends LitElement {
       } else {
         this.saveStatus = 'error';
         this.saveError = (result.errors && result.errors[0]) || result.message || 'Save failed';
+        this._showSaveError(this.saveError);
       }
     } catch (error) {
       console.error('Auto-save failed:', error);
       this.saveStatus = 'error';
       this.saveError = error.message || 'Network error';
+      this._showSaveError(this.saveError);
     } finally {
       this._saveInFlight = false;
       this.requestUpdate();
@@ -2399,18 +2473,6 @@ class AdminApp extends LitElement {
     });
   }
 
-  /** Cross-SITE links for the left nav (Home dashboard, Manual).
-   *  Real external navigations to sibling subdomains — kept out of
-   *  the section/route machinery so active-state logic is untouched. */
-  _homeUrl() {
-    const apex = window.location.hostname.replace(/^(admin|home|manual)\./, '');
-    return `${window.location.protocol}//home.${apex}/`;
-  }
-  _manualUrl() {
-    const apex = window.location.hostname.replace(/^(admin|home|manual)\./, '');
-    return `${window.location.protocol}//manual.${apex}/`;
-  }
-
   render() {
     // Show full-screen loading spinner on initial load
     if (this.loading) {
@@ -2481,7 +2543,7 @@ class AdminApp extends LitElement {
         <!-- Sidebar -->
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">
-            <h1>HomeFree</h1>
+            <h1 @click=${this.toggleSidebar} title="Collapse sidebar">HomeFree</h1>
             <button class="collapse-btn" @click=${this.toggleSidebar}>
               ${this.sidebarCollapsed ? '→' : '←'}
             </button>
@@ -2498,14 +2560,6 @@ class AdminApp extends LitElement {
                 <span class="nav-item-text">${finishSetupModule.title}</span>
               </div>
             ` : ''}
-            <!-- Cross-site link to the per-user portal, pinned at the
-                 top of the nav. External navigation, so no active
-                 state / handleModuleClick. -->
-            <a class="nav-item nav-item-crosssite" href="${this._homeUrl()}">
-              <span class="nav-item-icon">${navIcon('home')}</span>
-              <span class="nav-item-text">Home</span>
-              <span class="nav-item-arrow">↗</span>
-            </a>
             ${Object.entries(sections).map(([section, modules]) => html`
               <div class="nav-section-title">${section}</div>
               ${modules.map(module => html`
@@ -2523,16 +2577,6 @@ class AdminApp extends LitElement {
                 </div>
               `)}
             `)}
-            <!-- Manual in its own "More" section, mirroring the Home
-                 portal. External link, opens in a new tab since the
-                 manual site has no nav to get back here. -->
-            <div class="nav-section-title">More</div>
-            <a class="nav-item" href="${this._manualUrl()}"
-               target="_blank" rel="noopener">
-              <span class="nav-item-icon">${navIcon('manual')}</span>
-              <span class="nav-item-text">Manual</span>
-              <span class="nav-item-arrow">↗</span>
-            </a>
            </div>
           </nav>
 
@@ -2576,11 +2620,18 @@ class AdminApp extends LitElement {
             </div>
 
             <div class="top-bar-actions">
+              ${renderSurfaceSwitcher({
+                currentSurface: 'admin',
+                isAdmin: true,
+                isMobile: this.isMobile,
+                open: this.switcherOpen,
+                onToggle: () => this.toggleSwitcher(),
+              })}
               ${this._renderUserMenu()}
             </div>
           </div>
 
-          <div class="content-area">
+          <div class="content-area" @save-status=${this.handleSaveStatus}>
             ${this.renderModule()}
           </div>
         </div>

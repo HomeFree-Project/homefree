@@ -335,6 +335,7 @@ in
       automount     = m.automount or true;
       idle-timeout  = m.idle-timeout or "600";
       extra-options = m.extra-options or [];
+      enabled       = m.enabled or true;
     }) (jsonData.mounts or []);
 
     ## Per-service SSO opt-out toggles. The JSON stores

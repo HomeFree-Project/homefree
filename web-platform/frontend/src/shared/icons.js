@@ -50,6 +50,10 @@ const PATHS = {
   admin: svg`<path d="M2.5 16.88a1 1 0 0 1-.32-1.43l9-13.02a1 1 0 0 1 1.64 0l9 13.01a1 1 0 0 1-.32 1.44l-8.51 4.86a2 2 0 0 1-1.98 0Z"/><path d="M12 2v20"/>`,
   home: svg`<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`,
   manual: svg`<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>`,
+  // Folded surface-switcher trigger (top bar, narrow widths). Lucide
+  // `arrow-left-right` — reads as "switch between" and is distinct from
+  // the `apps` waffle used by the Home portal's Apps nav item.
+  switch: svg`<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>`,
 };
 
 // Service-lifecycle action glyphs + the external-link affordance, used
@@ -66,6 +70,11 @@ const ACTION_PATHS = {
   // shutdown button.
   poweroff: svg`<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>`,
   'external-link': svg`<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`,
+  // Lucide `info` — circle with an "i". Used by the Apps card's Details
+  // button (the read-only status/SSO/units view), paired with the
+  // `settings` gear (in PATHS, reached via the actionIcon fallback) for
+  // the editable Config button.
+  info: svg`<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`,
 };
 
 const FALLBACK = svg`<circle cx="12" cy="12" r="3"/>`;
@@ -94,7 +103,7 @@ export function actionIcon(id) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
          aria-hidden="true">
-      ${ACTION_PATHS[id] || FALLBACK}
+      ${ACTION_PATHS[id] || PATHS[id] || FALLBACK}
     </svg>
   `;
 }

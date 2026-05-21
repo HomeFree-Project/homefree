@@ -16,20 +16,41 @@ mid-outage and fail their image pull with `no such host`.
 
 ## The fix (already applied)
 
-`dns-ready` is `partOf` the DNS units (`unbound.service`,
-`podman-adguardhome.service`). A restart of a DNS unit propagates a
-restart to `dns-ready`, re-running its wait loop; a podman unit started
-in the same rebuild transaction is then ordered after the *re-run*.
+`dns-ready` is `partOf` `unbound.service` only. A restart of unbound
+propagates a restart to `dns-ready`, re-running its wait loop; a
+podman unit started in the same rebuild transaction is then ordered
+after the *re-run*. `podman-adguardhome.service` is in
+`after`/`wants` (an ordering dependency, so dns-ready still waits for
+it to come up) but is **deliberately not** in `partOf` — see below.
 
 - `partOf`, **not** `bindsTo` — `bindsTo` would also tear `dns-ready`
   down (cascade-stopping every container that `requires` it) the
   instant the adguard *container* merely crashed.
+- `partOf` is `[ unbound.service ]`, **not** `[ unbound.service,
+  podman-adguardhome.service ]`. On a cold-cache boot, adguardhome's
+  image pull can fail several times in a row (e.g. while unbound's
+  own upstream DoT path is still warming up). If adguardhome is in
+  `partOf`, every one of those failure-driven restarts SIGTERMs
+  `dns-ready` mid-probe (status=15/TERM, "Failed with result
+  'signal'"), and the gate's wait loop never gets to run
+  uninterrupted. Keeping adguardhome out of `partOf` means a transient
+  container flap doesn't tear the gate down; the gate's `after`/`wants`
+  on the container is enough to make it wait for adguard to be up.
+  The narrower `partOf = [ unbound.service ]` still gives us the
+  rebuild-restart-window property we actually wanted (re-arm when
+  unbound's config changes).
 - The real adguard unit is `podman-adguardhome.service`; there is no
   `adguardhome.service`.
 - The wait loop probes both the local zone and an **external** name
   (recursion must be up for registry pulls), but the external probe is
   **bounded** (~45 s) and then falls through — an offline rebuild must
   still succeed.
+- Container apps that pull from public registries also need a
+  generous `StartLimitBurst`/`StartLimitIntervalSec` (in `unitConfig`,
+  **not** `serviceConfig` — see below) so cold-boot pull retries can
+  ride out the period during which unbound's upstream DoT is still
+  warming up. `podman-adguardhome` uses 30×600s; pick similar for any
+  new app whose first start needs to fetch an image from the network.
 
 ## When adding a container app
 

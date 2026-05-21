@@ -54,10 +54,29 @@ async function fetchAPI(endpoint, options = {}) {
 }
 
 /**
- * GET request helper
+ * GET request helper.
+ *
+ * GETs are idempotent, so we retry a couple times on a TRANSIENT failure
+ * — the fetch itself rejecting (a "NetworkError"/"Failed to fetch") or
+ * our own timeout firing. Those happen for a beat during an admin-api
+ * blue/green flip or on the very first request after a page load, and
+ * without a retry they surface as a scary red "NetworkError" box that
+ * clears itself a moment later. HTTP error *responses* (err.status set —
+ * 401/403/4xx/5xx) are real answers from the backend and are never
+ * retried, so auth handling stays immediate.
  */
-async function get(endpoint) {
-  return fetchAPI(endpoint, { method: 'GET' });
+async function get(endpoint, { retries = 2, retryDelayMs = 300 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchAPI(endpoint, { method: 'GET' });
+    } catch (error) {
+      // No .status === the fetch never got an HTTP response (network
+      // drop or timeout) → transient, worth a retry.
+      const transient = typeof error.status !== 'number';
+      if (!transient || attempt >= retries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
 }
 
 /**

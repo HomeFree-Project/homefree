@@ -17,6 +17,7 @@ import {
   userMenuStyles,
   renderUserMenu,
 } from '../../shared/user-menu.js';
+import { surfaceSwitcherStyles, renderSurfaceSwitcher } from '../../shared/surface-switcher.js';
 import { shellStyles } from '../../shared/shell.js';
 import { navIcon } from '../../shared/icons.js';
 import '../shared/app-card.js';
@@ -53,6 +54,7 @@ class UserApp extends LitElement {
     loading: { type: Boolean },
     error: { type: String },
     userMenuOpen: { type: Boolean, state: true },
+    switcherOpen: { type: Boolean, state: true },
     sidebarCollapsed: { type: Boolean, state: true },
     isMobile: { type: Boolean, state: true },
     profileSaving: { type: Boolean, state: true },
@@ -61,7 +63,7 @@ class UserApp extends LitElement {
     passwordMessage: { type: Object, state: true },
   };
 
-  static styles = [themeVars, userMenuStyles, shellStyles, css`
+  static styles = [themeVars, userMenuStyles, surfaceSwitcherStyles, shellStyles, css`
     :host {
       display: block;
       width: 100%;
@@ -205,6 +207,7 @@ class UserApp extends LitElement {
     this.loading = true;
     this.error = null;
     this.userMenuOpen = false;
+    this.switcherOpen = false;
     this.profileSaving = false;
     this.profileMessage = null;
     this.passwordSaving = false;
@@ -282,11 +285,20 @@ class UserApp extends LitElement {
     }
   }
 
-  _apexDomain() {
-    return window.location.hostname.replace(/^home\./, '');
+  toggleSwitcher() {
+    this.switcherOpen = !this.switcherOpen;
+    if (this.switcherOpen) {
+      const onDocClick = (e) => {
+        const wrap = this.renderRoot?.querySelector('.surface-switcher-wrap');
+        if (wrap && !wrap.contains(e.target)) {
+          this.switcherOpen = false;
+          document.removeEventListener('click', onDocClick, true);
+        }
+      };
+      setTimeout(() =>
+        document.addEventListener('click', onDocClick, true), 0);
+    }
   }
-  _adminUrl()  { return `${window.location.protocol}//admin.${this._apexDomain()}/`; }
-  _manualUrl() { return `${window.location.protocol}//manual.${this._apexDomain()}/`; }
 
   _currentTitle() {
     return MODULES.find(m => m.id === this.route)?.title || 'Home';
@@ -326,24 +338,13 @@ class UserApp extends LitElement {
       <div class="app-container">
         <div class="sidebar ${this.sidebarCollapsed ? 'collapsed' : ''}">
           <div class="sidebar-header">
-            <h1>HomeFree</h1>
+            <h1 @click=${() => this.toggleSidebar()} title="Collapse sidebar">HomeFree</h1>
             <button class="collapse-btn" @click=${() => this.toggleSidebar()}>
               ${this.sidebarCollapsed ? '→' : '←'}
             </button>
           </div>
           <nav class="nav-menu">
            <div class="nav-menu-inner">
-            <!-- Cross-site link to the Admin app, pinned at the top of
-                 the nav (mirrors where admin-app pins its "Home" link).
-                 External navigation, so no hash route / active state.
-                 Admin-role users only — hidden entirely otherwise. -->
-            ${this.user?.is_admin_role ? html`
-              <a class="nav-item nav-item-crosssite" href="${this._adminUrl()}">
-                <span class="nav-item-icon">${navIcon('admin')}</span>
-                <span class="nav-item-text">Admin</span>
-                <span class="nav-item-arrow">↗</span>
-              </a>
-            ` : ''}
             ${Object.entries(sections).map(([sect, mods]) => html`
               <div class="nav-section-title">${sect}</div>
               ${mods.map(m => html`
@@ -354,15 +355,6 @@ class UserApp extends LitElement {
                 </a>
               `)}
             `)}
-            <!-- Manual in its own "More" section. External link, opens
-                 in a new tab since it has no nav to get back here. -->
-            <div class="nav-section-title">More</div>
-            <a class="nav-item" href="${this._manualUrl()}"
-               target="_blank" rel="noopener">
-              <span class="nav-item-icon">${navIcon('manual')}</span>
-              <span class="nav-item-text">Manual</span>
-              <span class="nav-item-arrow">↗</span>
-            </a>
            </div>
           </nav>
         </div>
@@ -378,6 +370,13 @@ class UserApp extends LitElement {
               <h2>${this._currentTitle()}</h2>
             </div>
             <div class="top-bar-actions">
+              ${renderSurfaceSwitcher({
+                currentSurface: 'home',
+                isAdmin: !!this.user?.is_admin_role,
+                isMobile: this.isMobile,
+                open: this.switcherOpen,
+                onToggle: () => this.toggleSwitcher(),
+              })}
               ${renderUserMenu({
                 currentUser: this.user,
                 open: this.userMenuOpen,
