@@ -1104,12 +1104,83 @@ class NixOperations:
             logger.error(f"Error marking flake revision applied: {e}")
 
     @staticmethod
-    def _build_inputs_manifest() -> Dict[str, str]:
+    def _local_input_dirs() -> List[str]:
         """
-        sha256 of each flake build-input file under /etc/nixos. Missing files
-        are omitted (so adding/removing one registers as a change).
+        Filesystem paths of every flake input that resolves to a local working
+        tree (path: or git+file://), read from flake.lock. Empty on a
+        production (all-remote) install.
         """
-        manifest: Dict[str, str] = {}
+        dirs: List[str] = []
+        try:
+            lock_path = NixOperations.FLAKE_DIR / "flake.lock"
+            if not lock_path.exists():
+                return dirs
+            lock = json.loads(lock_path.read_text())
+            for node in lock.get("nodes", {}).values():
+                locked = node.get("locked", {})
+                if not NixOperations._input_is_local_working_tree(locked):
+                    continue
+                url = locked.get("url", "") or ""
+                if url.startswith("file://"):
+                    dirs.append(url[len("file://"):])
+                elif locked.get("path"):
+                    dirs.append(locked["path"])
+        except Exception as e:
+            logger.warning(f"Could not enumerate local flake inputs: {e}")
+        return dirs
+
+    @staticmethod
+    def _dir_fingerprint(d: str) -> str:
+        """
+        Cheap content fingerprint of a local flake working tree, used to detect
+        code edits that haven't been rebuilt (flake.lock only re-pins local
+        inputs at rebuild time, so its hash misses live edits). Git repos:
+        HEAD + working-tree status + tracked diff. Non-git: per-file size+mtime.
+        Returns "" on error (treated as "no signal", never a false dirty).
+        """
+        try:
+            p = Path(d)
+            if not p.exists():
+                return ""
+            if (p / ".git").exists():
+                # safe.directory bypass: these read-only ops run as root over a
+                # (typically) user-owned checkout; git would otherwise refuse
+                # with "dubious ownership".
+                base = ["git", "-c", f"safe.directory={d}", "-C", d]
+
+                def run(args):
+                    return subprocess.run(
+                        base + args, capture_output=True, text=True, timeout=20
+                    ).stdout
+
+                blob = "\0".join([
+                    run(["rev-parse", "HEAD"]),
+                    run(["status", "--porcelain=v1", "-uall", "--no-renames"]),
+                    run(["diff", "HEAD"]),
+                ])
+            else:
+                parts = []
+                for f in sorted(p.rglob("*")):
+                    if f.is_file():
+                        st = f.stat()
+                        parts.append(f"{f.relative_to(p)}\0{st.st_size}\0{int(st.st_mtime)}")
+                blob = "\n".join(parts)
+            return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
+        except Exception as e:
+            logger.warning(f"Could not fingerprint local flake input {d}: {e}")
+            return ""
+
+    @staticmethod
+    def _build_inputs_manifest() -> Dict[str, Any]:
+        """
+        sha256 of each flake build-input file under /etc/nixos, PLUS a
+        fingerprint of every local working-tree input. The flake-file hashes
+        catch flake.nix / custom-flakes.nix / flake.lock changes (incl. a
+        remote-flake lock bump); the local-input fingerprints catch edits to
+        local code that haven't been rebuilt (flake.lock only re-pins those at
+        rebuild time, so its hash alone misses live edits).
+        """
+        manifest: Dict[str, Any] = {}
         for name in NixOperations.BUILD_INPUT_FILES:
             p = NixOperations.FLAKE_DIR / name
             try:
@@ -1117,6 +1188,12 @@ class NixOperations:
                     manifest[name] = hashlib.sha256(p.read_bytes()).hexdigest()
             except Exception as e:
                 logger.warning(f"Could not hash build input {name}: {e}")
+        local = {
+            d: NixOperations._dir_fingerprint(d)
+            for d in NixOperations._local_input_dirs()
+        }
+        if local:
+            manifest["local-inputs"] = local
         return manifest
 
     @staticmethod
@@ -1148,14 +1225,26 @@ class NixOperations:
                 return None
             applied = json.loads(NixOperations.APPLIED_BUILD_INPUTS_FILE.read_text())
             current = NixOperations._build_inputs_manifest()
-            if current == applied:
-                return None
+
+            # Local working-tree code edited since the last build. Only checked
+            # when the applied snapshot already has a local baseline, so a box
+            # upgrading into this feature doesn't flash "changed" until its next
+            # rebuild records one.
+            if "local-inputs" in applied and \
+               current.get("local-inputs") != applied.get("local-inputs"):
+                return "local code changed"
+
+            # Flake source / lock files (compared independently of the
+            # local-inputs fingerprints above).
             changed = {
-                n for n in (set(applied) | set(current))
+                n for n in NixOperations.BUILD_INPUT_FILES
                 if applied.get(n) != current.get(n)
             }
-            # Only flake.lock moved → a revision re-pin; flake.nix /
-            # custom-flakes.nix moved → the flake source / custom flake set.
+            if not changed:
+                return None
+            # Only flake.lock moved → a revision re-pin (e.g. a remote-flake
+            # lock bump); flake.nix / custom-flakes.nix moved → the flake
+            # source / custom flake set.
             if changed <= {"flake.lock"}:
                 return "build inputs changed"
             return "flake source changed"

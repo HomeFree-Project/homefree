@@ -34,6 +34,19 @@ are easy to break and several were learned the hard way.
   Returns `{dirty, reason, changedPaths}`. A no-op round-trip (key reorder,
   re-serialization, add-then-remove a row) must NOT read as dirty. Do not
   revert to text comparison.
+- **Undeployed CODE** (not just config) is detected by
+  `NixOperations.build_inputs_dirty()` against `applied-build-inputs.json`
+  (written post-build by `_mark_build_inputs_applied`): hashes of
+  `flake.nix`/`custom-flakes.nix`/`flake.lock` catch flake-source / remote-lock
+  changes (`reason` "flake source changed" / "build inputs changed"), and a
+  **git fingerprint of each LOCAL working-tree input** (`git+file://`/`path:`,
+  from `_local_input_dirs`/`_dir_fingerprint` = HEAD + status + tracked diff)
+  catches live edits to local code — `flake.lock` only re-pins local inputs at
+  rebuild (`_refresh_local_inputs`), so its hash alone misses them (`reason`
+  "local code changed"). These reasons map to the Custom Flakes nav badge.
+  Local detection stays dormant until the first rebuild records a `local-inputs`
+  baseline (avoids a one-time false positive on upgrade); the single `reason`
+  is config-first, so a code change is masked while config is also dirty.
 
 ## Frontend change-detection (admin-app.js)
 

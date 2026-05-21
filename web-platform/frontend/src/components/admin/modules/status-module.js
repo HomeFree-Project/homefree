@@ -10,7 +10,9 @@ class StatusModule extends LitElement {
     rebuildStatus: { type: Object },
     buildLogs: { type: Array },
     systemHealth: { type: String },
-    logsCollapsed: { type: Boolean }
+    logsCollapsed: { type: Boolean },
+    pendingChanges: { type: Array },        // [{page, detail}] not yet applied
+    hasUnappliedChanges: { type: Boolean }
   };
 
   static styles = css`
@@ -79,6 +81,42 @@ class StatusModule extends LitElement {
     .status-message {
       font-size: 14px;
       color: var(--hf-text-muted);
+      margin: 0;
+    }
+
+    /* Pending-changes list (everything that will deploy on the next Apply). */
+    .pending-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .pending-item {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .pending-page {
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--hf-warn);
+      background: var(--hf-warn-soft);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pending-detail {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 13px;
+      color: var(--hf-text);
+      word-break: break-all;
+    }
+    .pending-empty {
+      color: var(--hf-text-muted);
+      font-style: italic;
       margin: 0;
     }
 
@@ -208,6 +246,8 @@ class StatusModule extends LitElement {
     this.buildLogs = [];
     this.systemHealth = 'healthy';
     this.logsCollapsed = true; // Default to collapsed
+    this.pendingChanges = [];
+    this.hasUnappliedChanges = false;
   }
 
   toggleLogsCollapsed() {
@@ -322,6 +362,25 @@ class StatusModule extends LitElement {
             <p class="status-message">${this.rebuildStatus.message}</p>
           </div>
         </div>
+
+        <!-- Pending changes (everything that deploys on the next Apply) -->
+        <config-section
+          title="Pending changes"
+          description="Configuration and code that will deploy on the next Apply."
+        >
+          ${this.pendingChanges && this.pendingChanges.length ? html`
+            <ul class="pending-list">
+              ${this.pendingChanges.map(it => html`
+                <li class="pending-item">
+                  <span class="pending-page">${it.page}</span>
+                  <code class="pending-detail">${it.detail}</code>
+                </li>
+              `)}
+            </ul>
+          ` : html`
+            <p class="pending-empty">No pending changes — everything is deployed.</p>
+          `}
+        </config-section>
 
         <!-- Build Logs -->
         <div class="logs-container">

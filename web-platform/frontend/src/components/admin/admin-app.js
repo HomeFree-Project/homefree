@@ -102,19 +102,37 @@ class AdminApp extends LitElement {
     }
     /* Small note above the Apply button naming WHY there are undeployed
        changes. Hidden when the sidebar is collapsed (no room for text). */
+    /* Clickable note above the Apply button — links to Build & Logs, which
+       lists the pending changes. Bare link-button styling. */
     .sidebar-footer .apply-note {
       display: flex;
       align-items: center;
       gap: 6px;
+      width: 100%;
       font-size: 12px;
       font-weight: 500;
+      font-family: inherit;
       color: var(--hf-warn);
+      background: none;
+      border: none;
+      text-align: left;
+      cursor: pointer;
       margin-bottom: 8px;
-      padding: 0 2px;
+      padding: 2px;
       line-height: 1.3;
     }
-    .sidebar-footer .apply-note-dot,
-    .sidebar-footer .apply-badge-dot {
+    .sidebar-footer .apply-note:hover .apply-note-text {
+      text-decoration: underline;
+    }
+    .sidebar-footer .apply-note-text {
+      flex: 1;
+      min-width: 0;
+    }
+    .sidebar-footer .apply-note-chevron {
+      flex-shrink: 0;
+      opacity: 0.8;
+    }
+    .sidebar-footer .apply-note-dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
@@ -144,14 +162,6 @@ class AdminApp extends LitElement {
     .sidebar-footer .apply-btn.has-changes {
       opacity: 1;
       box-shadow: 0 0 0 3px var(--hf-accent-glow);
-    }
-    .sidebar-footer .apply-btn .apply-badge-dot {
-      background: #06281c;
-      animation: applyPulse 1.6s ease-in-out infinite;
-    }
-    @keyframes applyPulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
     }
     .sidebar-footer .apply-btn:hover:not(:disabled) {
       opacity: 1;
@@ -853,12 +863,6 @@ class AdminApp extends LitElement {
         section: 'System'
       },
       {
-        // Build status + rebuild log viewer.
-        id: 'build-logs',
-        title: 'Build & Logs',
-        section: 'System'
-      },
-      {
         id: 'updates',
         title: 'Updates',
         section: 'System'
@@ -882,6 +886,13 @@ class AdminApp extends LitElement {
         id: 'sso',
         title: 'SSO',
         section: 'Identity'
+      },
+      {
+        // Build status + rebuild log viewer + the pending-changes list.
+        // Grouped with the other power-user / Developers tools.
+        id: 'build-logs',
+        title: 'Build & Logs',
+        section: 'Developers'
       },
       {
         // Raw homefree-config.json viewer — a power-user / debugging
@@ -2208,6 +2219,7 @@ class AdminApp extends LitElement {
       case 'differs': return 'Configuration changed';
       case 'flake source changed': return 'Flake source changed';
       case 'build inputs changed': return 'System inputs changed';
+      case 'local code changed': return 'Local code changed';
       case 'last rebuild failed': return 'Last rebuild failed — retry';
       case 'system update pending': return 'System update pending';
       case 'config parse error': return 'Config file has a syntax error';
@@ -2253,10 +2265,35 @@ class AdminApp extends LitElement {
     // Flake-source / build-input divergence isn't a config path; attribute it
     // to the Custom Flakes page.
     if (this.dirtyReason === 'flake source changed' ||
-        this.dirtyReason === 'build inputs changed') {
+        this.dirtyReason === 'build inputs changed' ||
+        this.dirtyReason === 'local code changed') {
       ids.add('developers');
     }
     return ids;
+  }
+
+  // Structured list of everything that will deploy on the next Apply: the
+  // config paths that differ from the deployed config, each tagged with the
+  // page that owns it, plus any code/flake/update reason that isn't a config
+  // path. Rendered on the Build & Logs page (linked from the Apply note).
+  pendingChanges() {
+    const titleOf = (id) =>
+      (this.modules.find(m => m.id === id) || {}).title || id || 'Configuration';
+    const items = [];
+    for (const p of [...(this.undeployedPaths || [])].sort()) {
+      const id = this.pathOwnerModuleId(p);
+      items.push({ page: id ? titleOf(id) : 'Configuration', detail: p });
+    }
+    const r = this.dirtyReason;
+    if (r === 'flake source changed' || r === 'build inputs changed'
+        || r === 'local code changed') {
+      items.push({ page: titleOf('developers'), detail: this._dirtyReasonLabel() });
+    } else if (r === 'system update pending') {
+      items.push({ page: titleOf('updates'), detail: 'System update pending' });
+    } else if (r === 'last rebuild failed') {
+      items.push({ page: 'Build & Logs', detail: 'Last rebuild failed — retry' });
+    }
+    return items;
   }
 
   /**
@@ -2747,6 +2784,8 @@ class AdminApp extends LitElement {
             .rebuildStatus=${this.rebuildStatus}
             .systemHealth=${this.systemHealth}
             .buildLogs=${this.buildLogs}
+            .pendingChanges=${this.pendingChanges()}
+            .hasUnappliedChanges=${this.hasUnappliedChanges}
           ></status-module>
         `;
 
@@ -2917,10 +2956,15 @@ class AdminApp extends LitElement {
                "Apply" when collapsed since the text is hidden. -->
           <div class="sidebar-footer">
             ${this.hasUnappliedChanges && !this.rebuildStatus.running && !this.sidebarCollapsed ? html`
-              <div class="apply-note">
+              <button
+                class="apply-note"
+                @click=${() => this.handleModuleClick('build-logs')}
+                title="View pending changes"
+              >
                 <span class="apply-note-dot"></span>
-                <span>${this._dirtyReasonLabel()}</span>
-              </div>
+                <span class="apply-note-text">${this._dirtyReasonLabel()}</span>
+                <span class="apply-note-chevron">›</span>
+              </button>
             ` : ''}
             <button
               class="apply-btn ${this.hasUnappliedChanges ? 'has-changes' : ''}"
@@ -2934,7 +2978,7 @@ class AdminApp extends LitElement {
             >
               ${this.rebuildStatus.running
                 ? html`<span class="btn-spinner"></span><span class="apply-btn-text">Applying…</span>`
-                : html`${this.hasUnappliedChanges ? html`<span class="apply-badge-dot"></span>` : ''}<span class="apply-btn-text">Apply</span>${this.sidebarCollapsed ? html`✓` : ''}`}
+                : html`<span class="apply-btn-text">Apply</span>${this.sidebarCollapsed ? html`✓` : ''}`}
             </button>
           </div>
         </div>
