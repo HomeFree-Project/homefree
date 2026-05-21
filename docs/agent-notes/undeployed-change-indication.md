@@ -40,7 +40,10 @@ are easy to break and several were learned the hard way.
   `flake.nix`/`custom-flakes.nix`/`flake.lock` catch flake-source / remote-lock
   changes (`reason` "flake source changed" / "build inputs changed"), and a
   **git fingerprint of each LOCAL working-tree input** (`git+file://`/`path:`,
-  from `_local_input_dirs`/`_dir_fingerprint` = HEAD + status + tracked diff)
+  from `_local_input_dirs`/`_dir_fingerprint` = a tree hash of the TRACKED
+  content, staged into a throwaway index — exactly what a `git+file://` build
+  sees, so it is stable across a content-identical commit and blind to untracked
+  files; an earlier HEAD+status+diff blob flipped spuriously on either)
   catches live edits to local code — `flake.lock` only re-pins local inputs at
   rebuild (`_refresh_local_inputs`), so its hash alone misses them (`reason`
   "local code changed"). These reasons map to the Custom Flakes nav badge.

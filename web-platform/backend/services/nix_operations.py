@@ -1134,9 +1134,12 @@ class NixOperations:
         """
         Cheap content fingerprint of a local flake working tree, used to detect
         code edits that haven't been rebuilt (flake.lock only re-pins local
-        inputs at rebuild time, so its hash misses live edits). Git repos:
-        HEAD + working-tree status + tracked diff. Non-git: per-file size+mtime.
-        Returns "" on error (treated as "no signal", never a false dirty).
+        inputs at rebuild time, so its hash misses live edits). Git repos: a
+        tree hash of the TRACKED content (committed tree + uncommitted tracked
+        edits) via a throwaway index — exactly what a git+file:// build sees, so
+        it is stable across a content-identical commit and ignores untracked
+        files. Non-git: per-file size+mtime. Returns "" on error (treated as "no
+        signal", never a false dirty).
         """
         try:
             p = Path(d)
@@ -1148,16 +1151,33 @@ class NixOperations:
                 # with "dubious ownership".
                 base = ["git", "-c", f"safe.directory={d}", "-C", d]
 
-                def run(args):
-                    return subprocess.run(
-                        base + args, capture_output=True, text=True, timeout=20
-                    ).stdout
+                # Hash the TRACKED content tree (HEAD plus uncommitted tracked
+                # edits), staged into a throwaway index so the user's real index
+                # is untouched. Git trees are content-addressed, so this hash is
+                # stable across a content-identical commit (moving HEAD doesn't
+                # change the tracked content) and blind to untracked files (a
+                # git+file:// build ignores them) — the old HEAD+status+diff blob
+                # got both wrong, flipping spuriously on a commit or a stray
+                # untracked file. Real uncommitted tracked edits still move it.
+                env = dict(os.environ)
+                with tempfile.TemporaryDirectory(prefix="hf-fp-") as td:
+                    env["GIT_INDEX_FILE"] = os.path.join(td, "index")
 
-                blob = "\0".join([
-                    run(["rev-parse", "HEAD"]),
-                    run(["status", "--porcelain=v1", "-uall", "--no-renames"]),
-                    run(["diff", "HEAD"]),
-                ])
+                    def git(args):
+                        return subprocess.run(
+                            base + args, capture_output=True, text=True,
+                            timeout=30, env=env,
+                        )
+
+                    # No HEAD (fresh repo, no commits) → no usable signal.
+                    if git(["read-tree", "HEAD"]).returncode != 0:
+                        return ""
+                    git(["add", "-u"])          # stage tracked mods only
+                    wt = git(["write-tree"])
+                tree = wt.stdout.strip()
+                if wt.returncode != 0 or not tree:
+                    return ""
+                blob = tree
             else:
                 parts = []
                 for f in sorted(p.rglob("*")):
