@@ -8,6 +8,26 @@ let
   backup-to-path = if config.homefree.backups.to-path != null
     then trimTrailingSlash config.homefree.backups.to-path
     else "/var/lib/backups";
+  ## Mount point that must be live before any LOCAL backup writes to
+  ## `backup-to-path`. If the backup target lives on a NAS/backup volume that
+  ## is currently unmounted, writing would land on a stub directory on the
+  ## root filesystem and restic (initialize = true) would create a brand-new
+  ## empty repo there, shadowing the real one. The local pre-start guard
+  ## refuses to run when this mount is not mounted. Explicit override wins;
+  ## otherwise auto-derive the longest homefree.mounts mount-point that
+  ## `backup-to-path` sits under (null => local-disk target, no gating).
+  required-mount =
+    if config.homefree.backups.require-mountpoint != null
+    then config.homefree.backups.require-mountpoint
+    else
+      let
+        cands = lib.filter
+          (m: lib.hasPrefix (m.mount-point + "/") (backup-to-path + "/"))
+          config.homefree.mounts;
+        sorted = lib.sort
+          (a: b: lib.stringLength a.mount-point > lib.stringLength b.mount-point)
+          cands;
+      in if sorted == [] then null else (lib.head sorted).mount-point;
   ## Combine service backup paths to extra custom paths into an array of { label = "label"; paths = []; }
   backup-from-paths-all =
     (lib.map (entry: {
@@ -226,11 +246,62 @@ in
   ## never silently capture a stale database dump.
   systemd.services =
   let
-    mkPreStart = entry: pkgs.writeShellScript "restic-backup-prestart-${entry.label}" (''
+    ## Source paths to guard: the entry's own paths MINUS the generated
+    ## database-dump directories (those are produced by the DB-dump step
+    ## further down in this same script, so they legitimately do not exist
+    ## yet at guard time). Guard only the real, pre-existing sources.
+    db-dump-roots = [ "/var/backup/postgresql-homefree" "/var/backup/mysql-homefree" ];
+    isDbDumpPath = p: lib.any (root: lib.hasPrefix (root + "/") (p + "/")) db-dump-roots;
+    sourcePathsToGuard = entry: lib.filter (p: ! isDbDumpPath p) entry.paths;
+
+    mkPreStart = entry: prefix: pkgs.writeShellScript "restic-backup-prestart-${prefix}-${entry.label}" (''
       set -euo pipefail
-      ## Make sure the local backup path exists.
-      mkdir -p "${backup-to-path + "/${entry.label}"}"
+      ## ----------------------------------------------------------------
+      ## Source guard (both local and Backblaze): refuse to back up a
+      ## source that is missing or empty. A missing source already makes
+      ## restic fail safely, but an EMPTY-but-present source (e.g. a NAS
+      ## remounted but not yet repopulated, or an empty mountpoint stub)
+      ## would snapshot successfully and then `prune` away real history -
+      ## the catastrophic case. Abort loudly before any snapshot.
+      ## ----------------------------------------------------------------
     ''
+    + (lib.concatMapStrings (p: ''
+      if [ ! -e ${lib.escapeShellArg p} ]; then
+        echo "ERROR: backup source ${p} is missing - refusing to snapshot a missing source. Aborting." >&2
+        exit 1
+      fi
+      if [ -d ${lib.escapeShellArg p} ] && [ -z "$(${pkgs.coreutils}/bin/ls -A ${lib.escapeShellArg p} 2>/dev/null)" ]; then
+        echo "ERROR: backup source ${p} is an empty directory (NAS not mounted/populated?) - refusing to snapshot an empty source and prune real history. Aborting." >&2
+        exit 1
+      fi
+      if [ -f ${lib.escapeShellArg p} ] && [ ! -s ${lib.escapeShellArg p} ]; then
+        echo "ERROR: backup source file ${p} is empty - aborting." >&2
+        exit 1
+      fi
+    '') (sourcePathsToGuard entry))
+    ## ----------------------------------------------------------------
+    ## Target-mount guard + repo-dir creation: LOCAL units only. The
+    ## Backblaze target is a `b2:` remote, not a filesystem, so neither
+    ## the mount guard nor the local repo-dir mkdir applies there.
+    ## ----------------------------------------------------------------
+    + (lib.optionalString (prefix == "local") ''
+      ${lib.optionalString (required-mount != null) ''
+        ## The backup target lives under a mount that must be live. Nudge
+        ## x-systemd.automount by touching the mount root, then verify. If
+        ## the volume is genuinely gone the mount will not come up and we
+        ## abort BEFORE any mkdir/init - so we never create an empty repo
+        ## on a root-filesystem stub that would shadow the real one.
+        ${pkgs.coreutils}/bin/ls ${lib.escapeShellArg required-mount} >/dev/null 2>&1 || true
+        if ! ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg required-mount}; then
+          echo "ERROR: backup target mount ${required-mount} is not mounted - refusing to write to a stub on the root filesystem (would create an empty restic repo and shadow the real one). Aborting." >&2
+          exit 1
+        fi
+      ''}
+      ## Make sure the local backup path exists (only AFTER the mount is
+      ## verified - the previously-unconditional mkdir was the root cause
+      ## of empty stub repos being created on an unmounted target).
+      mkdir -p "${backup-to-path + "/${entry.label}"}"
+    '')
     + (lib.optionalString (lib.hasAttr entry.label service-to-postgres-databases-map)
         (lib.concatMapStrings (database: ''
           ## Refresh the PostgreSQL dump for ${database}. `systemctl restart`
@@ -272,7 +343,7 @@ in
       name = "restic-backups-${prefix}-${entry.label}";
       value = {
         serviceConfig.ExecStartPre =
-          lib.mkBefore [ "!${mkPreStart entry}" ];
+          lib.mkBefore [ "!${mkPreStart entry prefix}" ];
       } // (lib.optionalAttrs (prefix == "backblaze") {
         after = [ "backup-b2-env.service" ];
         requires = [ "backup-b2-env.service" ];

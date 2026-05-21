@@ -797,75 +797,33 @@ class AdminApp extends LitElement {
     this.closureIdPollInterval = null;
 
     // Navigation modules.
-    // Three sections: System (the host + its OS), Applications
-    // (services + their backups), Identity (users + SSO). The item
-    // formerly titled "System" is renamed "Host" to avoid colliding
-    // with the section name.
+    // Six domain-oriented sections, in render order: Overview
+    // (dashboard + the conditional finish-setup), Applications
+    // (services + their backups), Identity (users + SSO), Networking
+    // (the full network/DNS/proxy stack), System (the host + its OS +
+    // storage + updates), and Advanced (power-user / diagnostics
+    // tools).
+    // Section order follows first appearance in this array, and item
+    // order within a section follows array order — there is no separate
+    // sections list. The item formerly titled "System" is named "Host"
+    // to avoid colliding with the section name.
     // Per-item icons are resolved from `id` via navIcon() (see
     // shared/icons.js) — no `icon` key is stored here.
     this.modules = [
       {
         id: 'dashboard',
         title: 'Dashboard',
-        section: 'System'
+        section: 'Overview'
       },
       {
         // Post-install finish-setup. Listed in the nav ONLY while setup is
         // incomplete (filtered by getVisibleModules); the warning banner
         // also links here. Renders the finish-setup-wizard component.
+        // NOTE: rendered in its own dedicated top slot (not via the
+        // grouped sections), so this `section` value is cosmetic.
         id: 'finish-setup',
         title: 'Finish Setup',
-        section: 'System'
-      },
-      {
-        id: 'system',
-        title: 'Host',
-        section: 'System'
-      },
-      {
-        id: 'hardware',
-        title: 'Hardware',
-        section: 'System'
-      },
-      {
-        id: 'network',
-        title: 'Network',
-        section: 'System'
-      },
-      {
-        id: 'lan-clients',
-        title: 'LAN Clients',
-        section: 'System'
-      },
-      {
-        id: 'dns',
-        title: 'DNS',
-        section: 'System'
-      },
-      {
-        id: 'mounts',
-        title: 'Mounts',
-        section: 'System'
-      },
-      {
-        id: 'extra-proxies',
-        title: 'External Proxies',
-        section: 'System'
-      },
-      {
-        id: 'proxied-domains',
-        title: 'Proxied Domains',
-        section: 'System'
-      },
-      {
-        id: 'abuse-blocking',
-        title: 'Network Traffic',
-        section: 'System'
-      },
-      {
-        id: 'updates',
-        title: 'Updates',
-        section: 'System'
+        section: 'Overview'
       },
       {
         id: 'apps',
@@ -888,25 +846,75 @@ class AdminApp extends LitElement {
         section: 'Identity'
       },
       {
-        // Build status + rebuild log viewer + the pending-changes list.
-        // Grouped with the other power-user / Developers tools.
-        id: 'build-logs',
-        title: 'Build & Logs',
-        section: 'Developers'
+        id: 'network',
+        title: 'Network',
+        section: 'Networking'
       },
       {
-        // Raw homefree-config.json viewer — a power-user / debugging
-        // surface, grouped with the other Developers tools.
-        id: 'json-config',
-        title: 'JSON Config',
-        section: 'Developers'
+        id: 'abuse-blocking',
+        title: 'Traffic',
+        section: 'Networking'
+      },
+      {
+        id: 'lan-clients',
+        title: 'LAN Clients',
+        section: 'Networking'
+      },
+      {
+        id: 'dns',
+        title: 'DNS',
+        section: 'Networking'
+      },
+      {
+        id: 'extra-proxies',
+        title: 'External Proxies',
+        section: 'Networking'
+      },
+      {
+        id: 'proxied-domains',
+        title: 'Proxied Domains',
+        section: 'Networking'
+      },
+      {
+        id: 'system',
+        title: 'Host',
+        section: 'System'
+      },
+      {
+        id: 'hardware',
+        title: 'Hardware',
+        section: 'System'
+      },
+      {
+        id: 'mounts',
+        title: 'Mounts',
+        section: 'System'
+      },
+      {
+        id: 'updates',
+        title: 'Updates',
+        section: 'System'
+      },
+      {
+        // Build status + rebuild log viewer + the pending-changes list.
+        // Grouped with the other power-user / Advanced tools.
+        id: 'build-logs',
+        title: 'Build & Logs',
+        section: 'Advanced'
       },
       {
         // Register custom Nix flakes that extend the system with the
-        // user's own apps/modules. Last section — a power-user feature.
+        // user's own apps/modules. A power-user feature.
         id: 'developers',
         title: 'Custom Flakes',
-        section: 'Developers'
+        section: 'Advanced'
+      },
+      {
+        // Raw homefree-config.json viewer — a power-user / debugging
+        // surface, grouped with the other Advanced tools.
+        id: 'json-config',
+        title: 'JSON Config',
+        section: 'Advanced'
       }
     ];
   }

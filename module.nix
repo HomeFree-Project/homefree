@@ -1406,6 +1406,25 @@
         description = "Path to store backups";
       };
 
+      require-mountpoint = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          Mount point that must be a live mountpoint before any LOCAL restic
+          backup runs. Guards against writing to a stub directory on the root
+          filesystem (and initializing an empty repo that shadows the real one)
+          when a NAS/backup volume is unmounted.
+
+          Leave null for backup targets that live on a normal local disk; when
+          null the required mount is auto-derived as the longest
+          `homefree.mounts` mount-point that `to-path` sits under (if any), so
+          deployments whose backup target lives on a managed NAS mount are
+          protected automatically. Set this explicitly when the backup target
+          lives on a filesystem declared outside `homefree.mounts` (e.g. a raw
+          `fileSystems` entry).
+        '';
+      };
+
       extra-from-paths = lib.mkOption {
         ## A bare string is coerced into { path = <str>; enabled = true; }
         ## so older homefree-configuration.nix files (which pass the raw
@@ -1505,6 +1524,13 @@
             type = "str";
             default = "/var/lib/backups";
             description = "Local directory path where backups are stored";
+          }
+          {
+            path = "require-mountpoint";
+            type = "str";
+            nullable = true;
+            default = null;
+            description = "Mount point that must be mounted before local backups run (guards against writing to a stub on the root filesystem when a NAS/backup volume is unmounted). Leave empty for local-disk targets; auto-derived from homefree.mounts when empty.";
           }
           {
             path = "extra-from-paths";
