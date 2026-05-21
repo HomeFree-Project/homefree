@@ -179,6 +179,12 @@ Situational knowledge — read the linked note when working in that area:
   is not a function` (runtime, parse looks clean). Use plain words or
   single quotes for inline emphasis instead.
   → `docs/agent-notes/lit-tagged-template-backticks.md`
+- **Admin table column sizing on mobile** — a `table-layout: fixed`
+  table's `min-width` must include cell padding or the unsized column
+  starves to 0px (headers overlap); and a `%`-width cell under
+  `min-width: max-content` balloons the table to thousands of px wide.
+  Use a length, never a `%`.
+  → `docs/agent-notes/table-column-sizing-mobile.md`
 - **UI consistency + mobile** — every layout/UI change must work at
   phone width (add a `@media` fold when the desktop layout doesn't
   collapse gracefully), and must reuse the established pattern (the

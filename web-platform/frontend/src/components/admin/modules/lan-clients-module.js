@@ -141,9 +141,14 @@ class LanClientsModule extends LitElement {
        scrolls inside .panel (overflow-x:auto) instead. */
     table {
       width: 100%;
-      /* Fixed columns: 90+130+150+110+160+200 = 840px + Hostname
-         ~150px minimum. */
-      min-width: 990px;
+      /* min-width must cover every column's *content* width PLUS its
+         cell padding, or the one unsized column (Hostname) is starved.
+         Content: 90+150+130+150+110+160+200 = 990px; padding adds
+         7×(2×14) = 196px → 1186px. Anything less (the old 990px forgot
+         the padding) collapses Hostname to 0 on a narrow viewport — its
+         nowrap header then overlaps "IP address" and its cell vanishes.
+         The table scrolls inside .panel when wider than the viewport. */
+      min-width: 1190px;
       border-collapse: collapse;
       table-layout: fixed;
       font-size: 13px;
@@ -153,6 +158,13 @@ class LanClientsModule extends LitElement {
       padding: 9px 14px;
       border-bottom: 1px solid var(--hf-border);
       white-space: nowrap;
+    }
+    /* Phones: tighten the inter-column gap (halve the horizontal cell
+       padding) and drop min-width to match so the columns pack snugly
+       rather than stretching to fill the wider desktop min-width. */
+    @media (max-width: 600px) {
+      th, td { padding: 9px 7px; }
+      table { min-width: 1085px; }
     }
     /* Text cells: clip an over-long value with an ellipsis rather
        than letting it widen the column. NOT applied to the actions
@@ -173,10 +185,13 @@ class LanClientsModule extends LitElement {
       font-weight: 600;
     }
     /* Explicit column widths — Status, Hostname, IP, MAC, DHCP lease,
-       Type, Actions. Hostname has no width so it absorbs the slack.
-       Actions is wide enough for "Edit" + "Remove static" side by
-       side so neither button is ever clipped. */
+       Type, Actions. Every column is sized (Hostname included) so the
+       fixed layout can never starve one to 0; on a wide desktop the
+       width:100% table distributes the slack across them all. Actions
+       is wide enough for "Edit" + "Remove static" side by side so
+       neither button is ever clipped. */
     th:nth-child(1) { width: 90px; }
+    th:nth-child(2) { width: 150px; }
     th:nth-child(3) { width: 130px; }
     th:nth-child(4) { width: 150px; }
     th:nth-child(5) { width: 110px; }

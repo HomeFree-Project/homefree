@@ -74,6 +74,14 @@ class TableEditor extends LitElement {
       color: var(--hf-text);
     }
 
+    /* Phones: halve the horizontal cell padding so multi-column tables
+       (e.g. External Proxies) show a small gap between columns instead
+       of a wide one, and less of the wide table sits off-screen. */
+    @media (max-width: 600px) {
+      th { padding: 10px 8px; }
+      td { padding: 11px 8px; }
+    }
+
     tr:hover {
       background: var(--hf-surface-2);
     }
@@ -86,9 +94,16 @@ class TableEditor extends LitElement {
 
     /* Boolean columns render a single glyph — shrink them to content
        and let the header text wrap rather than stretch the column (and
-       the whole table) to fit a long header on one line. */
+       the whole table) to fit a long header on one line.
+       width:1px (a sub-min-content length, NOT a percentage) collapses
+       the column to its longest word. A percentage here (the old 1%)
+       resolves against the table max-content width that the table
+       min-width:max-content rule is simultaneously deriving from the
+       columns — and the feedback loop balloons the table to thousands
+       of px wide on any table that has boolean columns (e.g. External
+       Proxies). Keep this a length, never a percent. */
     th.col-bool, td.col-bool {
-      width: 1%;
+      width: 1px;
       white-space: normal;
     }
     th.col-bool { text-align: center; }
