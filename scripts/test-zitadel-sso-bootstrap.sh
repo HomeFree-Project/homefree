@@ -553,9 +553,10 @@ ok "All verification checks passed."
 
 ## ─── 6. Next steps ────────────────────────────────────────────────────
 admin_user=$(cat /var/lib/homefree-admin/admin-username 2>/dev/null || echo "<adminUsername>")
-domain=$(awk -F'"' '/system\.domain/ {print $2; exit}' \
-           /etc/nixos/homefree-configuration.nix 2>/dev/null \
+domain=$(jq -r '.system.domain // empty' \
+           /etc/nixos/homefree-config.json 2>/dev/null \
          || echo "<your-domain>")
+[ -n "$domain" ] || domain="<your-domain>"
 
 step "Next steps"
 if [ "${ADMIN_PASSWORD_SOURCE:-pre-seeded}" = "auto-generated" ]; then

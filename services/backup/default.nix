@@ -14,20 +14,25 @@ let
   ## root filesystem and restic (initialize = true) would create a brand-new
   ## empty repo there, shadowing the real one. The local pre-start guard
   ## refuses to run when this mount is not mounted. Explicit override wins;
-  ## otherwise auto-derive the longest homefree.mounts mount-point that
-  ## `backup-to-path` sits under (null => local-disk target, no gating).
+  ## otherwise auto-derive the longest mount-point that `backup-to-path` sits
+  ## under, considering BOTH network mounts (homefree.mounts) and local btrfs
+  ## volumes (homefree.storage.pools) — volumes mount nofail, so a backup
+  ## target sitting on one must be guarded too, or an unmounted volume sends
+  ## restic to a stub on root (null => local-disk target, no gating).
   required-mount =
     if config.homefree.backups.require-mountpoint != null
     then config.homefree.backups.require-mountpoint
     else
       let
+        mount-points =
+          (lib.map (m: m.mount-point) config.homefree.mounts)
+          ++ (lib.map (p: p.mountpoint)
+                (lib.filter (p: p.enabled or true) config.homefree.storage.pools));
         cands = lib.filter
-          (m: lib.hasPrefix (m.mount-point + "/") (backup-to-path + "/"))
-          config.homefree.mounts;
-        sorted = lib.sort
-          (a: b: lib.stringLength a.mount-point > lib.stringLength b.mount-point)
-          cands;
-      in if sorted == [] then null else (lib.head sorted).mount-point;
+          (mp: lib.hasPrefix (mp + "/") (backup-to-path + "/"))
+          mount-points;
+        sorted = lib.sort (a: b: lib.stringLength a > lib.stringLength b) cands;
+      in if sorted == [] then null else lib.head sorted;
   ## Combine service backup paths to extra custom paths into an array of { label = "label"; paths = []; }
   backup-from-paths-all =
     (lib.map (entry: {

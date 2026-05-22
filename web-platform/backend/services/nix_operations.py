@@ -9,6 +9,7 @@ from pathlib import Path
 from enum import Enum
 import tempfile
 import os
+import shutil
 import json
 import hashlib
 from datetime import datetime
@@ -933,7 +934,12 @@ class NixOperations:
             Dictionary with diff output
         """
         try:
-            config_file = NixOperations.FLAKE_DIR / "homefree-configuration.nix"
+            # The per-instance config is homefree-config.json (the
+            # generated homefree-configuration.nix no longer exists — the
+            # JSON→Nix mapping moved into the shared homefree-config-loader
+            # module). ConfigWriter backs the JSON up under config-backups
+            # as homefree-config.<timestamp>.json, so diff against those.
+            config_file = NixOperations.FLAKE_DIR / "homefree-config.json"
             backup_dir = Path("/var/lib/homefree-admin/config-backups")
 
             if not backup_dir.exists():
@@ -944,7 +950,7 @@ class NixOperations:
                 }
 
             # Get most recent backup
-            backups = sorted(backup_dir.glob("homefree-configuration.*.nix"))
+            backups = sorted(backup_dir.glob("homefree-config.*.json"))
             if not backups:
                 return {
                     'success': False,
@@ -1135,11 +1141,12 @@ class NixOperations:
         Cheap content fingerprint of a local flake working tree, used to detect
         code edits that haven't been rebuilt (flake.lock only re-pins local
         inputs at rebuild time, so its hash misses live edits). Git repos: a
-        tree hash of the TRACKED content (committed tree + uncommitted tracked
-        edits) via a throwaway index — exactly what a git+file:// build sees, so
-        it is stable across a content-identical commit and ignores untracked
-        files. Non-git: per-file size+mtime. Returns "" on error (treated as "no
-        signal", never a false dirty).
+        tree hash of the content a git+file:// build copies — every file in the
+        index (staged additions included, even ones not yet in HEAD) at its
+        working-tree content, untracked files excluded — via a throwaway index
+        seeded from the real one, so it is stable across a content-identical
+        commit. Non-git: per-file size+mtime. Returns "" on error (treated as
+        "no signal", never a false dirty).
         """
         try:
             p = Path(d)
@@ -1151,29 +1158,51 @@ class NixOperations:
                 # with "dubious ownership".
                 base = ["git", "-c", f"safe.directory={d}", "-C", d]
 
-                # Hash the TRACKED content tree (HEAD plus uncommitted tracked
-                # edits), staged into a throwaway index so the user's real index
-                # is untouched. Git trees are content-addressed, so this hash is
-                # stable across a content-identical commit (moving HEAD doesn't
-                # change the tracked content) and blind to untracked files (a
-                # git+file:// build ignores them) — the old HEAD+status+diff blob
-                # got both wrong, flipping spuriously on a commit or a stray
-                # untracked file. Real uncommitted tracked edits still move it.
-                env = dict(os.environ)
+                # Hash the content tree a git+file:// build would copy, staged
+                # into a throwaway index so the user's real index is untouched.
+                # Git trees are content-addressed, so this hash is stable across
+                # a content-identical commit and blind to untracked files (the
+                # build ignores them).
+                # GIT_INDEX_FILE must be UNSET while we resolve the real index
+                # path: `rev-parse --git-path index` echoes that variable when
+                # set, so setting it first would point us back at the empty
+                # throwaway index (the bug that made this silently fall back to
+                # a HEAD-only seed and drop new files). We pass the temp index
+                # explicitly only on the steps that build it.
+                base_env = dict(os.environ)
+                base_env.pop("GIT_INDEX_FILE", None)
                 with tempfile.TemporaryDirectory(prefix="hf-fp-") as td:
-                    env["GIT_INDEX_FILE"] = os.path.join(td, "index")
+                    tmp_index = os.path.join(td, "index")
 
-                    def git(args):
+                    def git(args, index=None):
+                        e = base_env
+                        if index:
+                            e = dict(base_env)
+                            e["GIT_INDEX_FILE"] = index
                         return subprocess.run(
                             base + args, capture_output=True, text=True,
-                            timeout=30, env=env,
+                            timeout=30, env=e,
                         )
 
-                    # No HEAD (fresh repo, no commits) → no usable signal.
-                    if git(["read-tree", "HEAD"]).returncode != 0:
+                    # Seed the throwaway index from the REAL index (not HEAD) so
+                    # staged *new* files — present in the index but not yet in
+                    # HEAD — are included: a git+file:// dirty build copies
+                    # staged files, so the fingerprint must too. (Seeding from
+                    # HEAD + `add -u` silently dropped every new file, because
+                    # `add -u` only restages already-tracked paths — that made
+                    # edits to a freshly-added module invisible.) `add -u` then
+                    # folds in unstaged modifications of tracked files.
+                    idx = git(["rev-parse", "--git-path", "index"])
+                    real_index = idx.stdout.strip()
+                    if real_index and not os.path.isabs(real_index):
+                        real_index = os.path.join(d, real_index)
+                    if real_index and os.path.exists(real_index):
+                        shutil.copyfile(real_index, tmp_index)
+                    elif git(["read-tree", "HEAD"], index=tmp_index).returncode != 0:
+                        # No index and no HEAD (fresh repo) → no usable signal.
                         return ""
-                    git(["add", "-u"])          # stage tracked mods only
-                    wt = git(["write-tree"])
+                    git(["add", "-u"], index=tmp_index)
+                    wt = git(["write-tree"], index=tmp_index)
                 tree = wt.stdout.strip()
                 if wt.returncode != 0 or not tree:
                     return ""

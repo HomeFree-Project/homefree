@@ -87,18 +87,29 @@ class InstallationService:
     # >>> homefree-base-binding (managed - do not edit by hand) >>>
     homefree = inputs.@@base_binding_target@@;
     # <<< homefree-base-binding <<<
+    # Per-instance config. homefree-config.json is the single source of
+    # truth; the admin UI / installer write it. The shared homefree repo
+    # module homefree-config-loader maps this parsed data into homefree.*
+    # — there is NO generated homefree-configuration.nix anymore (the old
+    # model went stale on a bare `nixos-rebuild switch`). We pass the
+    # parsed JSON and this directory (for the mediawiki logo-path import,
+    # which must resolve user assets under /etc/nixos) into the module
+    # system via specialArgs.
+    homefreeConfigJson = builtins.fromJSON (builtins.readFile ./homefree-config.json);
   in {
     nixosConfigurations = {
       @@hostname@@ = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
           homefree.nixosModules.homefree@@lanzaboote_module@@
+          homefree.nixosModules.homefree-config-loader
           ./configuration.nix
-          ./homefree-configuration.nix
         ] ++ customFlakeModules;
         specialArgs = {
           inherit system;
           homefree-inputs = homefree.inputs;
+          inherit homefreeConfigJson;
+          homefreeInstanceDir = ./.;
         };
       };
     };
@@ -141,6 +152,7 @@ class InstallationService:
     "adminUsername": "@@username@@",
     "adminDescription": "@@fullname@@",
     "adminEmail": "@@email@@",
+    "hashedPassword": "@@hashed_password@@",
     "localDomain": "lan",
     "additionalDomains": [],
     "authorizedKeys": []
@@ -169,6 +181,10 @@ class InstallationService:
     "cert-management": null
   },
   "mounts": [],
+  "storage": {
+    "pools": [],
+    "shares": []
+  },
   "sso": {
     "allowUserRegistration": false,
     "per-service": {}
@@ -205,295 +221,11 @@ class InstallationService:
 }
 """
 
-    # Nix configuration template - imports JSON configuration
-    HOMEFREE_CONFIG_TEMPLATE = """{ config, lib, pkgs, options, ... }:
-
-let
-  # Load configuration from JSON file in the same directory as flake.nix
-  # This uses a relative path which works in pure evaluation mode
-  jsonData = builtins.fromJSON (builtins.readFile ./homefree-config.json);
-in
-{
-  homefree = {
-    system = {
-      domain = jsonData.system.domain;
-      hostName = jsonData.system.hostName;
-      timeZone = jsonData.system.timeZone;
-      defaultLocale = jsonData.system.defaultLocale;
-      countryCode = jsonData.system.countryCode;
-      ## Localization extras — `or null`/default so an older JSON
-      ## file (pre-2026-05) without these keys evals cleanly.
-      elevation = jsonData.system.elevation or null;
-      latitude = jsonData.system.latitude or null;
-      longitude = jsonData.system.longitude or null;
-      unitSystem = jsonData.system.unitSystem or "metric";
-      currency = jsonData.system.currency or null;
-      language = jsonData.system.language or null;
-      keyMap = jsonData.system.keyMap;
-      adminUsername = jsonData.system.adminUsername;
-      adminDescription = jsonData.system.adminDescription;
-      adminEmail = jsonData.system.adminEmail;
-      localDomain = jsonData.system.localDomain;
-      additionalDomains = jsonData.system.additionalDomains;
-      authorizedKeys = jsonData.system.authorizedKeys;
-      ## Whether this box is the upstream homefree.host marketing
-      ## instance. Default false — a real personal deployment shows
-      ## the per-user dashboard at apex. Override in the JSON by
-      ## setting `system.project-mode: true`.
-      project-mode = jsonData.system.project-mode or false;
-    };
-
-    network = {
-      wan-interface = jsonData.network.wan-interface;
-      lan-interface = jsonData.network.lan-interface;
-      router.enable = jsonData.network.router-enable;
-      lan-address = jsonData.network.lan-address;
-      lan-subnet = jsonData.network.lan-subnet;
-      dhcp-range-start = jsonData.network.dhcp-range-start;
-      dhcp-range-end = jsonData.network.dhcp-range-end;
-      enable-unbound-adblock = jsonData.network.enable-unbound-adblock;
-      wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
-      wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
-
-      # Static IPs conversion
-      static-ips = map (ip: {
-        mac-address = ip.mac-address;
-        hostname = ip.hostname;
-        ip = ip.ip;
-        wan-access = ip.wan-access or true;
-      }) jsonData.network.static-ips;
-
-      ## Abuse-block CIDR list — each entry { cidr, enabled, comment }.
-      ## `cidr` may be IPv4 or IPv6. `or []` so a JSON file predating
-      ## this key still evaluates; the seed step in modules/abuse-
-      ## blocking.nix populates it on first run, and the admin UI
-      ## manages it thereafter. Consumed by profiles/router.nix to
-      ## build the abusive_nets4 / abusive_nets6 nftables sets.
-      ## Per-field `or` defaults tolerate partial entries.
-      abuseBlockCidrs = map (e: {
-        cidr = e.cidr;
-        enabled = e.enabled or true;
-        comment = e.comment or "";
-      }) (jsonData.network.abuseBlockCidrs or []);
-    };
-
-    dns = {
-      local = {
-        overrides = map (override: {
-          hostname = override.hostname;
-          domain = override.domain;
-          ip = override.ip;
-        }) jsonData.dns.overrides;
-      };
-
-      ## Remote DNS / dynamic-dns / wildcard cert acquisition. The
-      ## JSON carries non-secret metadata (zone names, protocol,
-      ## username, etc.) plus a *secret key* per zone — never the
-      ## password itself. The actual secret file lives at
-      ## /var/lib/homefree-secrets/ddclient/<key> (zone passwords)
-      ## and /var/lib/homefree-secrets/dns/api-token (DNS-01 API
-      ## token). Users either copy these in from the existing
-      ## SOPS-managed source on the previous host or populate them
-      ## via the secrets UI.
-      remote = {
-        cert-management.dns-01 = {
-          provider = jsonData.dns.cert-management.provider or null;
-          resolvers = jsonData.dns.cert-management.resolvers or [ "1.1.1.1" ];
-          secrets.api-token =
-            if (jsonData.dns.cert-management.provider or null) == null
-            then null
-            else /var/lib/homefree-secrets/dns/api-token;
-        };
-        dynamic-dns = {
-          interval = jsonData.dns.dynamic-dns.interval or "10m";
-          usev4    = jsonData.dns.dynamic-dns.usev4 or "webv4, webv4=ipinfo.io/ip";
-          usev6    = jsonData.dns.dynamic-dns.usev6 or "webv6, webv6=v6.ipinfo.io/ip";
-          zones = map (z: {
-            disable  = z.disable or false;
-            zone     = z.zone;
-            protocol = z.protocol or "hetzner";
-            username = z.username;
-            domains  = z.domains or [ "@" "*" ];
-            passwordFile =
-              ## Allow callers to skip the path-existence check on
-              ## the schema side by emitting a /run/keys-style
-              ## non-existent stub when the secret hasn't been
-              ## dropped yet. Once the file is in place at
-              ## /var/lib/homefree-secrets/ddclient/<key>, ddclient
-              ## will pick it up.
-              /var/lib/homefree-secrets/ddclient + ("/" + (z.password-secret-key or "password"));
-          }) (jsonData.dns.dynamic-dns.zones or []);
-        };
-      };
-    };
-
-    mounts = map (m: {
-      mount-point   = m.mount-point;
-      device        = m.device;
-      fs-type       = m.fs-type or "nfs";
-      nfs-version   = m.nfs-version or "3";
-      automount     = m.automount or true;
-      idle-timeout  = m.idle-timeout or "600";
-      extra-options = m.extra-options or [];
-      enabled       = m.enabled or true;
-    }) (jsonData.mounts or []);
-
-    ## Per-service SSO opt-out toggles. The JSON stores
-    ##   { "per-service": { "adguard": { "enable": false }, ... } }
-    ## We map it 1:1 to homefree.sso.per-service. Missing entries fall
-    ## through to the option's default (enable = true) defined in
-    ## services/sso.nix, so a missing key means "SSO on" rather than
-    ## a build error.
-    sso = {
-      allowUserRegistration = jsonData.sso.allowUserRegistration or false;
-      per-service = lib.mapAttrs (_: v: {
-        enable = v.enable or true;
-      }) (jsonData.sso.per-service or {});
-    };
-
-    ## Generic pass-through of `jsonData.services` into `homefree.services`.
-    ##
-    ## The JSON↔Nix mapping is identity now: every JSON key matches its
-    ## corresponding Nix attribute name verbatim. Submodule defaults in
-    ## module.nix fill in missing keys (e.g. `enable = false` when JSON
-    ## only sets `public`), and the type system rejects unknown keys, so
-    ## the per-service whitelist is no longer needed.
-    ##
-    ## Orphaned-key filtering: a custom-flake app (registered via
-    ## Developers → Custom Flakes) declares its own
-    ## `homefree.services.<name>` option. When such a flake is removed,
-    ## its `services.<name>` block can linger in homefree-config.json
-    ## after the module that declared the option is gone — an
-    ## "orphaned" key. Passing it straight through would abort the whole
-    ## build with `error: The option 'homefree.services.<name>' does not
-    ## exist`. So we filter `jsonData.services` to keys that are
-    ## actually declared options under `homefree.services`; orphaned
-    ## keys are silently dropped (their settings stay inert in the JSON,
-    ## so re-adding the flake restores them).
-    ##
-    ## Only mediawiki's instances need a real transform: `logo-path` is
-    ## a *string* in JSON (filesystem path like
-    ## "/etc/nixos/images/logo.png") but the option type is `nullOr path`
-    ## because favicon-generation and image-resizing run as derivations
-    ## that need to read the file at build time — that means it has to
-    ## be a Nix path literal so Nix imports it into the store.
-    ##
-    ## Why this lives in install.py's template rather than in
-    ## apps/mediawiki/default.nix: the conversion needs `./.` to resolve
-    ## to `/etc/nixos/` (the user's flake source root), because the
-    ## user's logo files live under `/etc/nixos/images/`. In the rendered
-    ## /etc/nixos/homefree-configuration.nix that's automatic — `./.` is
-    ## the directory containing the file. From inside the shared repo at
-    ## apps/mediawiki/default.nix, `./.` is a /nix/store path and the
-    ## user's logos are outside the flake source, so pure eval would
-    ## reject the path import.
-    services =
-      let
-        ## Only keys with a declared `homefree.services.<name>` option
-        ## survive — drops orphaned keys left by a removed custom flake
-        ## so the build doesn't abort. See the comment block above.
-        declared = lib.filterAttrs
-          (name: _: options.homefree.services ? ${name})
-          (jsonData.services or {});
-      in
-      ## mediawiki's instances need the logo-path string→path transform
-      ## (see comment above). Only rewrite mediawiki when it is actually
-      ## present in the config.
-      declared // (lib.optionalAttrs (declared ? mediawiki) {
-        mediawiki = declared.mediawiki // {
-          instances = map (instance: instance // {
-            logo-path =
-              let raw = instance.logo-path or null; in
-              if raw == null || raw == "" then null
-              else
-                let
-                  stripped =
-                    if lib.strings.hasPrefix "/etc/nixos/" raw
-                    then lib.strings.removePrefix "/etc/nixos/" raw
-                    else raw;
-                in (./. + ("/" + stripped));
-          }) (declared.mediawiki.instances or []);
-        };
-      });
-
-    backups = {
-      enable = jsonData.backups.enable;
-      to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;
-      ## Each extra-from-paths entry is { path = ...; enabled = ...; }.
-      ## A bare string is normalized to { path = <str>; enabled = true; }
-      ## so older homefree-config.json files (pre-schema-change) keep
-      ## evaluating without a separate migration step.
-      extra-from-paths = map (entry:
-        if builtins.isString entry
-          then { path = entry; enabled = true; }
-          else { path = entry.path; enabled = entry.enabled or true; }
-      ) (jsonData.backups.extra-from-paths or []);
-      backblaze = {
-        enable = jsonData.backups.backblaze-enable;
-        bucket = if jsonData.backups.backblaze-bucket == "" then null else jsonData.backups.backblaze-bucket;
-      };
-    };
-
-    ## Extra reverse-proxy entries for non-HomeFree hardware (NAS UI,
-    ## solar inverter admin, smart-plug PSU, router admin, etc.).
-    ## Each entry contributes one item to homefree.service-config; the
-    ## existing Caddy generator iterates that list and adds a route.
-    ## In-tree HomeFree services have their own service-config entries
-    ## emitted by their respective .nix files — those entries are
-    ## merged with these via NixOS list-merge semantics.
-    service-config = map (e: {
-      ## One "enabled" drives both flags: the top-level enable (catalog +
-      ## restart-policy) and reverse-proxy.enable (Caddy routing + DNS).
-      enable = e.enable or true;
-      label = e.label;
-      name = e.name or e.label;
-      reverse-proxy = {
-        enable    = e.enable or true;
-        subdomains = e.subdomains or [ e.label ];
-        ## https-domains is the user's public domains. When empty,
-        ## services/caddy.nix falls back to system.domain +
-        ## additionalDomains. Same default behavior in-tree services
-        ## use, so external entries get the same coverage automatically.
-        https-domains = e.https-domains or [];
-        host      = e.host;
-        port      = e.port or 80;
-        ssl       = e.ssl or false;
-        ssl-no-verify = e.ssl-no-verify or false;
-        disable-keepalive = e.disable-keepalive or false;
-        public    = e.public or false;
-        oauth2    = e.oauth2 or false;
-        basic-auth = e.basic-auth or false;
-        require-admin-role = e.require-admin-role or false;
-      };
-    }) (jsonData.service-config or []);
-
-    ## Whole-domain transparent proxies (e.g. slacktopia.org →
-    ## internal dev box). Each entry forwards all matching domains
-    ## to one backend host. http_port / https_port = null (or
-    ## absent) disables that protocol leg.
-    proxied-domains = map (e: {
-      domains = e.domains or [];
-      target = {
-        host = e.host;
-        http  = if (e.http-port  or null) == null then null else { port = e.http-port; };
-        https = if (e.https-port or null) == null then null else {
-          port = e.https-port;
-          ignore-self-signed-cert = e.ignore-self-signed or false;
-        };
-      };
-      public = e.public or false;
-    }) (jsonData.proxied-domains or []);
-  };
-
-  # Set admin user password
-  users.users.@@username@@ = {
-    hashedPassword = "@@hashed_password@@";
-  };
-}
-"""
-
     CONFIGURATION_TEMPLATE = """# Local system configuration overrides for HomeFree
-# Most system configuration is managed by HomeFree (see homefree-configuration.nix)
+# Most system configuration is managed by HomeFree. The per-instance
+# settings live in homefree-config.json and are mapped into homefree.*
+# by the shared homefree-config-loader module (wired in flake.nix) —
+# there is no generated homefree-configuration.nix anymore.
 # This file is for system-specific settings only.
 #
 # To rebuild: sudo nixos-rebuild switch --flake /etc/nixos#@@hostname@@
@@ -504,7 +236,6 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ./homefree-configuration.nix
     # disko owns the filesystem / LUKS / swap layout.
     ./disko.nix@@secureboot_import@@@@encryption_import@@@@dev_import@@
   ];
@@ -1171,7 +902,7 @@ in
 
     @staticmethod
     def _generate_configs(root_mount_point: str):
-        """Generate flake.nix, homefree-configuration.nix, and configuration.nix"""
+        """Generate flake.nix, homefree-config.json, and configuration.nix"""
         config = ConfigService.get_config()
         nixos_dir = Path(root_mount_point) / "etc/nixos"
         mkdir_privileged(str(nixos_dir))
@@ -1432,12 +1163,11 @@ in
             InstallationService.CUSTOM_FLAKES_TEMPLATE,
         )
 
-        # Generate homefree-configuration.nix (now imports from JSON)
-        homefree_config = InstallationService.HOMEFREE_CONFIG_TEMPLATE
-        for key, value in variables.items():
-            homefree_config = homefree_config.replace(f"@@{key}@@", str(value))
-
-        write_file_privileged(str(nixos_dir / "homefree-configuration.nix"), homefree_config)
+        # No homefree-configuration.nix is generated anymore. The
+        # homefree-config.json → homefree.* mapping lives in the shared
+        # repo (modules/homefree-config-loader.nix), wired into the
+        # module system by flake.nix via specialArgs. See
+        # docs/agent-notes/homefree-configuration-nix-is-generated.md.
 
         # Generate configuration.nix
         configuration = InstallationService.CONFIGURATION_TEMPLATE

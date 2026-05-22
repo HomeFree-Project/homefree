@@ -40,6 +40,7 @@ from services.fwupd_job import FwupdJob
 # Import API routers
 from resolvers.secrets import router as secrets_router
 from resolvers.backups import router as backups_router
+from resolvers.storage import router as storage_router
 
 # Configure logging
 logging.basicConfig(
@@ -425,6 +426,7 @@ app.add_middleware(TrustedHeaderAuthMiddleware)
 # Register API routers
 app.include_router(secrets_router)
 app.include_router(backups_router)
+app.include_router(storage_router)
 
 # Startup event handler
 @app.on_event("startup")

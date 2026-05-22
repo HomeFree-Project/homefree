@@ -37,6 +37,8 @@ in
 
     ## Host modules
     ./modules/mounts.nix
+    ./modules/storage-pools.nix
+    ./modules/storage-shares.nix
     ./modules/service-restart-policy.nix
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix
@@ -56,14 +58,22 @@ in
   };
 
   # Only create admin user on installed systems (not in live installer)
-  users.users."${config.homefree.system.adminUsername}" = lib.mkIf (config.system.nixos.variant_id or "" != "installer") {
+  users.users."${config.homefree.system.adminUsername}" = lib.mkIf (config.system.nixos.variant_id or "" != "installer") ({
     isNormalUser  = true;
     home  = "/home/${config.homefree.system.adminUsername}";
     description = config.homefree.system.adminDescription;
     extraGroups = [ "wheel" "docker" ];
     openssh.authorizedKeys.keys = config.homefree.system.authorizedKeys;
     initialHashedPassword = "";  # Empty password - should be set on first login or via SSH
-  };
+  } // lib.optionalAttrs (config.homefree.system.hashedPassword != null) {
+    ## Admin password hash from homefree-config.json
+    ## (system.hashedPassword), wired by
+    ## modules/homefree-config-loader.nix. Replaces the old generated
+    ## homefree-configuration.nix `users.users.<name>.hashedPassword`
+    ## block. hashedPassword overrides initialHashedPassword once the
+    ## account exists, so this is the persistent admin password.
+    hashedPassword = config.homefree.system.hashedPassword;
+  });
 
   # --------------------------------------------------------------------------------------
   # i18n

@@ -17,8 +17,15 @@ class Mode(Enum):
 class ModeService:
     """Service for detecting and managing application mode"""
 
-    # Config file paths
-    CONFIG_FILE = Path("/etc/nixos/homefree-configuration.nix")
+    # Config file paths.
+    #
+    # CONFIG_FILE is the per-instance config that marks an *installed*
+    # system. It used to be the generated homefree-configuration.nix, but
+    # that file no longer exists (the JSON→Nix mapping moved into the
+    # shared homefree-config-loader module). homefree-config.json is now
+    # the per-instance config and is present on every installed box, so it
+    # is the correct installer-vs-admin marker.
+    CONFIG_FILE = Path("/etc/nixos/homefree-config.json")
     FLAKE_FILE = Path("/etc/nixos/flake.nix")
     HOMEFREE_CONFIG = Path("/etc/nixos/homefree-config.json")
 

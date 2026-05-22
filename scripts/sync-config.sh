@@ -165,83 +165,21 @@ fi
 
 log_success "Found module.nix at: $MODULE_NIX"
 
-# Find the Python sync scripts
+# Find the Python sync script
 SYNC_SCRIPT="$(dirname "$0")/sync-config.py"
-TEMPLATE_SYNC_SCRIPT="$(dirname "$0")/sync-template.py"
 
 if [[ ! -f "$SYNC_SCRIPT" ]]; then
     log_error "Python sync script not found at: $SYNC_SCRIPT"
     exit 1
 fi
 
-# Re-render /etc/nixos/homefree-configuration.nix from install.py's
-# HOMEFREE_CONFIG_TEMPLATE so any new JSON→Nix bindings reach the
-# deployed system. The template is otherwise rendered only at install
-# time. Preserves the install-time username and hashedPassword.
-sync_template() {
-    local install_py
-    local target="$FLAKE_DIR/homefree-configuration.nix"
-
-    if [[ ! -f "$TEMPLATE_SYNC_SCRIPT" ]]; then
-        log_warning "sync-template.py not found, skipping template sync"
-        return 0
-    fi
-
-    # install.py lives next to module.nix in the homefree repo.
-    install_py="$(dirname "$MODULE_NIX")/web-platform/backend/services/install.py"
-    if [[ ! -f "$install_py" ]]; then
-        log_warning "install.py not found at $install_py, skipping template sync"
-        return 0
-    fi
-
-    if [[ ! -f "$target" ]]; then
-        return 0
-    fi
-
-    # Use temp files for stdout (rendered file) and stderr (status JSON)
-    # to avoid bash command-substitution stripping trailing newlines from
-    # the rendered file body (which would make every run report a diff).
-    local rendered_tmp status_tmp status action rc
-    rendered_tmp=$(mktemp)
-    status_tmp=$(mktemp)
-    python3 "$TEMPLATE_SYNC_SCRIPT" "$install_py" "$target" \
-        >"$rendered_tmp" 2>"$status_tmp"
-    rc=$?
-    status=$(cat "$status_tmp" 2>/dev/null || echo "")
-    rm -f "$status_tmp"
-
-    if [[ $rc -ne 0 ]]; then
-        log_warning "Template sync failed: $status"
-        rm -f "$rendered_tmp"
-        return 0
-    fi
-
-    action=$(echo "$status" | jq -r '.action // "noop"' 2>/dev/null || echo "noop")
-
-    case "$action" in
-        noop|skip)
-            rm -f "$rendered_tmp"
-            ;;
-        regenerate)
-            log_info "Updating $target from install.py template"
-            if [[ "$DRY_RUN" == "true" ]]; then
-                log_info "Dry run mode - template not rewritten"
-                rm -f "$rendered_tmp"
-            else
-                if [[ "$NO_BACKUP" != "true" ]]; then
-                    cp "$target" "$target$BACKUP_SUFFIX"
-                    log_info "Backed up $target to $target$BACKUP_SUFFIX"
-                fi
-                mv "$rendered_tmp" "$target"
-                log_success "Template synced"
-            fi
-            ;;
-        *)
-            log_warning "Template sync: $status"
-            rm -f "$rendered_tmp"
-            ;;
-    esac
-}
+# NOTE: There is no longer a homefree-configuration.nix to regenerate.
+# The homefree-config.json → homefree.* mapping now lives in the shared
+# repo (modules/homefree-config-loader.nix), wired into the module system
+# by the instance flake.nix via specialArgs. This script only reconciles
+# homefree-config.json against the module.nix schema (below); it no longer
+# renders a Nix file. See
+# docs/agent-notes/homefree-configuration-nix-is-generated.md.
 
 # Run the sync script
 log_info "Analyzing config and computing changes..."
@@ -258,7 +196,6 @@ NUM_CHANGES=$(echo "$CHANGES" | grep -c . || echo "0")
 
 if [[ -z "$CHANGES" ]] || [[ "$NUM_CHANGES" -eq 0 ]]; then
     log_success "Config is already in sync with schema. No changes needed."
-    sync_template
     exit 0
 fi
 
@@ -268,7 +205,6 @@ echo "$CHANGES"
 
 if [[ "$DRY_RUN" == "true" ]]; then
     log_info "Dry run mode - no changes written"
-    sync_template
     exit 0
 fi
 
@@ -289,5 +225,3 @@ log_info "Summary: $NUM_CHANGES changes applied"
 if [[ "$NO_BACKUP" != "true" ]]; then
     log_info "Backup saved to: $BACKUP_FILE"
 fi
-
-sync_template

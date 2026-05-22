@@ -129,6 +129,13 @@ class ConfigWriter:
             if 'mounts' in config:
                 current_config['mounts'] = config['mounts']
 
+            # Storage pools (Storage admin module). Same whole-array-replace
+            # rationale as `mounts` above: the frontend sends the full pools
+            # list and the pool-create job writes the full list, so a replace
+            # is correct and cannot resurrect a forgotten pool.
+            if 'storage' in config:
+                current_config['storage'] = config['storage']
+
             # NOTE: the `developers` section (registered custom flakes) is
             # deliberately NOT written here. It is owned exclusively by
             # DevelopersService, which writes it via its own endpoints and

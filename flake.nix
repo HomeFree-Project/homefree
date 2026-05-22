@@ -108,6 +108,15 @@
       imports = [ ];
       default = homefree;
       lan-client = import ./lan-client.nix { inherit homefree-inputs; inherit system; };
+      ## Per-instance config loader: maps a parsed homefree-config.json
+      ## into homefree.*. The instance flake.nix adds this module and
+      ## provides the parsed JSON + instance dir via specialArgs
+      ## (homefreeConfigJson / homefreeInstanceDir). Kept OUT of the main
+      ## `homefree` module's imports because the repo's own test
+      ## nixosConfigurations don't supply those specialArgs. See
+      ## modules/homefree-config-loader.nix and
+      ## docs/agent-notes/homefree-configuration-nix-is-generated.md.
+      homefree-config-loader = ./modules/homefree-config-loader.nix;
     };
 
     nixosConfigurations = {

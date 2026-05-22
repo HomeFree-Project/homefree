@@ -42,6 +42,10 @@ class ValidationService:
         if 'backups' in config:
             errors.extend(ValidationService._validate_backups(config['backups']))
 
+        if 'storage' in config:
+            errors.extend(ValidationService._validate_storage(
+                config['storage'], config.get('mounts')))
+
         return len(errors) == 0, errors
 
     @staticmethod
@@ -283,6 +287,86 @@ class ValidationService:
         if backups_config.get('backblaze-enable'):
             if not backups_config.get('backblaze-bucket'):
                 errors.append("Backblaze bucket required when Backblaze backups are enabled")
+
+        return errors
+
+    @staticmethod
+    def _validate_storage(storage_config: Dict[str, Any],
+                          mounts_config: List[Dict[str, Any]] = None) -> List[str]:
+        """Validate the storage.pools section. Pools are created by the admin
+        backend, but a hand-edited or stale homefree-config.json could carry a
+        malformed pool — catch it before it reaches a rebuild (mounting a bogus
+        pool, or two pools fighting for one mount point)."""
+        errors = []
+        pools = storage_config.get('pools') or []
+        valid_profiles = {'single': 1, 'raid0': 2, 'raid1': 2, 'raid10': 4}
+
+        seen_names = set()
+        seen_mounts = set()
+        network_mounts = {m.get('mount-point') for m in (mounts_config or [])}
+
+        for p in pools:
+            name = p.get('name')
+            mountpoint = p.get('mountpoint')
+            profile = p.get('profile')
+            members = p.get('members') or []
+
+            if not name:
+                errors.append("Storage volume name cannot be empty")
+            elif name in seen_names:
+                errors.append(f"Duplicate storage volume name: {name}")
+            seen_names.add(name)
+
+            if not mountpoint or not str(mountpoint).startswith('/'):
+                errors.append(f"Storage volume '{name}': mount point must be an absolute path")
+            else:
+                if mountpoint in seen_mounts:
+                    errors.append(f"Duplicate storage volume mount point: {mountpoint}")
+                if mountpoint in network_mounts:
+                    errors.append(f"Storage volume '{name}': mount point {mountpoint} "
+                                  f"collides with a network mount")
+                seen_mounts.add(mountpoint)
+
+            need = valid_profiles.get(profile)
+            if need is None:
+                errors.append(f"Storage volume '{name}': unsupported profile '{profile}'")
+            elif profile == 'single' and len(members) != 1:
+                errors.append(f"Storage volume '{name}': a single volume uses exactly one drive")
+            elif len(members) < need:
+                errors.append(f"Storage volume '{name}': {profile} needs at least {need} drives")
+            elif profile == 'raid10' and len(members) % 2:
+                errors.append(f"Storage volume '{name}': raid10 needs an even number of drives")
+
+            for m in members:
+                if not m or '/' in m:
+                    errors.append(f"Storage volume '{name}': members must be bare "
+                                  f"/dev/disk/by-id names (no '/')")
+                    break
+
+            if not p.get('fs-uuid'):
+                errors.append(f"Storage volume '{name}': missing fs-uuid")
+
+            if p.get('encrypted'):
+                errors.append(f"Storage volume '{name}': encrypted volumes are not supported yet")
+
+        # NFS shares (Phase 2a): host/subnet-trust exports.
+        import ipaddress
+        seen_share_names = set()
+        for sh in (storage_config.get('shares') or []):
+            sname = sh.get('name')
+            spath = sh.get('path')
+            if not sname:
+                errors.append("NFS share name cannot be empty")
+            elif sname in seen_share_names:
+                errors.append(f"Duplicate NFS share name: {sname}")
+            seen_share_names.add(sname)
+            if not spath or not str(spath).startswith('/'):
+                errors.append(f"NFS share '{sname}': path must be an absolute path")
+            for tok in (sh.get('allowed') or '').replace(',', ' ').split():
+                try:
+                    ipaddress.ip_network(tok, strict=False)
+                except ValueError:
+                    errors.append(f"NFS share '{sname}': '{tok}' is not a valid IP or CIDR")
 
         return errors
 

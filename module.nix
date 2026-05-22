@@ -201,6 +201,20 @@
         description = "Email address for the system admin";
       };
 
+      ## Pre-hashed password for the admin user. Set from
+      ## homefree-config.json (`system.hashedPassword`) by
+      ## modules/homefree-config-loader.nix. It is a crypt-style hash
+      ## (mkpasswd output), never a plaintext password. When null the
+      ## admin account keeps its empty initialHashedPassword and the
+      ## password must be set out of band (SSH / passwd). This replaces
+      ## the old install.py template's `users.users.<name>.hashedPassword`
+      ## injection — see modules/homefree-config-loader.nix.
+      hashedPassword = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Pre-hashed (crypt) password for the admin user, or null to leave unset.";
+      };
+
       adminHashedPassword = lib.mkOption {
         type = lib.types.str;
         default = "";
@@ -619,6 +633,173 @@
           };
         };
       });
+    };
+
+    storage = {
+      pools = lib.mkOption {
+        description = ''
+          Local btrfs data pools created by the Storage admin module from
+          unused drives. Each enabled entry produces a
+          `fileSystems."<mountpoint>"` declaration (mounted by btrfs
+          filesystem UUID, `nofail`). Pools are CREATED imperatively by the
+          admin backend (`mkfs.btrfs` once); this list only records their
+          identity so NixOS can mount them and, later, scrub/snapshot them.
+          A missing or degraded pool must never block boot, so every entry
+          mounts `nofail` with a bounded `x-systemd.device-timeout`.
+        '';
+        default = [];
+        example = [
+          {
+            enabled = true;
+            name = "tank";
+            mountpoint = "/mnt/tank";
+            profile = "raid1";
+            members = [
+              "ata-WDC_WD40EFRX-68N32N0_WD-WCC7K1234567"
+              "ata-WDC_WD40EFRX-68N32N0_WD-WCC7K7654321"
+            ];
+            fs-uuid = "b7c5e2f0-0000-0000-0000-000000000000";
+          }
+        ];
+        type = with lib.types; listOf (submodule {
+          options = {
+            enabled = lib.mkOption {
+              type = bool;
+              default = true;
+              description = ''
+                When false the pool is not mounted, but its row is kept in
+                homefree-config.json so the admin UI can re-enable it.
+              '';
+            };
+
+            name = lib.mkOption {
+              type = str;
+              description = "Pool identity and btrfs filesystem label (e.g. tank).";
+            };
+
+            mountpoint = lib.mkOption {
+              type = str;
+              description = "Absolute path where the pool is mounted (e.g. /mnt/tank).";
+            };
+
+            profile = lib.mkOption {
+              type = enum [ "single" "raid0" "raid1" "raid10" ];
+              description = ''
+                btrfs-native data profile chosen at creation. Parity
+                profiles (raid5/raid6) are intentionally absent — btrfs
+                parity has an unresolved write hole; space-efficient parity
+                is a planned future addition via btrfs-on-mdadm.
+              '';
+            };
+
+            members = lib.mkOption {
+              type = listOf str;
+              default = [];
+              description = ''
+                Member backing devices as bare /dev/disk/by-id names (no
+                /dev/ prefix). Recorded for display, scrub, and pool
+                removal; the mount itself keys on fs-uuid.
+              '';
+            };
+
+            fs-uuid = lib.mkOption {
+              type = str;
+              description = ''
+                btrfs filesystem UUID captured at mkfs time. The mount keys
+                on this — a multi-device btrfs assembles from whichever
+                member is present, so the UUID is stable across disk
+                reorder/reseat.
+              '';
+            };
+
+            encrypted = lib.mkOption {
+              type = bool;
+              default = false;
+              description = ''
+                Whether members are LUKS containers unlocked at boot. Not
+                supported yet (planned for a later phase); set false.
+              '';
+            };
+
+            luks-mappers = lib.mkOption {
+              type = listOf str;
+              default = [];
+              description = "Per-member LUKS mapper names; empty when not encrypted.";
+            };
+
+            mount-options = lib.mkOption {
+              type = listOf str;
+              default = [ "compress=zstd" "noatime" ];
+              description = ''
+                btrfs mount options appended after the safety defaults
+                (nofail + x-systemd.device-timeout).
+              '';
+            };
+
+            device-timeout = lib.mkOption {
+              type = str;
+              default = "15s";
+              description = ''
+                x-systemd.device-timeout for the mount — how long boot waits
+                for the pool device before giving up. The mount is nofail, so
+                boot proceeds regardless.
+              '';
+            };
+          };
+        });
+      };
+
+      shares = lib.mkOption {
+        description = ''
+          NFS network shares exported from this host (Phase 2a). Each enabled
+          entry adds a line to `services.nfs.server.exports`. These are
+          host/subnet-trust NFS exports (no per-user auth) reachable only from
+          the LAN — SMB and per-user (Zitadel-aligned) auth are a later phase,
+          since file protocols cannot use OIDC SSO.
+        '';
+        default = [];
+        example = [
+          {
+            enabled = true;
+            name = "media";
+            path = "/mnt/tank/media";
+            allowed = "10.0.0.0/24";
+            read-only = false;
+          }
+        ];
+        type = with lib.types; listOf (submodule {
+          options = {
+            enabled = lib.mkOption {
+              type = bool;
+              default = true;
+              description = "When false the export is omitted (row kept so the UI can re-enable it).";
+            };
+            name = lib.mkOption {
+              type = str;
+              description = "Share name (identifier, shown in the admin UI).";
+            };
+            path = lib.mkOption {
+              type = str;
+              description = "Absolute path to export — typically a volume mountpoint or a subdirectory of one.";
+            };
+            allowed = lib.mkOption {
+              type = str;
+              default = "";
+              description = ''
+                Allowed NFS clients: a comma/space-separated list of CIDRs or
+                IPs (e.g. "10.0.0.0/24"). Empty defaults to the host's LAN
+                subnet. A share with no resolvable clients is NOT exported
+                (never world-exported).
+              '';
+            };
+            read-only = lib.mkOption {
+              type = bool;
+              default = false;
+              description = "Export read-only (ro) instead of read-write (rw).";
+            };
+          };
+        });
+      };
     };
 
     proxied-domains = lib.mkOption {

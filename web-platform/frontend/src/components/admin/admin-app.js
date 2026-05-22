@@ -14,6 +14,7 @@ import './modules/network-module.js';
 import './modules/lan-clients-module.js';
 import './modules/dns-module.js';
 import './modules/mounts-module.js';
+import './modules/storage-module.js';
 import './modules/extra-proxies-module.js';
 import './modules/proxied-domains-module.js';
 import './modules/services-module.js';
@@ -27,6 +28,19 @@ import './modules/developers-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
 import './finish-setup-wizard.js';
+
+// Config paths that live in homefree-config.json but have NO rendered,
+// user-editable field on any admin page (secrets / internal plumbing). They
+// must be excluded from the undeployed-change INDICATION machinery so a value
+// with no UI field can never light a nav dot or appear in the pending-changes
+// list. This is indication-only; the value is still persisted, diffed for the
+// actual rebuild, and applied normally.
+//   - system.hashedPassword: the admin password hash, moved into
+//     homefree-config.json by the config-loader refactor. It has no field on
+//     the Host page, so without this it produced an orphan Host nav dot.
+const UNINDICATED_CONFIG_PATHS = new Set([
+  'system.hashedPassword',
+]);
 
 class AdminApp extends LitElement {
   static properties = {
@@ -888,6 +902,11 @@ class AdminApp extends LitElement {
       {
         id: 'mounts',
         title: 'Mounts',
+        section: 'System'
+      },
+      {
+        id: 'storage',
+        title: 'Storage',
         section: 'System'
       },
       {
@@ -1972,6 +1991,13 @@ class AdminApp extends LitElement {
     if (this.pendingConfig.mounts !== undefined) {
       merged.mounts = this.pendingConfig.mounts;
     }
+    // Storage holds two independent sub-arrays — pools (volumes) and shares —
+    // edited by different controls. Shallow-merge the sub-keys over the deployed
+    // storage so editing one never drops the other. (The Storage module also
+    // emits the full storage object, but this is defense in depth.)
+    if (this.pendingConfig.storage !== undefined) {
+      merged.storage = { ...(this.serverConfig.storage || {}), ...this.pendingConfig.storage };
+    }
     if (this.pendingConfig['proxied-domains'] !== undefined) {
       merged['proxied-domains'] = this.pendingConfig['proxied-domains'];
     }
@@ -2201,6 +2227,17 @@ class AdminApp extends LitElement {
       paths = new Set(this.deployedChangedPaths);
       for (const p of this._diffPaths(this.serverConfig || {}, current)) paths.add(p);
     }
+    // Drop config paths that have NO rendered, user-editable field on any
+    // page. Such a path can still differ from the deployed snapshot (e.g. the
+    // admin password hash, which the config-loader refactor moved into
+    // homefree-config.json as `system.hashedPassword`), but since nothing on a
+    // page highlights for it, leaving it in `undeployedPaths` produces an
+    // orphan nav dot (Host) and a meaningless pending-changes row. Filtering
+    // here keeps it out of BOTH the nav dots and the pending-changes list while
+    // not touching how genuine, editable fields are tracked.
+    for (const p of paths) {
+      if (UNINDICATED_CONFIG_PATHS.has(p)) paths.delete(p);
+    }
     // Only reassign when the set actually changed. Otherwise the 5s dirty poll
     // would hand every child a brand-new Set each tick — forcing needless
     // re-renders that can disrupt a focused text input.
@@ -2258,6 +2295,7 @@ class AdminApp extends LitElement {
       case 'system': return 'system';
       case 'dns': return 'dns';
       case 'mounts': return 'mounts';
+      case 'storage': return 'storage';
       case 'service-config': return 'extra-proxies';
       case 'proxied-domains': return 'proxied-domains';
       case 'backups': return 'backups';
@@ -2709,6 +2747,15 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></mounts-module>
+        `;
+
+      case 'storage':
+        return html`
+          <storage-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            @config-change=${this.handleConfigChange}
+          ></storage-module>
         `;
 
       case 'extra-proxies':

@@ -116,6 +116,31 @@ separate deployments. It is *not* one machine's config.
     - If you have already caused a UI breakage, say so loudly and treat
       restoring the UI as the top priority over any other in-flight work.
 
+11. **Never hand-migrate deployment data; changes are backwards-compatible
+    or run an explicit on-activation migration.** This shared code runs on
+    many live boxes, each with its own `/etc/nixos` instance state
+    (`homefree-config.json`, `applied-config.json`, per-instance assets).
+    Do NOT edit a box's instance files to fit a new format, and do NOT write
+    one-off agent-run "backfill"/migration steps against deployed data. If
+    you change a config/data format, either keep it **backwards-compatible**
+    (tolerate old shapes with `or`-defaults, optional fields, fallbacks — as
+    the JSON→Nix loader already does), OR add an **explicit, idempotent
+    migration that runs on activation** (checked into the repo, applied by
+    every box on rebuild). There is currently **no migration system**, so
+    default to backwards-compatible changes; introducing a migration
+    mechanism is a maintainer decision, not something to improvise.
+
+## Version control
+
+This repo uses **jj (jujutsu)**, colocated with git — prefer it for
+branching and committing. For parallel or independent strands of work
+(including multiple agents), use `jj workspace add` so concurrent edits
+don't collide on a single working tree; jj's first-class conflicts make
+later integration cleaner than git worktrees. Caveat: don't run jj on a
+tree another agent is actively editing with plain git — its auto-snapshot
+can capture half-finished edits. Rule 6 still applies: never commit
+without being asked.
+
 ## How services are structured
 
 - Each app/infra module is one directory under `apps/` or `services/`,
@@ -163,14 +188,16 @@ Situational knowledge — read the linked note when working in that area:
   snapshot, and `flake update <input>` will NOT re-hash a dirty tree.
   The lock node must be stripped and re-locked, or edits silently don't
   take effect. → `docs/agent-notes/flake-lock-local-input-refresh.md`
-- **`homefree-configuration.nix` is generated** — the
-  `/etc/nixos/homefree-configuration.nix` on a deployed box is
-  regenerated from `HOMEFREE_CONFIG_TEMPLATE` inside
-  `web-platform/backend/services/install.py` by `sync-template.py` on
-  every rebuild (CLI and UI). Editing only the deployed file is a time
-  bomb — it survives until any other template change makes them drift,
-  then is overwritten with no warning. Schema-loader patches go in
-  install.py.
+- **JSON→Nix mapping lives in a shared module** — `homefree-config.json`
+  is the per-instance source of truth; the box's `flake.nix` reads it and
+  the SHARED `modules/homefree-config-loader.nix` maps it into `homefree.*`
+  (wired via `homefree.nixosModules.homefree-config-loader` + the
+  `homefreeConfigJson`/`homefreeInstanceDir` specialArgs). There is NO
+  generated `/etc/nixos/homefree-configuration.nix` anymore (the old
+  `HOMEFREE_CONFIG_TEMPLATE` + `sync-template.py` model went stale on a
+  bare `nixos-rebuild switch`). Add any new JSON→Nix binding to the loader
+  module — never to install.py. Admin password hash lives in the JSON
+  under `system.hashedPassword`.
   → `docs/agent-notes/homefree-configuration-nix-is-generated.md`
 - **Lit tagged-template backticks** — never put a backtick inside a
   `css\`...\`` or `html\`...\`` template body (including inside a CSS

@@ -109,6 +109,20 @@ export const configureNetwork = (wanInterface, lanInterface) =>
     lan_interface: lanInterface,
   });
 
+// Storage & NAS — local drive pools (Phase 1).
+// `createStoragePool` deliberately uses post() (no retry): it formats disks,
+// so it must never be auto-replayed. The status poll uses get() (retryable).
+export const getStorageDrives = () => get('/api/storage/drives');
+export const getStoragePools = () => get('/api/storage/pools');
+export const previewStoragePool = (members, profile) =>
+  post('/api/storage/preview', { members, profile });
+export const createStoragePool = (payload) =>
+  post('/api/storage/pools/create', payload);
+export const getStoragePoolCreateStatus = () =>
+  get('/api/storage/pools/create-status');
+export const forgetStoragePool = (name) =>
+  post('/api/storage/pools/forget', { name });
+
 // Locale & Timezone — cached module-level so the network call only happens
 // once per page load. The data is large but immutable for the session, so
 // holding the promise eliminates the empty-dropdown flicker when navigating

@@ -303,6 +303,7 @@ in
     iotop
     iperf3
     jq
+    jujutsu          # jj — Git-compatible VCS; preferred for parallel workspaces
     lemonade
     luarocks
     lshw
