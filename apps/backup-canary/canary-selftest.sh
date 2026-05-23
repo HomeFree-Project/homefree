@@ -46,14 +46,87 @@ WRITER="${CANARY_WRITER:-canary-writer}"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# JSON-escape a string for safe interpolation into the result file. Handles
+# backslash, double-quote, and ASCII control characters - including newlines
+# from captured journal/restore-cli output, which are collapsed to spaces so
+# the result remains a single-line JSON string.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\r'/}"
+    s="${s//$'\n'/ }"
+    s="${s//$'\t'/ }"
+    s="$(printf '%s' "$s" | tr -d '\000-\037')"
+    printf '%s' "$s"
+}
+
+# Pick the most informative line(s) from a blob of script/unit output.
+# Skips empties + systemd lifecycle noise; prefers lines that look like an
+# error; caps the result so it fits the admin UI's single-line detail row.
+# Returns an empty string when nothing useful is found.
+extract_error_lines() {
+    local input="$1"
+    local best="" any="" line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        # Skip systemd lifecycle noise. Some messages come bare; others
+        # come with a "<unit>.service: " prefix (when systemd itself logs
+        # them), so we match the distinctive phrase as a substring.
+        case "$line" in
+            "Starting "*|"Started "*|"Stopping "*|"Stopped "*) continue ;;
+            "Failed to start "*|"Finished "*) continue ;;
+            *": Failed with result "*) continue ;;
+            *": Control process exited"*) continue ;;
+            *": Main process exited"*) continue ;;
+            *": Deactivated successfully"*) continue ;;
+            *": Finished "*) continue ;;
+            *": Consumed "*) continue ;;
+            *"See \""*) continue ;;
+        esac
+        any="$line"
+        # Prefer lines that look like a real script-level error. Anchored
+        # on the conventional error prefixes - the bare word "Failed"
+        # used to live here, but it matched systemd lifecycle messages
+        # too, swamping the real ERROR: line.
+        case "$line" in
+            "ERROR:"*|"Error:"*|"error:"*) best="$line" ;;
+            "FATAL:"*|"Fatal:"*|"fatal:"*) best="$line" ;;
+            "[ERROR]"*|"[FATAL]"*) best="$line" ;;
+            *" ERROR:"*|*" Error:"*|*" error:"*) best="$line" ;;
+            *" FATAL:"*|*" Fatal:"*|*" fatal:"*) best="$line" ;;
+        esac
+    done <<< "$input"
+    local result="${best:-$any}"
+    if (( ${#result} > 300 )); then
+        result="${result:0:299}…"
+    fi
+    printf '%s' "$result"
+}
+
+# Pull recent journal for a systemd unit and extract the failure reason.
+# `set -uo pipefail` (no -e) means a missing journal entry returns ""
+# rather than aborting the script.
+capture_unit_error() {
+    local unit="$1"
+    local lines=""
+    lines="$(journalctl -u "$unit" -n 30 -o cat --no-pager 2>/dev/null)" \
+        || return 0
+    extract_error_lines "$lines"
+}
+
 # Write a result file the canary web page / admin UI reads, then exit.
 #   $1  result: pass | fail
-#   $2  human-readable detail
+#   $2  human-readable detail (may contain captured error output - it is
+#       JSON-escaped before being written, so multi-line / quote-bearing
+#       error strings are safe here)
 finish() {
     local result="$1" detail="$2"
     local finished_at
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     mkdir -p "$DATA_DIR"
+    local escaped_detail
+    escaped_detail="$(json_escape "$detail")"
     local tmp
     tmp="$(mktemp "$DATA_DIR/.selftest.XXXXXX")"
     cat > "$tmp" <<JSON
@@ -62,7 +135,7 @@ finish() {
   "source": "$SELFTEST_SOURCE",
   "started_at": "$started_at",
   "finished_at": "$finished_at",
-  "detail": "$detail"
+  "detail": "$escaped_detail"
 }
 JSON
     mv "$tmp" "$RESULT_FILE"
@@ -136,7 +209,16 @@ run_cycle() {
     local unit="restic-backups-${source}-${CANARY_SERVICE}.service"
     echo "backing up via $unit ..."
     if ! systemctl start "$unit"; then
-        finish fail "backup unit $unit failed"
+        # Surface the actual reason the unit failed - the prestart guard
+        # message, restic's own error, etc. - so the admin UI shows more
+        # than "unit failed".
+        local why
+        why="$(capture_unit_error "$unit")"
+        if [[ -n "$why" ]]; then
+            finish fail "backup unit $unit failed: $why"
+        else
+            finish fail "backup unit $unit failed"
+        fi
     fi
 
     # 3. Mutate the marker so a restore has something to revert.
@@ -153,10 +235,26 @@ run_cycle() {
 
     # 4. Restore the canary. HARDCODED to backup-canary - this can never
     #    touch another service.
+    #    Capture restore-cli's combined output so we can both stream it to
+    #    the journal (cat below) AND extract the most informative error
+    #    line for the admin UI on failure.
     echo "restoring $CANARY_SERVICE from $source ..."
-    if ! "$RESTORE_CLI" restore "$CANARY_SERVICE" --source "$source" --yes; then
-        finish fail "restore of $CANARY_SERVICE from $source failed"
+    local restore_log restore_rc=0
+    restore_log="$(mktemp)"
+    "$RESTORE_CLI" restore "$CANARY_SERVICE" --source "$source" --yes \
+        >"$restore_log" 2>&1 || restore_rc=$?
+    cat "$restore_log"
+    if (( restore_rc != 0 )); then
+        local why
+        why="$(extract_error_lines "$(cat "$restore_log")")"
+        rm -f "$restore_log"
+        if [[ -n "$why" ]]; then
+            finish fail "restore of $CANARY_SERVICE from $source failed: $why"
+        else
+            finish fail "restore of $CANARY_SERVICE from $source failed"
+        fi
     fi
+    rm -f "$restore_log"
 
     # 5. Assert the restore reverted every facet of the canary state.
     local r_file r_db r_rows
