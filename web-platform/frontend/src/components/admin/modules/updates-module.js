@@ -7,7 +7,7 @@ import { checkSystemUpdates, applySystemUpdate } from '../../../api/client.js';
  * Checks whether a newer commit of the `homefree-base` flake input (declared
  * in /etc/nixos/flake.nix, pinned in flake.lock) is available, and lets the
  * admin pull it in. Pulling it in only bumps flake.lock — the admin then
- * clicks "Apply Changes" in the sidebar to rebuild onto the new version.
+ * clicks "Apply" in the sidebar to rebuild onto the new version.
  */
 class UpdatesModule extends LitElement {
   static properties = {
@@ -39,10 +39,10 @@ class UpdatesModule extends LitElement {
       font-size: 13px;
       line-height: 1.5;
     }
-    .info-box strong {
+    .info-box strong { color: var(--hf-text); }
+    .info-box > strong:first-child {
       display: block;
       margin-bottom: 8px;
-      color: var(--hf-text);
     }
 
     .notice {
@@ -55,7 +55,8 @@ class UpdatesModule extends LitElement {
       font-size: 13px;
       line-height: 1.5;
     }
-    .notice strong { display: block; margin-bottom: 6px; color: var(--hf-text); }
+    .notice strong { color: var(--hf-text); }
+    .notice > strong:first-child { display: block; margin-bottom: 6px; }
 
     .warn-box {
       background: rgba(59, 130, 246, 0.08);
@@ -67,7 +68,8 @@ class UpdatesModule extends LitElement {
       font-size: 13px;
       line-height: 1.5;
     }
-    .warn-box strong { display: block; margin-bottom: 10px; color: var(--hf-text); }
+    .warn-box strong { color: var(--hf-text); }
+    .warn-box > strong:first-child { display: block; margin-bottom: 10px; }
     .warn-box p { margin: 10px 0 4px; }
     .warn-box .ref {
       display: block;
@@ -271,7 +273,7 @@ class UpdatesModule extends LitElement {
             the alternate HomeFree repository above, not this version.
             Re-enable the official repository for this update to take effect.
           ` : html`
-            Click <strong>Apply Changes</strong> in the sidebar to rebuild
+            Click <strong>Apply</strong> in the sidebar to rebuild
             your system onto the new version.
           `}
         </div>
@@ -335,7 +337,7 @@ class UpdatesModule extends LitElement {
           <strong>Updates</strong>
           HomeFree checks the release branch it tracks for newer commits.
           Pulling an update in only changes the pinned version — click
-          <strong>Apply Changes</strong> afterwards to rebuild the system.
+          <strong>Apply</strong> afterwards to rebuild the system.
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}

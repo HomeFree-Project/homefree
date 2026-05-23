@@ -921,7 +921,7 @@ class DevelopersService:
             ]
             msg = "Alternate HomeFree repository saved, but not applied (see warnings)."
         elif stored["enabled"]:
-            msg = ("Alternate HomeFree repository saved. Click Apply Changes "
+            msg = ("Alternate HomeFree repository saved. Click Apply "
                    "to rebuild from it.")
         else:
             msg = ("Reverted to the official HomeFree repository. Click Apply "
@@ -988,7 +988,7 @@ class DevelopersService:
 
         return {
             "success": True,
-            "message": "Flake registered. Click Apply Changes to rebuild.",
+            "message": "Flake registered. Click Apply to rebuild.",
             "flake": normalized,
         }
 
@@ -1005,5 +1005,5 @@ class DevelopersService:
             return {"success": False, "message": err}
         return {
             "success": True,
-            "message": "Flake removed. Click Apply Changes to rebuild.",
+            "message": "Flake removed. Click Apply to rebuild.",
         }

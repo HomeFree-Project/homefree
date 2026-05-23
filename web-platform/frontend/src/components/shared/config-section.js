@@ -45,6 +45,20 @@ class ConfigSection extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
+    }
+
+    /* Right cluster: optional caller-provided actions (via slot="actions") and
+       the collapse icon. Actions click must not toggle a collapsible section. */
+    .section-header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .section-title {
@@ -108,11 +122,17 @@ class ConfigSection extends LitElement {
                 <p class="section-description">${this.description}</p>
               ` : ''}
             </div>
-            ${this.collapsible ? html`
-              <span class="collapse-icon ${this.collapsed ? 'collapsed' : ''}">
-                ▼
+            <div class="section-header-right">
+              <span class="section-header-actions"
+                    @click=${(e) => e.stopPropagation()}>
+                <slot name="actions"></slot>
               </span>
-            ` : ''}
+              ${this.collapsible ? html`
+                <span class="collapse-icon ${this.collapsed ? 'collapsed' : ''}">
+                  ▼
+                </span>
+              ` : ''}
+            </div>
           </div>
         </div>
 

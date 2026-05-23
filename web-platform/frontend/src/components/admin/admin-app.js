@@ -13,7 +13,6 @@ import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/lan-clients-module.js';
 import './modules/dns-module.js';
-import './modules/mounts-module.js';
 import './modules/storage-module.js';
 import './modules/extra-proxies-module.js';
 import './modules/proxied-domains-module.js';
@@ -897,11 +896,6 @@ class AdminApp extends LitElement {
       {
         id: 'hardware',
         title: 'Hardware',
-        section: 'System'
-      },
-      {
-        id: 'mounts',
-        title: 'Mounts',
         section: 'System'
       },
       {
@@ -2001,6 +1995,14 @@ class AdminApp extends LitElement {
     if (this.pendingConfig['proxied-domains'] !== undefined) {
       merged['proxied-domains'] = this.pendingConfig['proxied-domains'];
     }
+    // Snapshots is a top-level key carrying the OS-root timeline toggle, edited
+    // by the Storage module. Without this merge the edit lives only in
+    // pendingConfig and is dropped from the displayed config + save — the same
+    // failure mode as the network/mounts/storage merges above. Shallow per-key
+    // override is enough (the module emits the whole snapshots object).
+    if (this.pendingConfig.snapshots !== undefined) {
+      merged.snapshots = { ...(this.serverConfig.snapshots || {}), ...this.pendingConfig.snapshots };
+    }
 
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
@@ -2294,8 +2296,9 @@ class AdminApp extends LitElement {
     switch (seg[0]) {
       case 'system': return 'system';
       case 'dns': return 'dns';
-      case 'mounts': return 'mounts';
+      case 'mounts': return 'storage';   // Mounts UI merged into the Storage page
       case 'storage': return 'storage';
+      case 'snapshots': return 'storage';
       case 'service-config': return 'extra-proxies';
       case 'proxied-domains': return 'proxied-domains';
       case 'backups': return 'backups';
@@ -2738,15 +2741,6 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></dns-module>
-        `;
-
-      case 'mounts':
-        return html`
-          <mounts-module
-            .config=${this.config}
-            .appliedConfig=${this.appliedConfig}
-            @config-change=${this.handleConfigChange}
-          ></mounts-module>
         `;
 
       case 'storage':

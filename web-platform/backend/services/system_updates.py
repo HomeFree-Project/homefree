@@ -270,6 +270,6 @@ class SystemUpdates:
         logger.info(f"Updated homefree-base input to {latest_rev}")
         return {
             "success": True,
-            "message": "System version updated. Click Apply Changes to finish.",
+            "message": "System version updated. Click Apply to finish.",
             "latest_rev": latest_rev,
         }

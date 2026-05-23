@@ -36,10 +36,12 @@ class MountsModule extends LitElement {
       line-height: 1.5;
     }
 
-    .help-box strong {
+    .help-box strong { color: var(--hf-text); }
+    /* Only the leading title strong is a block heading; inline <strong>
+       emphasis within the body text stays inline. */
+    .help-box > strong:first-child {
       display: block;
       margin-bottom: 6px;
-      color: var(--hf-text);
       font-size: 14px;
     }
 

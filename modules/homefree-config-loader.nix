@@ -178,10 +178,13 @@ in
         profile        = p.profile;
         members        = p.members or [];
         fs-uuid        = p.fs-uuid;
+        md-uuid        = p.md-uuid or "";
+        md-device      = p.md-device or "";
         encrypted      = p.encrypted or false;
         luks-mappers   = p.luks-mappers or [];
         mount-options  = p.mount-options or [ "compress=zstd" "noatime" ];
         device-timeout = p.device-timeout or "15s";
+        snapshots      = p.snapshots or false;
       }) (jsonData.storage.pools or []);
       shares = map (s: {
         enabled   = s.enabled or true;
@@ -190,6 +193,19 @@ in
         allowed   = s.allowed or "";
         read-only = s.read-only or false;
       }) (jsonData.storage.shares or []);
+    };
+
+    ## Local btrfs timeline snapshots (snapper). Off by default; the chained
+    ## `or` tolerates older JSON without the key, and the retention defaults
+    ## match module.nix's homefree.snapshots.retention.
+    snapshots = {
+      system.enable = jsonData.snapshots.system.enable or false;
+      retention = {
+        hourly  = jsonData.snapshots.retention.hourly  or 24;
+        daily   = jsonData.snapshots.retention.daily   or 7;
+        weekly  = jsonData.snapshots.retention.weekly  or 4;
+        monthly = jsonData.snapshots.retention.monthly or 6;
+      };
     };
 
     ## Per-service SSO opt-out toggles. The JSON stores

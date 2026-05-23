@@ -31,7 +31,7 @@ function emitSaveStatus(el, status, error = '') {
  *
  * Registering a flake rewrites /etc/nixos/flake.nix and custom-flakes.nix
  * but does NOT rebuild — that lands the change in homefree-config.json too,
- * so the shell's dirty detection fires and the sidebar "Apply Changes"
+ * so the shell's dirty detection fires and the sidebar "Apply"
  * button activates. The admin rebuilds from there.
  */
 class DevelopersModule extends LitElement {
@@ -90,7 +90,8 @@ class DevelopersModule extends LitElement {
       font-size: 13px;
       line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
+    .info-box strong { color: var(--hf-text); }
+    .info-box > strong:first-child { display: block; margin-bottom: 8px; }
 
     .notice {
       background: rgba(59, 130, 246, 0.08);
@@ -445,7 +446,7 @@ class DevelopersModule extends LitElement {
         moduleAttr: this.formModuleAttr || 'default',
         enabled: true,
       });
-      this.notice = result.message || 'Flake registered. Click Apply Changes to rebuild.';
+      this.notice = result.message || 'Flake registered. Click Apply to rebuild.';
       this._resetForm();
       await this.loadFlakes();
       this._notifyDirty();
@@ -983,7 +984,7 @@ class DevelopersModule extends LitElement {
           modules. Each registered flake's <code>nixosModules</code> are composed
           into the system build — so you can run your own code while still
           receiving upstream updates. Registering a flake does not rebuild;
-          click <strong>Apply Changes</strong> in the sidebar afterwards.
+          click <strong>Apply</strong> in the sidebar afterwards.
         </div>
 
         ${this.notice ? html`<div class="notice"><strong>Done.</strong> ${this.notice}</div>` : ''}

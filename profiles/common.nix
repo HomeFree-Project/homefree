@@ -267,6 +267,19 @@ in
 
   programs.mosh.enable = true;
 
+  # Monthly btrfs scrub of the OS root. HomeFree's root is always btrfs
+  # (disko_builder), so this regularly checksum-verifies the system, /home and
+  # /nix subvolumes — detecting bitrot, and repairing it when root is a btrfs
+  # mirror. Storage volumes append their own mountpoints to
+  # services.btrfs.autoScrub.fileSystems in modules/storage-pools.nix; the
+  # in-use Synology import (/mnt/storage) is deliberately left out (a monthly
+  # multi-hour scrub of a 22TB array being copied off would be a lot of I/O).
+  services.btrfs.autoScrub = {
+    enable = true;
+    interval = "monthly";
+    fileSystems = [ "/" ];
+  };
+
   environment.systemPackages = with pkgs; [
     (python3.withPackages (python-pkgs: with python-pkgs; [
       pandas
@@ -304,6 +317,13 @@ in
     iperf3
     jq
     jujutsu          # jj — Git-compatible VCS; preferred for parallel workspaces
+    mdadm            # Linux md tooling; the Storage module needs it to CREATE a
+                     # parity (raid5/raid6) volume before boot.swraid is on
+                     # (storage-pools.nix enables swraid once one exists)
+    gptfdisk         # sgdisk — zap partition tables when the Storage module
+                     # reclaims (wipes) an in-use disk back to eligible
+    lvm2             # vgchange/pvs — tear down LVM on a disk being reclaimed,
+                     # even on a box with no pre-existing LVM
     lemonade
     luarocks
     lshw

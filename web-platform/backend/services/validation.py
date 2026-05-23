@@ -299,7 +299,8 @@ class ValidationService:
         pool, or two pools fighting for one mount point)."""
         errors = []
         pools = storage_config.get('pools') or []
-        valid_profiles = {'single': 1, 'raid0': 2, 'raid1': 2, 'raid10': 4}
+        valid_profiles = {'single': 1, 'raid0': 2, 'raid1': 2, 'raid10': 4,
+                          'raid5': 3, 'raid6': 4}
 
         seen_names = set()
         seen_mounts = set()

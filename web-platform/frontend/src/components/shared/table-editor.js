@@ -1,5 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { confirmDialog } from './confirm-dialog.js';
+import './file-browser.js';
+import './tag-input.js';
 
 /**
  * Table editor component for list-based configuration
@@ -28,7 +30,11 @@ class TableEditor extends LitElement {
     // Optional stable-identity column (e.g. "label"). When set, a row whose
     // identity still exists is treated as a MODIFICATION (highlighted amber by
     // _rowUndeployed), not a remove+add. Without it, rows match by whole value.
-    rowKey: { type: String }
+    rowKey: { type: String },
+    // Internal state for the path-column file picker.
+    _browserOpen: { state: true },
+    _browseFieldKey: { state: true },
+    _browseRoot: { state: true },
   };
 
   static styles = css`
@@ -287,6 +293,15 @@ class TableEditor extends LitElement {
       flex-shrink: 0;
     }
 
+    /* Path-type column: text input + Browse button side-by-side. Matches the
+       pattern used in developers-module's local-path picker. */
+    .modal-field .input-with-browse {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .modal-field .input-with-browse input { flex: 1; }
+
     .modal-field input,
     .modal-field select {
       width: 100%;
@@ -354,6 +369,9 @@ class TableEditor extends LitElement {
     this.editingIndex = -1;
     this.showModal = false;
     this.appliedData = null;
+    this._browserOpen = false;
+    this._browseFieldKey = '';
+    this._browseRoot = '';
     this.rowKey = null;
   }
 
@@ -433,6 +451,24 @@ class TableEditor extends LitElement {
     this.requestUpdate();
   }
 
+  // Open the shared file-browser for the given path-type column. The browser
+  // overlays the edit modal (its z-index is higher); on selection it writes
+  // back via handleFieldChange and closes itself.
+  _openBrowse(key, rootPath) {
+    this._browseFieldKey = key;
+    this._browseRoot = rootPath || '';
+    this._browserOpen = true;
+  }
+
+  _onBrowsePicked(e) {
+    this.handleFieldChange(this._browseFieldKey, e.detail.path);
+    this._browserOpen = false;
+  }
+
+  _onBrowseClose() {
+    this._browserOpen = false;
+  }
+
   saveRow() {
     const newData = [...this.data];
 
@@ -492,12 +528,16 @@ class TableEditor extends LitElement {
       return '';
     }
 
+    // Derive the modal title from `addLabel` so the caller doesn't see a
+    // generic "Add New Row" / "Edit Row". e.g. addLabel="Add NFS share" →
+    // "Add NFS share" / "Edit NFS share". The default "Add Row" still works.
+    const noun = (this.addLabel || 'Add Row').replace(/^Add\s+/i, '');
+    const modalTitle = this.editingIndex >= 0 ? `Edit ${noun}` : this.addLabel;
+
     return html`
       <div class="modal-overlay" @click=${this.closeModal}>
         <div class="modal" @click=${(e) => e.stopPropagation()}>
-          <h3 class="modal-header">
-            ${this.editingIndex >= 0 ? 'Edit Row' : 'Add New Row'}
-          </h3>
+          <h3 class="modal-header">${modalTitle}</h3>
 
           <div class="modal-body">
             ${this.columns.map(col => html`
@@ -511,6 +551,25 @@ class TableEditor extends LitElement {
                     />
                     <span>${col.label}</span>
                   </label>
+                ` : col.type === 'path' ? html`
+                  <label>${col.label}</label>
+                  <div class="input-with-browse">
+                    <input
+                      type="text"
+                      .value=${this.editingRow[col.key] || ''}
+                      @input=${(e) => this.handleFieldChange(col.key, e.target.value)}
+                      placeholder="${col.placeholder || ''}"
+                    />
+                    <button type="button" class="btn-row"
+                            @click=${() => this._openBrowse(col.key, col.rootPath)}>Browse…</button>
+                  </div>
+                ` : col.type === 'tags' ? html`
+                  <label>${col.label}</label>
+                  <tag-input
+                    .value=${this.editingRow[col.key] || ''}
+                    placeholder=${col.placeholder || ''}
+                    @change=${(e) => this.handleFieldChange(col.key, e.detail.value)}
+                  ></tag-input>
                 ` : html`
                   <label>${col.label}</label>
                   <input
@@ -604,6 +663,15 @@ class TableEditor extends LitElement {
       </div>
 
       ${this.renderEditModal()}
+
+      ${this._browserOpen ? html`
+        <file-browser
+          ?open=${this._browserOpen}
+          .currentPath=${(this.editingRow && this.editingRow[this._browseFieldKey]) || this._browseRoot || '/'}
+          .rootPath=${this._browseRoot}
+          @path-selected=${this._onBrowsePicked}
+          @close=${this._onBrowseClose}
+        ></file-browser>` : ''}
     `;
   }
 }

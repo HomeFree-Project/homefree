@@ -153,7 +153,8 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       font-size: 13px;
       line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
+    .info-box strong { color: var(--hf-text); }
+    .info-box > strong:first-child { display: block; margin-bottom: 8px; }
     .info-box ul { margin: 8px 0 0 20px; padding: 0; }
     .info-box a { color: var(--hf-accent); text-decoration: none; }
     .info-box a:hover { text-decoration: underline; }

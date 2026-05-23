@@ -51,10 +51,10 @@ class SsoModule extends LitElement {
       line-height: 1.5;
     }
 
-    .info-box strong {
+    .info-box strong { color: var(--hf-text); }
+    .info-box > strong:first-child {
       display: block;
       margin-bottom: 8px;
-      color: var(--hf-text);
     }
 
     .status-row {

@@ -115,7 +115,7 @@ class UsersStep extends LitElement {
       color: #1565c0;
     }
 
-    .info-box strong {
+    .info-box > strong:first-child {
       display: block;
       margin-bottom: 8px;
     }

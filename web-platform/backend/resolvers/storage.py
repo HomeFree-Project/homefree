@@ -26,6 +26,8 @@ import concurrent.futures
 import json
 import logging
 import os
+import pwd
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -41,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
-# Phase-1 btrfs-native profiles and the minimum member count each requires.
+# Supported profiles and the minimum member count each requires. single/raid0/
+# raid1/raid10 are btrfs-native; raid5/raid6 are btrfs-on-mdadm parity.
 PROFILE_MIN_MEMBERS: Dict[str, int] = {
-    "single": 1, "raid0": 2, "raid1": 2, "raid10": 4,
+    "single": 1, "raid0": 2, "raid1": 2, "raid10": 4, "raid5": 3, "raid6": 4,
 }
 
 _CMD_TIMEOUT_S = 5.0
@@ -78,6 +81,19 @@ def _resolve_bin(name: str) -> str:
 _LSBLK = _resolve_bin("lsblk")
 _FINDMNT = _resolve_bin("findmnt")
 _BTRFS = _resolve_bin("btrfs")
+_PVS = _resolve_bin("pvs")
+_BLKID = _resolve_bin("blkid")
+
+
+def _fs_present(fs_uuid: Optional[str]) -> bool:
+    """Whether the filesystem with this UUID is actually available — NOT merely
+    whether a /dev/disk/by-uuid symlink happens to exist (udev doesn't reliably
+    create that for md arrays). Falls back to blkid, which probes by UUID."""
+    if not fs_uuid:
+        return False
+    if Path(f"/dev/disk/by-uuid/{fs_uuid}").exists():
+        return True
+    return bool(_run([_BLKID, "-U", fs_uuid]).strip())
 
 
 def _run(cmd: List[str]) -> str:
@@ -255,6 +271,163 @@ def _by_id_map() -> Dict[str, str]:
     return {k: sorted(v, key=rank)[0] for k, v in candidates.items() if v}
 
 
+# ------------------------------------------------------- reclaim detection
+# Generic teardown of in-use storage so a hard-blocked disk can be wiped back to
+# eligible. Everything here is class-level block-layer fact (mdstat / pvs /
+# lsblk) — no vendor- or instance-specific assumptions (AGENTS.md rule 1).
+
+def _md_member_map() -> Dict[str, Dict[str, Any]]:
+    """Parse /proc/mdstat → {md_kname: {"members": [member part knames],
+    "level": str}} for every currently-ASSEMBLED array. Best-effort."""
+    try:
+        lines = Path("/proc/mdstat").read_text().splitlines()
+    except OSError:
+        return {}
+    arrays: Dict[str, Dict[str, Any]] = {}
+    for line in lines:
+        # "md127 : active (read-only) raid6 sde5[0] sdb5[3] sdc5[2] sdd5[1]"
+        if " : " not in line:
+            continue
+        head, rest = line.split(" : ", 1)
+        md = head.strip()
+        if not md.startswith("md"):
+            continue
+        toks = rest.split()
+        level = next((t for t in toks
+                      if t.startswith("raid") or t in ("linear", "multipath")), "")
+        members = [m.group(1) for m in
+                   (re.match(r"^([A-Za-z0-9]+)\[\d+\]", t) for t in toks) if m]
+        arrays[md] = {"members": members, "level": level}
+    return arrays
+
+
+def _pv_vg_map() -> Dict[str, str]:
+    """{pv_path: vg_name} from `pvs`. Empty when LVM tooling is absent or there
+    are no PVs (a PV with no VG maps to "")."""
+    out = _run([_PVS, "--noheadings", "-o", "pv_name,vg_name"])
+    mp: Dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        # Skip any non-device noise (e.g. pvs WARNING lines on an old PV header).
+        if parts and parts[0].startswith("/dev/"):
+            mp[parts[0]] = parts[1] if len(parts) >= 2 else ""
+    return mp
+
+
+def _reclaim_groups() -> List[Dict[str, Any]]:
+    """Teardownable storage groups on this box. Each group is wiped as a unit
+    (an array/VG spans several disks): an assembled md array (+ any LVM VGs
+    layered on it + its member disks), then any standalone LVM-PV disk. The
+    create wizard then treats the freed disks as blank."""
+    arrays = _md_member_map()
+    pv_vg = _pv_vg_map()
+    groups: List[Dict[str, Any]] = []
+    claimed: Set[str] = set()
+
+    # md arrays first; fold in VGs whose PV is the array device so they are
+    # deactivated before the array is stopped.
+    for md, info in arrays.items():
+        disks: Set[str] = set()
+        for part in info["members"]:
+            disks |= _underlying_disks(f"/dev/{part}")
+        vgs = sorted({vg for pv, vg in pv_vg.items() if vg
+                      and os.path.basename(os.path.realpath(pv)) == md})
+        level = (info["level"] or "raid").upper()
+        desc = f"{level} array /dev/{md} across {len(disks)} drive(s)"
+        if vgs:
+            desc += f", with LVM group {', '.join(vgs)}"
+        groups.append({
+            "id": f"md:{md}", "kind": "mdadm", "arrays": [f"/dev/{md}"],
+            "vgs": vgs, "disks": sorted(disks), "description": desc,
+        })
+        claimed |= disks
+
+    # Standalone LVM PVs sitting directly on a disk/partition (not on md).
+    for pv, vg in pv_vg.items():
+        if not vg or os.path.basename(os.path.realpath(pv)).startswith("md"):
+            continue
+        disks = _underlying_disks(pv) - claimed
+        if not disks:
+            continue
+        groups.append({
+            "id": f"lvm:{vg}", "kind": "lvm", "arrays": [], "vgs": [vg],
+            "disks": sorted(disks),
+            "description": f"LVM group {vg} on {len(disks)} drive(s)",
+        })
+        claimed |= disks
+
+    return groups
+
+
+def _proc_comm(pid: str) -> str:
+    try:
+        return Path(f"/proc/{pid}/comm").read_text().strip() or pid
+    except OSError:
+        return pid
+
+
+def _proc_user(pid: str) -> str:
+    try:
+        return pwd.getpwuid(os.stat(f"/proc/{pid}").st_uid).pw_name
+    except (OSError, KeyError):
+        return ""
+
+
+def _blockers_for_mountpoints(mountpoints: Set[str], limit_per: int = 12
+                              ) -> Dict[str, List[Dict[str, Any]]]:
+    """For each mountpoint, the processes keeping it busy — a cwd/root/exe or an
+    open fd under it — which is why an unmount (and thus a reclaim) is blocked.
+    Pure /proc scan, no lsof dependency; one pass covers all mountpoints. Only
+    called when a reclaimable array is still mounted, so the cost is rare.
+    Best-effort, never raises."""
+    targets = [(os.path.realpath(m), os.path.realpath(m).rstrip("/") + "/", m)
+               for m in mountpoints]
+    result: Dict[str, List[Dict[str, Any]]] = {m: [] for m in mountpoints}
+    if not targets:
+        return result
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return result
+    for pid in pids:
+        base = f"/proc/{pid}"
+        links: List[str] = []
+        for ln in ("cwd", "root", "exe"):
+            try:
+                links.append(os.readlink(f"{base}/{ln}"))
+            except OSError:
+                pass
+        try:
+            for fd in os.listdir(f"{base}/fd"):
+                try:
+                    links.append(os.readlink(f"{base}/fd/{fd}"))
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        matched = None
+        for tgt in links:
+            for real, prefix, orig in targets:
+                if tgt == real or tgt.startswith(prefix):
+                    matched = orig
+                    break
+            if matched:
+                break
+        if matched and len(result[matched]) < limit_per:
+            result[matched].append(
+                {"pid": int(pid), "command": _proc_comm(pid), "user": _proc_user(pid)})
+    return result
+
+
+def _dev_size_bytes(dev: str) -> Optional[int]:
+    """Size of a block device in bytes via /sys, or None."""
+    try:
+        name = os.path.basename(os.path.realpath(dev))
+        return int(Path(f"/sys/class/block/{name}/size").read_text().strip()) * 512
+    except (OSError, ValueError):
+        return None
+
+
 # ----------------------------------------------------------- usable capacity
 
 def _usable_bytes(profile: str, sizes: List[int]) -> int:
@@ -267,7 +440,56 @@ def _usable_bytes(profile: str, sizes: List[int]) -> int:
         # btrfs raid1/raid10 keep two copies. With unequal disks the usable
         # capacity is min(total/2, total - largest_disk).
         return min(total // 2, total - max(sizes))
+    if profile in ("raid5", "raid6"):
+        # md parity: capacity is (N - parity) × the SMALLEST member (md sizes
+        # every member to the smallest), so 1 disk (raid5) / 2 disks (raid6)
+        # worth of space goes to parity.
+        parity = 1 if profile == "raid5" else 2
+        if len(sizes) <= parity:
+            return 0
+        return (len(sizes) - parity) * min(sizes)
     return total
+
+
+def _md_status(md_kname: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Live status of the kernel md device <md_kname> (e.g. "md127") parsed
+    from /proc/mdstat. Returns {state, degraded, resync, resync_pct} or None.
+    Best-effort, never raises. The caller resolves md_kname from the pool's
+    btrfs UUID (stable across reboots), not the flaky /dev/md/<name> symlink."""
+    if not md_kname:
+        return None
+    try:
+        lines = Path("/proc/mdstat").read_text().splitlines()
+    except OSError:
+        return None
+    for i, line in enumerate(lines):
+        if not (line.startswith(md_kname + " ") or line.startswith(md_kname + ":")):
+            continue
+        # Header: "md127 : active raid6 sde[0] sdf[1] ...". The detail + any
+        # progress line follow on the next 1–3 lines (until a blank line).
+        block = "\n".join(lines[i:i + 4])
+        active = "active" in line.split()
+        mmap = re.search(r"\[([U_]+)\]", block)
+        degraded = bool(mmap and "_" in mmap.group(1))
+        pm = re.search(r"(resync|recovery|reshape|check)\s*=\s*([\d.]+)%", block)
+        resync = pm.group(1) if pm else None
+        pct = None
+        if pm:
+            try:
+                pct = float(pm.group(2))
+            except ValueError:
+                pct = None
+        if resync:
+            state = "resyncing"
+        elif degraded:
+            state = "degraded"
+        elif active:
+            state = "active"
+        else:
+            state = "inactive"
+        return {"state": state, "degraded": degraded,
+                "resync": resync, "resync_pct": pct}
+    return None
 
 
 # ----------------------------------------------------------------- resolver
@@ -285,6 +507,32 @@ class StorageResolver:
         os_disks = _os_disks()
         btrfs_disks = _mounted_btrfs_disks()
         swap_disks = _swap_disks()
+
+        # Teardownable structures, indexed by member disk, so a hard-blocked
+        # drive can offer a group-scoped "reclaim".
+        disk_to_group: Dict[str, Dict[str, Any]] = {}
+        for g in _reclaim_groups():
+            for dk in g["disks"]:
+                disk_to_group.setdefault(dk, g)
+
+        # Mountpoints backed by each disk. A reclaimable array that is still
+        # mounted can't be reclaimed until it's unmounted, so we surface where
+        # it's mounted and (only then) which processes hold it busy.
+        disk_mounts: Dict[str, List[str]] = {}
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].startswith("/dev/"):
+                    mp = parts[1].replace("\\040", " ")
+                    for dk in _underlying_disks(parts[0]):
+                        disk_mounts.setdefault(dk, [])
+                        if mp not in disk_mounts[dk]:
+                            disk_mounts[dk].append(mp)
+        except OSError:
+            pass
+        blocked_mps = {mp for dk, mps in disk_mounts.items()
+                       if dk in disk_to_group for mp in mps}
+        blockers_by_mp = _blockers_for_mountpoints(blocked_mps) if blocked_mps else {}
 
         out: List[Dict[str, Any]] = []
         for d in drives:
@@ -335,6 +583,49 @@ class StorageResolver:
             row["has_existing_data"] = bool(has_data)
             row["existing_fstype"] = fstype
             row["existing_label"] = label
+
+            # Reclaim: a disk that belongs to a teardownable structure (md/LVM)
+            # can be wiped back to Available — but only once nothing is mounted on
+            # it. NEVER offered for os/swap disks. When it IS still mounted we
+            # withhold Reclaim (can't wipe a live filesystem) and instead set
+            # `reclaim_blocked` so the UI can explain why and surface what's
+            # holding the mount. A plain mounted btrfs that is NOT on an md/LVM
+            # group (e.g. an ordinary data disk) is not in disk_to_group and sets
+            # no md/lvm flag, so it stays simply "in use" — never reclaimable.
+            reclaim = None
+            reclaim_blocked = None
+            grp = disk_to_group.get(name)
+            if (not eligible and row["by_id"]
+                    and name not in os_disks and name not in swap_disks
+                    and (grp or md or lvm)):
+                g = grp or {
+                    "id": f"disk:{name}", "kind": "stale", "arrays": [],
+                    "vgs": [], "disks": [name],
+                    "description": "leftover RAID/LVM signature",
+                }
+                if (name in btrfs_disks) or mounted:
+                    blk: List[Dict[str, Any]] = []
+                    seen_pids = set()
+                    for mp in disk_mounts.get(name, []):
+                        for b in blockers_by_mp.get(mp, []):
+                            if b["pid"] not in seen_pids:
+                                seen_pids.add(b["pid"])
+                                blk.append(b)
+                    reclaim_blocked = {
+                        "description": g["description"],
+                        "mountpoints": disk_mounts.get(name, []),
+                        "blockers": blk,
+                    }
+                else:
+                    reclaim = {
+                        "id": g["id"], "kind": g["kind"], "arrays": g["arrays"],
+                        "vgs": g["vgs"], "description": g["description"],
+                        "member_knames": g["disks"],
+                        "member_ids": [by_id[dk] for dk in g["disks"] if by_id.get(dk)],
+                    }
+            row["reclaimable"] = reclaim is not None
+            row["reclaim"] = reclaim
+            row["reclaim_blocked"] = reclaim_blocked
             out.append(row)
         return out
 
@@ -354,7 +645,9 @@ class StorageResolver:
             mp = p.get("mountpoint")
             uuid = p.get("fs-uuid")
             mounted = bool(mp) and mp in mount_points
-            present = bool(uuid) and Path(f"/dev/disk/by-uuid/{uuid}").exists()
+            # If it's mounted it is obviously present; otherwise probe by UUID
+            # (not just the by-uuid symlink, which udev may never create for md).
+            present = mounted or _fs_present(uuid)
             used = total = None
             if mounted and mp:
                 st = _statvfs_safe(mp)
@@ -362,11 +655,110 @@ class StorageResolver:
                     total = st.f_blocks * st.f_frsize
                     used = (st.f_blocks - st.f_bfree) * st.f_frsize
             row = dict(p)
-            row["runtime"] = {
+            runtime = {
                 "mounted": mounted, "present": present,
                 "used_bytes": used, "total_bytes": total,
             }
+            # Parity volumes carry an md array — surface its assembly / sync /
+            # degraded state. Resolve the live kernel md device via the btrfs
+            # UUID (stable; the /dev/md/<name> symlink may not exist), then read
+            # /proc/mdstat for it.
+            if p.get("profile") in ("raid5", "raid6") and uuid:
+                real = os.path.realpath(f"/dev/disk/by-uuid/{uuid}")
+                base = os.path.basename(real)
+                md = _md_status(base if base.startswith("md") else None)
+                if md is not None:
+                    runtime["md"] = md
+            row["runtime"] = runtime
             out.append(row)
+        return out
+
+    @staticmethod
+    def list_importable() -> List[Dict[str, Any]]:
+        """Existing btrfs filesystems that can be re-attached WITHOUT
+        reformatting: not recorded in storage.pools, not the OS, not mounted —
+        e.g. a Removed/forgotten volume, or drives moved from another box.
+        Limited to md-backed (raid level known from /proc/mdstat) and
+        single-device btrfs; a native multi-device layout can't be determined
+        offline, so it's skipped (recreate or mount it manually instead)."""
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        recorded = {p.get("fs-uuid")
+                    for p in ((cfg.get("storage") or {}).get("pools") or [])}
+        by_id = _by_id_map()
+        arrays = _md_member_map()
+
+        # Disks we must never offer to import onto: OS/boot, anything backing a
+        # mounted btrfs (root mirror, other data fs), swap, or a disk holding an
+        # EFI System Partition (a boot-mirror disk whose ESP/root isn't currently
+        # mounted — `os_disks` alone misses it). Mirrors the create-flow blocks.
+        nodes = _lsblk_disk_nodes()
+        esp_disks = {k for k, n in nodes.items() if _scan_node(n)[3]}
+        protected = (_os_disks() | _mounted_btrfs_disks() | _swap_disks() | esp_disks)
+
+        mounted_real: Set[str] = set()
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                parts = line.split()
+                if parts and parts[0].startswith("/dev/"):
+                    mounted_real.add(os.path.realpath(parts[0]))
+        except OSError:
+            pass
+
+        # Parse `btrfs filesystem show` into {label, uuid, devices[]}.
+        blocks: List[Dict[str, Any]] = []
+        cur: Optional[Dict[str, Any]] = None
+        for line in _run([_BTRFS, "filesystem", "show"]).splitlines():
+            s = line.strip()
+            if s.startswith("Label:"):
+                m = re.search(r"Label:\s+(?:'([^']*)'|none)\s+uuid:\s+(\S+)", s)
+                if m:
+                    cur = {"label": m.group(1) or "", "uuid": m.group(2), "devices": []}
+                    blocks.append(cur)
+            elif cur is not None and s.startswith("devid") and " path " in s:
+                cur["devices"].append(s.split(" path ", 1)[1].strip())
+
+        out: List[Dict[str, Any]] = []
+        for b in blocks:
+            uuid, devs = b["uuid"], b["devices"]
+            if not uuid or not devs or uuid in recorded:
+                continue
+            if any(os.path.realpath(d) in mounted_real for d in devs):
+                continue
+            md_dev = next((os.path.basename(d) for d in devs
+                           if os.path.basename(d).startswith("md")), None)
+            if md_dev:
+                info = arrays.get(md_dev) or {}
+                members: Set[str] = set()
+                for part in info.get("members", []):
+                    members |= _underlying_disks(f"/dev/{part}")
+                level = (info.get("level") or "").lower()
+                profile = level if level in (
+                    "raid0", "raid1", "raid10", "raid5", "raid6") else "raid6"
+                md_device = md_dev
+            else:
+                members = set()
+                for d in devs:
+                    members |= _underlying_disks(d)
+                if len(members) != 1:
+                    continue  # native multi-device: layout unknown offline
+                profile, md_device = "single", ""
+            if members & protected:
+                continue
+            member_ids = [by_id[k] for k in sorted(members) if by_id.get(k)]
+            if not member_ids or len(member_ids) != len(members):
+                continue  # need a stable by-id for every member
+            out.append({
+                "fs_uuid": uuid,
+                "label": b["label"],
+                "profile": profile,
+                "members": member_ids,
+                "md_device": md_device,
+                "device": devs[0],          # backing device, for the udev re-probe
+                "size_bytes": _dev_size_bytes(devs[0]),
+            })
         return out
 
     @staticmethod
@@ -397,10 +789,15 @@ class StorageResolver:
             warnings.append(f"{profile} needs at least {need} drives; {len(sizes)} selected.")
         if profile == "raid10" and len(sizes) % 2:
             warnings.append("raid10 needs an even number of drives.")
-        if profile in ("raid0", "raid1", "raid10") and len(set(sizes)) > 1:
+        if profile in ("raid0", "raid1", "raid10", "raid5", "raid6") and len(set(sizes)) > 1:
             warnings.append(
                 "Mixed drive sizes — usable capacity is limited by the layout; "
                 "some space on the larger drive(s) may be unused.")
+        if profile in ("raid5", "raid6"):
+            warnings.append(
+                "Parity volumes build on Linux md: the array is usable right "
+                "away, but a full parity sync runs in the background for "
+                "several hours after creation.")
 
         return {
             "profile": profile,
@@ -489,4 +886,57 @@ async def post_forget(req: ForgetRequest) -> Dict[str, Any]:
     ok = await asyncio.to_thread(StoragePoolService.forget, req.name)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to update configuration.")
+    return {"ok": True}
+
+
+# --- reclaim (delegated to services.storage_reclaim) -----------------------
+# Tears down an in-use storage group (mdadm/LVM) and wipes its member disks
+# back to eligible. Destructive; admin-only via the header gate above.
+
+class ReclaimRequest(BaseModel):
+    members: List[str]            # by-id names of the disks to reclaim (a group)
+    force: bool = False
+
+
+@router.post("/reclaim")
+async def post_reclaim(req: ReclaimRequest) -> Dict[str, Any]:
+    from services.storage_reclaim import StorageReclaimService, StorageReclaimBusy
+    errs = await asyncio.to_thread(StorageReclaimService.validate_request, req.members)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    try:
+        started = StorageReclaimService.start(req.members)
+    except StorageReclaimBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not started:
+        raise HTTPException(status_code=409, detail="A storage operation is already running.")
+    return {"started": True}
+
+
+@router.get("/reclaim-status")
+async def get_reclaim_status() -> Dict[str, Any]:
+    from services.storage_reclaim import StorageReclaimService
+    return StorageReclaimService.get_status()
+
+
+# --- import (re-attach an existing on-disk volume; non-destructive) --------
+
+@router.get("/importable")
+async def get_importable() -> Dict[str, Any]:
+    return {"importable": await asyncio.to_thread(StorageResolver.list_importable)}
+
+
+class ImportRequest(BaseModel):
+    fs_uuid: str
+    name: str
+    mountpoint: str
+
+
+@router.post("/pools/import")
+async def post_import(req: ImportRequest) -> Dict[str, Any]:
+    from services.storage_pool import StoragePoolService
+    errs = await asyncio.to_thread(
+        StoragePoolService.import_pool, req.fs_uuid, req.name, req.mountpoint)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
     return {"ok": True}

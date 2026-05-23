@@ -94,7 +94,7 @@ class PartitionStep extends LitElement {
     .banner.info { background: #e7f3ff; border: 1px solid #66a3ff; color: #1a4480; }
     .banner.warn { background: #fff3cd; border: 1px solid #ffc107; color: #856404; }
     .banner.danger { background: #fdecea; border: 1px solid #f5c6cb; color: #842029; }
-    .banner strong { display: block; margin-bottom: 4px; }
+    .banner > strong:first-child { display: block; margin-bottom: 4px; }
 
     .advanced-toggle {
       background: none; border: none; color: #667eea;

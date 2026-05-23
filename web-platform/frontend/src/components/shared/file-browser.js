@@ -9,6 +9,11 @@ class FileBrowser extends LitElement {
   static properties = {
     open: { type: Boolean },
     currentPath: { type: String },
+    // Optional UI restriction: when set, the picker hides "Parent Directory"
+    // at this path so the user cannot navigate above it. Backend behaviour is
+    // unchanged — this is purely a UI guardrail (sufficient for restricting
+    // mountpoint pickers etc. to /mnt and below).
+    rootPath: { type: String },
     entries: { type: Array, state: true },
     parent: { type: String, state: true },
     loading: { type: Boolean, state: true },
@@ -298,6 +303,7 @@ class FileBrowser extends LitElement {
     super();
     this.open = false;
     this.currentPath = '/';
+    this.rootPath = '';
     this.entries = [];
     this.parent = null;
     this.loading = false;
@@ -343,8 +349,12 @@ class FileBrowser extends LitElement {
     this.loadDirectory(path);
   }
 
+  get _atRoot() {
+    return !!this.rootPath && this.currentPath === this.rootPath;
+  }
+
   handleParentClick() {
-    if (this.parent) {
+    if (this.parent && !this._atRoot) {
       this.loadDirectory(this.parent);
     }
   }
@@ -478,7 +488,7 @@ class FileBrowser extends LitElement {
               <div class="error-message">⚠️ ${this.error}</div>
             ` : html`
               <ul class="directory-list">
-                ${this.parent ? html`
+                ${this.parent && !this._atRoot ? html`
                   <li class="directory-item parent" @click=${this.handleParentClick}>
                     <span class="directory-icon">⬆️</span>
                     <span class="directory-name">.. (Parent Directory)</span>

@@ -122,6 +122,16 @@ export const getStoragePoolCreateStatus = () =>
   get('/api/storage/pools/create-status');
 export const forgetStoragePool = (name) =>
   post('/api/storage/pools/forget', { name });
+// Reclaim: tear down an in-use array/LVM group and wipe its disks back to
+// eligible. post() (no retry) — it wipes disks; the status poll is retryable.
+export const reclaimStorageDisks = (members) =>
+  post('/api/storage/reclaim', { members });
+export const getStorageReclaimStatus = () =>
+  get('/api/storage/reclaim-status');
+// Import: re-attach an existing on-disk volume (non-destructive).
+export const getStorageImportable = () => get('/api/storage/importable');
+export const importStoragePool = (payload) =>
+  post('/api/storage/pools/import', payload);
 
 // Locale & Timezone — cached module-level so the network call only happens
 // once per page load. The data is large but immutable for the session, so
@@ -330,7 +340,7 @@ export const getRebuildStatusWithHistory = () =>
   get('/api/config/rebuild-status?include_history=1');
 
 // Developers — register custom Nix flakes that extend the system. Writing
-// a flake rewrites /etc/nixos/flake.nix; the user then clicks Apply Changes.
+// a flake rewrites /etc/nixos/flake.nix; the user then clicks Apply.
 export const getDeveloperFlakes = () => get('/api/developers/flakes');
 export const saveDeveloperFlake = (entry) => post('/api/developers/flakes', entry);
 export const deleteDeveloperFlake = (id) =>
@@ -340,7 +350,7 @@ export const validateDeveloperFlake = (probe) =>
 
 // Alternate HomeFree base repo — build this system from a fork or a local
 // working copy instead of the official homefree-base. Saving rewrites
-// /etc/nixos/flake.nix; the user then clicks Apply Changes.
+// /etc/nixos/flake.nix; the user then clicks Apply.
 export const getHomefreeBase = () => get('/api/developers/homefree-base');
 export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
 export const validateHomefreeBase = (probe) =>

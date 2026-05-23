@@ -71,7 +71,8 @@ class UsersModule extends LitElement {
       font-size: 13px;
       line-height: 1.5;
     }
-    .info-box strong { display: block; margin-bottom: 8px; color: var(--hf-text); }
+    .info-box strong { color: var(--hf-text); }
+    .info-box > strong:first-child { display: block; margin-bottom: 8px; }
 
     .error {
       background: rgba(248,113,113,0.08);

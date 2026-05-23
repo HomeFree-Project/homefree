@@ -185,6 +185,9 @@ class InstallationService:
     "pools": [],
     "shares": []
   },
+  "snapshots": {
+    "system": { "enable": false }
+  },
   "sso": {
     "allowUserRegistration": false,
     "per-service": {}

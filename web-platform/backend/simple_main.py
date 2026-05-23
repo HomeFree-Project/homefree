@@ -3285,7 +3285,7 @@ async def save_developer_flake(req: DeveloperFlakeRequest):
     """
     Register a new custom flake (no id) or update an existing one (with id).
     Rewrites /etc/nixos/flake.nix and custom-flakes.nix; does NOT rebuild —
-    the user applies via the global Apply Changes flow.
+    the user applies via the global "Apply" flow.
     """
     try:
         from services.mode import ModeService
@@ -3405,7 +3405,7 @@ async def save_homefree_base(req: HomefreeBaseOverrideRequest):
     """
     Set the alternate HomeFree base repository. Rewrites /etc/nixos/flake.nix
     (the managed homefree-base-override + homefree-base-binding regions);
-    does NOT rebuild — the user applies via the global Apply Changes flow.
+    does NOT rebuild — the user applies via the global "Apply" flow.
     """
     try:
         from services.mode import ModeService

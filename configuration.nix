@@ -39,6 +39,7 @@ in
     ./modules/mounts.nix
     ./modules/storage-pools.nix
     ./modules/storage-shares.nix
+    ./modules/snapshots.nix
     ./modules/service-restart-policy.nix
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix

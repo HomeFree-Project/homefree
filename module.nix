@@ -683,12 +683,18 @@
             };
 
             profile = lib.mkOption {
-              type = enum [ "single" "raid0" "raid1" "raid10" ];
+              type = enum [ "single" "raid0" "raid1" "raid10" "raid5" "raid6" ];
               description = ''
-                btrfs-native data profile chosen at creation. Parity
-                profiles (raid5/raid6) are intentionally absent — btrfs
-                parity has an unresolved write hole; space-efficient parity
-                is a planned future addition via btrfs-on-mdadm.
+                Data layout chosen at creation. single/raid0/raid1/raid10 are
+                btrfs-native. raid5/raid6 are space-efficient PARITY layouts
+                built as btrfs-on-mdadm (the Synology approach): Linux md owns
+                the parity and btrfs runs single-profile on the resulting
+                /dev/md device, adding checksums + scrub + snapshots. Native
+                btrfs raid5/6 is deliberately NOT used (unresolved write hole).
+                md's own write hole is mitigated by an internal write-intent
+                bitmap plus btrfs checksums, which turn any post-failure parity
+                corruption into a DETECTED read error rather than silent data
+                loss (recover from Backups).
               '';
             };
 
@@ -709,6 +715,26 @@
                 on this — a multi-device btrfs assembles from whichever
                 member is present, so the UUID is stable across disk
                 reorder/reseat.
+              '';
+            };
+
+            md-uuid = lib.mkOption {
+              type = str;
+              default = "";
+              description = ''
+                Parity volumes only (raid5/raid6): the Linux md array UUID
+                captured at create time. Empty for btrfs-native profiles.
+                Recorded for display, health, and reclaim — assembly itself is
+                automatic, by homehost, via the mdadm udev rules.
+              '';
+            };
+
+            md-device = lib.mkOption {
+              type = str;
+              default = "";
+              description = ''
+                Parity volumes only: the md array name (e.g. "tank", assembled
+                at /dev/md/tank). Empty for btrfs-native profiles.
               '';
             };
 
@@ -743,6 +769,17 @@
                 x-systemd.device-timeout for the mount — how long boot waits
                 for the pool device before giving up. The mount is nofail, so
                 boot proceeds regardless.
+              '';
+            };
+
+            snapshots = lib.mkOption {
+              type = bool;
+              default = false;
+              description = ''
+                Enable scheduled btrfs timeline snapshots (snapper) for this
+                volume — fast LOCAL file recovery, NOT a backup (if the drive
+                fails the snapshots are lost too). Retention is shared via
+                homefree.snapshots.retention. Off by default.
               '';
             };
           };
@@ -799,6 +836,45 @@
             };
           };
         });
+      };
+    };
+
+    snapshots = {
+      system = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Scheduled btrfs timeline snapshots of the OS root (/ and /home)
+            for fast LOCAL recovery of mutable files. This is NOT system
+            rollback — NixOS generations already boot a previous config — and
+            NOT a backup. /nix is excluded (separate subvolume). Off by default
+            (the root holds service databases under /var/lib, where snapshots
+            add some space/fragmentation cost).
+          '';
+        };
+      };
+      retention = {
+        hourly = lib.mkOption {
+          type = lib.types.int;
+          default = 24;
+          description = "Hourly timeline snapshots to keep (snapper TIMELINE_LIMIT_HOURLY).";
+        };
+        daily = lib.mkOption {
+          type = lib.types.int;
+          default = 7;
+          description = "Daily timeline snapshots to keep.";
+        };
+        weekly = lib.mkOption {
+          type = lib.types.int;
+          default = 4;
+          description = "Weekly timeline snapshots to keep.";
+        };
+        monthly = lib.mkOption {
+          type = lib.types.int;
+          default = 6;
+          description = "Monthly timeline snapshots to keep.";
+        };
       };
     };
 
