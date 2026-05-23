@@ -100,7 +100,6 @@ class StorageModule extends LitElement {
     mountsRuntime: { state: true },     // live homefree.mounts + statvfs
     mountableDevices: { state: true },  // disks/partitions that could be added
     systemVolumes: { state: true },     // read-only OS root mount
-    addVolumeOpen: { state: true },     // router modal: which-flow chooser
     addMountOpen: { state: true },
     addMountSource: { state: true },    // selected fs_uuid OR "__custom__"
     addMountDevice: { state: true },    // free-form device (when __custom__)
@@ -108,6 +107,8 @@ class StorageModule extends LitElement {
     addMountPoint: { state: true },
     addMountError: { state: true },
     addingMount: { state: true },
+    addMountForceCustom: { state: true },  // open AddMount in custom-only mode
+    addMountSourceLocked: { state: true }, // open AddMount with source pre-pinned (no picker)
     addNetworkOpen: { state: true },
     netMountPoint: { state: true },
     netDevice: { state: true },
@@ -205,6 +206,12 @@ class StorageModule extends LitElement {
     .btn-row:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-row.delete { color: var(--hf-err); border-color: color-mix(in srgb, var(--hf-err) 45%, transparent); }
     .btn-row.delete:hover { background: color-mix(in srgb, var(--hf-err) 14%, transparent); border-color: var(--hf-err); }
+    /* Warn variant of .btn-row — same shape as .btn-row.delete (compact,
+       outlined) but in the warn palette. Used for destructive-but-not-
+       data-loss actions like Create on a drive that already has a
+       filesystem (the click wipes it on Apply). */
+    .btn-row.warn { color: var(--hf-warn); border-color: color-mix(in srgb, var(--hf-warn) 45%, transparent); }
+    .btn-row.warn:hover { background: color-mix(in srgb, var(--hf-warn) 14%, transparent); border-color: var(--hf-warn); }
     /* A teardownable array/group, drawn as a rounded, light-bordered box around
        its header row + member rows (needs border-collapse: separate on the
        table). The header is the box top; member rows form the sides; the last
@@ -244,6 +251,21 @@ class StorageModule extends LitElement {
 
     /* ---- pool cards ---- */
     .pools { display: flex; flex-direction: column; gap: 12px; }
+    /* In-list section heading: separates Available (un-mounted) from
+       Mounted in the unified Volumes list without splitting them into two
+       DOM sections. Sized like a proper subsection heading — 14px, full
+       text color, solid divider line — so it reads from across the room.
+       The :first-child trim drops top margin when a tier is the very
+       first thing in the list. */
+    .tier-subtitle {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--hf-text);
+      margin-top: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--hf-border);
+    }
+    .tier-subtitle:first-child { margin-top: 0; }
     .pool-card {
       border: 1px solid var(--hf-border-2); border-radius: 10px;
       background: var(--hf-surface); padding: 14px 16px;
@@ -260,6 +282,25 @@ class StorageModule extends LitElement {
     .pool-name { font-size: 15px; font-weight: 600; color: var(--hf-text); }
     .pool-meta { color: var(--hf-text-muted); font-size: 12px; margin-top: 4px; }
     .pool-members { color: var(--hf-text-subtle); font-size: 12px; margin-top: 6px; word-break: break-all; }
+
+    /* Multi-piece cards (pools, mounts, system, btrfs candidates, stale
+       groups) list their constituent drives inside via _renderMemberDrives.
+       Replaces the old top-level Drives table. Compact, monospace identity
+       on the right; model bold on the left. */
+    .member-drives {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--hf-border);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .member-drives .member-row {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+      font-size: 12px; color: var(--hf-text-muted);
+    }
+    .member-drives .member-row.missing { opacity: 0.6; }
+    .member-drives .m-model { color: var(--hf-text); font-weight: 500; min-width: 160px; }
+    .member-drives .m-id { font-family: var(--hf-font-mono, monospace); color: var(--hf-text-subtle); font-size: 11px; word-break: break-all; }
+    .member-drives .m-stats { font-family: var(--hf-font-mono, monospace); font-size: 11px; margin-left: auto; }
     .pending-note { color: var(--hf-warn); font-size: 12px; margin-top: 8px; font-weight: 500; }
     .snap-row {
       display: flex; align-items: center; gap: 8px;
@@ -339,6 +380,25 @@ class StorageModule extends LitElement {
     .drive-opt .d-sub { color: var(--hf-text-subtle); font-size: 11px; }
     .drive-opt.warn-opt { border-color: var(--hf-warn); }
     .drive-opt.warn-opt.sel { background: var(--hf-warn-soft); border-color: var(--hf-warn); }
+    /* Per-drive Use-existing → AddMount: the source is already chosen by
+       which drive button the user clicked, so the modal shows it as a
+       locked info block instead of the source picker. No radio, no chance
+       to switch disks. */
+    .locked-source {
+      padding: 10px 12px;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+    }
+    .locked-source-main { font-size: 13px; color: var(--hf-text); }
+    .locked-source-sub {
+      margin-top: 4px;
+      font-family: var(--hf-font-mono, monospace);
+      font-size: 11px;
+      color: var(--hf-text-subtle);
+      word-break: break-all;
+    }
+
     /* "Contains existing data" — the warning lives in the title-row chip
        only. We deliberately do NOT amber-tint the drive option itself: the
        data-escape callout below the picker is the page's amber-tinted
@@ -466,7 +526,6 @@ class StorageModule extends LitElement {
     this.mountsRuntime = [];
     this.mountableDevices = [];
     this.systemVolumes = [];
-    this.addVolumeOpen = false;
     this.addMountOpen = false;
     this.addMountSource = '';
     this.addMountDevice = '';
@@ -474,6 +533,8 @@ class StorageModule extends LitElement {
     this.addMountPoint = '';
     this.addMountError = '';
     this.addingMount = false;
+    this.addMountForceCustom = false;
+    this.addMountSourceLocked = false;
     this.addNetworkOpen = false;
     this.netMountPoint = '';
     this.netDevice = '';
@@ -584,6 +645,63 @@ class StorageModule extends LitElement {
     const claimed = this._claimedDriveIds;
     return [...this.eligibleDrives, ...this.overridableDrives]
       .filter((d) => !claimed.has(d.by_id));
+  }
+
+  // Drives that don't already live inside some other card. Anything in a
+  // pool, mount, btrfs candidate, stale-signature group, OR System card is
+  // already represented somewhere; the remainder are the cards we render at
+  // the top of the unified Volumes list with per-drive Create / Use-existing
+  // buttons.
+  _unassociatedDrives() {
+    const claimed = this._claimedDriveIds;
+    const candidateDisks = new Set();
+    for (const c of (this.promotable || [])) {
+      for (const id of (c.members || [])) candidateDisks.add(id);
+    }
+    const staleDisks = new Set();
+    for (const d of (this.drives || [])) {
+      if ((d.reclaim || d.reclaim_blocked) && d.by_id) staleDisks.add(d.by_id);
+    }
+    const osDiskIds = new Set();
+    for (const sv of (this.systemVolumes || [])) {
+      for (const id of (sv.disk_by_ids || [])) osDiskIds.add(id);
+    }
+    return (this.drives || []).filter((d) => {
+      if (!d.by_id) return false;
+      if (claimed.has(d.by_id)) return false;
+      if (candidateDisks.has(d.by_id)) return false;
+      if (staleDisks.has(d.by_id)) return false;
+      if (osDiskIds.has(d.by_id)) return false;
+      return true;
+    });
+  }
+
+  // Unmanaged btrfs filesystems that need a Promote click and aren't
+  // already surfaced as a mount card. Dedup is by fs-uuid against
+  // `mountsRuntime` (= `homefree.mounts` entries) — those render as mount
+  // cards with their own Promote button. Externally-mounted btrfs (leftover
+  // fstab / previous-deployment mount unit) have a mount_point set but are
+  // NOT in `mountsRuntime`; they belong in this list so the user can
+  // re-adopt them. (An earlier version of this filter used `!c.mount_point`
+  // for dedup, which silently hid externally-mounted candidates as soon as
+  // the backend started populating mount_point from /proc/mounts.)
+  _candidateBtrfsList() {
+    const mountUuids = new Set(
+      (this.mountsRuntime || []).map((m) => m.fs_uuid).filter(Boolean));
+    return (this.promotable || []).filter((c) => !mountUuids.has(c.fs_uuid));
+  }
+
+  // Leftover RAID/LVM signature groups, deduped by reclaim id. Each group
+  // is rendered once with all its members listed inside the card; the user
+  // gets a single Reclaim & erase action on the group, never per-drive.
+  _staleSignatureGroups() {
+    const byId = new Map();
+    for (const d of (this.drives || [])) {
+      if (!d.reclaim) continue;
+      const id = d.reclaim.id;
+      if (!byId.has(id)) byId.set(id, d.reclaim);
+    }
+    return [...byId.values()];
   }
 
   get _claimedDriveIds() {
@@ -931,28 +1049,6 @@ class StorageModule extends LitElement {
       !== !!this.appliedConfig?.snapshots?.system?.enable;
   }
 
-  _renderSnapshots() {
-    const on = !!this.config?.snapshots?.system?.enable;
-    return html`
-      <config-section title="Snapshots" description="Scheduled local btrfs snapshots for recovering lost files">
-        <label class="snap-row ${this._snapshotsSystemUndeployed() ? 'undeployed' : ''}">
-          <input type="checkbox" .checked=${on}
-                 @change=${(e) => this._emitSnapshots(e.target.checked)} />
-          <span>Snapshot the system drive (<code>/</code> and <code>/home</code>)</span>
-        </label>
-        <div class="hint" style="margin-top:8px">
-          Snapshots are fast point-in-time copies for recovering deleted or
-          overwritten files — kept on a timeline (roughly a day of hourly, a week
-          of daily, a month of weekly, and six months of monthly). They live on
-          the same drive, so they are <strong>not a backup</strong> (use Backups
-          for off-box copies) and <strong>not system rollback</strong> (NixOS
-          generations handle that). Turn on snapshots for a data volume from its
-          card above. Apply to take effect.
-        </div>
-      </config-section>
-    `;
-  }
-
   // The LAN subnet (homefree.network.lan-subnet) is the sensible default for
   // a new NFS share's "Allowed clients" — anything on the LAN can mount it,
   // matching the typical home/single-network use case. Hardcoded fallback
@@ -1028,6 +1124,165 @@ class StorageModule extends LitElement {
     }));
   }
 
+  // A compact list of member drives, rendered inside every multi-piece
+  // card (managed pools, mount cards, system card, btrfs candidates, stale
+  // groups). Replaces the old "Drives" section by surfacing each drive's
+  // identity + live stats next to whatever owns it. Drives whose by-id
+  // isn't in `this.drives` (e.g. moved to another box) render dimmed.
+  _renderMemberDrives(byIds) {
+    if (!byIds || !byIds.length) return '';
+    const drivesById = new Map((this.drives || []).map((d) => [d.by_id, d]));
+    return html`
+      <div class="member-drives">
+        ${byIds.map((id) => {
+          const d = drivesById.get(id);
+          if (!d) return html`
+            <div class="member-row missing">
+              <span class="m-id">${id}</span>
+              <span class="m-stats">not present</span>
+            </div>`;
+          const cls = (d.drive_class || '').toUpperCase();
+          const tran = d.transport ? d.transport.toUpperCase() : '';
+          const temp = (d.temp_c !== null && d.temp_c !== undefined) ? d.temp_c + '°C' : '—';
+          let health = '—';
+          if (d.smart_available) {
+            health = d.smart_passed === false
+              ? html`<span class="badge badge-err">FAIL</span>`
+              : 'OK';
+          }
+          return html`
+            <div class="member-row">
+              <span class="m-model">${d.model || 'Unknown'}</span>
+              <span class="m-id">${id}</span>
+              <span class="m-stats">${formatBytes(d.size_bytes)} · ${cls}${tran ? ' · ' + tran : ''} · ${temp} · ${health}</span>
+            </div>`;
+        })}
+      </div>
+    `;
+  }
+
+  // Top-of-list card for an unassociated drive — replaces the per-drive row
+  // in the deleted Drives table. Per-drive Create / Use-existing buttons
+  // live here so the user picks the action right next to the drive.
+  _renderAvailableDriveCard(d) {
+    const cls = (d.drive_class || '').toUpperCase();
+    const tran = d.transport ? d.transport.toUpperCase() : '';
+    const temp = (d.temp_c !== null && d.temp_c !== undefined) ? d.temp_c + '°C' : '—';
+    const hasData = !!d.has_existing_data;
+    const dataLabel = d.existing_label ? ' ‘' + d.existing_label + '’' : '';
+    const dataKind = d.existing_fstype || 'data';
+    let health = '—';
+    if (d.smart_available) {
+      health = d.smart_passed === false
+        ? html`<span class="badge badge-err">FAIL</span>`
+        : 'OK';
+    }
+    // "Mount existing filesystem" only makes sense when the drive's
+    // filesystem is in the backend's mountable list — otherwise the click
+    // would open a modal that can't actually mount anything for this drive
+    // (LUKS, swap, weird fs). Hide the button in that case; the data-badge
+    // already makes the "contains data" state visible.
+    const useExistingCand = hasData
+      ? (this.mountableDevices || []).find((m) => m.disk_by_id === d.by_id)
+      : null;
+    // All Available-tier action buttons use the compact .btn-row style —
+    // same as the Mounted-tier buttons, same as table-editor buttons
+    // elsewhere in the admin UI. Create on a has-data drive gets the warn
+    // variant (yellow outline) since the click wipes data; blank drives
+    // get plain .btn-row.
+    const createCls = hasData ? 'btn-row warn' : 'btn-row';
+    const createLabel = hasData ? 'Wipe and Create' : 'Create';
+    const buttons = useExistingCand ? html`
+      <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>
+      <button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`
+      : html`<button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`;
+    return html`
+      <div class="pool-card">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${d.model || 'Unknown'}</span>
+            <div class="pool-meta">
+              ${formatBytes(d.size_bytes)} · ${cls}${tran ? ' · ' + tran : ''} · ${temp} · ${health}
+              ${hasData ? html`<span class="data-badge">Contains ${dataKind}${dataLabel}</span>` : ''}
+            </div>
+          </div>
+          <div class="pool-actions">${buttons}</div>
+        </div>
+        <div class="pool-members">${d.by_id || d.name}</div>
+      </div>
+    `;
+  }
+
+  // Unmanaged btrfs filesystem (single OR multi-drive). Tier-aware UI:
+  //   * mount_point set (Mounted tier — an externally-mounted btrfs that
+  //     could be elevated to managed) → "Promote to volume…" only + the
+  //     "Not a managed volume" badge. No Create button: wiping a mounted
+  //     filesystem from the UI is a footgun.
+  //   * mount_point empty + SINGLE drive (Available tier — cold btrfs on
+  //     one disk) → "Mount existing filesystem" + "Wipe and Create".
+  //     Parity with non-btrfs Available drives: the user can either
+  //     adopt the existing fs or wipe it and start fresh.
+  //   * mount_point empty + multi-drive → "Mount existing filesystem"
+  //     only. Wiping a multi-drive btrfs needs to tear down the
+  //     underlying md array first (Reclaim), so no Create here.
+  // Mount-existing / Promote both call `_openPromote(c)`; Create calls
+  // `_createFromDrive(d)` where d is the single member drive.
+  _renderCandidateBtrfsCard(c) {
+    const memberIds = c.members || [];
+    const lbl = c.label ? '‘' + c.label + '’' : '(unlabelled btrfs)';
+    const isMounted = !!c.mount_point;
+    // For a single-drive cold candidate, resolve the underlying drive
+    // record so Create can route through `_createFromDrive`.
+    const singleDrive = (!isMounted && memberIds.length === 1)
+      ? (this.drives || []).find((d) => d.by_id === memberIds[0])
+      : null;
+    return html`
+      <div class="pool-card">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${lbl}</span>
+            <div class="pool-meta">
+              ${c.profile} · ${memberIds.length} drive(s) · btrfs · ${formatBytes(c.size_bytes || 0)}${isMounted ? html` · mounted at <code>${c.mount_point}</code>` : ''}
+            </div>
+          </div>
+          <div class="pool-actions">
+            ${isMounted ? html`<span class="badge badge-warn">Not a managed volume</span>` : ''}
+            <button class="btn-row" @click=${() => this._openPromote(c)}>
+              ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
+            </button>
+            ${singleDrive ? html`
+              <button class="btn-row warn" @click=${() => this._createFromDrive(singleDrive)}>Wipe and Create</button>` : ''}
+          </div>
+        </div>
+        ${this._renderMemberDrives(memberIds)}
+      </div>
+    `;
+  }
+
+  // Leftover RAID/LVM signature group — Reclaim & erase wipes the disks
+  // and returns them to the Available pool. Same backend flow as the
+  // deleted Drives-table set-box.
+  _renderStaleGroupCard(rec) {
+    const memberIds = rec.member_ids || [];
+    return html`
+      <div class="pool-card">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${this._reclaimGroupTitle(rec)}</span>
+            <div class="pool-meta">
+              ${memberIds.length} drive(s) · ${rec.description}
+            </div>
+          </div>
+          <div class="pool-actions">
+            <span class="badge badge-warn">Leftover</span>
+            <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
+          </div>
+        </div>
+        ${this._renderMemberDrives(memberIds)}
+      </div>
+    `;
+  }
+
   // Mount cards mirror Volume cards: title + subtitle, real-state badge,
   // pending-action note (amber), usage bar when mounted+local, action buttons.
   // No snapshots row (that's a Volume-only concept).
@@ -1087,22 +1342,25 @@ class StorageModule extends LitElement {
           <div class="pool-meta">${formatBytes(rt.used_bytes)} of ${formatBytes(rt.total_bytes)} used</div>
         ` : ''}
 
-        ${byIds.length ? html`
-          <div class="pool-members">${byIds.join(', ')}</div>` : ''}
+        ${this._renderMemberDrives(byIds)}
       </div>
     `;
   }
 
-  // Read-only "System" card: surfaces the OS root mount in the unified
-  // Volumes list. Same .pool-card skeleton as everything else, but the
-  // actions area carries just a muted "Read-only" badge (no Mount /
-  // Unmount / Remove / Promote) — this is informational. Never undeployed
-  // (the OS mount isn't user-edited), no pending states.
+  // System card: surfaces the OS root mount in the unified Volumes list.
+  // Same .pool-card skeleton as everything else; Read-only badge fills the
+  // actions area (no Mount / Unmount / Remove — those would be disastrous
+  // on /). The snapshots checkbox is the same control non-system volumes
+  // get, just wired to `config.snapshots.system.enable` (a top-level key,
+  // not under storage.pools). Shown only when the root is btrfs — non-btrfs
+  // roots can't have btrfs snapshots.
   _renderSystemCard(s) {
     const rt = s.runtime || {};
     const byIds = s.disk_by_ids || [];
+    const fsType = (s['fs-type'] || '').toLowerCase();
     const pct = (rt.total_bytes && rt.used_bytes != null)
       ? Math.min(100, Math.round((rt.used_bytes / rt.total_bytes) * 100)) : null;
+    const snapOn = !!this.config?.snapshots?.system?.enable;
     return html`
       <div class="pool-card">
         <div class="pool-top">
@@ -1118,7 +1376,13 @@ class StorageModule extends LitElement {
           <div class="usage-bar"><div class="usage-fill" style="width:${pct}%"></div></div>
           <div class="pool-meta">${formatBytes(rt.used_bytes)} of ${formatBytes(rt.total_bytes)} used</div>
         ` : ''}
-        ${byIds.length ? html`<div class="pool-members">${byIds.join(', ')}</div>` : ''}
+        ${this._renderMemberDrives(byIds)}
+        ${fsType === 'btrfs' ? html`
+          <label class="snap-row ${this._snapshotsSystemUndeployed() ? 'undeployed' : ''}">
+            <input type="checkbox" .checked=${snapOn}
+                   @change=${(e) => this._emitSnapshots(e.target.checked)} />
+            <span>Snapshots <span class="hint">— hourly/daily timeline for file recovery</span></span>
+          </label>` : ''}
       </div>
     `;
   }
@@ -1434,15 +1698,12 @@ class StorageModule extends LitElement {
 
         ${this.loadError ? html`<div class="err-banner">${this.loadError}</div>` : ''}
 
-        ${this._renderDrives()}
         ${this._renderVolumes()}
         ${this._renderImportable()}
-        ${this._renderSnapshots()}
         ${this._renderShares()}
         ${this.wizardOpen ? this._renderWizard() : ''}
         ${this.reclaimTarget ? this._renderReclaimModal() : ''}
         ${this.promoteOpen ? this._renderPromoteModal() : ''}
-        ${this.addVolumeOpen ? this._renderAddVolumeRouter() : ''}
         ${this.addMountOpen ? this._renderAddMountModal() : ''}
         ${this.addNetworkOpen ? this._renderAddNetworkShareModal() : ''}
       </div>
@@ -1466,47 +1727,109 @@ class StorageModule extends LitElement {
     const removedMounts = this._removedMounts();
     const promoUuids = new Set((this.promotable || []).map((p) => p.fs_uuid));
 
-    const items = [
-      ...(this.systemVolumes || []).map((s) => ({
-        kind: 'system', sortKey: s['mount-point'] || '', data: s,
+    // Split candidates by mount state — a candidate that's actually mounted
+    // (externally, via leftover fstab / previous-deployment mount unit)
+    // belongs visually with the Mounted volumes (it IS serving data, just
+    // needs Promote to become managed). A candidate with no mount-point is
+    // cold storage waiting to be configured — belongs in Available.
+    const allCandidates = this._candidateBtrfsList();
+    const mountedCandidates = allCandidates.filter((c) => !!c.mount_point);
+    const unmountedCandidates = allCandidates.filter((c) => !c.mount_point);
+
+    // Tier 0 — AVAILABLE: drives/things not currently mounted that the user
+    // can act on. SortKey prefix '0…' pins them above Tier 1 in the same
+    // single-sort pass.
+    const tier1 = [
+      ...this._staleSignatureGroups().map((rec) => ({
+        kind: 'stale', sortKey: '0a:' + (rec.id || ''), data: rec,
       })),
-      ...pools.map((p) => ({ kind: 'pool', sortKey: p.mountpoint || '', data: p })),
+      ...unmountedCandidates.map((c) => ({
+        kind: 'btrfs-candidate', sortKey: '0b:' + (c.fs_uuid || ''), data: c,
+      })),
+      ...this._unassociatedDrives().map((d) => ({
+        kind: 'available', sortKey: '0c:' + (d.by_id || d.name || ''), data: d,
+      })),
+    ];
+
+    // Tier 1 — MOUNTED: real volumes (system, managed pools, mounts) plus
+    // any unmanaged btrfs that's currently mounted (externally) and needs
+    // a Promote click. SortKey prefix '1…', alphabetical by mount-point.
+    const tier2 = [
+      ...(this.systemVolumes || []).map((s) => ({
+        kind: 'system', sortKey: '1:' + (s['mount-point'] || ''), data: s,
+      })),
+      ...pools.map((p) => ({
+        kind: 'pool', sortKey: '1:' + (p.mountpoint || ''), data: p,
+      })),
       ...pendingMounts.map((m) => ({
         kind: this._isNetworkMount(m) ? 'network' : 'local',
-        sortKey: m['mount-point'] || '',
+        sortKey: '1:' + (m['mount-point'] || ''),
         data: m,
         runtime: rtByMp.get(m['mount-point']),
       })),
-      ...removedPools.map((a) => ({ kind: 'pool-removed', sortKey: a.mountpoint || '', data: a })),
-      ...removedMounts.map((m) => ({ kind: 'mount-removed', sortKey: m['mount-point'] || '', data: m })),
+      ...mountedCandidates.map((c) => ({
+        kind: 'btrfs-candidate', sortKey: '1:' + (c.mount_point || ''), data: c,
+      })),
+      ...removedPools.map((a) => ({
+        kind: 'pool-removed', sortKey: '1:' + (a.mountpoint || ''), data: a,
+      })),
+      ...removedMounts.map((m) => ({
+        kind: 'mount-removed', sortKey: '1:' + (m['mount-point'] || ''), data: m,
+      })),
     ];
-    items.sort((a, b) => (a.sortKey || '').localeCompare(b.sortKey || ''));
+
+    const items = [...tier1, ...tier2];
+    items.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    // For the tier subtitle injection in render: track which tier each item
+    // belongs to via the leading sortKey char ('0' = Available, '1' = Mounted).
 
     const renderItem = (it) => {
       switch (it.kind) {
-        case 'system':         return this._renderSystemCard(it.data);
-        case 'pool':           return this._renderPoolCard(it.data);
-        case 'local':          return this._renderMountCard(it.data, it.runtime, promoUuids);
-        case 'network':        return this._renderMountCard(it.data, it.runtime, promoUuids);
-        case 'pool-removed':   return this._renderRemovedCard(it.data);
-        case 'mount-removed':  return this._renderRemovedMountCard(it.data);
-        default:               return '';
+        case 'available':         return this._renderAvailableDriveCard(it.data);
+        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data);
+        case 'stale':             return this._renderStaleGroupCard(it.data);
+        case 'system':            return this._renderSystemCard(it.data);
+        case 'pool':              return this._renderPoolCard(it.data);
+        case 'local':             return this._renderMountCard(it.data, it.runtime, promoUuids);
+        case 'network':           return this._renderMountCard(it.data, it.runtime, promoUuids);
+        case 'pool-removed':      return this._renderRemovedCard(it.data);
+        case 'mount-removed':     return this._renderRemovedMountCard(it.data);
+        default:                  return '';
       }
     };
 
     return html`
       <config-section title="Volumes"
-        description="Storage volumes attached to this box — local disks, network shares, and managed pools">
-        <button slot="actions" class="btn btn-primary" @click=${this._openAddVolume}>
-          + Add volume…
-        </button>
+        description="Storage volumes attached to this box — local disks, network shares, managed pools, and unassigned drives">
+        <button slot="actions" class="btn" @click=${this.loadData}>↻ Refresh</button>
+        <button slot="actions" class="btn" @click=${this._openAddNetwork}>+ Add network share</button>
+        <button slot="actions" class="btn" @click=${this._openAddCustom}>+ Add custom device</button>
         ${loadingPools
           ? html`<div class="pools">${this._renderSkeletonCards(2)}</div>`
           : (items.length === 0
-              ? html`<div class="empty" style="padding:4px 0">No volumes yet.</div>`
-              : html`<div class="pools">${items.map(renderItem)}</div>`)}
+              ? html`<div class="empty" style="padding:4px 0">No volumes or drives detected.</div>`
+              : html`<div class="pools">${this._renderItemsWithTiers(items, renderItem)}</div>`)}
       </config-section>
     `;
+  }
+
+  // Walk the sorted items and inject a subtitle whenever the tier changes
+  // ('0' → Available, '1' → Mounted). Keeps everything in one flat .pools
+  // list — sections are visually delimited by the subtitle, not split DOM.
+  _renderItemsWithTiers(items, renderItem) {
+    const out = [];
+    let lastTier = null;
+    for (const it of items) {
+      const tier = (it.sortKey || '')[0];
+      if (tier !== lastTier) {
+        const label = tier === '0' ? 'Available' : 'Mounted';
+        out.push(html`<div class="tier-subtitle">${label}</div>`);
+        lastTier = tier;
+      }
+      out.push(renderItem(it));
+    }
+    return out;
   }
 
   // Existing on-disk volumes not attached to HomeFree (e.g. a Removed one, or
@@ -1637,7 +1960,7 @@ class StorageModule extends LitElement {
           <div class="pool-meta">${formatBytes(rt.used_bytes)} of ${formatBytes(rt.total_bytes)} used</div>
         ` : ''}
 
-        <div class="pool-members">${(p.members || []).join(', ')}</div>
+        ${this._renderMemberDrives(p.members)}
 
         ${rt.md ? html`
           <div class="pool-meta">
@@ -1652,155 +1975,6 @@ class StorageModule extends LitElement {
         </label>
       </div>
     `;
-  }
-
-  _renderDrives() {
-    const loading = this.drives === null;      // first load not finished
-    const drives = this.drives || [];
-    // A drive's set id when it belongs to a MULTI-drive reclaim group OR a
-    // MULTI-drive unmanaged-btrfs candidate. Both render under the same
-    // set-box (header row + bordered member block) — the only difference is
-    // what the header says + which action button it carries.
-    const setGid = (dr) => {
-      if (!dr) return null;
-      if (dr.reclaim && (dr.reclaim.member_ids || []).length > 1) {
-        return dr.reclaim.id;
-      }
-      const pb = dr.promotable_btrfs;
-      if (pb && (pb.member_count || 0) > 1) return 'btrfs:' + pb.fs_uuid;
-      return null;
-    };
-    return html`
-      <config-section title="Drives" description="Every non-removable drive detected on this machine">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Drive</th><th>Size</th><th>Type</th><th>Temp</th><th>Health</th>
-                <th>
-                  <div class="th-action">
-                    <span>Status</span>
-                    <button class="btn-row" ?disabled=${loading} @click=${this.loadData}>↻ Refresh</button>
-                  </div>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              ${loading
-                ? this._renderSkeletonRows(6, 4)
-                : drives.length === 0
-                  ? html`<tr><td colspan="6" class="empty" style="text-align:center; padding:18px;">No drives detected.</td></tr>`
-                  : drives.map((d, i) => this._renderDriveRow(d, {
-                      isSet: !!setGid(d),
-                      firstOfSet: !!setGid(d) && setGid(d) !== setGid(drives[i - 1]),
-                      lastOfSet: !!setGid(d) && setGid(d) !== setGid(drives[i + 1]),
-                    }))}
-            </tbody>
-          </table>
-        </div>
-      </config-section>
-    `;
-  }
-
-  _renderDriveRow(d, opts) {
-    const { isSet = false, firstOfSet = false, lastOfSet = false } = opts || {};
-    const cls = (d.drive_class || '').toUpperCase();
-    const tran = d.transport ? d.transport.toUpperCase() : '';
-    const pb = d.promotable_btrfs;
-    // An unmanaged btrfs disk lands ineligible with "in use by an existing
-    // btrfs filesystem" — accurate but reads as a dead end. Soften the badge
-    // so the user understands the disk is reachable (just unmanaged), and
-    // surface the mount path when it has one.
-    let status;
-    if (pb) {
-      status = pb.mount_point
-        ? html`<span class="badge badge-warn">Btrfs · ${pb.mount_point}</span>`
-        : html`<span class="badge badge-warn">Btrfs · unmanaged</span>`;
-    } else if (d.eligible) {
-      status = d.has_existing_data
-        ? html`<span class="badge badge-warn">Available · has data (${d.existing_fstype || '?'})</span>`
-        : html`<span class="badge badge-ok">Available</span>`;
-    } else {
-      status = html`<span class="badge badge-err">${d.ineligible_reason || 'In use'}</span>`;
-    }
-    const temp = (d.temp_c !== null && d.temp_c !== undefined) ? d.temp_c + '°C' : '—';
-    let health = '—';
-    if (d.smart_available) {
-      health = d.smart_passed === false ? html`<span class="badge badge-err">FAIL</span>` : 'OK';
-    }
-
-    // A multi-drive set (reclaim OR unmanaged-btrfs) gets a single header row
-    // — description + one action button — atop a rounded bordered box around
-    // its members. A single-drive case puts the action on the row itself.
-    const rec = d.reclaim;
-    const recSize = rec ? (rec.member_ids || []).length : 0;
-    const isBtrfsSet = !!pb && (pb.member_count || 0) > 1;
-    const isReclaimSet = !!rec && recSize > 1;
-
-    let header = '';
-    if (isSet && firstOfSet) {
-      if (isReclaimSet) {
-        header = html`
-          <tr class="set-box-top">
-            <td colspan="6">
-              <div class="set-head">
-                <div class="set-head-info">
-                  <strong>${this._reclaimGroupTitle(rec)} · ${recSize} drives</strong>
-                  <div class="set-head-sub">${rec.description} — erasing reclaims all ${recSize} drives.</div>
-                </div>
-                <button class="btn btn-danger" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
-              </div>
-            </td>
-          </tr>`;
-      } else if (isBtrfsSet) {
-        header = html`
-          <tr class="set-box-top">
-            <td colspan="6">
-              <div class="set-head">
-                <div class="set-head-info">
-                  <strong>${this._btrfsGroupTitle(pb)}</strong>
-                  <div class="set-head-sub">${this._btrfsGroupSub(pb)}</div>
-                </div>
-                <button class="btn btn-primary" @click=${() => this._openPromote(pb)}>Promote to volume…</button>
-              </div>
-            </td>
-          </tr>`;
-      }
-    }
-
-    return html`
-      ${header}
-      <tr class="${isSet ? 'set-box' : ''} ${isSet && lastOfSet ? 'set-box-last' : ''}">
-        <td>
-          <div>${d.model || 'Unknown'}</div>
-          <div class="serial">${d.by_id || d.name}</div>
-        </td>
-        <td class="muted">${formatBytes(d.size_bytes)}</td>
-        <td class="muted">${cls}${tran ? ' · ' + tran : ''}</td>
-        <td class="muted">${temp}</td>
-        <td class="muted">${health}</td>
-        <td>
-          ${status}
-          ${rec && !isSet ? html`
-            <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>` : ''}
-          ${d.reclaim_blocked ? this._renderReclaimBlocked(d.reclaim_blocked) : ''}
-          ${pb && !isSet ? html`
-            <button class="btn-row" @click=${() => this._openPromote(pb)}>Promote to volume…</button>` : ''}
-        </td>
-      </tr>
-    `;
-  }
-
-  _btrfsGroupTitle(pb) {
-    const lbl = pb.label ? `‘${pb.label}’` : '(unlabelled)';
-    return `Btrfs filesystem · ${lbl} · ${pb.member_count} drives · ${pb.profile}`;
-  }
-
-  _btrfsGroupSub(pb) {
-    const where = pb.mount_point
-      ? html`Mounted at <code>${pb.mount_point}</code> outside HomeFree.`
-      : html`Not currently mounted.`;
-    return html`${where} Promote to a managed volume to enable snapshots, scrub, and backup integration.`;
   }
 
   _reclaimGroupTitle(rec) {
@@ -1916,46 +2090,71 @@ class StorageModule extends LitElement {
       && (effectiveFsType || '').toLowerCase() === 'btrfs'
       && (this.promotable || []).some((p) => p.fs_uuid === selected.fs_uuid);
 
+    // Three-mode modal:
+    //  * sourceLocked — invoked from a per-drive "Use existing…" button;
+    //    the source is already implied by which button was clicked, so we
+    //    just render it as info (no picker, no chance to switch disks).
+    //  * customOnly  — invoked from "+ Add custom device" in the section
+    //    header; hides the picker entirely and asks for device + fs-type.
+    //  * default      — picker + custom-fallback radio.
+    const sourceLocked = !!this.addMountSourceLocked;
+    const customOnly = !!this.addMountForceCustom;
+    const lockedSrc = sourceLocked && selected;
     return html`
       <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddMount(); }}>
         <div class="modal">
-          <h2>Add existing filesystem</h2>
+          <h2>${customOnly ? 'Add custom device' : 'Use existing filesystem'}</h2>
           <div class="sub">
-            Mount a disk or partition that already has data. Btrfs filesystems
-            are added as managed volumes (snapshots + scrub); other filesystems
-            (ext4, xfs, ntfs, …) are added as plain mounts.
+            ${customOnly
+              ? html`Mount a device by typing its spec directly — useful when the
+                     auto-detect scan misses something (unusual layouts, future
+                     plug-ins, etc.).`
+              : html`Mount a disk or partition that already has data. Btrfs
+                     filesystems are added as managed volumes (snapshots +
+                     scrub); other filesystems (ext4, xfs, ntfs, …) are added
+                     as plain mounts.`}
           </div>
 
-          <div class="field">
-            <label>Source</label>
-            <div class="drive-pick">
-              ${devices.length === 0 ? html`
-                <div class="hint" style="padding:8px 0">
-                  No mountable disks or partitions detected — use the custom
-                  entry below.
-                </div>` : devices.map((d) => html`
-                <label class="drive-opt ${this.addMountSource === d.fs_uuid ? 'sel' : ''}">
+          ${lockedSrc ? html`
+            <div class="field">
+              <label>Source</label>
+              <div class="locked-source">
+                <div class="locked-source-main">${lockedSrc.display_name} — ${formatBytes(lockedSrc.size_bytes)} · ${lockedSrc.fs_type}${lockedSrc.label ? ' · ‘' + lockedSrc.label + '’' : ''}</div>
+                <div class="locked-source-sub">${lockedSrc.device_path} · UUID=${lockedSrc.fs_uuid}</div>
+              </div>
+            </div>` : ''}
+
+          ${customOnly || sourceLocked ? '' : html`
+            <div class="field">
+              <label>Source</label>
+              <div class="drive-pick">
+                ${devices.length === 0 ? html`
+                  <div class="hint" style="padding:8px 0">
+                    No mountable disks or partitions detected — use the custom
+                    entry below.
+                  </div>` : devices.map((d) => html`
+                  <label class="drive-opt ${this.addMountSource === d.fs_uuid ? 'sel' : ''}">
+                    <input type="radio" name="add-mount-src"
+                           .checked=${this.addMountSource === d.fs_uuid}
+                           @change=${() => this._selectMountSource(d)} />
+                    <span class="d-main">
+                      <div>${d.display_name} — ${formatBytes(d.size_bytes)} · ${d.fs_type}${d.label ? ' · ‘' + d.label + '’' : ''}</div>
+                      <div class="d-sub">${d.device_path} · UUID=${d.fs_uuid}</div>
+                    </span>
+                  </label>`)}
+                <label class="drive-opt ${isCustom ? 'sel' : ''}">
                   <input type="radio" name="add-mount-src"
-                         .checked=${this.addMountSource === d.fs_uuid}
-                         @change=${() => this._selectMountSource(d)} />
+                         .checked=${isCustom}
+                         @change=${this._selectCustomSource} />
                   <span class="d-main">
-                    <div>${d.display_name} — ${formatBytes(d.size_bytes)} · ${d.fs_type}${d.label ? ' · ‘' + d.label + '’' : ''}</div>
-                    <div class="d-sub">${d.device_path} · UUID=${d.fs_uuid}</div>
+                    <div>Custom device…</div>
+                    <div class="d-sub">Enter a device spec yourself (e.g. <code>UUID=…</code>, <code>LABEL=…</code>, or <code>/dev/sdX1</code>)</div>
                   </span>
-                </label>`)}
-              <label class="drive-opt ${isCustom ? 'sel' : ''}">
-                <input type="radio" name="add-mount-src"
-                       .checked=${isCustom}
-                       @change=${this._selectCustomSource} />
-                <span class="d-main">
-                  <div>Custom device…</div>
-                  <div class="d-sub">Enter a device spec yourself (e.g. <code>UUID=…</code>, <code>LABEL=…</code>, or <code>/dev/sdX1</code>)</div>
-                </span>
-              </label>
-            </div>
-          </div>
+                </label>
+              </div>
+            </div>`}
 
-          ${isCustom ? html`
+          ${isCustom || customOnly ? html`
             <div class="field">
               <label>Device</label>
               <input type="text" .value=${this.addMountDevice}
@@ -2005,6 +2204,41 @@ class StorageModule extends LitElement {
     this.addMountPoint = '';
     this.addMountError = '';
     this.addingMount = false;
+    this.addMountForceCustom = false;
+    this.addMountSourceLocked = false;
+  }
+
+  // Open the AddMount modal in custom-only mode — used by the section-header
+  // "+ Add custom device" entry point. Skips the detected-source picker and
+  // shows just the device + fs-type fields.
+  _openAddCustom() {
+    this._openAddMount();
+    this.addMountForceCustom = true;
+    this.addMountSource = '__custom__';
+  }
+
+  // Per-drive entry points. The section-header "+ Add volume" router is gone
+  // — instead, each unassociated drive's card carries its own Create / Use
+  // existing buttons, so the user clicks the action right next to the noun.
+  _createFromDrive(d) {
+    if (!d || !d.by_id) return;
+    this._openWizard();              // resets, then we pre-seed
+    this.selected = [d.by_id];
+    this._ensureProfileStillValid();  // auto-picks Single (only 1 drive)
+    this._refreshPreview();
+  }
+
+  _useExistingFromDrive(d) {
+    if (!d || !d.by_id) return;
+    const cand = (this.mountableDevices || []).find(
+      (m) => m.disk_by_id === d.by_id);
+    if (!cand) return;     // button shouldn't render without one; defensive
+    this._openAddMount();
+    this._selectMountSource(cand);
+    // The button is per-drive, so the source is already chosen. Don't show
+    // the picker in the modal — that would let the user accidentally switch
+    // to a different disk than the one they clicked the button on.
+    this.addMountSourceLocked = true;
   }
 
   _closeAddMount() {
@@ -2084,80 +2318,6 @@ class StorageModule extends LitElement {
     const all = this.config?.mounts || [];
     this._emitMounts([...all, newRow]);
     this.addMountOpen = false;
-  }
-
-  // Add-volume router modal — one entry point for the three Add flows. Each
-  // card describes its use-case in user terms (no managed-vs-mount jargon)
-  // and routes to the underlying flow that's actually different enough to
-  // warrant its own modal: format-blank-drives wizard, pick-existing-fs
-  // modal, or add-network-share modal.
-  _renderAddVolumeRouter() {
-    const canCreate = this.eligibleDrives.length > 0
-                       || this.overridableDrives.length > 0;
-    return html`
-      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddVolume(); }}>
-        <div class="modal">
-          <h2>Add a volume</h2>
-          <div class="sub">How would you like to add storage to this box?</div>
-
-          <div class="drive-pick add-vol-routes" style="margin-top:6px">
-            <label class="drive-opt ${!canCreate ? 'warn-opt' : ''}"
-                   @click=${() => canCreate && this._chooseAddRoute('create')}
-                   style="${canCreate ? 'cursor:pointer' : 'cursor:not-allowed; opacity:0.55'}">
-              <span class="d-main">
-                <div class="route-title">Create a new managed volume</div>
-                <div class="route-desc">
-                  ${canCreate
-                    ? 'Format blank drives, pick a RAID layout, mount as a managed pool with snapshot and scrub integration.'
-                    : 'No eligible blank drives detected — free up a drive in the Drives section first.'}
-                </div>
-              </span>
-            </label>
-
-            <label class="drive-opt"
-                   @click=${() => this._chooseAddRoute('existing')}
-                   style="cursor:pointer">
-              <span class="d-main">
-                <div class="route-title">Use existing filesystem</div>
-                <div class="route-desc">
-                  Mount a local disk or partition that already has data — auto-detected or custom device path.
-                </div>
-              </span>
-            </label>
-
-            <label class="drive-opt"
-                   @click=${() => this._chooseAddRoute('network')}
-                   style="cursor:pointer">
-              <span class="d-main">
-                <div class="route-title">Add network share</div>
-                <div class="route-desc">
-                  Mount an NFS or SMB export from another machine on the LAN.
-                </div>
-              </span>
-            </label>
-          </div>
-
-          <div class="row" style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
-            <button class="btn" @click=${this._closeAddVolume}>Cancel</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  _openAddVolume() {
-    this.addVolumeOpen = true;
-  }
-
-  _closeAddVolume() {
-    this.addVolumeOpen = false;
-  }
-
-  _chooseAddRoute(which) {
-    this.addVolumeOpen = false;
-    if (which === 'create') this._openWizard();
-    else if (which === 'existing') this._openAddMount();
-    else if (which === 'network') this._openAddNetwork();
   }
 
   // Add network share modal — mirrors the schema the old Network Mounts

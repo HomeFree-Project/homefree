@@ -871,14 +871,24 @@ class StorageResolver:
         esp_disks = {k for k, n in nodes.items() if _scan_node(n)[3]}
         all_mounted_btrfs_disks = _mounted_btrfs_disks()
 
-        # Every /dev path currently in /proc/mounts → real path. Used to
-        # detect "this filesystem is mounted somehow" vs. "completely cold".
+        # Every /dev path currently in /proc/mounts → real path, plus a
+        # mount-point lookup by realpath. Lets us both detect "this fs is
+        # mounted somehow" AND recover the actual mount-point for an fs
+        # that's mounted outside `homefree.mounts` (e.g. leftover fstab
+        # entry or a previous-deployment systemd mount unit that survived
+        # a Forget without an Apply). Those are now promote-eligible too.
         mounted_real: Set[str] = set()
+        proc_mp_by_real: Dict[str, str] = {}
         try:
             for line in Path("/proc/mounts").read_text().splitlines():
                 parts = line.split()
-                if parts and parts[0].startswith("/dev/"):
-                    mounted_real.add(os.path.realpath(parts[0]))
+                if not parts or not parts[0].startswith("/dev/"):
+                    continue
+                real = os.path.realpath(parts[0])
+                mounted_real.add(real)
+                mp = parts[1].replace("\\040", " ") if len(parts) >= 2 else ""
+                if mp and real not in proc_mp_by_real:
+                    proc_mp_by_real[real] = mp
         except OSError:
             pass
 
@@ -933,14 +943,26 @@ class StorageResolver:
             if not member_ids or len(member_ids) != len(member_knames):
                 continue
 
-            # Mount state: if any device of this fs is in /proc/mounts and
-            # we don't see a matching `homefree.mounts` row, it's mounted by
-            # someone else — skip. Otherwise capture the HomeFree mount-point
-            # (empty if unmounted).
+            # Mount state has three flavors:
+            #   1. not mounted          → `mount_point` empty; user picks one
+            #      in the Promote modal.
+            #   2. mounted via HomeFree → `mount_point` from hf_mp_by_uuid;
+            #      modal shows the path read-only.
+            #   3. mounted outside HomeFree (leftover fstab/systemd mount, a
+            #      previous-deployment unit still alive after a Forget) →
+            #      `mount_point` recovered from /proc/mounts so the user can
+            #      re-adopt it. Treated like (2) for the Promote flow: the
+            #      pool record is added with the same mount-point and the
+            #      filesystem stays mounted.
             is_mounted = any(os.path.realpath(d) in mounted_real for d in devs)
             mount_point = hf_mp_by_uuid.get(fs_uuid, "")
             if is_mounted and not mount_point:
-                continue
+                for d in devs:
+                    real = os.path.realpath(d)
+                    mp = proc_mp_by_real.get(real)
+                    if mp:
+                        mount_point = mp
+                        break
 
             label = (b.get("label") or "").strip()
             if mount_point:

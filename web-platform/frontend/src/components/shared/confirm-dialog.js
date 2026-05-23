@@ -177,27 +177,43 @@ class ConfirmDialog extends LitElement {
   _onConfirm() { this._finish(true); }
   _onCancel()  { this._finish(false); }
 
-  connectedCallback() {
-    super.connectedCallback();
-    this._onKeydown = (e) => {
-      if (!this.open) return;
-      if (e.key === 'Escape') { e.preventDefault(); this._onCancel(); }
-      if (e.key === 'Enter')  { e.preventDefault(); this._onConfirm(); }
-    };
-    window.addEventListener('keydown', this._onKeydown);
+  // Element-scoped keydown — Enter/Escape only fire when the dialog is the
+  // focused subtree. Previously the listener was on `window`, which meant
+  // ANY Enter keypress on the page (typing in a form field, submitting a
+  // different modal) auto-confirmed an open dialog. That made destructive
+  // confirms ("Remove volume") effectively accidental-keypress-triggered.
+  _onKeydown(e) {
+    if (!this.open) return;
+    if (e.key === 'Escape') { e.preventDefault(); this._onCancel(); }
+    if (e.key === 'Enter')  { e.preventDefault(); this._onConfirm(); }
   }
 
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    window.removeEventListener('keydown', this._onKeydown);
+  // When the dialog opens, focus the SAFER default — Cancel for destructive
+  // ('danger') variants, Confirm otherwise. Combined with the scoped
+  // keydown listener above, a reflexive Enter on an open destructive
+  // dialog now cancels instead of confirming.
+  updated(changed) {
+    if (changed.has('open') && this.open) {
+      // Defer one tick to let the dialog DOM exist before focusing.
+      Promise.resolve().then(() => {
+        const root = this.renderRoot;
+        if (!root) return;
+        const sel = this.variant === 'danger'
+          ? '.actions button.btn:not(.btn-danger)'
+          : '.actions button.btn-primary';
+        const btn = root.querySelector(sel)
+          || root.querySelector('.actions button');
+        if (btn) btn.focus();
+      });
+    }
   }
 
   render() {
     if (!this.open) return html``;
 
     return html`
-      <div class="overlay" @click=${this._onCancel}>
-        <div class="dialog" @click=${(e) => e.stopPropagation()}>
+      <div class="overlay" @click=${this._onCancel} @keydown=${this._onKeydown}>
+        <div class="dialog" @click=${(e) => e.stopPropagation()} tabindex="-1">
           <h2 class="title">${this.title}</h2>
           ${this.message
             ? html`<div class="message">${this.message}</div>`
