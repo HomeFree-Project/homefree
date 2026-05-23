@@ -414,6 +414,109 @@ class StoragePoolService:
             return ["Imported the volume but failed to write homefree-config.json."]
         return []
 
+    # ----------------------------------------------------------- promote
+
+    @staticmethod
+    def promote_volume(fs_uuid: str, name: str, mountpoint: str) -> List[str]:
+        """Add an existing unmanaged btrfs filesystem to
+        `homefree.storage.pools`. Non-destructive — no format, no
+        device-identity change, same `fs-uuid`. If the same filesystem is
+        currently mounted via a `homefree.mounts` row, drop that row in the
+        same atomic config write so the volume isn't double-mounted on Apply.
+
+        Looking up the candidate by `fs_uuid` (vs. mount-point in round 1) lets
+        the same call promote a mounted *or* unmounted filesystem with no extra
+        branching at the call site."""
+        from resolvers.storage import StorageResolver, _resolve_mount_spec, _fs_uuid_of
+        fs_uuid = (fs_uuid or "").strip()
+        name = (name or "").strip()
+        mountpoint = (mountpoint or "").strip()
+        errs: List[str] = []
+        if not _NAME_RE.match(name):
+            errs.append("Volume name must be 1–32 characters: letters, digits, "
+                        "'-' or '_', starting with a letter or digit.")
+        if not mountpoint.startswith("/"):
+            errs.append("Mount point must be an absolute path.")
+
+        cand = next((v for v in StorageResolver.list_promotable_btrfs()
+                     if v.get("fs_uuid") == fs_uuid), None)
+        if cand is None:
+            errs.append("That filesystem is no longer promotable.")
+
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        existing_pools = ((cfg.get("storage") or {}).get("pools")) or []
+        if any(p.get("name") == name for p in existing_pools):
+            errs.append(f"A volume named '{name}' already exists.")
+        if any(p.get("mountpoint") == mountpoint for p in existing_pools):
+            errs.append(f"Mount point '{mountpoint}' is already a managed volume.")
+
+        # Defensive parallel of the modal's read-only-when-mounted rule: if
+        # the candidate is already mounted, a caller is not allowed to move
+        # it to a different path during promotion (would force an unmount +
+        # remount-elsewhere we don't want hiding inside an Apply). Renaming
+        # the mount path is a separate, explicit flow.
+        if cand is not None and cand.get("mount_point") \
+                and mountpoint != cand["mount_point"]:
+            errs.append("Cannot change mount point during promotion of an "
+                        "already-mounted filesystem; promote first, then move.")
+        if errs:
+            return errs
+        assert cand is not None  # guaranteed: a missing cand would be in errs
+
+        # Make sure /dev/disk/by-uuid/<fs-uuid> exists so the new pool's
+        # nofail mount on Apply doesn't silently fail (same precaution as
+        # create + import).
+        StoragePoolService._ensure_by_uuid(
+            fs_uuid, [cand.get("device")], timeout_s=15)
+
+        pool = {
+            "enabled": True,
+            "name": name,
+            "mountpoint": mountpoint,
+            "profile": cand["profile"],
+            "members": cand["members"],
+            "fs-uuid": fs_uuid,
+            "md-uuid": "",
+            "md-device": cand.get("md_device") or "",
+            "encrypted": False,
+            "luks-mappers": [],
+            "mount-options": ["compress=zstd", "noatime"],
+            "device-timeout": "15s",
+            "imported-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+
+        # Atomic write: pools-with-new + mounts-without-any-row-that-points-at-fs_uuid.
+        # We match by fs-uuid (not mount-point) because a row can have a
+        # different mount-point yet still target the same filesystem (e.g.
+        # `UUID=<X>` typed in by hand) — mount-point alone would leak a stale
+        # duplicate that fights the new pool on the next Apply.
+        def _row_targets_fs(m: Dict[str, Any]) -> bool:
+            spec = (m.get("device") or "").strip()
+            if not spec:
+                return False
+            if spec.startswith("UUID="):
+                return spec[5:] == fs_uuid
+            if spec.startswith("/dev/disk/by-uuid/"):
+                return spec.rsplit("/", 1)[-1] == fs_uuid
+            resolved = _resolve_mount_spec(spec)
+            if not resolved:
+                return False
+            return _fs_uuid_of(os.path.realpath(resolved)) == fs_uuid
+
+        new_pools = list(existing_pools) + [pool]
+        new_mounts = [m for m in (cfg.get("mounts") or [])
+                      if not _row_targets_fs(m)]
+        ok = ConfigWriter.write_config({
+            "storage": {"pools": new_pools},
+            "mounts": new_mounts,
+        })
+        if not ok:
+            return ["Failed to write homefree-config.json."]
+        return []
+
     # ----------------------------------------------------------- helpers
 
     @staticmethod

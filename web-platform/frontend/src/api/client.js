@@ -132,6 +132,21 @@ export const getStorageReclaimStatus = () =>
 export const getStorageImportable = () => get('/api/storage/importable');
 export const importStoragePool = (payload) =>
   post('/api/storage/pools/import', payload);
+// Promote: add an unmanaged btrfs (mounted via homefree.mounts OR currently
+// cold, single-drive or md-backed) to homefree.storage.pools. Non-destructive
+// — no format, no device-identity change, same fs-uuid. The backend evicts a
+// matching homefree.mounts row in the same atomic write so the volume isn't
+// double-mounted on Apply.
+export const getPromotableBtrfs = () => get('/api/storage/promotable-btrfs');
+export const promoteVolume = (fs_uuid, name, mountpoint) =>
+  post('/api/storage/pools/promote', { fs_uuid, name, mountpoint });
+// Disk mounts: live `homefree.mounts` view (with mounted/used/total runtime)
+// + the list of partitions/disks that could be added as a new mount.
+export const getMounts = () => get('/api/storage/mounts');
+export const getMountableDevices = () => get('/api/storage/mountable-devices');
+// System mounts: read-only / mount info for the "System" card in the
+// unified Volumes section. Returns a list (length 0 or 1).
+export const getSystemVolumes = () => get('/api/storage/system-volumes');
 
 // Locale & Timezone — cached module-level so the network call only happens
 // once per page load. The data is large but immutable for the session, so

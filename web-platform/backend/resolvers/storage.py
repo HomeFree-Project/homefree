@@ -84,6 +84,10 @@ _BTRFS = _resolve_bin("btrfs")
 _PVS = _resolve_bin("pvs")
 _BLKID = _resolve_bin("blkid")
 
+# Same constraint `StoragePoolService._NAME_RE` enforces; duplicated here to
+# avoid the resolver depending on the service layer (one-way dep).
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
 
 def _fs_present(fs_uuid: Optional[str]) -> bool:
     """Whether the filesystem with this UUID is actually available — NOT merely
@@ -94,6 +98,32 @@ def _fs_present(fs_uuid: Optional[str]) -> bool:
     if Path(f"/dev/disk/by-uuid/{fs_uuid}").exists():
         return True
     return bool(_run([_BLKID, "-U", fs_uuid]).strip())
+
+
+def _fs_uuid_of(dev: str) -> str:
+    """UUID of the filesystem on <dev> via blkid. Empty on failure."""
+    if not dev:
+        return ""
+    return _run([_BLKID, "-o", "value", "-s", "UUID", dev]).strip()
+
+
+def _resolve_mount_spec(spec: str) -> str:
+    """Normalize an fstab-style mount source to a real path. `UUID=…` and
+    `LABEL=…` are valid in /etc/fstab and round-trip through `homefree.mounts`
+    that way too, so a literal path check (`os.path.exists`) on the raw spec
+    rejects them. Returns the resolved /dev path or '' if it can't be resolved."""
+    if not spec:
+        return ""
+    if spec.startswith("UUID="):
+        p = f"/dev/disk/by-uuid/{spec[5:]}"
+        return p if os.path.exists(p) else ""
+    if spec.startswith("LABEL="):
+        p = f"/dev/disk/by-label/{spec[6:]}"
+        return p if os.path.exists(p) else ""
+    if spec.startswith("PARTUUID="):
+        p = f"/dev/disk/by-partuuid/{spec[9:]}"
+        return p if os.path.exists(p) else ""
+    return spec if os.path.exists(spec) else ""
 
 
 def _run(cmd: List[str]) -> str:
@@ -534,6 +564,26 @@ class StorageResolver:
                        if dk in disk_to_group for mp in mps}
         blockers_by_mp = _blockers_for_mountpoints(blocked_mps) if blocked_mps else {}
 
+        # All unmanaged btrfs filesystems on this box (mounted or not, single
+        # or multi-drive). Indexed by member kname so each drive row carries a
+        # `promotable_btrfs` hint — the UI uses it both to render an inline
+        # "Promote to volume…" button on single-drive rows and to group the
+        # members of a multi-drive set under one set-box header.
+        disk_to_promotable_btrfs: Dict[str, Dict[str, Any]] = {}
+        for rec in StorageResolver.list_promotable_btrfs():
+            hint = {
+                "fs_uuid": rec["fs_uuid"],
+                "label": rec.get("label") or "",
+                "profile": rec["profile"],
+                "member_count": len(rec.get("member_knames") or []),
+                "size_bytes": rec.get("size_bytes") or 0,
+                "mount_point": rec.get("mount_point") or "",
+                "suggested_name": rec["suggested_name"],
+                "suggested_mountpoint": rec["suggested_mountpoint"],
+            }
+            for dk in rec.get("member_knames", []):
+                disk_to_promotable_btrfs.setdefault(dk, hint)
+
         out: List[Dict[str, Any]] = []
         for d in drives:
             name = os.path.basename(d.get("device", ""))
@@ -626,6 +676,7 @@ class StorageResolver:
             row["reclaimable"] = reclaim is not None
             row["reclaim"] = reclaim
             row["reclaim_blocked"] = reclaim_blocked
+            row["promotable_btrfs"] = disk_to_promotable_btrfs.get(name)
             out.append(row)
         return out
 
@@ -760,6 +811,403 @@ class StorageResolver:
                 "size_bytes": _dev_size_bytes(devs[0]),
             })
         return out
+
+    @staticmethod
+    def list_promotable_btrfs() -> List[Dict[str, Any]]:
+        """All btrfs filesystems on this box that could be moved into
+        `homefree.storage.pools` as managed volumes — mounted (via
+        `homefree.mounts`) or not, single-device or md-backed.
+
+        Skipped cases:
+        - filesystems already recorded in `storage.pools` (would duplicate);
+        - filesystems whose members touch OS / swap / ESP / a *different*
+          mounted btrfs (same protections `list_importable` enforces);
+        - filesystems that ARE mounted but **not** via `homefree.mounts`
+          (a hand-rolled fstab or sysadmin mount — out of scope; the
+          promotion would have to evict whatever owns it);
+        - native multi-device btrfs (profile unknowable offline — same
+          restriction as `list_importable`); md-backed is fine because the
+          raid level is in `/proc/mdstat`."""
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        recorded_uuids = {p.get("fs-uuid")
+                          for p in ((cfg.get("storage") or {}).get("pools") or [])}
+        hf_mounts = cfg.get("mounts") or []
+
+        # Index `homefree.mounts` by the fs-uuid each row resolves to, so we
+        # can identify "mounted via HomeFree" in O(1) per candidate. Resolve
+        # `UUID=…`/`LABEL=…`/path uniformly via the shared helper, then read
+        # the fs-uuid from the spec or via blkid as a fallback.
+        hf_mp_by_uuid: Dict[str, str] = {}
+        for m in hf_mounts:
+            if (m.get("fs-type") or "").lower() != "btrfs":
+                continue
+            mp = m.get("mount-point") or ""
+            dev = m.get("device") or ""
+            if not mp:
+                continue
+            u = ""
+            if dev.startswith("UUID="):
+                u = dev[5:]
+            elif dev.startswith("/dev/disk/by-uuid/"):
+                u = dev.rsplit("/", 1)[-1]
+            if not u:
+                resolved = _resolve_mount_spec(dev)
+                if resolved:
+                    u = _fs_uuid_of(os.path.realpath(resolved))
+            if u:
+                hf_mp_by_uuid.setdefault(u, mp)
+
+        by_id = _by_id_map()
+        arrays = _md_member_map()
+
+        # Same protected-disks set `list_importable` uses: OS/boot, swap,
+        # any drive backing an ESP, and (importantly) the running root
+        # mirror's members are caught by `_mounted_btrfs_disks()` once we
+        # exclude the candidate's own devices from it below.
+        nodes = _lsblk_disk_nodes()
+        esp_disks = {k for k, n in nodes.items() if _scan_node(n)[3]}
+        all_mounted_btrfs_disks = _mounted_btrfs_disks()
+
+        # Every /dev path currently in /proc/mounts → real path. Used to
+        # detect "this filesystem is mounted somehow" vs. "completely cold".
+        mounted_real: Set[str] = set()
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                parts = line.split()
+                if parts and parts[0].startswith("/dev/"):
+                    mounted_real.add(os.path.realpath(parts[0]))
+        except OSError:
+            pass
+
+        # Parse `btrfs filesystem show` → [{label, uuid, devices[]}] (same
+        # parse as `list_importable`).
+        blocks: List[Dict[str, Any]] = []
+        cur: Optional[Dict[str, Any]] = None
+        for line in _run([_BTRFS, "filesystem", "show"]).splitlines():
+            s = line.strip()
+            if s.startswith("Label:"):
+                m_re = re.search(r"Label:\s+(?:'([^']*)'|none)\s+uuid:\s+(\S+)", s)
+                if m_re:
+                    cur = {"label": m_re.group(1) or "", "uuid": m_re.group(2), "devices": []}
+                    blocks.append(cur)
+            elif cur is not None and s.startswith("devid") and " path " in s:
+                cur["devices"].append(s.split(" path ", 1)[1].strip())
+
+        out: List[Dict[str, Any]] = []
+        for b in blocks:
+            fs_uuid, devs = b["uuid"], b["devices"]
+            if not fs_uuid or not devs or fs_uuid in recorded_uuids:
+                continue
+
+            # Member resolution + profile (mirrors `list_importable`).
+            md_dev = next((os.path.basename(d) for d in devs
+                           if os.path.basename(d).startswith("md")), None)
+            if md_dev:
+                info = arrays.get(md_dev) or {}
+                member_knames: Set[str] = set()
+                for part in info.get("members", []):
+                    member_knames |= _underlying_disks(f"/dev/{part}")
+                level = (info.get("level") or "").lower()
+                profile = level if level in (
+                    "raid0", "raid1", "raid10", "raid5", "raid6") else "raid6"
+                md_device = md_dev
+            else:
+                member_knames = set()
+                for d in devs:
+                    member_knames |= _underlying_disks(d)
+                if len(member_knames) != 1:
+                    continue   # multi-device native: layout unknown offline
+                profile, md_device = "single", ""
+
+            # Exclude this candidate's own members from the mounted-btrfs set
+            # before treating it as a "protected disk" — otherwise a mounted
+            # candidate would always reject itself.
+            protected = (_os_disks() | _swap_disks() | esp_disks
+                         | (all_mounted_btrfs_disks - member_knames))
+            if member_knames & protected:
+                continue
+            member_ids = [by_id[k] for k in sorted(member_knames) if by_id.get(k)]
+            if not member_ids or len(member_ids) != len(member_knames):
+                continue
+
+            # Mount state: if any device of this fs is in /proc/mounts and
+            # we don't see a matching `homefree.mounts` row, it's mounted by
+            # someone else — skip. Otherwise capture the HomeFree mount-point
+            # (empty if unmounted).
+            is_mounted = any(os.path.realpath(d) in mounted_real for d in devs)
+            mount_point = hf_mp_by_uuid.get(fs_uuid, "")
+            if is_mounted and not mount_point:
+                continue
+
+            label = (b.get("label") or "").strip()
+            if mount_point:
+                suggested_name = mount_point.rstrip("/").rsplit("/", 1)[-1] or "volume"
+            elif _NAME_RE.match(label):
+                suggested_name = label
+            else:
+                suggested_name = f"btrfs-{fs_uuid[:8]}"
+            suggested_mountpoint = mount_point or f"/mnt/{suggested_name}"
+
+            out.append({
+                "fs_uuid": fs_uuid,
+                "label": label,
+                "profile": profile,
+                "members": member_ids,
+                "member_knames": sorted(member_knames),
+                "md_device": md_device,
+                "device": devs[0],                        # backing device for udev re-probe
+                "size_bytes": _dev_size_bytes(devs[0]),
+                "mount_point": mount_point,               # "" if unmounted
+                "suggested_name": suggested_name,
+                "suggested_mountpoint": suggested_mountpoint,
+            })
+        return out
+
+    @staticmethod
+    def list_mounts() -> List[Dict[str, Any]]:
+        """Every `homefree.mounts` row paired with live runtime — same idea as
+        `list_pools`, so the Disk Mounts UI can render each entry as a
+        Volume-style card (badge + usage bar) instead of a flat table.
+
+        Each row gets:
+        - `device_real`:  the realpath the spec resolves to (e.g. `/dev/sda1`
+          for `UUID=…`); empty when the device isn't currently visible.
+        - `disk_by_ids`:  the *whole-disk* by-id link(s) underlying the device
+          (e.g. `ata-…`) for a stable, human-readable footer line.
+        - `runtime`:      `{ mounted, used_bytes, total_bytes }` — `mounted`
+          comes from `/proc/mounts`, `used/total` from statvfs (mounted only).
+        Network mounts (nfs/cifs/…) get `runtime.mounted` but no size — a
+        statvfs on a remote share would hang if the server's gone."""
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        mounts = cfg.get("mounts") or []
+        # Filesystems already represented as managed pools — skip the
+        # `homefree.mounts` row in that case so the unified Volumes UI doesn't
+        # render the same filesystem twice. Defensive: a well-behaved config
+        # never has both, but a hand-edited file can.
+        pool_uuids = {p.get("fs-uuid")
+                      for p in ((cfg.get("storage") or {}).get("pools") or [])
+                      if p.get("fs-uuid")}
+        proc_mp = _proc_mount_points()
+        by_id = _by_id_map()
+
+        out: List[Dict[str, Any]] = []
+        for m in mounts:
+            mp = (m.get("mount-point") or "").strip()
+            spec = (m.get("device") or "").strip()
+            fstype = (m.get("fs-type") or "").lower()
+
+            real = ""
+            disk_by_ids: List[str] = []
+            resolved = _resolve_mount_spec(spec)
+            if resolved:
+                try:
+                    real = os.path.realpath(resolved)
+                except OSError:
+                    real = ""
+            if real and real.startswith("/dev/"):
+                disk_knames = _underlying_disks(real)
+                disk_by_ids = [by_id[k] for k in sorted(disk_knames) if by_id.get(k)]
+
+            # fs-uuid resolution: spec wins (UUID= / by-uuid path) → blkid on
+            # the resolved real device → empty. Exposed on the row so the UI
+            # doesn't have to redo this work for the Promote affordance.
+            fs_uuid = ""
+            if spec.startswith("UUID="):
+                fs_uuid = spec[5:]
+            elif spec.startswith("/dev/disk/by-uuid/"):
+                fs_uuid = spec.rsplit("/", 1)[-1]
+            elif real:
+                fs_uuid = _fs_uuid_of(real)
+
+            # Dedup against managed pools.
+            if fs_uuid and fs_uuid in pool_uuids:
+                continue
+
+            mounted = bool(mp) and mp in proc_mp
+            # Don't statvfs network mounts — a hung NFS server would block.
+            local = fstype not in ("nfs", "nfs4", "cifs", "smb", "smbfs", "sshfs")
+            used = total = None
+            if mounted and mp and local:
+                st = _statvfs_safe(mp)
+                if st:
+                    total = st.f_blocks * st.f_frsize
+                    used = (st.f_blocks - st.f_bfree) * st.f_frsize
+
+            row = dict(m)
+            row["device_real"] = real
+            row["disk_by_ids"] = disk_by_ids
+            row["fs_uuid"] = fs_uuid
+            row["runtime"] = {
+                "mounted": mounted,
+                "used_bytes": used,
+                "total_bytes": total,
+            }
+            out.append(row)
+        return out
+
+    @staticmethod
+    def list_system_volumes() -> List[Dict[str, Any]]:
+        """Read-only `/` mount info for the unified Volumes UI's "System"
+        card. Returns a list (length 0 or 1) so the frontend's items-array
+        rendering stays uniform with pools and mounts. Only `/` is
+        surfaced: same-fs subvolume mounts (e.g. `/nix/store` on the same
+        btrfs filesystem under `@nix`) would double-count usage, and
+        `/boot` is too small to merit its own card. Future work can
+        broaden if needed."""
+        by_id = _by_id_map()
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                dev_spec = parts[0]
+                mp = parts[1].replace("\\040", " ")
+                fstype = parts[2]
+                if mp != "/" or not dev_spec.startswith("/dev/"):
+                    continue
+                try:
+                    real = os.path.realpath(dev_spec)
+                except OSError:
+                    real = ""
+                disks = _underlying_disks(real) if real else set()
+                disk_by_ids = [by_id[k] for k in sorted(disks) if by_id.get(k)]
+                st = _statvfs_safe(mp)
+                used = total = None
+                if st:
+                    total = st.f_blocks * st.f_frsize
+                    used = (st.f_blocks - st.f_bfree) * st.f_frsize
+                return [{
+                    "mount-point": mp,
+                    "device": dev_spec,
+                    "fs-type": fstype,
+                    "device_real": real,
+                    "disk_by_ids": disk_by_ids,
+                    "runtime": {
+                        "mounted": True,
+                        "used_bytes": used,
+                        "total_bytes": total,
+                    },
+                }]
+        except OSError:
+            pass
+        return []
+
+    @staticmethod
+    def list_mountable_devices() -> List[Dict[str, Any]]:
+        """Disks and partitions that the maintainer could add to
+        `homefree.mounts`: anything with a filesystem (so a one-shot mkfs isn't
+        part of the flow), not already in `storage.pools`, not already in
+        `homefree.mounts`, not OS / swap / ESP / md-member / lvm-member, not
+        currently mounted elsewhere.
+
+        Used to populate the radio-card source picker on the Add Disk Mount
+        modal. The user can still fall back to a free-form `device` path if a
+        candidate is missing (e.g. unusual layouts the scan doesn't surface)."""
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        recorded_uuids = {p.get("fs-uuid")
+                          for p in ((cfg.get("storage") or {}).get("pools") or [])}
+
+        # All fs-uuids already claimed by an existing homefree.mounts row, so
+        # we don't offer the same disk twice.
+        hf_uuids: Set[str] = set()
+        for m in (cfg.get("mounts") or []):
+            d = (m.get("device") or "").strip()
+            if d.startswith("UUID="):
+                hf_uuids.add(d[5:])
+            elif d.startswith("/dev/disk/by-uuid/"):
+                hf_uuids.add(d.rsplit("/", 1)[-1])
+            else:
+                resolved = _resolve_mount_spec(d)
+                if resolved:
+                    u = _fs_uuid_of(os.path.realpath(resolved))
+                    if u:
+                        hf_uuids.add(u)
+
+        os_disks = _os_disks()
+        swap_disks = _swap_disks()
+        by_id = _by_id_map()
+
+        # lsblk JSON walk: at every level (disk-as-fs OR partition) emit a
+        # row when the node looks like a usable, unclaimed filesystem.
+        out_raw = _run([_LSBLK, "-J", "-b", "-o",
+                        "NAME,KNAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,PARTTYPE,PATH,MODEL"])
+        try:
+            blocks = json.loads(out_raw or "{}").get("blockdevices", [])
+        except json.JSONDecodeError:
+            blocks = []
+
+        candidates: List[Dict[str, Any]] = []
+        skip_fs = {"swap", "linux_raid_member", "lvm2_member", "crypto_luks", ""}
+
+        for disk in blocks:
+            if disk.get("type") != "disk":
+                continue
+            disk_kname = disk.get("kname") or disk.get("name") or ""
+            if disk_kname in os_disks or disk_kname in swap_disks:
+                continue
+            disk_by_id = by_id.get(disk_kname, "")
+            disk_model = (disk.get("model") or "").strip()
+
+            def walk(n: Dict[str, Any], part_idx: int = 0) -> None:
+                fstype = (n.get("fstype") or "").lower()
+                fs_uuid = (n.get("uuid") or "").strip()
+                parttype = (n.get("parttype") or "").lower()
+                mountpoint = (n.get("mountpoint") or "").strip()
+                kname = n.get("kname") or n.get("name") or ""
+
+                # Recurse first so children are considered regardless of this
+                # node's own status (a partition table has fstype "").
+                children = n.get("children") or []
+                for i, c in enumerate(children, start=1):
+                    walk(c, i)
+
+                # Filter: only nodes with a usable, unclaimed filesystem and
+                # not currently mounted (anywhere).
+                if fstype in skip_fs:
+                    return
+                if parttype == _EFI_GUID:
+                    return
+                if not fs_uuid:
+                    return
+                if fs_uuid in recorded_uuids or fs_uuid in hf_uuids:
+                    return
+                if mountpoint:
+                    return
+
+                path = n.get("path") or f"/dev/{kname}"
+                size = int(n.get("size") or 0)
+                label = (n.get("label") or "").strip()
+                # The card-picker description: model is "ata-…" by-id when we
+                # don't have a real model string, then partition number when
+                # this is a child node.
+                tag = disk_model or disk_by_id or disk_kname or "Unknown"
+                if part_idx > 0:
+                    tag = f"{tag} (part {part_idx})"
+                candidates.append({
+                    "device": f"UUID={fs_uuid}",   # what we'll write to config — stable
+                    "device_path": path,             # for display: /dev/sdb1
+                    "fs_uuid": fs_uuid,
+                    "fs_type": fstype,
+                    "label": label,
+                    "size_bytes": size,
+                    "kname": kname,
+                    "disk_kname": disk_kname,
+                    "disk_by_id": disk_by_id,
+                    "disk_model": disk_model,
+                    "display_name": tag,
+                })
+
+            walk(disk)
+        return candidates
 
     @staticmethod
     def preview_pool(members: List[str], profile: str) -> Dict[str, Any]:
@@ -940,3 +1388,45 @@ async def post_import(req: ImportRequest) -> Dict[str, Any]:
     if errs:
         raise HTTPException(status_code=400, detail="; ".join(errs))
     return {"ok": True}
+
+
+# --- promote (any unmanaged btrfs → storage.pools, optionally evicting the
+#     matching homefree.mounts row in the same atomic write) -----------------
+
+@router.get("/promotable-btrfs")
+async def get_promotable_btrfs() -> Dict[str, Any]:
+    return {"promotable": await asyncio.to_thread(StorageResolver.list_promotable_btrfs)}
+
+
+class PromoteRequest(BaseModel):
+    fs_uuid: str
+    name: str
+    mountpoint: str
+
+
+@router.post("/pools/promote")
+async def post_promote(req: PromoteRequest) -> Dict[str, Any]:
+    from services.storage_pool import StoragePoolService
+    errs = await asyncio.to_thread(
+        StoragePoolService.promote_volume,
+        req.fs_uuid, req.name, req.mountpoint)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    return {"ok": True}
+
+
+# --- mounts: live view of homefree.mounts + sources for Add Disk Mount -------
+
+@router.get("/mounts")
+async def get_mounts() -> Dict[str, Any]:
+    return {"mounts": await asyncio.to_thread(StorageResolver.list_mounts)}
+
+
+@router.get("/mountable-devices")
+async def get_mountable_devices() -> Dict[str, Any]:
+    return {"devices": await asyncio.to_thread(StorageResolver.list_mountable_devices)}
+
+
+@router.get("/system-volumes")
+async def get_system_volumes() -> Dict[str, Any]:
+    return {"system_volumes": await asyncio.to_thread(StorageResolver.list_system_volumes)}

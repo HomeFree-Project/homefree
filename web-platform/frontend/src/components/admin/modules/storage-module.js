@@ -13,6 +13,11 @@ import {
   getStorageReclaimStatus,
   getStorageImportable,
   importStoragePool,
+  getPromotableBtrfs,
+  promoteVolume,
+  getMounts,
+  getMountableDevices,
+  getSystemVolumes,
 } from '../../../api/client.js';
 
 /**
@@ -85,6 +90,32 @@ class StorageModule extends LitElement {
     importName: { state: true },
     importMountpoint: { state: true },
     importError: { state: true },
+    promotable: { state: true },        // candidates from list_promotable_btrfs
+    promoteOpen: { state: true },       // modal visibility
+    promoteCand: { state: true },       // currently-selected candidate (object)
+    promoteName: { state: true },
+    promoteMountpoint: { state: true },
+    promoteError: { state: true },
+    promoting: { state: true },         // inflight → disable submit
+    mountsRuntime: { state: true },     // live homefree.mounts + statvfs
+    mountableDevices: { state: true },  // disks/partitions that could be added
+    systemVolumes: { state: true },     // read-only OS root mount
+    addVolumeOpen: { state: true },     // router modal: which-flow chooser
+    addMountOpen: { state: true },
+    addMountSource: { state: true },    // selected fs_uuid OR "__custom__"
+    addMountDevice: { state: true },    // free-form device (when __custom__)
+    addMountFsType: { state: true },    // free-form fs-type (when __custom__)
+    addMountPoint: { state: true },
+    addMountError: { state: true },
+    addingMount: { state: true },
+    addNetworkOpen: { state: true },
+    netMountPoint: { state: true },
+    netDevice: { state: true },
+    netFsType: { state: true },         // 'nfs' | 'cifs'
+    netNfsVersion: { state: true },
+    netAutomount: { state: true },
+    netIdleTimeout: { state: true },
+    netError: { state: true },
     loading: { state: true },
     loadError: { state: true },
     wizardOpen: { state: true },
@@ -308,6 +339,40 @@ class StorageModule extends LitElement {
     .drive-opt .d-sub { color: var(--hf-text-subtle); font-size: 11px; }
     .drive-opt.warn-opt { border-color: var(--hf-warn); }
     .drive-opt.warn-opt.sel { background: var(--hf-warn-soft); border-color: var(--hf-warn); }
+    /* "Contains existing data" — the warning lives in the title-row chip
+       only. We deliberately do NOT amber-tint the drive option itself: the
+       data-escape callout below the picker is the page's amber-tinted
+       region, and two yellow blocks side-by-side fights for attention. */
+    .data-badge {
+      display: inline-block; margin-left: 8px;
+      padding: 1px 8px; border-radius: 999px;
+      background: var(--hf-warn-soft); color: var(--hf-warn);
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    /* Step-1 escape-hatch notice: sits right above the modal-actions row;
+       the actual switch-flow action is a third primary button alongside
+       Cancel + Review, so this block is text-only. */
+    .data-escape {
+      margin: 8px 0; padding: 10px 12px;
+      background: var(--hf-warn-soft);
+      border-left: 3px solid var(--hf-warn);
+      border-radius: 6px;
+      font-size: 13px; line-height: 1.45;
+    }
+    .data-escape strong { color: var(--hf-warn); }
+    /* Add-volume router uses the same .drive-opt shell as the wizard's drive
+       picker, but the description here IS the primary content (not secondary
+       identity), so it needs to be readable — the wizard's d-sub size (11px)
+       is too small for body copy. */
+    .add-vol-routes .drive-opt { padding: 14px 16px; }
+    .add-vol-routes .route-title {
+      font-size: 15px; font-weight: 600; color: var(--hf-text);
+      margin-bottom: 4px;
+    }
+    .add-vol-routes .route-desc {
+      font-size: 13px; line-height: 1.45;
+      color: var(--hf-text-muted);
+    }
 
     /* Layout picker — replaces the wizard's plain <select>. Filtered by what
        the current drive count can use, so the visible options change as drives
@@ -391,6 +456,32 @@ class StorageModule extends LitElement {
     this.importName = '';
     this.importMountpoint = '';
     this.importError = '';
+    this.promotable = [];
+    this.promoteOpen = false;
+    this.promoteCand = null;
+    this.promoteName = '';
+    this.promoteMountpoint = '';
+    this.promoteError = '';
+    this.promoting = false;
+    this.mountsRuntime = [];
+    this.mountableDevices = [];
+    this.systemVolumes = [];
+    this.addVolumeOpen = false;
+    this.addMountOpen = false;
+    this.addMountSource = '';
+    this.addMountDevice = '';
+    this.addMountFsType = '';
+    this.addMountPoint = '';
+    this.addMountError = '';
+    this.addingMount = false;
+    this.addNetworkOpen = false;
+    this.netMountPoint = '';
+    this.netDevice = '';
+    this.netFsType = 'nfs';
+    this.netNfsVersion = '3';
+    this.netAutomount = true;
+    this.netIdleTimeout = '600';
+    this.netError = '';
     this.loading = true;
     this.loadError = '';
     this._resetWizard();
@@ -446,11 +537,17 @@ class StorageModule extends LitElement {
     this.loading = true;
     this.loadError = '';
     try {
-      const [d, p, imp] = await Promise.all([
-        getStorageDrives(), getStoragePools(), getStorageImportable()]);
+      const [d, p, imp, pr, mr, md, sv] = await Promise.all([
+        getStorageDrives(), getStoragePools(), getStorageImportable(),
+        getPromotableBtrfs(), getMounts(), getMountableDevices(),
+        getSystemVolumes()]);
       this.drives = d.drives || [];
       this.pools = p.pools || [];
       this.importable = imp.importable || [];
+      this.promotable = pr.promotable || [];
+      this.mountsRuntime = mr.mounts || [];
+      this.mountableDevices = md.devices || [];
+      this.systemVolumes = sv.system_volumes || [];
     } catch (e) {
       this.loadError = e.message || 'Failed to load storage information.';
       // Surface the error state, not perpetual skeletons.
@@ -476,10 +573,43 @@ class StorageModule extends LitElement {
     return this.selected.some((id) => ov.has(id));
   }
 
-  // Drives offered in the create wizard: usable-now plus owner-overridable.
-  // Hard-blocked disks (OS, mounted, active RAID/swap) are never offered.
+  // Drives offered in the create wizard: usable-now plus owner-overridable,
+  // minus anything already claimed by a pending edit (`storage.pools` member
+  // or `homefree.mounts` device that hasn't reached Apply yet). `list_drives`
+  // only sees the live filesystem state (`/proc/mounts`), so without this
+  // pending-claim filter a disk you just added via "Use existing filesystem"
+  // would still appear here — and selecting it would silently wipe the
+  // filesystem you decided to keep.
   get selectableDrives() {
-    return [...this.eligibleDrives, ...this.overridableDrives];
+    const claimed = this._claimedDriveIds;
+    return [...this.eligibleDrives, ...this.overridableDrives]
+      .filter((d) => !claimed.has(d.by_id));
+  }
+
+  get _claimedDriveIds() {
+    const claimed = new Set();
+    // Pools — pending + committed (`this.config` is the merged view).
+    for (const p of (this.config?.storage?.pools || [])) {
+      for (const m of (p.members || [])) claimed.add(m);
+    }
+    // Already-applied mounts: backend resolved the underlying whole-disk by-id.
+    for (const m of (this.mountsRuntime || [])) {
+      for (const id of (m.disk_by_ids || [])) claimed.add(id);
+    }
+    // Pending-but-not-Applied mounts: resolve fs_uuid → mountable candidate →
+    // its underlying disk by-id. Best-effort; an opaque custom device path we
+    // can't match falls through (worst case the disk shows in the wizard and
+    // the user's explicit "wipe" gesture still wins).
+    for (const m of (this.config?.mounts || [])) {
+      const spec = (m.device || '').trim();
+      let u = '';
+      if (spec.startsWith('UUID=')) u = spec.slice(5);
+      else if (spec.startsWith('/dev/disk/by-uuid/')) u = spec.slice('/dev/disk/by-uuid/'.length);
+      if (!u) continue;
+      const dev = (this.mountableDevices || []).find((d) => d.fs_uuid === u);
+      if (dev && dev.disk_by_id) claimed.add(dev.disk_by_id);
+    }
+    return claimed;
   }
 
   // ---- wizard control ----
@@ -508,19 +638,35 @@ class StorageModule extends LitElement {
     this._refreshPreview();
   }
 
-  // If the current selection no longer satisfies `this.profile`'s constraints
-  // (e.g. user deselected a drive so raid6 is no longer possible), clear it —
-  // otherwise the filtered card list would render with nothing visibly chosen
-  // while internal state still pointed at an impossible layout.
+  // Keep `this.profile` consistent with the current drive count:
+  //  1. If the currently-chosen layout is no longer valid (e.g. user
+  //     deselected a drive so raid6 isn't possible), clear it.
+  //  2. If exactly one layout is *available* (typically 1 drive → only
+  //     Single), auto-select it. With one option visible the picker reads
+  //     as informational, not as an action — auto-selecting removes the
+  //     hidden step where Review stays disabled until the user clicks the
+  //     lone card. Going from 1 → 2 drives runs (1) which clears Single
+  //     (it has `exact: 1`), forcing a deliberate choice between the
+  //     newly-visible multi-drive layouts. Going 2 → 1 runs (2) and
+  //     re-selects Single.
   _ensureProfileStillValid() {
-    if (!this.profile) return;
-    const p = PROFILES.find((x) => x.value === this.profile);
-    const n = this.selected.length;
-    if (!p
-      || n < p.min
-      || (p.exact && n !== p.exact)
-      || (p.even && n % 2 !== 0)) {
-      this.profile = '';
+    if (this.profile) {
+      const p = PROFILES.find((x) => x.value === this.profile);
+      const n = this.selected.length;
+      if (!p
+        || n < p.min
+        || (p.exact && n !== p.exact)
+        || (p.even && n % 2 !== 0)) {
+        this.profile = '';
+      }
+    }
+    if (!this.profile) {
+      const n = this.selected.length;
+      const available = PROFILES.filter((p) =>
+        n >= p.min && (!p.exact || n === p.exact) && (!p.even || n % 2 === 0));
+      if (available.length === 1) {
+        this.profile = available[0].value;
+      }
     }
   }
 
@@ -882,79 +1028,197 @@ class StorageModule extends LitElement {
     }));
   }
 
-  _handleNetworkMountsChange(e) {
-    const local = (this.config?.mounts || []).filter((m) => !this._isNetworkMount(m));
-    this._emitMounts([...local, ...(e.detail.data || [])]);
-  }
+  // Mount cards mirror Volume cards: title + subtitle, real-state badge,
+  // pending-action note (amber), usage bar when mounted+local, action buttons.
+  // No snapshots row (that's a Volume-only concept).
+  _renderMountCard(m, runtime, promoUuids) {
+    const mp = m['mount-point'] || '';
+    const fsType = m['fs-type'] || '';
+    const dev = m.device || '';
+    const enabled = m.enabled !== false;
+    const rt = runtime?.runtime || { mounted: false, used_bytes: null, total_bytes: null };
+    const byIds = runtime?.disk_by_ids || [];
+    const undeployed = this._mountUndeployed(mp);
 
-  _handleDiskMountsChange(e) {
-    const network = (this.config?.mounts || []).filter((m) => this._isNetworkMount(m));
-    this._emitMounts([...network, ...(e.detail.data || [])]);
-  }
+    let badge;
+    if (rt.mounted) badge = html`<span class="badge badge-ok">Mounted</span>`;
+    else if (!enabled) badge = html`<span class="badge badge-muted">Disabled</span>`;
+    else badge = html`<span class="badge badge-muted">Not mounted</span>`;
 
-  _renderDiskMounts() {
-    const all = this.config?.mounts || [];
-    const rows = all.filter((m) => !this._isNetworkMount(m));
-    const applied = (this.appliedConfig?.mounts || []).filter((m) => !this._isNetworkMount(m));
-    const columns = [
-      { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
-      { key: 'mount-point', label: 'Mount point', type: 'path',
-        placeholder: '/mnt/data', rootPath: '/mnt' },
-      { key: 'device', label: 'Device', type: 'text', placeholder: '/dev/disk/by-uuid/…' },
-      { key: 'fs-type', label: 'Type', type: 'text', placeholder: 'ext4', default: 'ext4' },
-      { key: 'automount', label: 'Automount', type: 'boolean' },
-      { key: 'idle-timeout', label: 'Idle (s)', type: 'text', placeholder: '600', default: '600' },
-    ];
+    const pct = (rt.total_bytes && rt.used_bytes != null)
+      ? Math.min(100, Math.round((rt.used_bytes / rt.total_bytes) * 100)) : null;
+
+    // A btrfs mount that's still in `homefree.mounts` is a promotion
+    // opportunity — surface the button right on the card so the user doesn't
+    // have to find it in the Drives section. Detection mirrors the Drives
+    // affordance (matches by fs_uuid via `promoUuids`).
+    const fsUuid = this._fsUuidForMount(m, runtime);
+    const promotable = (fsType.toLowerCase() === 'btrfs') && fsUuid
+      && promoUuids.has(fsUuid);
+    const promoteCand = promotable
+      ? (this.promotable || []).find((p) => p.fs_uuid === fsUuid)
+      : null;
+
     return html`
-      <config-section title="Disk mounts"
-        description="Mount an existing local disk or partition that HomeFree doesn't manage as a volume">
-        <table-editor
-          .columns=${columns}
-          .data=${rows}
-          .appliedData=${applied}
-          .rowKey=${'mount-point'}
-          addLabel="Add disk mount"
-          .neutralBooleans=${true}
-          @data-change=${this._handleDiskMountsChange}
-        ></table-editor>
-      </config-section>
-    `;
-  }
-
-  _renderNetworkMounts() {
-    const all = this.config?.mounts || [];
-    const rows = all.filter((m) => this._isNetworkMount(m));
-    const applied = (this.appliedConfig?.mounts || []).filter((m) => this._isNetworkMount(m));
-    const columns = [
-      { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
-      { key: 'mount-point', label: 'Mount point', type: 'path',
-        placeholder: '/mnt/ellis', rootPath: '/mnt' },
-      { key: 'device', label: 'Remote share', type: 'text', placeholder: '10.0.0.42:/volume1/ellis' },
-      { key: 'fs-type', label: 'Type', type: 'text', placeholder: 'nfs', default: 'nfs' },
-      { key: 'nfs-version', label: 'NFS ver', type: 'text', placeholder: '3', default: '3' },
-      { key: 'automount', label: 'Automount', type: 'boolean', default: true },
-      { key: 'idle-timeout', label: 'Idle (s)', type: 'text', placeholder: '600', default: '600' },
-    ];
-    return html`
-      <config-section title="Network Mounts"
-        description="Mount a remote NFS/SMB share from another machine ONTO this box (this box as a client) — the reverse of NFS Shares above">
-        <table-editor
-          .columns=${columns}
-          .data=${rows}
-          .appliedData=${applied}
-          .rowKey=${'mount-point'}
-          addLabel="Add network mount"
-          .neutralBooleans=${true}
-          @data-change=${this._handleNetworkMountsChange}
-        ></table-editor>
-        <div class="hint" style="margin-top:8px">
-          With <strong>Automount</strong> on, the share mounts on first access and
-          unmounts after <code>idle</code> seconds. Untick <strong>Enabled</strong>
-          to keep the row but skip the mount (useful when the remote host is
-          offline — an unreachable export hangs anything touching the mount point).
+      <div class="pool-card ${undeployed ? 'undeployed' : ''}">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${mp || '(no mount point)'}</span>
+            <div class="pool-meta">
+              ${fsType || '?'} · device <code>${dev || '—'}</code>
+            </div>
+          </div>
+          <div class="pool-actions">
+            ${badge}
+            ${enabled
+              ? html`<button class="btn-row" @click=${() => this._toggleMountEnabled(mp, false)}>Unmount</button>`
+              : html`<button class="btn-row" @click=${() => this._toggleMountEnabled(mp, true)}>Mount</button>`}
+            ${promoteCand ? html`
+              <button class="btn-row" @click=${() => this._openPromote(promoteCand)}>Promote to volume…</button>` : ''}
+            <button class="btn-row delete" @click=${() => this._removeMount(m)}>Remove…</button>
+          </div>
         </div>
-      </config-section>
+
+        ${this._mountPendingLabel(m) ? html`
+          <div class="pending-note">⟳ ${this._mountPendingLabel(m)}</div>` : ''}
+
+        ${pct !== null ? html`
+          <div class="usage-bar"><div class="usage-fill" style="width:${pct}%"></div></div>
+          <div class="pool-meta">${formatBytes(rt.used_bytes)} of ${formatBytes(rt.total_bytes)} used</div>
+        ` : ''}
+
+        ${byIds.length ? html`
+          <div class="pool-members">${byIds.join(', ')}</div>` : ''}
+      </div>
     `;
+  }
+
+  // Read-only "System" card: surfaces the OS root mount in the unified
+  // Volumes list. Same .pool-card skeleton as everything else, but the
+  // actions area carries just a muted "Read-only" badge (no Mount /
+  // Unmount / Remove / Promote) — this is informational. Never undeployed
+  // (the OS mount isn't user-edited), no pending states.
+  _renderSystemCard(s) {
+    const rt = s.runtime || {};
+    const byIds = s.disk_by_ids || [];
+    const pct = (rt.total_bytes && rt.used_bytes != null)
+      ? Math.min(100, Math.round((rt.used_bytes / rt.total_bytes) * 100)) : null;
+    return html`
+      <div class="pool-card">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">System</span>
+            <div class="pool-meta">${s['fs-type'] || '?'} · root mount <code>/</code></div>
+          </div>
+          <div class="pool-actions">
+            <span class="badge badge-muted">Read-only</span>
+          </div>
+        </div>
+        ${pct !== null ? html`
+          <div class="usage-bar"><div class="usage-fill" style="width:${pct}%"></div></div>
+          <div class="pool-meta">${formatBytes(rt.used_bytes)} of ${formatBytes(rt.total_bytes)} used</div>
+        ` : ''}
+        ${byIds.length ? html`<div class="pool-members">${byIds.join(', ')}</div>` : ''}
+      </div>
+    `;
+  }
+
+  // Ghost card for a mount that was deployed but has been removed in pending
+  // edits — same idea as `_renderRemovedCard` for volumes, so the pending
+  // removal isn't invisible bar the nav dot.
+  _renderRemovedMountCard(m) {
+    const mp = m['mount-point'] || '';
+    return html`
+      <div class="pool-card undeployed removed">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${mp}</span>
+            <div class="pool-meta">${m['fs-type'] || '?'} · device <code>${m.device || '—'}</code></div>
+          </div>
+          <div class="pool-actions">
+            <span class="badge badge-warn">Pending removal</span>
+            <button class="btn-row" @click=${() => this._undoRemoveMount(m)}>Undo</button>
+          </div>
+        </div>
+        <div class="pending-note">⟳ Will be unmounted and removed on Apply</div>
+      </div>
+    `;
+  }
+
+  // Mounts in appliedConfig that aren't in pendingConfig anymore — the user
+  // tapped Remove but hasn't applied. We surface them as ghost cards so a
+  // pending removal is visible.
+  _removedMounts() {
+    if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return [];
+    const applied = this.appliedConfig?.mounts || [];
+    const currentMps = new Set((this.config?.mounts || []).map((m) => m['mount-point']));
+    return applied.filter((a) => a['mount-point'] && !currentMps.has(a['mount-point']));
+  }
+
+  _mountUndeployed(mp) {
+    if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return false;
+    const current = (this.config?.mounts || []).find((m) => m['mount-point'] === mp);
+    if (!current) return false;
+    const applied = (this.appliedConfig?.mounts || []).find((m) => m['mount-point'] === mp);
+    if (!applied) return true;
+    return stableKey(current) !== stableKey(applied);
+  }
+
+  _mountPendingLabel(m) {
+    const mp = m['mount-point'];
+    if (!this._mountUndeployed(mp)) return null;
+    const applied = (this.appliedConfig?.mounts || []).find((a) => a['mount-point'] === mp);
+    const enabled = m.enabled !== false;
+    if (!applied) return enabled ? 'New — will mount on Apply' : 'New — added on Apply';
+    const appliedEnabled = applied.enabled !== false;
+    if (enabled && !appliedEnabled) return 'Will mount on Apply';
+    if (!enabled && appliedEnabled) return 'Will unmount on Apply';
+    return 'Changes will take effect on Apply';
+  }
+
+  // Try to pull the fs-uuid for a mount record without an extra round-trip:
+  // - device spec is `UUID=<X>` or `/dev/disk/by-uuid/<X>` → read it directly,
+  // - otherwise fall back to the runtime's resolved real device path matched
+  //   against the promotable list (which carries fs_uuid + device).
+  _fsUuidForMount(m, runtime) {
+    const spec = (m.device || '').trim();
+    if (spec.startsWith('UUID=')) return spec.slice(5);
+    if (spec.startsWith('/dev/disk/by-uuid/')) {
+      return spec.slice('/dev/disk/by-uuid/'.length);
+    }
+    const real = runtime?.device_real;
+    if (real) {
+      const cand = (this.promotable || []).find((p) => p.device === real);
+      if (cand) return cand.fs_uuid;
+    }
+    return '';
+  }
+
+  _toggleMountEnabled(mountPoint, enabled) {
+    const all = this.config?.mounts || [];
+    const next = all.map((m) =>
+      m['mount-point'] === mountPoint ? { ...m, enabled } : m);
+    this._emitMounts(next);
+  }
+
+  async _removeMount(m) {
+    const mp = m['mount-point'] || '(unnamed mount)';
+    const ok = await confirmDialog({
+      title: `Remove "${mp}" from Disk Mounts?`,
+      message: 'The mount config row is dropped — on Apply the box stops '
+             + 'mounting this device here. The filesystem on the device is '
+             + 'left untouched; you can re-add the mount later.',
+      confirmText: 'Remove',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    const all = this.config?.mounts || [];
+    this._emitMounts(all.filter((row) => row['mount-point'] !== m['mount-point']));
+  }
+
+  _undoRemoveMount(m) {
+    const all = this.config?.mounts || [];
+    this._emitMounts([...all, m]);
   }
 
   // ---- remove (drop the config record; non-destructive, reversible via Attach) ----
@@ -1022,6 +1286,74 @@ class StorageModule extends LitElement {
     } catch (e) {
       this.importError = e.message || 'Failed to import volume.';
     }
+  }
+
+  // ---- promote (any unmanaged btrfs → managed volume; modal flow) ----
+
+  _openPromote(short) {
+    // `short` may be the abridged shape carried on a drive row
+    // (promotable_btrfs) — look up the full candidate for `members` etc.
+    const full = (this.promotable || []).find(
+      (p) => p.fs_uuid === short.fs_uuid) || short;
+    this.promoteCand = full;
+    this.promoteName = full.suggested_name || '';
+    this.promoteMountpoint = full.suggested_mountpoint
+      || full.mount_point || '';
+    this.promoteError = '';
+    this.promoting = false;
+    this.promoteOpen = true;
+  }
+
+  _closePromote() {
+    if (this.promoting) return;     // don't yank the modal mid-write
+    this.promoteOpen = false;
+    this.promoteCand = null;
+    this.promoteError = '';
+  }
+
+  _onPromoteName(e) { this.promoteName = e.target.value; }
+  _onPromoteMountpoint(e) { this.promoteMountpoint = e.target.value; }
+
+  async _doPromote() {
+    const cand = this.promoteCand;
+    if (!cand) return;
+    this.promoteError = '';
+    this.promoting = true;
+    try {
+      const mp = (cand.mount_point || this.promoteMountpoint || '').trim();
+      await promoteVolume(cand.fs_uuid, this.promoteName.trim(), mp);
+      await this.loadData();      // refresh drives/pools/importable/promotable
+      // The backend wrote pools (added) + mounts (any row pointing at this
+      // fs-uuid removed) in one atomic write. Mirror BOTH deltas to
+      // pendingConfig so the merged view matches disk — emitting only pools
+      // would leave the just-promoted row visible in the Disk Mounts table.
+      const remainingMounts = (this.config?.mounts || [])
+        .filter((m) => !this._mountTargetsFsUuid(m, cand.fs_uuid));
+      this._emitMounts(remainingMounts);
+      this._emitPools();
+      this.promoteOpen = false;
+      this.promoteCand = null;
+    } catch (e) {
+      this.promoteError = e.message || 'Failed to promote volume.';
+    } finally {
+      this.promoting = false;
+    }
+  }
+
+  // Mirror of backend `_row_targets_fs`: a mount row targets this fs-uuid if
+  // its device spec resolves to the same fs. Used to scrub the matching row
+  // from the pending mounts list after a successful promote so the UI agrees
+  // with what the backend just wrote. blkid resolution isn't reachable from
+  // the browser, so we cover the on-the-wire forms (UUID=, by-uuid path); the
+  // backend already did the authoritative removal, so a missed match here
+  // just means one extra Apply cycle to reconcile — not a correctness break.
+  _mountTargetsFsUuid(m, fsUuid) {
+    const spec = String(m?.device || '');
+    if (spec.startsWith('UUID=')) return spec.slice(5) === fsUuid;
+    if (spec.startsWith('/dev/disk/by-uuid/')) {
+      return spec.slice('/dev/disk/by-uuid/'.length) === fsUuid;
+    }
+    return false;
   }
 
   // ---- reclaim (release + wipe an in-use array/LVM group) ----
@@ -1103,39 +1435,76 @@ class StorageModule extends LitElement {
         ${this.loadError ? html`<div class="err-banner">${this.loadError}</div>` : ''}
 
         ${this._renderDrives()}
-        ${this._renderPools()}
+        ${this._renderVolumes()}
         ${this._renderImportable()}
-        ${this._renderDiskMounts()}
         ${this._renderSnapshots()}
         ${this._renderShares()}
-        ${this._renderNetworkMounts()}
         ${this.wizardOpen ? this._renderWizard() : ''}
         ${this.reclaimTarget ? this._renderReclaimModal() : ''}
+        ${this.promoteOpen ? this._renderPromoteModal() : ''}
+        ${this.addVolumeOpen ? this._renderAddVolumeRouter() : ''}
+        ${this.addMountOpen ? this._renderAddMountModal() : ''}
+        ${this.addNetworkOpen ? this._renderAddNetworkShareModal() : ''}
       </div>
     `;
   }
 
-  _renderPools() {
-    const loading = this.pools === null;       // first load not finished
+  // Unified Volumes section — managed pools + local mounts + network shares,
+  // intermixed in one alphabetical list. Backend partitioning (storage.pools
+  // vs homefree.mounts) is implementation detail; the user sees one list of
+  // "volumes attached to this box". Dedup is enforced server-side: list_mounts
+  // skips any row whose fs-uuid is also in storage.pools.
+  _renderVolumes() {
+    const loadingPools = this.pools === null;
     const pools = this.pools || [];
-    const removed = this._removedPools();       // recorded-then-removed, pending Apply
-    const canCreate = !loading && (this.eligibleDrives.length > 0 || this.overridableDrives.length > 0);
+    // Pending mount rows drive identity (what exists from the user's POV);
+    // runtime rows (keyed by mount-point) carry mounted/used/total/by-id.
+    const pendingMounts = this.config?.mounts || [];
+    const rtByMp = new Map((this.mountsRuntime || [])
+      .map((rt) => [rt['mount-point'], rt]));
+    const removedPools = this._removedPools();
+    const removedMounts = this._removedMounts();
+    const promoUuids = new Set((this.promotable || []).map((p) => p.fs_uuid));
+
+    const items = [
+      ...(this.systemVolumes || []).map((s) => ({
+        kind: 'system', sortKey: s['mount-point'] || '', data: s,
+      })),
+      ...pools.map((p) => ({ kind: 'pool', sortKey: p.mountpoint || '', data: p })),
+      ...pendingMounts.map((m) => ({
+        kind: this._isNetworkMount(m) ? 'network' : 'local',
+        sortKey: m['mount-point'] || '',
+        data: m,
+        runtime: rtByMp.get(m['mount-point']),
+      })),
+      ...removedPools.map((a) => ({ kind: 'pool-removed', sortKey: a.mountpoint || '', data: a })),
+      ...removedMounts.map((m) => ({ kind: 'mount-removed', sortKey: m['mount-point'] || '', data: m })),
+    ];
+    items.sort((a, b) => (a.sortKey || '').localeCompare(b.sortKey || ''));
+
+    const renderItem = (it) => {
+      switch (it.kind) {
+        case 'system':         return this._renderSystemCard(it.data);
+        case 'pool':           return this._renderPoolCard(it.data);
+        case 'local':          return this._renderMountCard(it.data, it.runtime, promoUuids);
+        case 'network':        return this._renderMountCard(it.data, it.runtime, promoUuids);
+        case 'pool-removed':   return this._renderRemovedCard(it.data);
+        case 'mount-removed':  return this._renderRemovedMountCard(it.data);
+        default:               return '';
+      }
+    };
+
     return html`
-      <config-section title="Volumes" description="Local btrfs data volumes on this machine">
-        <button slot="actions" class="btn btn-primary"
-                ?disabled=${!canCreate}
-                @click=${this._openWizard}>+ Create volume</button>
-        ${loading
+      <config-section title="Volumes"
+        description="Storage volumes attached to this box — local disks, network shares, and managed pools">
+        <button slot="actions" class="btn btn-primary" @click=${this._openAddVolume}>
+          + Add volume…
+        </button>
+        ${loadingPools
           ? html`<div class="pools">${this._renderSkeletonCards(2)}</div>`
-          : (pools.length === 0 && removed.length === 0
+          : (items.length === 0
               ? html`<div class="empty" style="padding:4px 0">No volumes yet.</div>`
-              : html`
-                <div class="pools">
-                  ${pools.map((p) => this._renderPoolCard(p))}
-                  ${removed.map((a) => this._renderRemovedCard(a))}
-                </div>`)}
-        ${!loading && this.eligibleDrives.length === 0 && this.overridableDrives.length === 0 ? html`
-          <div class="hint">No eligible drives available to create a new volume.</div>` : ''}
+              : html`<div class="pools">${items.map(renderItem)}</div>`)}
       </config-section>
     `;
   }
@@ -1144,7 +1513,14 @@ class StorageModule extends LitElement {
   // drives moved from another box). Re-attaching writes the config record back
   // — no reformatting — and the volume mounts on the next Apply.
   _renderImportable() {
-    const items = this.importable || [];
+    // Btrfs candidates now flow through the Promote affordance in Drives
+    // (covers mounted-via-homefree.mounts AND unmounted, single- AND
+    // multi-drive). Filter them out here so the same disk doesn't appear in
+    // two sections. The section auto-hides when the result is empty — which
+    // it is in practice today, since list_importable scans only btrfs.
+    // Reserved for future non-btrfs (ext4/xfs/…) attach.
+    const promotedUuids = new Set((this.promotable || []).map((p) => p.fs_uuid));
+    const items = (this.importable || []).filter((c) => !promotedUuids.has(c.fs_uuid));
     if (!items.length) return '';
     return html`
       <config-section title="Available to attach"
@@ -1281,9 +1657,19 @@ class StorageModule extends LitElement {
   _renderDrives() {
     const loading = this.drives === null;      // first load not finished
     const drives = this.drives || [];
-    // A drive's set id only if it belongs to a MULTI-drive reclaim group.
-    const setGid = (dr) => (dr && dr.reclaim && (dr.reclaim.member_ids || []).length > 1)
-      ? dr.reclaim.id : null;
+    // A drive's set id when it belongs to a MULTI-drive reclaim group OR a
+    // MULTI-drive unmanaged-btrfs candidate. Both render under the same
+    // set-box (header row + bordered member block) — the only difference is
+    // what the header says + which action button it carries.
+    const setGid = (dr) => {
+      if (!dr) return null;
+      if (dr.reclaim && (dr.reclaim.member_ids || []).length > 1) {
+        return dr.reclaim.id;
+      }
+      const pb = dr.promotable_btrfs;
+      if (pb && (pb.member_count || 0) > 1) return 'btrfs:' + pb.fs_uuid;
+      return null;
+    };
     return html`
       <config-section title="Drives" description="Every non-removable drive detected on this machine">
         <div class="table-wrap">
@@ -1320,8 +1706,17 @@ class StorageModule extends LitElement {
     const { isSet = false, firstOfSet = false, lastOfSet = false } = opts || {};
     const cls = (d.drive_class || '').toUpperCase();
     const tran = d.transport ? d.transport.toUpperCase() : '';
+    const pb = d.promotable_btrfs;
+    // An unmanaged btrfs disk lands ineligible with "in use by an existing
+    // btrfs filesystem" — accurate but reads as a dead end. Soften the badge
+    // so the user understands the disk is reachable (just unmanaged), and
+    // surface the mount path when it has one.
     let status;
-    if (d.eligible) {
+    if (pb) {
+      status = pb.mount_point
+        ? html`<span class="badge badge-warn">Btrfs · ${pb.mount_point}</span>`
+        : html`<span class="badge badge-warn">Btrfs · unmanaged</span>`;
+    } else if (d.eligible) {
       status = d.has_existing_data
         ? html`<span class="badge badge-warn">Available · has data (${d.existing_fstype || '?'})</span>`
         : html`<span class="badge badge-ok">Available</span>`;
@@ -1334,24 +1729,44 @@ class StorageModule extends LitElement {
       health = d.smart_passed === false ? html`<span class="badge badge-err">FAIL</span>` : 'OK';
     }
 
-    // A reclaim acts on a whole array/group: a multi-drive set gets a single
-    // header row (description + one button) atop a rounded bordered box around
-    // its members. A single-drive group just shows the button on its own row.
+    // A multi-drive set (reclaim OR unmanaged-btrfs) gets a single header row
+    // — description + one action button — atop a rounded bordered box around
+    // its members. A single-drive case puts the action on the row itself.
     const rec = d.reclaim;
-    const setSize = rec ? (rec.member_ids || []).length : 0;
+    const recSize = rec ? (rec.member_ids || []).length : 0;
+    const isBtrfsSet = !!pb && (pb.member_count || 0) > 1;
+    const isReclaimSet = !!rec && recSize > 1;
 
-    const header = (isSet && firstOfSet) ? html`
-      <tr class="set-box-top">
-        <td colspan="6">
-          <div class="set-head">
-            <div class="set-head-info">
-              <strong>${this._reclaimGroupTitle(rec)} · ${setSize} drives</strong>
-              <div class="set-head-sub">${rec.description} — erasing reclaims all ${setSize} drives.</div>
-            </div>
-            <button class="btn btn-danger" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
-          </div>
-        </td>
-      </tr>` : '';
+    let header = '';
+    if (isSet && firstOfSet) {
+      if (isReclaimSet) {
+        header = html`
+          <tr class="set-box-top">
+            <td colspan="6">
+              <div class="set-head">
+                <div class="set-head-info">
+                  <strong>${this._reclaimGroupTitle(rec)} · ${recSize} drives</strong>
+                  <div class="set-head-sub">${rec.description} — erasing reclaims all ${recSize} drives.</div>
+                </div>
+                <button class="btn btn-danger" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
+              </div>
+            </td>
+          </tr>`;
+      } else if (isBtrfsSet) {
+        header = html`
+          <tr class="set-box-top">
+            <td colspan="6">
+              <div class="set-head">
+                <div class="set-head-info">
+                  <strong>${this._btrfsGroupTitle(pb)}</strong>
+                  <div class="set-head-sub">${this._btrfsGroupSub(pb)}</div>
+                </div>
+                <button class="btn btn-primary" @click=${() => this._openPromote(pb)}>Promote to volume…</button>
+              </div>
+            </td>
+          </tr>`;
+      }
+    }
 
     return html`
       ${header}
@@ -1369,9 +1784,23 @@ class StorageModule extends LitElement {
           ${rec && !isSet ? html`
             <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>` : ''}
           ${d.reclaim_blocked ? this._renderReclaimBlocked(d.reclaim_blocked) : ''}
+          ${pb && !isSet ? html`
+            <button class="btn-row" @click=${() => this._openPromote(pb)}>Promote to volume…</button>` : ''}
         </td>
       </tr>
     `;
+  }
+
+  _btrfsGroupTitle(pb) {
+    const lbl = pb.label ? `‘${pb.label}’` : '(unlabelled)';
+    return `Btrfs filesystem · ${lbl} · ${pb.member_count} drives · ${pb.profile}`;
+  }
+
+  _btrfsGroupSub(pb) {
+    const where = pb.mount_point
+      ? html`Mounted at <code>${pb.mount_point}</code> outside HomeFree.`
+      : html`Not currently mounted.`;
+    return html`${where} Promote to a managed volume to enable snapshots, scrub, and backup integration.`;
   }
 
   _reclaimGroupTitle(rec) {
@@ -1392,6 +1821,472 @@ class StorageModule extends LitElement {
     `;
   }
 
+  // Modal for promoting an unmanaged btrfs → managed Volume. One form covers
+  // mounted (read-only path) AND unmounted (editable path) cases — the source
+  // candidate's `mount_point` drives the difference.
+  _renderPromoteModal() {
+    const c = this.promoteCand || {};
+    const mounted = !!c.mount_point;
+    const nameOk = NAME_RE.test((this.promoteName || '').trim());
+    const mpOk = (this.promoteMountpoint || '').trim().startsWith('/');
+    const canSubmit = nameOk && mpOk && !this.promoting;
+    const lbl = c.label ? `‘${c.label}’` : '(unlabelled btrfs)';
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closePromote(); }}>
+        <div class="modal">
+          <h2>Promote to managed volume</h2>
+          <div class="sub">
+            ${lbl} · ${c.profile || '?'} · ${(c.member_count || (c.members && c.members.length) || 1)} drive(s) ·
+            ${formatBytes(c.size_bytes || 0)}
+          </div>
+
+          ${c.members && c.members.length ? html`
+            <div class="field">
+              <label>Members</label>
+              <div class="pool-members" style="margin-top:4px">${c.members.join(', ')}</div>
+            </div>` : ''}
+
+          <div class="field">
+            <label>Name</label>
+            <input type="text" .value=${this.promoteName}
+                   @input=${this._onPromoteName}
+                   placeholder="${c.suggested_name || 'storage'}" />
+            <div class="hint">Letters, digits, ‘-’ or ‘_’; starts with a letter or digit (max 32 chars).</div>
+          </div>
+
+          <div class="field">
+            <label>Mount point</label>
+            ${mounted ? html`
+              <input type="text" .value=${c.mount_point} readonly
+                     style="opacity:0.7; cursor:not-allowed" />
+              <div class="hint">
+                Current mount path. Change it later through the volume settings
+                if you need to move it.
+              </div>` : html`
+              <input type="text" .value=${this.promoteMountpoint}
+                     @input=${this._onPromoteMountpoint}
+                     placeholder="${c.suggested_mountpoint || '/mnt/storage'}" />`}
+          </div>
+
+          ${this.promoteError ? html`<div class="err-banner">${this.promoteError}</div>` : ''}
+
+          <div class="row" style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+            <button class="btn" ?disabled=${this.promoting} @click=${this._closePromote}>Cancel</button>
+            <button class="btn btn-primary" ?disabled=${!canSubmit} @click=${this._doPromote}>
+              ${this.promoting ? 'Promoting…' : 'Promote'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Add Disk Mount modal — radio-card source picker (live-detected partitions
+  // and disks with a filesystem) plus a "Custom device…" fallback for when
+  // the scan misses something (unusual layouts, future plug-ins, etc.).
+  _renderAddMountModal() {
+    const devices = this.mountableDevices || [];
+    const isCustom = this.addMountSource === '__custom__';
+    const selected = !isCustom
+      ? devices.find((d) => d.fs_uuid === this.addMountSource)
+      : null;
+
+    const effectiveDevice = isCustom
+      ? (this.addMountDevice || '').trim()
+      : (selected ? selected.device : '');
+    const effectiveFsType = isCustom
+      ? (this.addMountFsType || '').trim()
+      : (selected ? selected.fs_type : '');
+    const mp = (this.addMountPoint || '').trim();
+    const mpOk = mp.startsWith('/');
+    const sourceOk = !!effectiveDevice && !!effectiveFsType;
+    // Mount-point collision check covers BOTH stores — a pool mountpoint and
+    // a mount-row mountpoint occupy the same path on disk, so dupes between
+    // them are just as bad as dupes within either store.
+    const dupMp = (this.config?.mounts || []).some((m) => m['mount-point'] === mp)
+      || (this.pools || []).some((p) => p.mountpoint === mp);
+    const canSubmit = mpOk && sourceOk && !dupMp && !this.addingMount;
+
+    // If the selected filesystem is btrfs AND it qualifies for managed-pool
+    // semantics (single-device or md-backed, by-id stable, etc.), the Add
+    // button routes through `promote_volume` instead of a plain mount row —
+    // so the user doesn't have to make a second Promote click. Surface that
+    // outcome in the modal so the action is honest about what it'll do.
+    const willPromote = !isCustom && selected
+      && (effectiveFsType || '').toLowerCase() === 'btrfs'
+      && (this.promotable || []).some((p) => p.fs_uuid === selected.fs_uuid);
+
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddMount(); }}>
+        <div class="modal">
+          <h2>Add existing filesystem</h2>
+          <div class="sub">
+            Mount a disk or partition that already has data. Btrfs filesystems
+            are added as managed volumes (snapshots + scrub); other filesystems
+            (ext4, xfs, ntfs, …) are added as plain mounts.
+          </div>
+
+          <div class="field">
+            <label>Source</label>
+            <div class="drive-pick">
+              ${devices.length === 0 ? html`
+                <div class="hint" style="padding:8px 0">
+                  No mountable disks or partitions detected — use the custom
+                  entry below.
+                </div>` : devices.map((d) => html`
+                <label class="drive-opt ${this.addMountSource === d.fs_uuid ? 'sel' : ''}">
+                  <input type="radio" name="add-mount-src"
+                         .checked=${this.addMountSource === d.fs_uuid}
+                         @change=${() => this._selectMountSource(d)} />
+                  <span class="d-main">
+                    <div>${d.display_name} — ${formatBytes(d.size_bytes)} · ${d.fs_type}${d.label ? ' · ‘' + d.label + '’' : ''}</div>
+                    <div class="d-sub">${d.device_path} · UUID=${d.fs_uuid}</div>
+                  </span>
+                </label>`)}
+              <label class="drive-opt ${isCustom ? 'sel' : ''}">
+                <input type="radio" name="add-mount-src"
+                       .checked=${isCustom}
+                       @change=${this._selectCustomSource} />
+                <span class="d-main">
+                  <div>Custom device…</div>
+                  <div class="d-sub">Enter a device spec yourself (e.g. <code>UUID=…</code>, <code>LABEL=…</code>, or <code>/dev/sdX1</code>)</div>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          ${isCustom ? html`
+            <div class="field">
+              <label>Device</label>
+              <input type="text" .value=${this.addMountDevice}
+                     @input=${(e) => { this.addMountDevice = e.target.value; }}
+                     placeholder="UUID=… or /dev/sdb1" />
+            </div>
+            <div class="field">
+              <label>Filesystem type</label>
+              <input type="text" .value=${this.addMountFsType}
+                     @input=${(e) => { this.addMountFsType = e.target.value; }}
+                     placeholder="ext4" />
+            </div>` : ''}
+
+          <div class="field">
+            <label>Mount point</label>
+            <input type="text" .value=${this.addMountPoint}
+                   @input=${(e) => { this.addMountPoint = e.target.value; }}
+                   placeholder="/mnt/data" />
+            ${dupMp ? html`
+              <div class="hint" style="color:var(--hf-err)">A volume at <code>${mp}</code> already exists.</div>` : ''}
+            ${willPromote ? html`
+              <div class="hint">
+                Will be added as a <strong>managed volume</strong> (snapshots,
+                scrub, backup integration). Volume name will be the mount
+                point's basename.
+              </div>` : ''}
+          </div>
+
+          ${this.addMountError ? html`<div class="err-banner">${this.addMountError}</div>` : ''}
+
+          <div class="row" style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+            <button class="btn" ?disabled=${this.addingMount} @click=${this._closeAddMount}>Cancel</button>
+            <button class="btn btn-primary" ?disabled=${!canSubmit} @click=${this._doAddMount}>
+              ${this.addingMount ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _openAddMount() {
+    this.addMountOpen = true;
+    this.addMountSource = '';
+    this.addMountDevice = '';
+    this.addMountFsType = '';
+    this.addMountPoint = '';
+    this.addMountError = '';
+    this.addingMount = false;
+  }
+
+  _closeAddMount() {
+    if (this.addingMount) return;
+    this.addMountOpen = false;
+    this.addMountError = '';
+  }
+
+  _selectMountSource(d) {
+    this.addMountSource = d.fs_uuid;
+    // Auto-fill a sensible mount point if the user hasn't typed one yet:
+    // /mnt/<label> if there's a usable label, else /mnt/<short-uuid>.
+    if (!this.addMountPoint) {
+      const slug = (d.label || '').match(/^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/)
+        ? d.label
+        : `data-${d.fs_uuid.slice(0, 4)}`;
+      this.addMountPoint = '/mnt/' + slug;
+    }
+  }
+
+  _selectCustomSource() {
+    this.addMountSource = '__custom__';
+  }
+
+  async _doAddMount() {
+    const isCustom = this.addMountSource === '__custom__';
+    const selected = !isCustom
+      ? (this.mountableDevices || []).find((d) => d.fs_uuid === this.addMountSource)
+      : null;
+    const device = isCustom ? this.addMountDevice.trim() : (selected ? selected.device : '');
+    const fsType = isCustom ? this.addMountFsType.trim() : (selected ? selected.fs_type : '');
+    const mp = this.addMountPoint.trim();
+    if (!device || !fsType || !mp.startsWith('/')) return;
+    this.addMountError = '';
+
+    // Route btrfs → managed pool when the candidate is promote-eligible. This
+    // makes the "Add existing filesystem" path automatically write to
+    // storage.pools (snapshots/scrub) without a follow-up Promote click. A
+    // btrfs that's not in `this.promotable` (e.g. multi-device-native; layout
+    // unknowable offline) falls through to the plain-mount path below.
+    if (!isCustom && selected && fsType.toLowerCase() === 'btrfs') {
+      const promo = (this.promotable || []).find((p) => p.fs_uuid === selected.fs_uuid);
+      if (promo) {
+        const name = mp.replace(/\/+$/, '').split('/').pop() || '';
+        if (!NAME_RE.test(name)) {
+          this.addMountError = `Can't derive a volume name from "${mp}" — `
+            + 'use a mount point whose basename starts with a letter/digit '
+            + "and contains only letters, digits, ‘-’ or ‘_’.";
+          return;
+        }
+        this.addingMount = true;
+        try {
+          await promoteVolume(promo.fs_uuid, name, mp);
+          await this.loadData();
+          this._emitPools();   // promote also pruned any mounts row → list_mounts dedup catches it
+          this.addMountOpen = false;
+        } catch (e) {
+          this.addMountError = e.message || 'Failed to add as managed volume.';
+        } finally {
+          this.addingMount = false;
+        }
+        return;
+      }
+    }
+
+    // Non-btrfs, custom device, or btrfs that doesn't qualify for a managed
+    // pool: add as a plain mount row. Same defaults the old table-editor used.
+    const newRow = {
+      enabled: true,
+      'mount-point': mp,
+      device,
+      'fs-type': fsType,
+      automount: false,
+      'idle-timeout': '600',
+      'extra-options': [],
+    };
+    const all = this.config?.mounts || [];
+    this._emitMounts([...all, newRow]);
+    this.addMountOpen = false;
+  }
+
+  // Add-volume router modal — one entry point for the three Add flows. Each
+  // card describes its use-case in user terms (no managed-vs-mount jargon)
+  // and routes to the underlying flow that's actually different enough to
+  // warrant its own modal: format-blank-drives wizard, pick-existing-fs
+  // modal, or add-network-share modal.
+  _renderAddVolumeRouter() {
+    const canCreate = this.eligibleDrives.length > 0
+                       || this.overridableDrives.length > 0;
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddVolume(); }}>
+        <div class="modal">
+          <h2>Add a volume</h2>
+          <div class="sub">How would you like to add storage to this box?</div>
+
+          <div class="drive-pick add-vol-routes" style="margin-top:6px">
+            <label class="drive-opt ${!canCreate ? 'warn-opt' : ''}"
+                   @click=${() => canCreate && this._chooseAddRoute('create')}
+                   style="${canCreate ? 'cursor:pointer' : 'cursor:not-allowed; opacity:0.55'}">
+              <span class="d-main">
+                <div class="route-title">Create a new managed volume</div>
+                <div class="route-desc">
+                  ${canCreate
+                    ? 'Format blank drives, pick a RAID layout, mount as a managed pool with snapshot and scrub integration.'
+                    : 'No eligible blank drives detected — free up a drive in the Drives section first.'}
+                </div>
+              </span>
+            </label>
+
+            <label class="drive-opt"
+                   @click=${() => this._chooseAddRoute('existing')}
+                   style="cursor:pointer">
+              <span class="d-main">
+                <div class="route-title">Use existing filesystem</div>
+                <div class="route-desc">
+                  Mount a local disk or partition that already has data — auto-detected or custom device path.
+                </div>
+              </span>
+            </label>
+
+            <label class="drive-opt"
+                   @click=${() => this._chooseAddRoute('network')}
+                   style="cursor:pointer">
+              <span class="d-main">
+                <div class="route-title">Add network share</div>
+                <div class="route-desc">
+                  Mount an NFS or SMB export from another machine on the LAN.
+                </div>
+              </span>
+            </label>
+          </div>
+
+          <div class="row" style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+            <button class="btn" @click=${this._closeAddVolume}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _openAddVolume() {
+    this.addVolumeOpen = true;
+  }
+
+  _closeAddVolume() {
+    this.addVolumeOpen = false;
+  }
+
+  _chooseAddRoute(which) {
+    this.addVolumeOpen = false;
+    if (which === 'create') this._openWizard();
+    else if (which === 'existing') this._openAddMount();
+    else if (which === 'network') this._openAddNetwork();
+  }
+
+  // Add network share modal — mirrors the schema the old Network Mounts
+  // table-editor exposed (mount-point, server:/export, fs-type, nfs-version,
+  // automount, idle-timeout). One field per row, same defaults as the
+  // table-editor's row-add (enabled, automount on, idle 600s).
+  _renderAddNetworkShareModal() {
+    const mp = (this.netMountPoint || '').trim();
+    const dev = (this.netDevice || '').trim();
+    const mpOk = mp.startsWith('/');
+    const devOk = dev.length > 0;
+    const isNfs = this.netFsType === 'nfs';
+    const dupMp = (this.config?.mounts || []).some((m) => m['mount-point'] === mp);
+    const canSubmit = mpOk && devOk && !dupMp;
+
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddNetwork(); }}>
+        <div class="modal">
+          <h2>Add network share</h2>
+          <div class="sub">Mount an NFS or SMB share from another machine onto this box.</div>
+
+          <div class="field">
+            <label>Mount point</label>
+            <input type="text" .value=${this.netMountPoint}
+                   @input=${(e) => { this.netMountPoint = e.target.value; }}
+                   placeholder="/mnt/share" />
+            ${dupMp ? html`<div class="hint" style="color:var(--hf-err)">A mount at <code>${mp}</code> already exists.</div>` : ''}
+          </div>
+
+          <div class="field">
+            <label>Server &amp; export</label>
+            <input type="text" .value=${this.netDevice}
+                   @input=${(e) => { this.netDevice = e.target.value; }}
+                   placeholder="${isNfs ? '10.0.0.42:/volume1/share' : '//10.0.0.42/share'}" />
+            <div class="hint">
+              ${isNfs
+                ? 'NFS: hostname or IP, colon, export path on the server.'
+                : 'SMB: //hostname/share-name'}
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Type</label>
+            <div class="drive-pick">
+              <label class="drive-opt ${isNfs ? 'sel' : ''}" style="cursor:pointer">
+                <input type="radio" name="net-fs"
+                       .checked=${isNfs}
+                       @change=${() => { this.netFsType = 'nfs'; }} />
+                <span class="d-main"><div>NFS</div></span>
+              </label>
+              <label class="drive-opt ${!isNfs ? 'sel' : ''}" style="cursor:pointer">
+                <input type="radio" name="net-fs"
+                       .checked=${!isNfs}
+                       @change=${() => { this.netFsType = 'cifs'; }} />
+                <span class="d-main"><div>SMB / CIFS</div></span>
+              </label>
+            </div>
+          </div>
+
+          ${isNfs ? html`
+            <div class="field">
+              <label>NFS version</label>
+              <input type="text" .value=${this.netNfsVersion}
+                     @input=${(e) => { this.netNfsVersion = e.target.value; }}
+                     placeholder="3" />
+            </div>` : ''}
+
+          <div class="field">
+            <label style="display:flex; align-items:center; gap:8px">
+              <input type="checkbox" .checked=${this.netAutomount}
+                     @change=${(e) => { this.netAutomount = e.target.checked; }} />
+              <span>Automount on access (unmount after idle)</span>
+            </label>
+          </div>
+
+          ${this.netAutomount ? html`
+            <div class="field">
+              <label>Idle timeout (seconds)</label>
+              <input type="text" .value=${this.netIdleTimeout}
+                     @input=${(e) => { this.netIdleTimeout = e.target.value; }}
+                     placeholder="600" />
+            </div>` : ''}
+
+          ${this.netError ? html`<div class="err-banner">${this.netError}</div>` : ''}
+
+          <div class="row" style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+            <button class="btn" @click=${this._closeAddNetwork}>Cancel</button>
+            <button class="btn btn-primary" ?disabled=${!canSubmit} @click=${this._doAddNetwork}>Add</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _openAddNetwork() {
+    this.addNetworkOpen = true;
+    this.netMountPoint = '';
+    this.netDevice = '';
+    this.netFsType = 'nfs';
+    this.netNfsVersion = '3';
+    this.netAutomount = true;
+    this.netIdleTimeout = '600';
+    this.netError = '';
+  }
+
+  _closeAddNetwork() {
+    this.addNetworkOpen = false;
+    this.netError = '';
+  }
+
+  _doAddNetwork() {
+    const mp = this.netMountPoint.trim();
+    const dev = this.netDevice.trim();
+    if (!mp.startsWith('/') || !dev) return;
+    const row = {
+      enabled: true,
+      'mount-point': mp,
+      device: dev,
+      'fs-type': this.netFsType,
+      'nfs-version': this.netFsType === 'nfs' ? (this.netNfsVersion || '3') : '3',
+      automount: this.netAutomount,
+      'idle-timeout': this.netIdleTimeout || '600',
+      'extra-options': [],
+    };
+    const all = this.config?.mounts || [];
+    this._emitMounts([...all, row]);
+    this.addNetworkOpen = false;
+  }
+
   _renderStepConfigure() {
     const n = this.selected.length;
     // Filter PROFILES by what the current drive count can actually use, so the
@@ -1402,6 +2297,11 @@ class StorageModule extends LitElement {
       n >= p.min
       && (!p.exact || n === p.exact)
       && (!p.even || n % 2 === 0));
+    // When the user's selection contains a drive with an existing filesystem
+    // that ALSO has a Use-Existing alternative, surface a notice + a third
+    // action button — and swap primary emphasis so the non-destructive path
+    // gets the green button, not Review. Returns null when no escape applies.
+    const escape = this._existingDataEscapeInfo();
     return html`
       <h2>Create a storage volume</h2>
       <div class="sub">Select drives, choose a layout, and name the volume.</div>
@@ -1411,17 +2311,20 @@ class StorageModule extends LitElement {
         <div class="drive-pick">
           ${this.selectableDrives.map((d) => {
             const warn = d.overridable;
-            const sub = warn
-              ? d.by_id + ' · ' + d.ineligible_reason
-              : d.by_id + (d.has_existing_data ? ' · contains data (' + (d.existing_fstype || '?') + ')' : '');
+            const hasData = !!d.has_existing_data;
+            const dataLabel = d.existing_label ? ' ‘' + d.existing_label + '’' : '';
+            const dataKind = d.existing_fstype || 'data';
             return html`
               <label class="drive-opt ${warn ? 'warn-opt' : ''} ${this.selected.includes(d.by_id) ? 'sel' : ''}">
                 <input type="checkbox"
                        .checked=${this.selected.includes(d.by_id)}
                        @change=${() => this._toggleDrive(d.by_id)} />
                 <span class="d-main">
-                  <div>${warn ? '⚠ ' : ''}${d.model || 'Unknown'} — ${formatBytes(d.size_bytes)}</div>
-                  <div class="d-sub">${sub}</div>
+                  <div>
+                    ${warn ? '⚠ ' : ''}${d.model || 'Unknown'} — ${formatBytes(d.size_bytes)}
+                    ${hasData ? html`<span class="data-badge">Contains ${dataKind}${dataLabel} — will be wiped</span>` : ''}
+                  </div>
+                  <div class="d-sub">${d.by_id}${warn ? ' · ' + d.ineligible_reason : ''}</div>
                 </span>
               </label>`;
           })}
@@ -1471,12 +2374,49 @@ class StorageModule extends LitElement {
         <input type="text" placeholder="/mnt/tank" .value=${this.mountpoint} @input=${this._onMountpoint} />
       </div>
 
+      ${escape ? html`
+        <div class="data-escape">
+          <strong>${escape.count === 1 ? 'This drive contains' : 'These drives contain'} existing data that will be wiped.</strong>
+          Did you mean to keep the existing filesystem and just mount it?
+        </div>` : ''}
+
       <div class="modal-actions">
         <button class="btn" @click=${this._closeWizard}>Cancel</button>
-        <button class="btn btn-primary" ?disabled=${!this._canConfigure}
-                @click=${() => { this.createConfirmText = ''; this.wizardStep = 2; }}>Review</button>
+        ${escape ? html`
+          <button class="btn btn-primary"
+                  @click=${() => this._switchToExistingFlow(escape.cand)}>
+            Use existing filesystem instead…
+          </button>
+          <button class="btn" ?disabled=${!this._canConfigure}
+                  @click=${() => { this.createConfirmText = ''; this.wizardStep = 2; }}>Review</button>`
+        : html`
+          <button class="btn btn-primary" ?disabled=${!this._canConfigure}
+                  @click=${() => { this.createConfirmText = ''; this.wizardStep = 2; }}>Review</button>`}
       </div>
     `;
+  }
+
+  // Returns { cand, count } when the user has selected at least one drive
+  // with an existing filesystem we can ALSO mount via "Use existing
+  // filesystem" (i.e. that drive has a candidate in mountableDevices). Used
+  // by Step 1 to surface the non-destructive escape hatch. LUKS/swap drives
+  // show has_existing_data but aren't in mountableDevices, so the escape
+  // stays silent there to avoid promising a flow we can't deliver.
+  _existingDataEscapeInfo() {
+    const sel = (this.drives || []).filter((d) =>
+      this.selected.includes(d.by_id) && d.has_existing_data);
+    if (!sel.length) return null;
+    const cand = sel
+      .map((d) => (this.mountableDevices || []).find((m) => m.disk_by_id === d.by_id))
+      .find(Boolean);
+    if (!cand) return null;
+    return { cand, count: sel.length };
+  }
+
+  _switchToExistingFlow(cand) {
+    this._closeWizard();
+    this._openAddMount();
+    this._selectMountSource(cand);
   }
 
   _renderStepConfirm() {

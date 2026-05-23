@@ -199,12 +199,23 @@ Situational knowledge — read the linked note when working in that area:
   module — never to install.py. Admin password hash lives in the JSON
   under `system.hashedPassword`.
   → `docs/agent-notes/homefree-configuration-nix-is-generated.md`
-- **Lit tagged-template backticks** — never put a backtick inside a
-  `css\`...\`` or `html\`...\`` template body (including inside a CSS
-  `/* ... */` comment); it closes the template and the trailing text
-  parses as JS. Fails as `SyntaxError` (parse-time) or `TypeError: ...
-  is not a function` (runtime, parse looks clean). Use plain words or
-  single quotes for inline emphasis instead.
+- **Lit tagged-template backticks** — ⚠️ **REPEAT AGENT FAILURE.**
+  Agents in this repo have white-screened the SPA with this *at least
+  five times*. The rule is: a backtick *anywhere* inside a `css\`...\``
+  or `html\`...\`` template body — including inside `/* ... */`
+  comments, prose explanations, and class/selector references — closes
+  the tagged template, and everything after parses as JavaScript. The
+  trap is the markdown-style "wrap an identifier in backticks for
+  emphasis" reflex; the JS parser does not know what CSS is. **Use
+  single quotes or plain words for emphasis in comments inside the
+  template, never backticks.** After ANY edit to a file under
+  `web-platform/frontend/src/components/` (or any other file with a
+  Lit `css\`/`html\`` block), grep your own diff for a stray ` `` `
+  inside the template body before declaring the edit done — *that
+  scan is the rule, not a suggestion.* Fails as `SyntaxError`
+  (parse-time, `node --check` catches it) or `TypeError: … is not a
+  function` (runtime, parse looks clean and only blows up at module
+  evaluation in the browser).
   → `docs/agent-notes/lit-tagged-template-backticks.md`
 - **Admin table column sizing on mobile** — a `table-layout: fixed`
   table's `min-width` must include cell padding or the unsized column

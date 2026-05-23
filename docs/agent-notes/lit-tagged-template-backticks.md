@@ -1,5 +1,14 @@
 # No backticks inside Lit `css` / `html` tagged templates
 
+> ⚠️ **REPEAT AGENT FAILURE.** Agents have white-screened the SPA with this
+> mistake *at least five times* — even with this note, the `AGENTS.md`
+> gotcha entry, and an explicit memory entry all already in place. If
+> you are an agent reading this: the docs aren't the gap, your
+> pre-save backtick scan is. Read the "How to apply" section below
+> and execute the scan **before** declaring any edit to a Lit
+> component file done. No exceptions, including for "harmless" CSS
+> comments.
+
 Every Lit component in `web-platform/` defines its styles inside a
 `css\`...\`` tagged template literal, and most render bodies live inside
 `html\`...\``. The whole template — selectors, declarations, **and CSS
