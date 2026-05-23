@@ -122,6 +122,11 @@ export const getStoragePoolCreateStatus = () =>
   get('/api/storage/pools/create-status');
 export const forgetStoragePool = (name) =>
   post('/api/storage/pools/forget', { name });
+// Re-add a pool record verbatim. Used by the Undo Remove flow with the
+// appliedConfig record so the post-undo state byte-matches applied (no
+// pending diff afterward).
+export const restoreStoragePool = (record) =>
+  post('/api/storage/pools/restore', { record });
 // Reclaim: tear down an in-use array/LVM group and wipe its disks back to
 // eligible. post() (no retry) — it wipes disks; the status poll is retryable.
 export const reclaimStorageDisks = (members) =>

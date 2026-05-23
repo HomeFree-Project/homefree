@@ -1359,6 +1359,23 @@ async def post_forget(req: ForgetRequest) -> Dict[str, Any]:
     return {"ok": True}
 
 
+class RestoreRequest(BaseModel):
+    record: Dict[str, Any]
+
+
+@router.post("/pools/restore")
+async def post_restore(req: RestoreRequest) -> Dict[str, Any]:
+    """Re-add a pool record verbatim to storage.pools. The frontend uses
+    this for the Undo Remove flow with the appliedConfig record as
+    `record`, so the post-undo state byte-matches applied (no spurious
+    pending diff)."""
+    from services.storage_pool import StoragePoolService
+    errs = await asyncio.to_thread(StoragePoolService.restore_pool, req.record)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    return {"ok": True}
+
+
 # --- reclaim (delegated to services.storage_reclaim) -----------------------
 # Tears down an in-use storage group (mdadm/LVM) and wipes its member disks
 # back to eligible. Destructive; admin-only via the header gate above.

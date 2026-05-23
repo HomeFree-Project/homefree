@@ -350,6 +350,40 @@ class StoragePoolService:
         pools = [p for p in (storage.get("pools") or []) if p.get("name") != name]
         return ConfigWriter.write_config({"storage": {"pools": pools}})
 
+    # ----------------------------------------------------------- restore
+
+    @staticmethod
+    def restore_pool(record: Dict[str, Any]) -> List[str]:
+        """Re-add a pool record to storage.pools verbatim. Used by the
+        frontend's Undo Remove flow — the record passed in is the one
+        from applied-config.json, so writing it back byte-for-byte
+        means the post-undo state has no pending diff vs. applied
+        (which is what makes the volume card stop reading 'undeployed'
+        after the undo). Less rigorous than create/import (no mkfs, no
+        live-fs validation) because the caller already has a known-good
+        applied record.
+
+        Preserves any sibling subkeys under `storage` (e.g. `shares`)
+        by spreading the existing object — ConfigWriter does a
+        whole-storage replace, so we must include them explicitly."""
+        name = (record.get("name") or "").strip()
+        if not _NAME_RE.match(name):
+            return ["Volume name must be 1–32 characters: letters, digits, "
+                    "'-' or '_', starting with a letter or digit."]
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        storage = cfg.get("storage") or {}
+        pools = list(storage.get("pools") or [])
+        if any(p.get("name") == name for p in pools):
+            return [f"A volume named '{name}' already exists."]
+        pools.append(record)
+        new_storage = {**storage, "pools": pools}
+        if not ConfigWriter.write_config({"storage": new_storage}):
+            return ["Failed to write homefree-config.json."]
+        return []
+
     # ----------------------------------------------------------- import
 
     @staticmethod

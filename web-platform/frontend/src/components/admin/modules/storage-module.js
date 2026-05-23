@@ -9,6 +9,7 @@ import {
   createStoragePool,
   getStoragePoolCreateStatus,
   forgetStoragePool,
+  restoreStoragePool,
   reclaimStorageDisks,
   getStorageReclaimStatus,
   getStorageImportable,
@@ -258,6 +259,10 @@ class StorageModule extends LitElement {
        The :first-child trim drops top margin when a tier is the very
        first thing in the list. */
     .tier-subtitle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       font-size: 14px;
       font-weight: 600;
       color: var(--hf-text);
@@ -276,7 +281,9 @@ class StorageModule extends LitElement {
       background: var(--hf-warn-soft);
       box-shadow: inset 3px 0 0 0 var(--hf-warn);
     }
-    .pool-card.removed .pool-name { text-decoration: line-through; }
+    /* Ghost cards (pending removal) — slight fade only. The amber
+       .undeployed background + the "Removing" badge already cue the
+       state; an extra strikethrough on top was redundant. */
     .pool-card.removed { opacity: 0.85; }
     .pool-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
     .pool-name { font-size: 15px; font-weight: 600; color: var(--hf-text); }
@@ -992,6 +999,11 @@ class StorageModule extends LitElement {
   }
 
   _renderRemovedCard(a) {
+    // Undo is offerable only while the live mount is still up (i.e. the
+    // backend's list_promotable_btrfs still sees the filesystem) — once
+    // Apply unmounts it, the undo path stops existing. Check by fs-uuid.
+    const canUndo = !!(this.promotable || []).find(
+      (p) => p.fs_uuid === a['fs-uuid']);
     return html`
       <div class="pool-card undeployed removed">
         <div class="pool-top">
@@ -999,11 +1011,32 @@ class StorageModule extends LitElement {
             <span class="pool-name">${a.name}</span>
             <div class="pool-meta">${a.profile} · mount <code>${a.mountpoint}</code></div>
           </div>
-          <span class="badge badge-warn">Removing</span>
+          <div class="pool-actions">
+            <span class="badge badge-warn">Removing</span>
+            ${canUndo ? html`
+              <button class="btn-row" @click=${() => this._undoRemoveVolume(a)}>Undo</button>` : ''}
+          </div>
         </div>
         <div class="pending-note">⟳ Will be removed (unmounted) on Apply — data stays on the disks</div>
       </div>
     `;
+  }
+
+  // Undo a pool removal while it's still pending. We write the EXACT
+  // applied-config record (`a`) back to storage.pools via the restore
+  // endpoint — going through promote_volume would produce a fresh
+  // record with different timestamps / default options, and the volume
+  // card would then read as "pending" even after the undo because
+  // _poolUndeployed compares stableKey(current) vs stableKey(applied).
+  // After restore the byte-match is exact → no pending diff.
+  async _undoRemoveVolume(a) {
+    try {
+      await restoreStoragePool(a);
+      await this.loadData();
+      this._emitPools();
+    } catch (e) {
+      this.loadError = e.message || 'Failed to undo remove.';
+    }
   }
 
   // NFS shares are plain config rows (no imperative action) — edited via a
@@ -1213,47 +1246,65 @@ class StorageModule extends LitElement {
     `;
   }
 
-  // Unmanaged btrfs filesystem (single OR multi-drive). Tier-aware UI:
-  //   * mount_point set (Mounted tier — an externally-mounted btrfs that
-  //     could be elevated to managed) → "Promote to volume…" only + the
-  //     "Not a managed volume" badge. No Create button: wiping a mounted
-  //     filesystem from the UI is a footgun.
-  //   * mount_point empty + SINGLE drive (Available tier — cold btrfs on
-  //     one disk) → "Mount existing filesystem" + "Wipe and Create".
-  //     Parity with non-btrfs Available drives: the user can either
-  //     adopt the existing fs or wipe it and start fresh.
+  // Unmanaged btrfs filesystem (single OR multi-drive). Four states:
+  //   * removed (pending pool removal — Available tier, amber styling) →
+  //     title = original pool name, "Removing" badge, single "Mount
+  //     existing filesystem" button that directly undoes the remove
+  //     (re-promotes with the original name + mountpoint). No Wipe
+  //     option: the user clicked Remove, not Wipe.
+  //   * mount_point set, no pending removal (Mounted tier — an
+  //     externally-mounted btrfs that could be elevated to managed) →
+  //     "Promote to volume…" + "Not a managed volume" badge. No Create:
+  //     wiping a mounted filesystem from the UI is a footgun.
+  //   * mount_point empty + SINGLE drive (Available tier — cold btrfs
+  //     on one disk) → "Mount existing filesystem" + "Wipe and Create".
+  //     Parity with non-btrfs Available drives.
   //   * mount_point empty + multi-drive → "Mount existing filesystem"
-  //     only. Wiping a multi-drive btrfs needs to tear down the
-  //     underlying md array first (Reclaim), so no Create here.
-  // Mount-existing / Promote both call `_openPromote(c)`; Create calls
-  // `_createFromDrive(d)` where d is the single member drive.
-  _renderCandidateBtrfsCard(c) {
+  //     only. Wiping a multi-drive btrfs needs to tear down the md
+  //     array first (Reclaim), so no Create here.
+  _renderCandidateBtrfsCard(c, removed) {
     const memberIds = c.members || [];
-    const lbl = c.label ? '‘' + c.label + '’' : '(unlabelled btrfs)';
     const isMounted = !!c.mount_point;
-    // For a single-drive cold candidate, resolve the underlying drive
-    // record so Create can route through `_createFromDrive`.
-    const singleDrive = (!isMounted && memberIds.length === 1)
+    const isPendingRemove = !!removed;
+    // Pending-removal: use the original pool's name + mountpoint (what
+    // the user picked when they created the volume) — the candidate's
+    // suggested_name (mount-point basename) usually matches, but isn't
+    // guaranteed. Also: the subtitle includes "mounted at …" only in
+    // the regular Mounted-tier case; for pending-removal the card
+    // already sits in Available with a "Removing" pill, so showing
+    // "mounted at" alongside is contradictory.
+    const title = isPendingRemove
+      ? removed.name
+      : (c.label ? '‘' + c.label + '’' : '(unlabelled btrfs)');
+    const mountPath = isPendingRemove ? removed.mountpoint : c.mount_point;
+    const singleDrive = (!isMounted && !isPendingRemove && memberIds.length === 1)
       ? (this.drives || []).find((d) => d.by_id === memberIds[0])
       : null;
     return html`
-      <div class="pool-card">
+      <div class="pool-card ${isPendingRemove ? 'undeployed removed' : ''}">
         <div class="pool-top">
           <div>
-            <span class="pool-name">${lbl}</span>
+            <span class="pool-name">${title}</span>
             <div class="pool-meta">
-              ${c.profile} · ${memberIds.length} drive(s) · btrfs · ${formatBytes(c.size_bytes || 0)}${isMounted ? html` · mounted at <code>${c.mount_point}</code>` : ''}
+              ${c.profile} · ${memberIds.length} drive(s) · btrfs · ${formatBytes(c.size_bytes || 0)}${isPendingRemove ? html` · mount <code>${mountPath}</code>` : (isMounted ? html` · mounted at <code>${mountPath}</code>` : '')}
             </div>
           </div>
           <div class="pool-actions">
-            ${isMounted ? html`<span class="badge badge-warn">Not a managed volume</span>` : ''}
-            <button class="btn-row" @click=${() => this._openPromote(c)}>
-              ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
-            </button>
+            ${isPendingRemove
+              ? html`<span class="badge badge-warn">Removing</span>`
+              : (isMounted ? html`<span class="badge badge-warn">Not a managed volume</span>` : '')}
+            ${isPendingRemove ? html`
+              <button class="btn-row" @click=${() => this._undoRemoveVolume(removed)}>Mount existing filesystem</button>`
+              : html`
+              <button class="btn-row" @click=${() => this._openPromote(c)}>
+                ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
+              </button>`}
             ${singleDrive ? html`
               <button class="btn-row warn" @click=${() => this._createFromDrive(singleDrive)}>Wipe and Create</button>` : ''}
           </div>
         </div>
+        ${isPendingRemove ? html`
+          <div class="pending-note">⟳ Will be unmounted on Apply — data stays on the disks. Click 'Mount existing filesystem' to revert.</div>` : ''}
         ${this._renderMemberDrives(memberIds)}
       </div>
     `;
@@ -1727,21 +1778,71 @@ class StorageModule extends LitElement {
     const removedMounts = this._removedMounts();
     const promoUuids = new Set((this.promotable || []).map((p) => p.fs_uuid));
 
-    // Split candidates by mount state — a candidate that's actually mounted
-    // (externally, via leftover fstab / previous-deployment mount unit)
-    // belongs visually with the Mounted volumes (it IS serving data, just
-    // needs Promote to become managed). A candidate with no mount-point is
-    // cold storage waiting to be configured — belongs in Available.
-    const allCandidates = this._candidateBtrfsList();
-    const mountedCandidates = allCandidates.filter((c) => !!c.mount_point);
-    const unmountedCandidates = allCandidates.filter((c) => !c.mount_point);
+    // Categorize candidates against pending pool/mount removals so the
+    // pending state has ONE representation in the list, and so removal is
+    // visually the inverse of the Mount-existing flow:
+    //
+    //   * Mount existing  (Available → pending → Mounted on Apply)
+    //   * Remove         (Mounted   → pending → Available on Apply)
+    //
+    // A candidate covering a removed POOL gets elevated to the Available
+    // tier with pending-removal styling and a "Mount existing filesystem"
+    // button that re-promotes with the original name + mountpoint (the
+    // undo). A candidate covering a removed MOUNT is suppressed instead —
+    // the mount-removed ghost already carries its own in-memory Undo
+    // affordance, and elevating the candidate would change the write path
+    // (mount → pool) which isn't what the user wants for a mount undo.
+    const removedPoolByUuid = new Map();
+    const removedPoolByMp = new Map();
+    for (const a of removedPools) {
+      if (a['fs-uuid']) removedPoolByUuid.set(a['fs-uuid'], a);
+      if (a.mountpoint) removedPoolByMp.set(a.mountpoint, a);
+    }
+    const removedMountMps = new Set(
+      removedMounts.map((m) => m['mount-point']).filter(Boolean));
 
-    // Tier 0 — AVAILABLE: drives/things not currently mounted that the user
-    // can act on. SortKey prefix '0…' pins them above Tier 1 in the same
-    // single-sort pass.
+    const allCandidates = this._candidateBtrfsList();
+    const candidatesAnnotated = allCandidates.map((c) => {
+      const removedPool = (c.fs_uuid && removedPoolByUuid.get(c.fs_uuid))
+        || (c.mount_point && removedPoolByMp.get(c.mount_point));
+      const coveredByMountRemoval = c.mount_point
+        && removedMountMps.has(c.mount_point);
+      return { c, removedPool, coveredByMountRemoval };
+    });
+    // Pending-pool-removal → Available tier, special render.
+    const pendingRemovalCandidates = candidatesAnnotated
+      .filter((x) => x.removedPool);
+    // Normal categorization (mounted → Mounted tier, cold → Available tier).
+    // Skip candidates covered by a removed mount (handled by the mount ghost).
+    const normalCandidates = candidatesAnnotated
+      .filter((x) => !x.removedPool && !x.coveredByMountRemoval)
+      .map((x) => x.c);
+    const mountedCandidates = normalCandidates.filter((c) => !!c.mount_point);
+    const unmountedCandidates = normalCandidates.filter((c) => !c.mount_point);
+    // Removed pools NOT covered by a candidate (e.g. btrfs scan didn't pick
+    // up the live mount fast enough) — render as a fallback ghost in the
+    // Mounted tier so the pending state isn't invisible.
+    const coveredRemovedPoolUuids = new Set(
+      pendingRemovalCandidates.map((x) => x.removedPool['fs-uuid']));
+    const uncoveredRemovedPools = removedPools.filter(
+      (a) => !coveredRemovedPoolUuids.has(a['fs-uuid']));
+
+    // Tier 0 — AVAILABLE: drives/things not currently mounted (or in the
+    // process of being unmounted on the next Apply). SortKey prefix '0…'
+    // pins them above the Mounted tiers in the single-sort pass.
     const tier1 = [
       ...this._staleSignatureGroups().map((rec) => ({
         kind: 'stale', sortKey: '0a:' + (rec.id || ''), data: rec,
+      })),
+      // Pending-removed pools render as Available candidates with pending
+      // styling — the user clicked Remove, and the card moved out of
+      // Mounted into Available with an undo affordance. Inverse of the
+      // Mount-existing flow.
+      ...pendingRemovalCandidates.map((x) => ({
+        kind: 'btrfs-candidate',
+        sortKey: '0b:' + (x.c.fs_uuid || ''),
+        data: x.c,
+        removed: x.removedPool,
       })),
       ...unmountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '0b:' + (c.fs_uuid || ''), data: c,
@@ -1761,20 +1862,30 @@ class StorageModule extends LitElement {
       ...pools.map((p) => ({
         kind: 'pool', sortKey: '1:' + (p.mountpoint || ''), data: p,
       })),
-      ...pendingMounts.map((m) => ({
-        kind: this._isNetworkMount(m) ? 'network' : 'local',
-        sortKey: '1:' + (m['mount-point'] || ''),
-        data: m,
-        runtime: rtByMp.get(m['mount-point']),
-      })),
+      ...pendingMounts.map((m) => {
+        const network = this._isNetworkMount(m);
+        return {
+          kind: network ? 'network' : 'local',
+          // Disk Mounts ('1:…') vs Network Mounts ('2:…') — splits the
+          // single Mounted tier into two subsections in the unified list.
+          sortKey: (network ? '2:' : '1:') + (m['mount-point'] || ''),
+          data: m,
+          runtime: rtByMp.get(m['mount-point']),
+        };
+      }),
       ...mountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '1:' + (c.mount_point || ''), data: c,
       })),
-      ...removedPools.map((a) => ({
+      // Fallback ghost cards for removed pools whose live mount isn't
+      // detected as a candidate (e.g. btrfs scan timing). The covered
+      // case renders as a pending-removal candidate in Tier 0 instead.
+      ...uncoveredRemovedPools.map((a) => ({
         kind: 'pool-removed', sortKey: '1:' + (a.mountpoint || ''), data: a,
       })),
       ...removedMounts.map((m) => ({
-        kind: 'mount-removed', sortKey: '1:' + (m['mount-point'] || ''), data: m,
+        kind: 'mount-removed',
+        sortKey: (this._isNetworkMount(m) ? '2:' : '1:') + (m['mount-point'] || ''),
+        data: m,
       })),
     ];
 
@@ -1787,7 +1898,7 @@ class StorageModule extends LitElement {
     const renderItem = (it) => {
       switch (it.kind) {
         case 'available':         return this._renderAvailableDriveCard(it.data);
-        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data);
+        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data, it.removed);
         case 'stale':             return this._renderStaleGroupCard(it.data);
         case 'system':            return this._renderSystemCard(it.data);
         case 'pool':              return this._renderPoolCard(it.data);
@@ -1803,7 +1914,7 @@ class StorageModule extends LitElement {
       <config-section title="Volumes"
         description="Storage volumes attached to this box — local disks, network shares, managed pools, and unassigned drives">
         <button slot="actions" class="btn" @click=${this.loadData}>↻ Refresh</button>
-        <button slot="actions" class="btn" @click=${this._openAddNetwork}>+ Add network share</button>
+        <button slot="actions" class="btn" @click=${this._openAddNetwork}>+ Add Network Mount</button>
         <button slot="actions" class="btn" @click=${this._openAddCustom}>+ Add custom device</button>
         ${loadingPools
           ? html`<div class="pools">${this._renderSkeletonCards(2)}</div>`
@@ -1815,16 +1926,30 @@ class StorageModule extends LitElement {
   }
 
   // Walk the sorted items and inject a subtitle whenever the tier changes
-  // ('0' → Available, '1' → Mounted). Keeps everything in one flat .pools
-  // list — sections are visually delimited by the subtitle, not split DOM.
+  // ('0' → Available, '1' → Disk Mounts, '2' → Network Mounts). Keeps
+  // everything in one flat .pools list — sections are visually delimited
+  // by the subtitle, not split DOM. The Network Mounts subtitle row
+  // carries a right-aligned contextual "+ Add Network Mount" button so
+  // adding a network mount doesn't require scrolling back to the section
+  // header.
   _renderItemsWithTiers(items, renderItem) {
+    const labels = {
+      '0': 'Available',
+      '1': 'Disk Mounts',
+      '2': 'Network Mounts',
+    };
     const out = [];
     let lastTier = null;
     for (const it of items) {
       const tier = (it.sortKey || '')[0];
       if (tier !== lastTier) {
-        const label = tier === '0' ? 'Available' : 'Mounted';
-        out.push(html`<div class="tier-subtitle">${label}</div>`);
+        const action = tier === '2' ? html`
+          <button class="btn-row" @click=${this._openAddNetwork}>+ Add Network Mount</button>` : '';
+        out.push(html`
+          <div class="tier-subtitle">
+            <span>${labels[tier] || ''}</span>
+            ${action}
+          </div>`);
         lastTier = tier;
       }
       out.push(renderItem(it));
@@ -2320,10 +2445,13 @@ class StorageModule extends LitElement {
     this.addMountOpen = false;
   }
 
-  // Add network share modal — mirrors the schema the old Network Mounts
+  // Add Network Mount modal — mirrors the schema the old Network Mounts
   // table-editor exposed (mount-point, server:/export, fs-type, nfs-version,
   // automount, idle-timeout). One field per row, same defaults as the
-  // table-editor's row-add (enabled, automount on, idle 600s).
+  // table-editor's row-add (enabled, automount on, idle 600s). User-facing
+  // term is "mount" (the local mount-point on this box); the modal still
+  // talks about the remote NFS/SMB share since that IS what's being
+  // mounted.
   _renderAddNetworkShareModal() {
     const mp = (this.netMountPoint || '').trim();
     const dev = (this.netDevice || '').trim();
@@ -2336,7 +2464,7 @@ class StorageModule extends LitElement {
     return html`
       <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeAddNetwork(); }}>
         <div class="modal">
-          <h2>Add network share</h2>
+          <h2>Add network mount</h2>
           <div class="sub">Mount an NFS or SMB share from another machine onto this box.</div>
 
           <div class="field">
