@@ -341,14 +341,19 @@ class StoragePoolService:
     def forget(name: str) -> bool:
         """Remove a pool's record. NON-destructive — the btrfs and its data
         stay on the disks; only the mount config is dropped. The user Applies
-        afterward to unmount."""
+        afterward to unmount.
+
+        Critical: spread the existing `storage` object when writing so
+        sibling sub-keys (notably `shares` for NFS exports) survive.
+        ConfigWriter does a whole-`storage` REPLACE — sending only
+        `{pools: …}` would silently wipe `shares`."""
         try:
             cfg = ConfigReader.read_config()
         except Exception:  # noqa: BLE001
             return False
         storage = cfg.get("storage") or {}
         pools = [p for p in (storage.get("pools") or []) if p.get("name") != name]
-        return ConfigWriter.write_config({"storage": {"pools": pools}})
+        return ConfigWriter.write_config({"storage": {**storage, "pools": pools}})
 
     # ----------------------------------------------------------- restore
 
@@ -543,8 +548,12 @@ class StoragePoolService:
         new_pools = list(existing_pools) + [pool]
         new_mounts = [m for m in (cfg.get("mounts") or [])
                       if not _row_targets_fs(m)]
+        # Spread the existing `storage` object on write — ConfigWriter does
+        # a whole-`storage` REPLACE, so passing only `{pools: …}` would
+        # silently wipe sibling sub-keys (notably `shares` for NFS exports).
+        existing_storage = cfg.get("storage") or {}
         ok = ConfigWriter.write_config({
-            "storage": {"pools": new_pools},
+            "storage": {**existing_storage, "pools": new_pools},
             "mounts": new_mounts,
         })
         if not ok:
@@ -635,6 +644,10 @@ class StoragePoolService:
 
     @staticmethod
     def _append_pool(record: Dict[str, Any]) -> bool:
+        """Used by create_pool + import_pool. Spread the existing `storage`
+        object on write — ConfigWriter does a whole-`storage` REPLACE, so
+        sending only `{pools: …}` would silently wipe sibling sub-keys
+        (notably `shares` for NFS exports)."""
         try:
             cfg = ConfigReader.read_config()
         except Exception:  # noqa: BLE001
@@ -642,4 +655,4 @@ class StoragePoolService:
         storage = cfg.get("storage") or {}
         pools = list(storage.get("pools") or [])
         pools.append(record)
-        return ConfigWriter.write_config({"storage": {"pools": pools}})
+        return ConfigWriter.write_config({"storage": {**storage, "pools": pools}})

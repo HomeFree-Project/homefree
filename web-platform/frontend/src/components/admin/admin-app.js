@@ -2252,18 +2252,46 @@ class AdminApp extends LitElement {
   // Dotted leaf paths where `b` differs from `a`. Mirrors the backend's
   // compute_changed_paths: objects recurse; arrays/scalars compare
   // whole-value (an array is one path, so a reorder isn't N changes).
+  //
+  // Two extensions vs. a naive deep-compare, both for the same reason —
+  // an optional config sub-tree that's ABSENT on one side and "all
+  // default" on the other shouldn't read as a diff:
+  //   1. If one side is an object and the other is undefined/null,
+  //      recurse with the missing side treated as {}, so the diff
+  //      lands at the LEAF, not at the parent.
+  //   2. At leaves, treat the canonical-falsy values (false, null,
+  //      empty string / array / object) as equivalent to undefined.
+  // Without these, toggling a checkbox like System Snapshots back to
+  // its default (enable=false ≡ "no snapshots key") would leave a
+  // phantom path in `undeployedPaths` and a stuck nav dot.
   _diffPaths(a, b) {
     const out = [];
     const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    const canonicalFalsy = (v) =>
+      v === undefined || v === null || v === false || v === '' ||
+      (Array.isArray(v) && v.length === 0) ||
+      (isObj(v) && Object.keys(v).length === 0);
     const walk = (x, y, prefix) => {
-      if (isObj(x) && isObj(y)) {
+      const xObj = isObj(x), yObj = isObj(y);
+      if (xObj && yObj) {
         const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
-        for (const k of keys) {
-          walk(x[k], y[k], prefix ? `${prefix}.${k}` : k);
-        }
-      } else if (JSON.stringify(x) !== JSON.stringify(y) && prefix) {
-        out.push(prefix);
+        for (const k of keys) walk(x[k], y[k], prefix ? `${prefix}.${k}` : k);
+        return;
       }
+      // One side is an object, the other is missing — recurse with the
+      // missing side as {} so the diff is reported at the leaf, where the
+      // canonical-falsy check can suppress "false ≡ undefined" no-ops.
+      if (xObj && (y === undefined || y === null)) {
+        for (const k of Object.keys(x)) walk(x[k], undefined, prefix ? `${prefix}.${k}` : k);
+        return;
+      }
+      if (yObj && (x === undefined || x === null)) {
+        for (const k of Object.keys(y)) walk(undefined, y[k], prefix ? `${prefix}.${k}` : k);
+        return;
+      }
+      if (JSON.stringify(x) === JSON.stringify(y)) return;
+      if (canonicalFalsy(x) && canonicalFalsy(y)) return;
+      if (prefix) out.push(prefix);
     };
     walk(a || {}, b || {}, '');
     return out;

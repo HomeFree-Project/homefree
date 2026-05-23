@@ -136,6 +136,16 @@ class ConfigWriter:
             if 'storage' in config:
                 current_config['storage'] = config['storage']
 
+            # Snapshots (System / per-volume snapshot toggle). The Storage
+            # admin module emits the WHOLE snapshots object (spreading the
+            # current one) so a partial replace is correct here too. Without
+            # this branch, the snapshots key in the payload was silently
+            # dropped — making the System Snapshots checkbox a no-op on
+            # disk and flickering the "Configuration changed" notice
+            # (success → checkConfigDirty re-fetched a clean disk → false).
+            if 'snapshots' in config:
+                current_config['snapshots'] = config['snapshots']
+
             # NOTE: the `developers` section (registered custom flakes) is
             # deliberately NOT written here. It is owned exclusively by
             # DevelopersService, which writes it via its own endpoints and

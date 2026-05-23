@@ -3087,9 +3087,15 @@ async def get_config_dirty():
         # Compare SEMANTICALLY (parsed), not as raw text. A no-op round-trip —
         # adding then removing a list row, a key reorder, or a re-serialization
         # by ConfigWriter — leaves the meaning unchanged and must NOT report
-        # dirty. changedPaths (same diff) drives the per-field highlight.
+        # dirty. changedPaths drives both the per-field highlight AND the
+        # dirty signal — that way the nav-dot and the "Configuration changed"
+        # notice agree (both fire iff there's at least one semantically-real
+        # diff path). compute_changed_paths treats canonical-falsy ↔ missing
+        # as equal, so reverting an optional checkbox to its default also
+        # clears dirty — `current_json != applied_json` (Python dict compare)
+        # would falsely flag that.
         changed_paths = NixOperations.compute_changed_paths(current_json, applied_json)
-        if current_json != applied_json:
+        if changed_paths:
             return JSONResponse(content={"dirty": True, "reason": "differs", "changedPaths": changed_paths})
 
         # Config matches applied, but the flake build inputs (the flake source /

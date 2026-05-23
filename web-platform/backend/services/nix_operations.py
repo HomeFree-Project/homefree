@@ -1308,16 +1308,55 @@ class NixOperations:
         recurse; arrays and scalars compare whole-value (an array is reported as
         a single path so a reorder doesn't mark every element changed). Used to
         highlight which UI fields hold undeployed changes.
+
+        Two refinements vs. a naive deep-compare, both motivated by optional
+        config sub-trees that exist on one side but not the other:
+          1. If one side is a dict and the other is `None`/missing, recurse
+             with the missing side treated as {}, so the diff lands at the
+             LEAF, not at the parent.
+          2. At leaves, treat canonical-falsy values (False / None / empty
+             string / list / dict) as equivalent. Without this, toggling a
+             checkbox like System Snapshots back to its default
+             (enable=False ≡ "no snapshots key") would leave a phantom path
+             in changedPaths and a stuck "Configuration changed" notice.
+
+        The frontend's `_diffPaths` mirrors this logic — keep them in sync.
         """
         paths: List[str] = []
-        missing = object()
+
+        def is_canonical_falsy(v):
+            if v is None or v is False or v == "":
+                return True
+            if isinstance(v, (list, dict)) and len(v) == 0:
+                return True
+            return False
 
         def walk(cur, app, prefix):
-            if isinstance(cur, dict) and isinstance(app, dict):
+            cur_is_dict = isinstance(cur, dict)
+            app_is_dict = isinstance(app, dict)
+            if cur_is_dict and app_is_dict:
                 for key in (set(cur) | set(app)):
                     child = f"{prefix}.{key}" if prefix else key
-                    walk(cur.get(key, missing), app.get(key, missing), child)
-            elif cur != app and prefix:
+                    walk(cur.get(key), app.get(key), child)
+                return
+            # One side is a dict, the other is missing (None) — recurse with
+            # the missing side as {} so the diff lands at the leaf, where
+            # the canonical-falsy check can suppress "False ≡ None" no-ops.
+            if cur_is_dict and app is None:
+                for key in cur:
+                    child = f"{prefix}.{key}" if prefix else key
+                    walk(cur[key], None, child)
+                return
+            if app_is_dict and cur is None:
+                for key in app:
+                    child = f"{prefix}.{key}" if prefix else key
+                    walk(None, app[key], child)
+                return
+            if cur == app:
+                return
+            if is_canonical_falsy(cur) and is_canonical_falsy(app):
+                return
+            if prefix:
                 paths.append(prefix)
 
         walk(
