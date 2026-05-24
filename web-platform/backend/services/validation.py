@@ -348,7 +348,36 @@ class ValidationService:
                 errors.append(f"Storage volume '{name}': missing fs-uuid")
 
             if p.get('encrypted'):
-                errors.append(f"Storage volume '{name}': encrypted volumes are not supported yet")
+                mappers = p.get('luks-mappers') or []
+                is_parity = profile in ('raid5', 'raid6')
+                # btrfs-native = per-disk LUKS (one mapper per member); parity =
+                # LUKS-on-md (one mapper for the assembled array).
+                expected = 1 if is_parity else len(members)
+                if len(mappers) != expected:
+                    errors.append(
+                        f"Storage volume '{name}': encrypted {profile} expects "
+                        f"{expected} luks-mapper "
+                        f"{'entry' if expected == 1 else 'entries'}, "
+                        f"got {len(mappers)}")
+                seen_mappers = set()
+                for m in mappers:
+                    mn = m.get('mapper') if isinstance(m, dict) else None
+                    by_id = m.get('by-id') if isinstance(m, dict) else None
+                    luks_uuid = m.get('luks-uuid') if isinstance(m, dict) else None
+                    if not (mn and by_id and luks_uuid):
+                        errors.append(
+                            f"Storage volume '{name}': luks-mapper entry missing "
+                            f"mapper / by-id / luks-uuid")
+                        continue
+                    if '/' in mn:
+                        errors.append(
+                            f"Storage volume '{name}': luks mapper name "
+                            f"'{mn}' must not contain '/'")
+                    if mn in seen_mappers:
+                        errors.append(
+                            f"Storage volume '{name}': duplicate luks mapper "
+                            f"name '{mn}'")
+                    seen_mappers.add(mn)
 
         # NFS shares (Phase 2a): host/subnet-trust exports.
         import ipaddress

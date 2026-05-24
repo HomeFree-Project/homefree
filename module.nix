@@ -742,15 +742,97 @@
               type = bool;
               default = false;
               description = ''
-                Whether members are LUKS containers unlocked at boot. Not
-                supported yet (planned for a later phase); set false.
+                Whether the volume's members are LUKS containers unlocked at boot.
+                The unlock key is the LUKS recovery passphrase at
+                `/etc/nixos/secrets/recovery-passphrase.txt` (the same value the
+                user types to unlock the system disk). Unlock is LATE — driven by
+                `/etc/crypttab` after root mount, with `nofail` so a missing /
+                failed disk never blocks the admin UI (AGENTS.md rule 10).
               '';
             };
 
             luks-mappers = lib.mkOption {
-              type = listOf str;
+              type = listOf (submodule {
+                options = {
+                  mapper = lib.mkOption {
+                    type = str;
+                    description = ''
+                      Mapper name exposed at `/dev/mapper/<mapper>`. Convention:
+                      `cryptd-<pool>-<i>` (1..N) for per-disk LUKS on btrfs-native
+                      profiles; `cryptd-<pool>` (single) for LUKS-on-md on parity
+                      profiles.
+                    '';
+                  };
+                  by-id = lib.mkOption {
+                    type = str;
+                    description = ''
+                      Stable identifier of the LUKS backing device — used to build
+                      the `/dev/disk/by-id/<by-id>` path in `/etc/crypttab`. For
+                      btrfs-native profiles this is a member disk's by-id (mirrors
+                      a row in `members`). For parity profiles it is the md
+                      array's `md-uuid-<X>` symlink (one entry per pool, the LUKS
+                      sits on the assembled `/dev/md`).
+                    '';
+                  };
+                  luks-uuid = lib.mkOption {
+                    type = str;
+                    description = ''
+                      LUKS2 container UUID captured at format time (via
+                      `cryptsetup luksUUID`). Invariant across cable/controller
+                      reseats — recorded for display, future rotation, and a
+                      defensive sanity-check before opening (catch a swapped disk
+                      before unlocking the wrong device).
+                    '';
+                  };
+                  keyfile = lib.mkOption {
+                    type = str;
+                    default = "";
+                    description = ''
+                      Absolute path to a keyfile that auto-unlocks this LUKS
+                      container at boot. Empty (the default) means the volume
+                      is master-keyed: /etc/crypttab uses `none` as the
+                      keyfile field with `tpm2-device=auto,tpm2-pcrs=7` so
+                      TPM2 auto-unlocks and the recovery passphrase prompts as
+                      fallback. Non-empty (typically
+                      `/etc/nixos/secrets/luks-keys/<luks-uuid>.key`) means
+                      the volume was adopted with a foreign passphrase — the
+                      crypttab entry references the keyfile directly; if the
+                      master key was ALSO adopted as a slot (luksAddKey),
+                      TPM2 is still tried first and the keyfile is the
+                      backup. The /etc/nixos/secrets directory is backed up,
+                      so the keyfile survives restore.
+                    '';
+                  };
+                  tpm2-enrolled = lib.mkOption {
+                    type = bool;
+                    default = true;
+                    description = ''
+                      Whether this LUKS container has a TPM2-bound keyslot
+                      (`systemd-cryptenroll --tpm2-device=auto`). When TRUE
+                      the generated /etc/crypttab line includes
+                      `tpm2-device=auto,tpm2-pcrs=7` so systemd-cryptsetup
+                      tries TPM2 unseal first at boot. When FALSE those opts
+                      are OMITTED — critical, because a `tpm2-device=auto`
+                      opt against a LUKS with NO TPM2 slot causes
+                      systemd-cryptsetup to SEGFAULT inside `tpm2_unseal`
+                      instead of falling through to the keyfile / prompt
+                      (observed on systemd 260 — boot fails with
+                      `core-dump`). Default true preserves the original
+                      master-keyed behavior for legacy pool records (which
+                      don't carry this field); foreign-keyed pools adopted
+                      via the unlock flow set it explicitly based on a
+                      probe of the live LUKS slots.
+                    '';
+                  };
+                };
+              });
               default = [];
-              description = "Per-member LUKS mapper names; empty when not encrypted.";
+              description = ''
+                Per-member LUKS containers, populated by the pool create job when
+                `encrypted = true`. Empty otherwise. Length is one entry per disk
+                for btrfs-native profiles, and a single entry (for the md device)
+                for parity profiles (raid5/raid6).
+              '';
             };
 
             mount-options = lib.mkOption {

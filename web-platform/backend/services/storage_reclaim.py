@@ -22,6 +22,7 @@ Mutually exclusive with pool creation (one storage operation at a time).
 """
 
 import logging
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -40,6 +41,7 @@ _WIPEFS = _resolve_bin("wipefs")
 _SGDISK = _resolve_bin("sgdisk")
 _VGCHANGE = _resolve_bin("vgchange")
 _UDEVADM = _resolve_bin("udevadm")
+_CRYPTSETUP = _resolve_bin("cryptsetup")
 
 _CMD_TIMEOUT_S = 180
 
@@ -176,7 +178,30 @@ class StorageReclaimService:
                     "A filesystem on these drives is still mounted — unmount it "
                     "first, then retry.")
 
-            # 3. Deactivate LVM volume groups layered on top.
+            # 3. Close any LUKS mappers sitting on the target disks or arrays
+            #    BEFORE the mdadm/LVM teardown — an open mapper holds its
+            #    backing device, which makes `mdadm --stop` and `vgchange -an`
+            #    fail with "device in use". Covers both encrypted layouts:
+            #    per-disk LUKS (mapper sits on a member disk) and LUKS-on-md
+            #    (mapper sits on the assembled array).
+            # NORMALIZE to kernel names: `knames` is already short ('vdc'), but
+            # `arrays` contains /dev paths ('/dev/md127' per
+            # resolvers/storage.py:370). `_crypt_mappers_on` reads
+            # /sys/block/<name>/holders, which only exists for kernel names —
+            # passing '/dev/md127' silently looks up an empty path and the
+            # LUKS-on-md mapper isn't found. basename strips both.
+            crypt_devs = sorted({os.path.basename(d) for d in (list(knames) + list(arrays))})
+            open_mappers = StorageReclaimService._crypt_mappers_on(crypt_devs)
+            for mapper in open_mappers:
+                StorageReclaimService._update(
+                    "luks-close", 15.0, f"Closing LUKS mapper {mapper}")
+                rc, out = StorageReclaimService._cmd(
+                    [_CRYPTSETUP, "close", mapper])
+                if rc != 0:
+                    return StorageReclaimService._error(
+                        f"Could not close LUKS mapper {mapper}: {out}")
+
+            # 4. Deactivate LVM volume groups layered on top.
             for vg in vgs:
                 StorageReclaimService._update("lvm", 25.0,
                                               f"Deactivating LVM group {vg}")
@@ -185,7 +210,7 @@ class StorageReclaimService:
                     return StorageReclaimService._error(
                         f"Could not deactivate LVM group {vg}: {out}")
 
-            # 4. Stop the md arrays.
+            # 5. Stop the md arrays.
             for md in arrays:
                 StorageReclaimService._update("md-stop", 45.0,
                                               f"Stopping array {md}")
@@ -194,7 +219,7 @@ class StorageReclaimService:
                     return StorageReclaimService._error(
                         f"Could not stop array {md}: {out}")
 
-            # 5. Wipe each disk: zero md superblocks on its partitions + itself
+            # 6. Wipe each disk: zero md superblocks on its partitions + itself
             #    (must precede the zap, which removes the partitions), clear
             #    signatures, then destroy the partition table.
             for dk in knames:
@@ -245,6 +270,37 @@ class StorageReclaimService:
                     out.append(f"/dev/{child.name}")
         except OSError:
             pass
+        return out
+
+    @staticmethod
+    def _crypt_mappers_on(devs: List[str]) -> List[str]:
+        """Open LUKS mapper names whose backing device is one of `devs`
+        (kernel names like 'sdb' or 'md127'). Walks `/sys/block/<dev>/holders`
+        and filters to holders whose `dm/uuid` starts with `CRYPT-`. Returns
+        de-duplicated names suitable for `cryptsetup close`. Pure /sys read —
+        no subprocess (safe even when cryptsetup is missing)."""
+        out: List[str] = []
+        for d in devs:
+            holders = Path(f"/sys/block/{d}/holders")
+            if not holders.is_dir():
+                continue
+            try:
+                children = list(holders.iterdir())
+            except OSError:
+                continue
+            for h in children:
+                try:
+                    uuid = (h / "dm" / "uuid").read_text().strip()
+                except OSError:
+                    continue
+                if not uuid.startswith("CRYPT-"):
+                    continue
+                try:
+                    name = (h / "dm" / "name").read_text().strip()
+                except OSError:
+                    continue
+                if name and name not in out:
+                    out.append(name)
         return out
 
     @staticmethod

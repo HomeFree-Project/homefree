@@ -118,10 +118,21 @@ export const previewStoragePool = (members, profile) =>
   post('/api/storage/preview', { members, profile });
 export const createStoragePool = (payload) =>
   post('/api/storage/pools/create', payload);
+// Reformat: put a NEW filesystem on an existing mdadm parity array WITHOUT
+// re-running mdadm --create (skips the multi-TB resync at the cost of any
+// data currently on the array). Status reported via the same create-status
+// endpoint — the in-flight slot is shared.
+export const reformatStoragePool = (payload) =>
+  post('/api/storage/pools/reformat', payload);
 export const getStoragePoolCreateStatus = () =>
   get('/api/storage/pools/create-status');
 export const forgetStoragePool = (name) =>
   post('/api/storage/pools/forget', { name });
+// Atomic destroy: unmount → close LUKS → tear down md → wipe disks →
+// remove pool record. The pool card's "Reclaim & erase" uses this so
+// the user doesn't have to Remove → Apply → Reclaim as three steps.
+export const destroyStoragePool = (name) =>
+  post('/api/storage/pools/destroy', { name });
 // Re-add a pool record verbatim. Used by the Undo Remove flow with the
 // appliedConfig record so the post-undo state byte-matches applied (no
 // pending diff afterward).
@@ -152,6 +163,48 @@ export const getMountableDevices = () => get('/api/storage/mountable-devices');
 // System mounts: read-only / mount info for the "System" card in the
 // unified Volumes section. Returns a list (length 0 or 1).
 export const getSystemVolumes = () => get('/api/storage/system-volumes');
+
+// Locked LUKS containers — encrypted volumes detected on the box whose
+// mappers are NOT open (so the contents are unreadable until someone
+// unlocks). Each record carries `master_key_unlocks` so the UI shows a
+// one-click "Unlock with master key" for HomeFree-keyed volumes and a
+// passphrase modal for foreign-keyed ones.
+export const getLockedLuks = () => get('/api/storage/locked-luks');
+// Persistently open a locked LUKS container. Pass `useMasterKey=true` to
+// authorize via the configured master key, or supply `passphrase` for a
+// foreign-keyed volume. The two persistence flags are honored only for
+// foreign-key unlocks (no-ops with master):
+//   saveKey       — write the passphrase to
+//                   /etc/nixos/secrets/luks-keys/<luks-uuid>.key so
+//                   Promote can record it as the crypttab keyfile
+//                   (auto-unlock on boot).
+//   adoptMaster   — `cryptsetup luksAddKey` to add the master key as a
+//                   new LUKS slot + TPM2-enroll, so the volume joins
+//                   the regular master-keyed unlock path.
+// Returns {mapper, device, luks_uuid, key_stored, master_adopted}.
+export const unlockLuks = (
+  device, useMasterKey, passphrase, saveKey = false, adoptMaster = false,
+) =>
+  post('/api/storage/luks/unlock', {
+    device, use_master_key: !!useMasterKey, passphrase: passphrase || '',
+    save_key: !!saveKey, adopt_master: !!adoptMaster,
+  });
+
+// Storage encryption (master key for data-pool LUKS containers). The master
+// key is the LUKS recovery passphrase persisted at
+// /etc/nixos/secrets/recovery-passphrase.txt — same value that unlocks the
+// system disk's recovery slot. The Storage UI uses these to gate the
+// "Encrypt this volume" toggle on first-time setup.
+export const getStorageEncryptionStatus = () =>
+  get('/api/storage/encryption/status');
+// Generate a fresh 6-base36 master passphrase. Returns it ONCE so the UI
+// can display it for the admin to save. Backend refuses if one already exists.
+export const generateStorageMasterKey = () =>
+  post('/api/storage/encryption/master-key/generate', {});
+// Persist a user-provided master passphrase (min 20 chars, printable ASCII).
+// Backend refuses if one already exists.
+export const setStorageMasterKey = (passphrase) =>
+  post('/api/storage/encryption/master-key/set', { passphrase });
 
 // Locale & Timezone — cached module-level so the network call only happens
 // once per page load. The data is large but immutable for the session, so

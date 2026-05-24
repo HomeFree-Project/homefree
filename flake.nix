@@ -14,7 +14,10 @@
     # Secure Boot support for the installer's optional lanzaboote path.
     # Pinned to a release tag; the generated installed-system flake
     # references this same revision when the user opts into Secure Boot.
-    lanzaboote.url = "github:nix-community/lanzaboote/v0.4.2";
+    # v0.4.3 dropped the "fat stub" build (which on v0.4.2 broke under the
+    # currently-locked nixpkgs because its rust-docs FOD fetched a file
+    # with no extension that unpackPhase couldn't dispatch).
+    lanzaboote.url = "github:nix-community/lanzaboote/v0.4.3";
     lanzaboote.inputs.nixpkgs.follows = "nixpkgs";
 
     nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";

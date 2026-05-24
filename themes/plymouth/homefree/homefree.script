@@ -31,23 +31,32 @@ for (i = 0; i < 8; i++) {
     spinner_dot[i].sprite.SetOpacity(0);
 }
 
+# When a password prompt is active we suppress the spinner (the redraw
+# would otherwise paint the dots over the prompt every frame) and the rest
+# of the splash chrome — see display_password_callback below.
+password_active = 0;
+
 # Animate spinner
 fun refresh_callback() {
     spinner_angle = spinner_angle + 0.1;
 
     # Update each dot position and opacity
     for (i = 0; i < 8; i++) {
-        angle = spinner_angle + (i * 3.14159 * 2 / 8);
-        x = spinner_x + Math.Cos(angle) * spinner_radius;
-        y = spinner_y + Math.Sin(angle) * spinner_radius;
+        if (password_active) {
+            spinner_dot[i].sprite.SetOpacity(0);
+        } else {
+            angle = spinner_angle + (i * 3.14159 * 2 / 8);
+            x = spinner_x + Math.Cos(angle) * spinner_radius;
+            y = spinner_y + Math.Sin(angle) * spinner_radius;
 
-        # Create dot as a circle approximation using text
-        opacity = 0.3 + (i / 8.0) * 0.7;
-        spinner_dot[i].image = Image.Text("●", opacity, opacity, opacity, 1.0, "Sans 12");
-        spinner_dot[i].sprite.SetImage(spinner_dot[i].image);
-        spinner_dot[i].sprite.SetX(x - spinner_dot[i].image.GetWidth() / 2);
-        spinner_dot[i].sprite.SetY(y - spinner_dot[i].image.GetHeight() / 2);
-        spinner_dot[i].sprite.SetOpacity(1.0);
+            # Create dot as a circle approximation using text
+            opacity = 0.3 + (i / 8.0) * 0.7;
+            spinner_dot[i].image = Image.Text("●", opacity, opacity, opacity, 1.0, "Sans 12");
+            spinner_dot[i].sprite.SetImage(spinner_dot[i].image);
+            spinner_dot[i].sprite.SetX(x - spinner_dot[i].image.GetWidth() / 2);
+            spinner_dot[i].sprite.SetY(y - spinner_dot[i].image.GetHeight() / 2);
+            spinner_dot[i].sprite.SetOpacity(1.0);
+        }
     }
 }
 
@@ -95,27 +104,58 @@ fun message_callback(text) {
 
 Plymouth.SetMessageFunction(message_callback);
 
-# Display message function
+# Persistent prompt sprites — updated in place on every keystroke. Plymouth
+# invokes display_password_callback per character; allocating fresh sprites
+# each time would pile up overlapping bullet rows (each pass leaks the
+# previous bullets_sprite because the local reference goes out of scope but
+# the underlying sprite stays on the screen).
+prompt_sprite = Sprite();
+prompt_sprite.SetOpacity(0);
+bullets_sprite = Sprite();
+bullets_sprite.SetOpacity(0);
+
+# Restore the splash chrome (logo, subtitle, spinner) and hide any prompt
+# left over from a password phase. Plymouth fires this when it switches
+# back to "normal" display mode, i.e. after the unlock completes.
 fun display_normal_callback() {
+    password_active = 0;
+    logo.sprite.SetOpacity(1.0);
+    subtitle.sprite.SetOpacity(1.0);
     message_sprite.SetOpacity(1.0);
+    prompt_sprite.SetOpacity(0);
+    bullets_sprite.SetOpacity(0);
 }
 
+# Show the LUKS / sudo password prompt. We HIDE the logo + subtitle + boot
+# message because the spinner-and-logo layout previously rendered ON TOP of
+# the prompt, leaving the user unsure whether the box was actually waiting
+# for input (pressing Escape revealed the prompt — that's the "this graphic
+# boot loader hides the prompt" bug). The spinner is suppressed via the
+# `password_active` gate in refresh_callback above.
 fun display_password_callback(prompt, bullets) {
-    # For password prompts during boot
-    prompt_image = Image.Text(prompt, 1.0, 1.0, 1.0, 1.0, "Sans 14");
-    prompt_sprite = Sprite(prompt_image);
-    prompt_sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - prompt_image.GetWidth() / 2);
-    prompt_sprite.SetY(Window.GetY() + Window.GetHeight() / 2 + 50);
+    password_active = 1;
+    logo.sprite.SetOpacity(0);
+    subtitle.sprite.SetOpacity(0);
+    message_sprite.SetOpacity(0);
 
-    # Display bullets for password
-    bullets_text = "";
+    prompt_image = Image.Text(prompt, 1.0, 1.0, 1.0, 1.0, "Sans 18");
+    prompt_sprite.SetImage(prompt_image);
+    prompt_sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - prompt_image.GetWidth() / 2);
+    prompt_sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - 20);
+    prompt_sprite.SetOpacity(1.0);
+
+    # Build the bullets line. A single space when no characters have been
+    # entered keeps the sprite a stable size — plymouth doesn't always
+    # render a zero-width image cleanly.
+    bullets_text = " ";
     for (i = 0; i < bullets; i++) {
         bullets_text += "• ";
     }
-    bullets_image = Image.Text(bullets_text, 1.0, 1.0, 1.0, 1.0, "Sans 14");
-    bullets_sprite = Sprite(bullets_image);
+    bullets_image = Image.Text(bullets_text, 1.0, 1.0, 1.0, 1.0, "Sans 22");
+    bullets_sprite.SetImage(bullets_image);
     bullets_sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - bullets_image.GetWidth() / 2);
-    bullets_sprite.SetY(prompt_sprite.GetY() + 30);
+    bullets_sprite.SetY(prompt_sprite.GetY() + 36);
+    bullets_sprite.SetOpacity(1.0);
 }
 
 Plymouth.SetDisplayNormalFunction(display_normal_callback);

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Pinned lanzaboote revision - must match the flake input in the repo
 # root flake.nix. Used only when the user opts into Secure Boot.
-LANZABOOTE_FLAKE_REF = "github:nix-community/lanzaboote/v0.4.2"
+LANZABOOTE_FLAKE_REF = "github:nix-community/lanzaboote/v0.4.3"
 
 
 class InstallationService:
@@ -609,11 +609,15 @@ class InstallationService:
             'use_encryption': partitioning.get('use_encryption', True),
             'use_swap': partitioning.get('use_swap', True),
             'use_lanzaboote': partitioning.get('use_lanzaboote', False),
+            # Optional BYO passphrase from the installer's advanced panel.
+            # Empty / missing => auto-generate (current default behavior).
+            # Validated below in _generate_luks_secrets before use.
+            'user_passphrase': partitioning.get('user_passphrase') or '',
         }
 
     @staticmethod
-    def _generate_luks_secrets() -> str:
-        """Create the install-time LUKS keyfile and a human recovery
+    def _generate_luks_secrets(user_passphrase: str = "") -> str:
+        """Create the install-time LUKS keyfile and decide the recovery
         passphrase.
 
         disko reads `settings.keyFile` *literally on the live installer*
@@ -622,6 +626,13 @@ class InstallationService:
         the target's /etc/nixos after disko mounts it (see
         _copy_secrets_to_target) so the installed initrd can read it
         until the first-boot TPM2 service shreds it.
+
+        Recovery passphrase: if `user_passphrase` is non-empty and ≥ 20
+        chars, use it verbatim (BYO from the installer's Advanced panel).
+        Otherwise auto-generate a fresh 6-base36-group value. The chosen
+        value is added as keyslot 2 on every system LUKS partition AND
+        persisted to /etc/nixos/secrets/recovery-passphrase.txt as the
+        master key for any future encrypted data pool.
 
         Returns the recovery passphrase for the UI completion screen.
         """
@@ -641,13 +652,25 @@ class InstallationService:
         write_file_privileged(LUKS_KEYFILE, keyfile_content)
         run_privileged(["chmod", "600", LUKS_KEYFILE], check=True)
 
-        # Human recovery passphrase: 6 base36 groups, easy to transcribe.
-        alphabet = string.ascii_lowercase + string.digits
-        groups = ["".join(secrets.choice(alphabet) for _ in range(5))
-                  for _ in range(6)]
-        recovery_passphrase = "-".join(groups)
-
-        logger.info("Generated LUKS keyfile and recovery passphrase")
+        user_passphrase = (user_passphrase or "").rstrip("\n")
+        if user_passphrase:
+            if len(user_passphrase) < 20:
+                # Defensive: the frontend already enforces this, but a
+                # too-short BYO value here would still install — and then
+                # silently weaken the encryption. Fail loudly.
+                raise Exception(
+                    "Recovery passphrase too short — need at least 20 "
+                    "characters (got " + str(len(user_passphrase)) + ").")
+            recovery_passphrase = user_passphrase
+            logger.info("Using admin-supplied recovery passphrase (length=%d)",
+                        len(recovery_passphrase))
+        else:
+            # Human recovery passphrase: 6 base36 groups, easy to transcribe.
+            alphabet = string.ascii_lowercase + string.digits
+            groups = ["".join(secrets.choice(alphabet) for _ in range(5))
+                      for _ in range(6)]
+            recovery_passphrase = "-".join(groups)
+            logger.info("Generated LUKS keyfile and recovery passphrase")
         return recovery_passphrase
 
     @staticmethod
@@ -666,8 +689,17 @@ class InstallationService:
         run_privileged(["cp", LUKS_KEYFILE, target_keyfile], check=True)
         run_privileged(["chmod", "600", target_keyfile], check=True)
 
+        # Write the recovery passphrase WITHOUT a trailing newline. The same
+        # file is later read by storage_pool.py (`_materialize_master_passphrase`)
+        # and the systemd-cryptsetup keyfile path; both must see the EXACT
+        # bytes cryptsetup binds to the LUKS slot (`_add_recovery_keyslots`
+        # below adds the slot via stdin without `--key-file=-`, i.e. passphrase
+        # semantics — newline-stripped). A trailing newline would split:
+        # the slot would be bound to "X" but the file-read would see "X\n",
+        # and any unlock via the file would fail. Files created before this
+        # fix have a trailing newline; runtime readers `rstrip(b"\n")`.
         recovery_path = str(target_secrets / "recovery-passphrase.txt")
-        write_file_privileged(recovery_path, recovery_passphrase + "\n")
+        write_file_privileged(recovery_path, recovery_passphrase)
         run_privileged(["chmod", "600", recovery_path], check=True)
         logger.info("Copied LUKS secrets into target /etc/nixos/secrets")
 
@@ -724,7 +756,8 @@ class InstallationService:
         # before disko runs (disko reads settings.keyFile literally).
         recovery_passphrase = None
         if use_encryption:
-            recovery_passphrase = InstallationService._generate_luks_secrets()
+            recovery_passphrase = InstallationService._generate_luks_secrets(
+                user_passphrase=part.get('user_passphrase') or '')
         InstallationService._recovery_passphrase = recovery_passphrase
 
         # Size swap to RAM (capped) so hibernation works on single-disk;
@@ -1246,12 +1279,91 @@ class InstallationService:
             raise Exception(f"Failed to initialize git: {e}")
 
     @staticmethod
+    def _seed_sbctl_keys(root_mount_point: str):
+        """Generate sbctl Secure Boot keys at /mnt/var/lib/sbctl BEFORE the
+        lanzaboote bootloader installer runs as part of nixos-install.
+
+        The lanzaboote installer reads the public key at
+        `${pkiBundle}/keys/db/db.pem` to compute each stub's input-addressed
+        name AND to sign each stub. With no keys present it bails at the very
+        first generation:
+
+            Failed to install generation 1:
+              Get stub name: No such file or directory (os error 2)
+
+        Generating keys here ENROLLS NOTHING into firmware — that's the
+        first-boot `homefree-secureboot-enroll` oneshot's job (which runs
+        `sbctl enroll-keys` only when firmware is in Setup Mode). These are
+        just the local PKI bundle lanzaboote needs to sign images at
+        activation time.
+
+        Idempotent: re-running install after a previous failure sees the
+        existing key file and skips. Output paths land directly under the
+        target so nixos-install's bootloader step (which chroots into /mnt)
+        sees them at the path the lanzaboote NixOS module references by
+        default (`${cfg.pkiBundle}/keys/db/db.pem`).
+        """
+        target_sbctl = f"{root_mount_point}/var/lib/sbctl"
+        target_keydir = f"{target_sbctl}/keys"
+        target_guid = f"{target_sbctl}/GUID"
+        public_key = f"{target_keydir}/db/db.pem"
+
+        # Existence probe through stat — the nixos user can't read under
+        # /mnt directly, but the pkexec wrapper has coreutils on PATH.
+        # `--` guards against any path that starts with `-`. Return code 0 =
+        # the public key file exists, so a previous run already seeded keys
+        # for this install and we can skip.
+        rc = run_privileged(
+            ["stat", "-t", "--", public_key],
+            capture_output=True, check=False).returncode
+        if rc == 0:
+            logger.info(
+                "Secure Boot keys already present at %s — skipping create.",
+                public_key)
+            return
+
+        run_privileged(["mkdir", "-p", target_keydir], check=True)
+
+        # `--export <dir>` overrides sbctl's default Keydir; `--database-path
+        # <file>` overrides the GUID file path. `--disable-landlock` avoids
+        # the landlock sandbox restricting writes outside /var/lib/sbctl on
+        # the live ISO (we're writing into /mnt instead). Pure list args —
+        # no shell wrapping, no env-var games, no quoting hazards.
+        logger.info("Generating Secure Boot keys at %s", target_keydir)
+        try:
+            result = run_privileged(
+                ["sbctl",
+                 "--disable-landlock",
+                 "create-keys",
+                 "--export", target_keydir,
+                 "--database-path", target_guid],
+                capture_output=True, text=True, check=True)
+            output = (result.stdout or "").strip()
+            if output:
+                logger.info("sbctl: %s", output)
+        except subprocess.CalledProcessError as e:
+            err = ((e.stderr or "") + (e.stdout or "")).strip()
+            raise Exception(
+                "Failed to generate Secure Boot keys for lanzaboote: "
+                + (err or str(e))) from e
+
+    @staticmethod
     def _nixos_install(root_mount_point: str):
         """Run nixos-install"""
         import os
 
         config = ConfigService.get_config()
         hostname = config.get('hostname', 'homefree')
+
+        # When the user opted into Secure Boot, generate the sbctl PKI under
+        # the target FIRST. nixos-install's bootloader step is lanzaboote's
+        # installer when `boot.lanzaboote.enable = true`; that installer fails
+        # with "Get stub name: No such file or directory" unless the keys are
+        # in place. Inexpensive to compute at install time and idempotent.
+        part = InstallationService._get_partitioning()
+        fw_type = "efi" if Path("/sys/firmware/efi").exists() else "bios"
+        if part.get('use_lanzaboote') and fw_type == "efi":
+            InstallationService._seed_sbctl_keys(root_mount_point)
 
         try:
             # nixos-install automatically prepends 'nixosConfigurations.' so just pass the hostname

@@ -2,13 +2,16 @@ import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/table-editor.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
+import { navIcon } from '../../../shared/icons.js';
 import {
   getStorageDrives,
   getStoragePools,
   previewStoragePool,
   createStoragePool,
+  reformatStoragePool,
   getStoragePoolCreateStatus,
   forgetStoragePool,
+  destroyStoragePool,
   restoreStoragePool,
   reclaimStorageDisks,
   getStorageReclaimStatus,
@@ -19,6 +22,11 @@ import {
   getMounts,
   getMountableDevices,
   getSystemVolumes,
+  getStorageEncryptionStatus,
+  generateStorageMasterKey,
+  setStorageMasterKey,
+  getLockedLuks,
+  unlockLuks,
 } from '../../../api/client.js';
 
 /**
@@ -132,11 +140,52 @@ class StorageModule extends LitElement {
     createStatus: { state: true },
     createError: { state: true },
     ackBoot: { state: true },
+    encryptToggle: { state: true },     // wizard: encrypt this new volume?
     reclaimTarget: { state: true },
     reclaimConfirmText: { state: true },
     reclaiming: { state: true },
     reclaimStatus: { state: true },
     reclaimError: { state: true },
+    // Master encryption key (data-pool LUKS). Backend probes whether the
+    // master key file exists, whether a TPM is present, and whether Secure
+    // Boot enrollment is still pending (PCR-7 re-lock risk). null while
+    // loading; never undefined-checked downstream so it's safe to read
+    // optional fields with ?.
+    encryptionStatus: { state: true },
+    // Master-key setup modal state. Generate and paste-in flows live in one
+    // modal with a tab toggle; the generated value is shown ONCE after a
+    // successful generate (no second fetch — backend refuses).
+    masterKeySetupOpen: { state: true },
+    masterKeySetupMode: { state: true },    // 'generate' | 'paste'
+    masterKeyPasted: { state: true },
+    masterKeyGenerated: { state: true },
+    masterKeySaving: { state: true },
+    masterKeyError: { state: true },
+    masterKeyAck: { state: true },          // user confirmed they saved the value
+    // Reformat-existing-array modal: put a new filesystem on an already-
+    // assembled mdadm array WITHOUT re-running mdadm --create (no resync).
+    // Reuses the create-status poll endpoint (shared single-flight slot).
+    reformatTarget: { state: true },        // { md_device, members, profile, label?, size_bytes? }
+    reformatName: { state: true },
+    reformatMountpoint: { state: true },
+    reformatEncrypt: { state: true },
+    reformatConfirmText: { state: true },
+    reformatting: { state: true },
+    reformatStatus: { state: true },
+    reformatError: { state: true },
+    // Locked LUKS containers (closed mappers — encrypted volumes whose
+    // contents are inaccessible until unlocked). Each carries
+    // `master_key_unlocks` so we can offer a one-click master unlock vs
+    // a passphrase modal. After unlock the mapper stays open and the
+    // regular btrfs-candidate flow takes over.
+    lockedLuks: { state: true },
+    unlockTarget: { state: true },        // record from lockedLuks (or null)
+    unlockPassphrase: { state: true },
+    unlockSaveKey: { state: true },       // write /etc/nixos/secrets/luks-keys/<uuid>.key
+    unlockAdoptMaster: { state: true },   // add master key as a new LUKS slot
+    unlockShowAdvanced: { state: true },  // expand the persistence-options panel
+    unlocking: { state: true },
+    unlockError: { state: true },
   };
 
   static styles = css`
@@ -328,13 +377,24 @@ class StorageModule extends LitElement {
     .pool-actions { display: flex; gap: 8px; align-items: center; }
 
     .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px;
       font-size: 11px; font-weight: 600; white-space: nowrap;
     }
     .badge-ok { background: var(--hf-accent-soft); color: var(--hf-accent); }
     .badge-warn { background: var(--hf-warn-soft); color: var(--hf-warn); }
     .badge-err { background: rgba(239,68,68,0.15); color: var(--hf-err); }
     .badge-muted { background: var(--hf-surface-3); color: var(--hf-text-muted); }
+    /* Lucide nav icons render as 24x24 by default; scale them down inside
+       badges and inline-with-title spans so they match the surrounding
+       text weight. The currentColor stroke is set by the parent
+       (.badge / .pool-name), so the icon tints with that color
+       automatically. */
+    .badge svg { width: 12px; height: 12px; }
+    .pool-name svg {
+      width: 16px; height: 16px;
+      vertical-align: -3px; margin-right: 6px;
+    }
 
     .inline-confirm {
       margin-top: 10px; padding: 10px; border-radius: 8px;
@@ -368,7 +428,7 @@ class StorageModule extends LitElement {
 
     .field { margin-bottom: 14px; }
     .field label { display: block; font-size: 13px; color: var(--hf-text); margin-bottom: 5px; font-weight: 500; }
-    .field input[type="text"], .field select {
+    .field input[type="text"], .field input[type="password"], .field select {
       width: 100%; box-sizing: border-box;
       background: var(--hf-surface-2); color: var(--hf-text);
       border: 1px solid var(--hf-border-2); border-radius: 8px;
@@ -559,6 +619,34 @@ class StorageModule extends LitElement {
     this.reclaimStatus = null;
     this.reclaimError = '';
     this._pollTimer = null;
+    this.encryptionStatus = null;
+    this.masterKeySetupOpen = false;
+    this.masterKeySetupMode = 'generate';
+    this.masterKeyPasted = '';
+    this.masterKeyGenerated = '';
+    this.masterKeySaving = false;
+    this.masterKeyError = '';
+    this.masterKeyAck = false;
+    this.reformatTarget = null;
+    this.reformatName = '';
+    this.reformatMountpoint = '';
+    this.reformatEncrypt = false;
+    this.reformatConfirmText = '';
+    this.reformatting = false;
+    this.reformatStatus = null;
+    this.reformatError = '';
+    this.lockedLuks = [];
+    this.unlockTarget = null;
+    this.unlockPassphrase = '';
+    // Both persistence options default ON — that's the recommended path
+    // (saves the keyfile + adopts master so auto-unlock on reboot just
+    // works). Hidden behind "Advanced" so the common case is one click
+    // (paste + Unlock); users who want to opt out can expand and uncheck.
+    this.unlockSaveKey = true;
+    this.unlockAdoptMaster = true;
+    this.unlockShowAdvanced = false;
+    this.unlocking = false;
+    this.unlockError = '';
   }
 
   connectedCallback() {
@@ -599,16 +687,26 @@ class StorageModule extends LitElement {
     this.creating = false;
     this.createStatus = null;
     this.createError = '';
+    // Default ON when the master key is configured — once a box has
+    // encryption set up, the safer default is to encrypt new volumes too.
+    // Toggling OFF is one click; the user is in the wizard either way.
+    this.encryptToggle = !!(this.encryptionStatus && this.encryptionStatus.master_key_configured);
   }
 
   async loadData() {
     this.loading = true;
     this.loadError = '';
     try {
-      const [d, p, imp, pr, mr, md, sv] = await Promise.all([
+      const [d, p, imp, pr, mr, md, sv, enc, locked] = await Promise.all([
         getStorageDrives(), getStoragePools(), getStorageImportable(),
         getPromotableBtrfs(), getMounts(), getMountableDevices(),
-        getSystemVolumes()]);
+        getSystemVolumes(),
+        // Encryption status is best-effort: if the endpoint 500s, the rest
+        // of the page must still render. Swallowing the rejection lets
+        // Promise.all settle even when this single probe fails.
+        getStorageEncryptionStatus().catch(() => null),
+        getLockedLuks().catch(() => null),
+      ]);
       this.drives = d.drives || [];
       this.pools = p.pools || [];
       this.importable = imp.importable || [];
@@ -616,6 +714,9 @@ class StorageModule extends LitElement {
       this.mountsRuntime = mr.mounts || [];
       this.mountableDevices = md.devices || [];
       this.systemVolumes = sv.system_volumes || [];
+      this.encryptionStatus = enc
+        || { master_key_configured: false, tpm_present: false, secure_boot_pending: false };
+      this.lockedLuks = (locked && locked.locked) || [];
     } catch (e) {
       this.loadError = e.message || 'Failed to load storage information.';
       // Surface the error state, not perpetual skeletons.
@@ -655,10 +756,15 @@ class StorageModule extends LitElement {
   }
 
   // Drives that don't already live inside some other card. Anything in a
-  // pool, mount, btrfs candidate, stale-signature group, OR System card is
-  // already represented somewhere; the remainder are the cards we render at
-  // the top of the unified Volumes list with per-drive Create / Use-existing
-  // buttons.
+  // pool, mount, btrfs candidate, MULTI-disk reclaim group, locked-LUKS
+  // card, OR System card is already represented somewhere; the remainder
+  // are the cards we render at the top of the unified Volumes list.
+  //
+  // SINGLE-disk reclaim groups are NOT a reason to exclude — those drives
+  // STAY in the Available list and their Reclaim button rides on the
+  // Available drive card itself. Reclaim-blocked disks (mounted, can't
+  // wipe) are also excluded because the wizard wouldn't accept them
+  // either; the stale-group card surfaces the "unmount to reclaim" hint.
   _unassociatedDrives() {
     const claimed = this._claimedDriveIds;
     const candidateDisks = new Set();
@@ -667,7 +773,24 @@ class StorageModule extends LitElement {
     }
     const staleDisks = new Set();
     for (const d of (this.drives || [])) {
-      if ((d.reclaim || d.reclaim_blocked) && d.by_id) staleDisks.add(d.by_id);
+      if (!d.by_id) continue;
+      // Multi-disk reclaim group → render as standalone stale-group card.
+      const memberCount = (d.reclaim?.member_ids || []).length;
+      if (memberCount > 1) staleDisks.add(d.by_id);
+      // Mounted-but-reclaimable (reclaim_blocked) → exclude from Available
+      // either way (single OR multi-disk); the stale-group card surfaces
+      // the blocker explanation.
+      else if (d.reclaim_blocked) staleDisks.add(d.by_id);
+    }
+    // Disks backing a locked-LUKS card belong to that card alone — without
+    // this filter a single-disk LUKS like /dev/vdg shows up TWICE: once as
+    // the "Locked encrypted volume" AND once as a generic "Unknown"
+    // Available drive (closed LUKS has no open holder, so the disk reads
+    // as eligible). Members captured straight off the locked-LUKS records;
+    // matches the same suppression idea as candidateDisks/staleDisks.
+    const lockedDisks = new Set();
+    for (const l of (this.lockedLuks || [])) {
+      for (const id of (l.members || [])) lockedDisks.add(id);
     }
     const osDiskIds = new Set();
     for (const sv of (this.systemVolumes || [])) {
@@ -678,6 +801,7 @@ class StorageModule extends LitElement {
       if (claimed.has(d.by_id)) return false;
       if (candidateDisks.has(d.by_id)) return false;
       if (staleDisks.has(d.by_id)) return false;
+      if (lockedDisks.has(d.by_id)) return false;
       if (osDiskIds.has(d.by_id)) return false;
       return true;
     });
@@ -698,17 +822,103 @@ class StorageModule extends LitElement {
     return (this.promotable || []).filter((c) => !mountUuids.has(c.fs_uuid));
   }
 
-  // Leftover RAID/LVM signature groups, deduped by reclaim id. Each group
-  // is rendered once with all its members listed inside the card; the user
-  // gets a single Reclaim & erase action on the group, never per-drive.
+  // Leftover RAID/LVM signature groups, deduped by reclaim id. Only
+  // MULTI-disk reclaim groups (mdadm / LVM / multi-disk-stale) get
+  // their own card here — a single-disk reclaim is rendered as a Reclaim
+  // button on the disk's existing card (Available drive, btrfs
+  // candidate, locked-LUKS), so no extra noise.
+  //
+  // Suppresses groups whose disks are entirely covered by:
+  //   - a btrfs candidate (merge into candidate card), OR
+  //   - a pool record (pending or applied) — e.g. right after a Reformat
+  //     the new `tank` pool record claims md127's member by-ids, so the
+  //     leftover-RAID-array card for the SAME md127 would be a duplicate.
+  //   - a locked-LUKS card — same physical thing; the locked card already
+  //     carries Reclaim & erase + Use array buttons.
   _staleSignatureGroups() {
+    const covered = new Set();
+    for (const g of this._candidateReclaimMap().values()) covered.add(g.id);
+    // Pool records → cover their underlying reclaim groups by member-set.
+    const poolMemberSets = (this.config?.storage?.pools || []).map(
+      (p) => new Set(p.members || []));
+    // Locked-LUKS cards → cover their underlying reclaim groups by member-set.
+    const lockedMemberSets = (this.lockedLuks || []).map(
+      (l) => new Set(l.members || []));
+    const allCoverSets = [...poolMemberSets, ...lockedMemberSets];
+    if (allCoverSets.length) {
+      for (const d of (this.drives || [])) {
+        if (!d.reclaim) continue;
+        const memberIds = d.reclaim.member_ids || [];
+        if (memberIds.length === 0) continue;
+        for (const cover of allCoverSets) {
+          if (memberIds.every((id) => cover.has(id))) {
+            covered.add(d.reclaim.id);
+            break;
+          }
+        }
+      }
+    }
     const byId = new Map();
     for (const d of (this.drives || [])) {
       if (!d.reclaim) continue;
+      // Skip single-disk groups — the disk's own card (Available drive,
+      // candidate, etc.) shows the Reclaim button instead. This is what
+      // keeps a plain "Contains ext4" Available card from sprouting a
+      // duplicate "Unmanaged drive" stale-group card.
+      if ((d.reclaim.member_ids || []).length <= 1) continue;
       const id = d.reclaim.id;
+      if (covered.has(id)) continue;
       if (!byId.has(id)) byId.set(id, d.reclaim);
     }
     return [...byId.values()];
+  }
+
+  // For each locked-LUKS record, the reclaim group that covers its
+  // underlying members (so the locked card can include the existing
+  // Reclaim & erase action — same merging idea as `_candidateReclaimMap`).
+  _lockedLuksReclaimMap() {
+    const drivesById = new Map((this.drives || []).map((d) => [d.by_id, d]));
+    const out = new Map();
+    for (const l of (this.lockedLuks || [])) {
+      const memberIds = l.members || [];
+      if (memberIds.length === 0) continue;
+      let id = null;
+      let group = null;
+      let coherent = true;
+      for (const m of memberIds) {
+        const r = drivesById.get(m)?.reclaim;
+        if (!r) { coherent = false; break; }
+        if (id === null) { id = r.id; group = r; }
+        else if (r.id !== id) { coherent = false; break; }
+      }
+      if (coherent && group) out.set(l.id, group);
+    }
+    return out;
+  }
+
+  // For each btrfs candidate, the reclaim group that covers ALL its member
+  // drives — or null if the members split across multiple groups, or none
+  // of them are reclaimable. Used by both the candidate card (to render an
+  // inline Reclaim & erase button) AND `_staleSignatureGroups` (to suppress
+  // the duplicate stale-group card for the same physical thing).
+  _candidateReclaimMap() {
+    const drivesById = new Map((this.drives || []).map((d) => [d.by_id, d]));
+    const out = new Map();
+    for (const c of (this.promotable || [])) {
+      const memberIds = c.members || [];
+      if (memberIds.length === 0) continue;
+      let id = null;
+      let group = null;
+      let coherent = true;
+      for (const m of memberIds) {
+        const r = drivesById.get(m)?.reclaim;
+        if (!r) { coherent = false; break; }
+        if (id === null) { id = r.id; group = r; }
+        else if (r.id !== id) { coherent = false; break; }
+      }
+      if (coherent && group) out.set(c.fs_uuid, group);
+    }
+    return out;
   }
 
   get _claimedDriveIds() {
@@ -742,6 +952,16 @@ class StorageModule extends LitElement {
   _openWizard() {
     this._resetWizard();
     this.wizardOpen = true;
+  }
+
+  // Sole entry point to the create-volume wizard — opens with NO drive
+  // preselected, the user picks any subset (1..N) via the step-1 checkbox
+  // list. Wired to the Volumes section header's "+ Create volume" button.
+  // Earlier the wizard was also entered from per-drive "Create" buttons,
+  // but those were ambiguous about multi-drive support and have been
+  // removed; this is now the only way in.
+  _openCreateVolume() {
+    this._openWizard();
   }
 
   _closeWizard() {
@@ -845,7 +1065,11 @@ class StorageModule extends LitElement {
       mountpoint: this.mountpoint.trim(),
       profile: this.profile,
       members: this.selected,
-      encrypted: false,
+      // Only honor the toggle when the master key is configured (the wizard
+      // disables it otherwise, but defend in depth).
+      encrypted: !!(this.encryptToggle
+                    && this.encryptionStatus
+                    && this.encryptionStatus.master_key_configured),
       force: this._selectedOverridable,
     };
     try {
@@ -1210,25 +1434,21 @@ class StorageModule extends LitElement {
         ? html`<span class="badge badge-err">FAIL</span>`
         : 'OK';
     }
-    // "Mount existing filesystem" only makes sense when the drive's
-    // filesystem is in the backend's mountable list — otherwise the click
-    // would open a modal that can't actually mount anything for this drive
-    // (LUKS, swap, weird fs). Hide the button in that case; the data-badge
-    // already makes the "contains data" state visible.
+    // The per-drive "Create" / "Wipe and Create" buttons are gone — every
+    // create flow now starts from the top-level "+ Create volume" button in
+    // the Volumes section header (one canonical entry, no ambiguity about
+    // whether the per-drive button supports multi-drive RAID). The wizard's
+    // per-row "Contains <fs> — will be wiped" warning still surfaces the
+    // data-loss risk when the user checks a has-data drive.
+    //
+    // "Mount existing filesystem" stays per-drive — that one IS genuinely
+    // scoped to a single drive (mounting one disk's filesystem in place,
+    // not building a new array). Only shown when the drive's filesystem is
+    // in the backend's mountable list; for LUKS / swap / weird fs the
+    // data-badge already makes the state visible.
     const useExistingCand = hasData
       ? (this.mountableDevices || []).find((m) => m.disk_by_id === d.by_id)
       : null;
-    // All Available-tier action buttons use the compact .btn-row style —
-    // same as the Mounted-tier buttons, same as table-editor buttons
-    // elsewhere in the admin UI. Create on a has-data drive gets the warn
-    // variant (yellow outline) since the click wipes data; blank drives
-    // get plain .btn-row.
-    const createCls = hasData ? 'btn-row warn' : 'btn-row';
-    const createLabel = hasData ? 'Wipe and Create' : 'Create';
-    const buttons = useExistingCand ? html`
-      <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>
-      <button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`
-      : html`<button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`;
     return html`
       <div class="pool-card">
         <div class="pool-top">
@@ -1239,33 +1459,57 @@ class StorageModule extends LitElement {
               ${hasData ? html`<span class="data-badge">Contains ${dataKind}${dataLabel}</span>` : ''}
             </div>
           </div>
-          <div class="pool-actions">${buttons}</div>
+          <div class="pool-actions">
+            ${useExistingCand ? html`
+              <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>` : ''}
+            ${d.reclaim ? html`
+              <button class="btn-row delete" @click=${() => this._openReclaim(d.reclaim)}>Reclaim &amp; erase…</button>` : ''}
+          </div>
         </div>
         <div class="pool-members">${d.by_id || d.name}</div>
       </div>
     `;
   }
 
-  // Unmanaged btrfs filesystem (single OR multi-drive). Four states:
+  // Unmanaged btrfs filesystem (single OR multi-drive). Three states:
   //   * removed (pending pool removal — Available tier, amber styling) →
   //     title = original pool name, "Removing" badge, single "Mount
   //     existing filesystem" button that directly undoes the remove
-  //     (re-promotes with the original name + mountpoint). No Wipe
-  //     option: the user clicked Remove, not Wipe.
+  //     (re-promotes with the original name + mountpoint).
   //   * mount_point set, no pending removal (Mounted tier — an
   //     externally-mounted btrfs that could be elevated to managed) →
-  //     "Promote to volume…" + "Not a managed volume" badge. No Create:
-  //     wiping a mounted filesystem from the UI is a footgun.
-  //   * mount_point empty + SINGLE drive (Available tier — cold btrfs
-  //     on one disk) → "Mount existing filesystem" + "Wipe and Create".
-  //     Parity with non-btrfs Available drives.
-  //   * mount_point empty + multi-drive → "Mount existing filesystem"
-  //     only. Wiping a multi-drive btrfs needs to tear down the md
-  //     array first (Reclaim), so no Create here.
-  _renderCandidateBtrfsCard(c, removed) {
+  //     "Promote to volume…" + "Not a managed volume" badge.
+  //   * mount_point empty (Available tier — cold btrfs, single OR
+  //     multi-drive) → "Mount existing filesystem" only. To wipe and
+  //     reuse the underlying drive(s), the user goes through the
+  //     top-level "+ Create volume" and selects them there; the wizard's
+  //     per-row warning surfaces the data-loss risk. (Earlier this card
+  //     had a per-drive "Wipe and Create" shortcut, removed for parity
+  //     with the rest of the Available tier — one canonical create entry.)
+  _renderCandidateBtrfsCard(c, removed, reclaim) {
     const memberIds = c.members || [];
     const isMounted = !!c.mount_point;
     const isPendingRemove = !!removed;
+    // Reclaim is exposed here ONLY when the candidate's underlying drives are
+    // entirely covered by a single reclaim group (computed in
+    // _candidateReclaimMap) AND nothing is currently mounted on those drives
+    // AND we're not mid-pending-removal (Apply hasn't unmounted yet — the
+    // backend will report reclaim_blocked in that state anyway, so the
+    // resolved `reclaim` will be null until after Apply). When this fires
+    // the standalone stale-signature card is suppressed by
+    // `_staleSignatureGroups` so the user sees ONE card per physical thing
+    // with both "Mount existing filesystem" and "Reclaim & erase…".
+    const showReclaim = !!reclaim && !isMounted && !isPendingRemove;
+    // "Use array (new filesystem)" — appears for btrfs-on-mdadm candidates
+    // (c.md_device set) so the admin can throw away the existing filesystem
+    // and start a new one on the SAME assembled array, skipping the
+    // multi-TB resync a fresh mdadm --create would force. Only offered when
+    // the reclaim group carries a recognised parity profile (raid5/raid6);
+    // a btrfs that happens to live on a non-parity md device would not fit
+    // our btrfs-on-mdadm reformat path.
+    const showReformat = !isMounted && !isPendingRemove
+      && !!c.md_device
+      && !!reclaim && !!reclaim.profile;
     // Pending-removal: use the original pool's name + mountpoint (what
     // the user picked when they created the volume) — the candidate's
     // suggested_name (mount-point basename) usually matches, but isn't
@@ -1277,9 +1521,6 @@ class StorageModule extends LitElement {
       ? removed.name
       : (c.label ? '‘' + c.label + '’' : '(unlabelled btrfs)');
     const mountPath = isPendingRemove ? removed.mountpoint : c.mount_point;
-    const singleDrive = (!isMounted && !isPendingRemove && memberIds.length === 1)
-      ? (this.drives || []).find((d) => d.by_id === memberIds[0])
-      : null;
     return html`
       <div class="pool-card ${isPendingRemove ? 'undeployed removed' : ''}">
         <div class="pool-top">
@@ -1299,8 +1540,12 @@ class StorageModule extends LitElement {
               <button class="btn-row" @click=${() => this._openPromote(c)}>
                 ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
               </button>`}
-            ${singleDrive ? html`
-              <button class="btn-row warn" @click=${() => this._createFromDrive(singleDrive)}>Wipe and Create</button>` : ''}
+            ${showReformat ? html`
+              <button class="btn-row warn"
+                      title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
+                      @click=${() => this._openReformatFromCandidate(c, reclaim)}>Use array (new filesystem)…</button>` : ''}
+            ${showReclaim ? html`
+              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
           </div>
         </div>
         ${isPendingRemove ? html`
@@ -1315,6 +1560,15 @@ class StorageModule extends LitElement {
   // deleted Drives-table set-box.
   _renderStaleGroupCard(rec) {
     const memberIds = rec.member_ids || [];
+    // Reformat is offered when the leftover group IS an assembled mdadm
+    // parity array (raid5/raid6) with no btrfs candidate covering it (an
+    // assembled-but-empty array, or an array carrying a non-btrfs fs we
+    // don't surface as a candidate). The candidate path handles
+    // btrfs-on-mdadm with its own merged card. `rec.profile` is non-null
+    // only for raid5/raid6 mdadm groups (backend filter).
+    const showReformat = rec.kind === 'mdadm'
+      && !!rec.profile
+      && (rec.arrays || []).length > 0;
     return html`
       <div class="pool-card">
         <div class="pool-top">
@@ -1326,6 +1580,10 @@ class StorageModule extends LitElement {
           </div>
           <div class="pool-actions">
             <span class="badge badge-warn">Leftover</span>
+            ${showReformat ? html`
+              <button class="btn-row warn"
+                      title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
+                      @click=${() => this._openReformatFromArray(rec)}>Use array (new filesystem)…</button>` : ''}
             <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
           </div>
         </div>
@@ -1420,6 +1678,7 @@ class StorageModule extends LitElement {
             <div class="pool-meta">${s['fs-type'] || '?'} · root mount <code>/</code></div>
           </div>
           <div class="pool-actions">
+            ${s.encrypted ? html`<span class="badge badge-ok" title="System disk is LUKS-encrypted; auto-unlocked by TPM2 (recovery passphrase as fallback at the boot prompt)">${navIcon('lock')}Encrypted</span>` : ''}
             <span class="badge badge-muted">Read-only</span>
           </div>
         </div>
@@ -1557,6 +1816,22 @@ class StorageModule extends LitElement {
     } catch (e) {
       this.loadError = e.message || 'Failed to remove volume.';
     }
+  }
+
+  // Destroy a managed pool in one shot: unmount → close LUKS → tear down
+  // md → wipe member disks → remove the pool record. Routes through the
+  // same _openReclaim modal as the drive/candidate/stale-group buttons,
+  // so the user has to type the ERASE_CONFIRM_PHRASE — destroying a
+  // pool is at least as destructive as reclaiming its drives (wipes
+  // every member plus tears down LUKS/md) and deserves the same gate.
+  // The destroy_pool_name field flips _doReclaim into pool-destroy
+  // mode (synchronous backend call, no reclaim-status polling).
+  _destroyPool(p) {
+    this._openReclaim({
+      description: `the volume "${p.name}"`,
+      member_ids: p.members || [],
+      destroy_pool_name: p.name,
+    });
   }
 
   // ---- import (re-attach an existing on-disk volume; non-destructive) ----
@@ -1702,8 +1977,20 @@ class StorageModule extends LitElement {
     this.reclaimError = '';
     this.reclaimStatus = { step: 'starting', progress: 0, message: 'Starting…' };
     try {
-      await reclaimStorageDisks(this.reclaimTarget.member_ids);
-      this._pollReclaim();
+      if (this.reclaimTarget.destroy_pool_name) {
+        // Pool-destroy path: backend does the whole thing synchronously
+        // (unmount → close mappers → mdadm --stop → wipefs/sgdisk →
+        // remove record). No background job to poll.
+        await destroyStoragePool(this.reclaimTarget.destroy_pool_name);
+        this.reclaiming = false;
+        this.reclaimStatus = null;
+        this.reclaimTarget = null;
+        await this.loadData();
+        this._emitPools();
+      } else {
+        await reclaimStorageDisks(this.reclaimTarget.member_ids);
+        this._pollReclaim();
+      }
     } catch (e) {
       this.reclaiming = false;
       this.reclaimStatus = null;       // back to the confirm view so it's retryable
@@ -1749,6 +2036,7 @@ class StorageModule extends LitElement {
 
         ${this.loadError ? html`<div class="err-banner">${this.loadError}</div>` : ''}
 
+        ${this._renderEncryptionPanel()}
         ${this._renderVolumes()}
         ${this._renderImportable()}
         ${this._renderShares()}
@@ -1757,6 +2045,9 @@ class StorageModule extends LitElement {
         ${this.promoteOpen ? this._renderPromoteModal() : ''}
         ${this.addMountOpen ? this._renderAddMountModal() : ''}
         ${this.addNetworkOpen ? this._renderAddNetworkShareModal() : ''}
+        ${this.masterKeySetupOpen ? this._renderMasterKeySetup() : ''}
+        ${this.reformatTarget ? this._renderReformatModal() : ''}
+        ${this.unlockTarget ? this._renderUnlockModal() : ''}
       </div>
     `;
   }
@@ -1827,12 +2118,30 @@ class StorageModule extends LitElement {
     const uncoveredRemovedPools = removedPools.filter(
       (a) => !coveredRemovedPoolUuids.has(a['fs-uuid']));
 
+    // Reclaim groups indexed by btrfs-candidate fs_uuid — each candidate
+    // that covers a complete reclaim group renders Reclaim & erase INLINE
+    // (no separate stale-signature card for the same physical thing).
+    const candReclaim = this._candidateReclaimMap();
+    // Reclaim groups indexed by locked-LUKS id — used to drop Reclaim &
+    // erase + Use array (new filesystem) onto the locked card.
+    const lockedReclaim = this._lockedLuksReclaimMap();
+
     // Tier 0 — AVAILABLE: drives/things not currently mounted (or in the
     // process of being unmounted on the next Apply). SortKey prefix '0…'
     // pins them above the Mounted tiers in the single-sort pass.
     const tier1 = [
       ...this._staleSignatureGroups().map((rec) => ({
         kind: 'stale', sortKey: '0a:' + (rec.id || ''), data: rec,
+      })),
+      // Locked-LUKS cards sit alongside btrfs candidates in the Available
+      // tier — they're the "encrypted closed-mapper" equivalent of a
+      // candidate. Sort prefix '0a-luks' interleaves them after stale
+      // groups (which they normally suppress anyway).
+      ...(this.lockedLuks || []).map((l) => ({
+        kind: 'locked-luks',
+        sortKey: '0a-luks:' + (l.id || ''),
+        data: l,
+        reclaim: lockedReclaim.get(l.id) || null,
       })),
       // Pending-removed pools render as Available candidates with pending
       // styling — the user clicked Remove, and the card moved out of
@@ -1843,9 +2152,11 @@ class StorageModule extends LitElement {
         sortKey: '0b:' + (x.c.fs_uuid || ''),
         data: x.c,
         removed: x.removedPool,
+        reclaim: candReclaim.get(x.c.fs_uuid) || null,
       })),
       ...unmountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '0b:' + (c.fs_uuid || ''), data: c,
+        reclaim: candReclaim.get(c.fs_uuid) || null,
       })),
       ...this._unassociatedDrives().map((d) => ({
         kind: 'available', sortKey: '0c:' + (d.by_id || d.name || ''), data: d,
@@ -1875,6 +2186,10 @@ class StorageModule extends LitElement {
       }),
       ...mountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '1:' + (c.mount_point || ''), data: c,
+        // Reclaim is hidden on mounted candidates anyway (backend reports
+        // reclaim_blocked instead of reclaim while a filesystem is live);
+        // we still attach the resolved group for consistency.
+        reclaim: candReclaim.get(c.fs_uuid) || null,
       })),
       // Fallback ghost cards for removed pools whose live mount isn't
       // detected as a candidate (e.g. btrfs scan timing). The covered
@@ -1898,8 +2213,9 @@ class StorageModule extends LitElement {
     const renderItem = (it) => {
       switch (it.kind) {
         case 'available':         return this._renderAvailableDriveCard(it.data);
-        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data, it.removed);
+        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data, it.removed, it.reclaim);
         case 'stale':             return this._renderStaleGroupCard(it.data);
+        case 'locked-luks':       return this._renderLockedLuksCard(it.data, it.reclaim);
         case 'system':            return this._renderSystemCard(it.data);
         case 'pool':              return this._renderPoolCard(it.data);
         case 'local':             return this._renderMountCard(it.data, it.runtime, promoUuids);
@@ -1914,6 +2230,12 @@ class StorageModule extends LitElement {
       <config-section title="Volumes"
         description="Storage volumes attached to this box — local disks, network shares, managed pools, and unassigned drives">
         <button slot="actions" class="btn" @click=${this.loadData}>↻ Refresh</button>
+        <button slot="actions" class="btn"
+                ?disabled=${(this.selectableDrives || []).length === 0}
+                title=${(this.selectableDrives || []).length > 0
+                  ? 'Create a new local volume from one or more unassigned drives.'
+                  : 'No unassigned drives available.'}
+                @click=${this._openCreateVolume}>+ Create volume</button>
         <button slot="actions" class="btn" @click=${this._openAddNetwork}>+ Add Network Mount</button>
         <button slot="actions" class="btn" @click=${this._openAddCustom}>+ Add custom device</button>
         ${loadingPools
@@ -2069,11 +2391,15 @@ class StorageModule extends LitElement {
             </div>
           </div>
           <div class="pool-actions">
+            ${p.encrypted ? html`<span class="badge badge-ok" title="Encrypted with LUKS; auto-unlock via TPM2 when present, recovery passphrase otherwise">${navIcon('lock')}Encrypted</span>` : ''}
             ${badge}
             ${enabled
               ? html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, false)}>Unmount</button>`
               : html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, true)}>Mount</button>`}
             <button class="btn-row delete" @click=${() => this._removeVolume(p)}>Remove…</button>
+            <button class="btn-row delete"
+                    title="Unmount, tear down LUKS/RAID, wipe drives, and remove the pool record — all in one step. Use Remove if you just want to unmanage the volume without destroying its data."
+                    @click=${() => this._destroyPool(p)}>Reclaim &amp; erase…</button>
           </div>
         </div>
 
@@ -2105,6 +2431,13 @@ class StorageModule extends LitElement {
   _reclaimGroupTitle(rec) {
     if (rec.kind === 'mdadm') return 'RAID array';
     if (rec.kind === 'lvm') return 'LVM volume group';
+    // `stale` covers both leftover RAID/LVM signatures (typically multi-disk
+    // remnants) AND single-disk unmanaged filesystems (e.g. an unmanaged
+    // btrfs or a LUKS container holding one). Use the per-disk title for the
+    // 1-drive case so the card doesn't read as a "group" of one.
+    if (rec.kind === 'stale' && (rec.member_ids || []).length === 1) {
+      return 'Unmanaged drive';
+    }
     return 'Disk group';
   }
 
@@ -2342,17 +2675,10 @@ class StorageModule extends LitElement {
     this.addMountSource = '__custom__';
   }
 
-  // Per-drive entry points. The section-header "+ Add volume" router is gone
-  // — instead, each unassociated drive's card carries its own Create / Use
-  // existing buttons, so the user clicks the action right next to the noun.
-  _createFromDrive(d) {
-    if (!d || !d.by_id) return;
-    this._openWizard();              // resets, then we pre-seed
-    this.selected = [d.by_id];
-    this._ensureProfileStillValid();  // auto-picks Single (only 1 drive)
-    this._refreshPreview();
-  }
-
+  // Per-drive "Mount existing filesystem" — opens the AddMount modal
+  // with the drive's existing filesystem pre-selected as the source. The
+  // sibling per-drive Create button is gone; all create flows route through
+  // the top-level "+ Create volume" entry point.
   _useExistingFromDrive(d) {
     if (!d || !d.by_id) return;
     const cand = (this.mountableDevices || []).find(
@@ -2596,6 +2922,9 @@ class StorageModule extends LitElement {
 
       <div class="field">
         <label>Drives <span class="hint">(${this.selected.length} selected)</span></label>
+        <div class="hint" style="margin:-4px 0 8px 0;">
+          Check 2+ drives for a RAID layout; check all 4 for double-parity RAID6.
+        </div>
         <div class="drive-pick">
           ${this.selectableDrives.map((d) => {
             const warn = d.overridable;
@@ -2661,6 +2990,8 @@ class StorageModule extends LitElement {
         <label>Mount point</label>
         <input type="text" placeholder="/mnt/tank" .value=${this.mountpoint} @input=${this._onMountpoint} />
       </div>
+
+      ${this._renderEncryptField()}
 
       ${escape ? html`
         <div class="data-escape">
@@ -2804,9 +3135,12 @@ class StorageModule extends LitElement {
 
   _renderReclaimModal() {
     const r = this.reclaimTarget;
-    const members = (r.member_ids || [])
-      .map((id) => (this.drives || []).find((d) => d.by_id === id))
-      .filter(Boolean);
+    // For pool-destroy, drives[] may not contain absent/wiped members.
+    // Fall back to a by-id-only entry so the count and identity match
+    // what's actually being destroyed.
+    const members = (r.member_ids || []).map(
+      (id) => (this.drives || []).find((d) => d.by_id === id) || { by_id: id, model: null, size_bytes: null }
+    );
     const inProgress = this.reclaiming || (this.reclaimStatus && !this.reclaimError);
     return html`
       <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeReclaim(); }}>
@@ -2821,7 +3155,7 @@ class StorageModule extends LitElement {
             <ul class="erase-list">
               ${members.map((d) => html`
                 <li>
-                  <strong>${d.model || 'Unknown'}</strong> — ${formatBytes(d.size_bytes)}
+                  <strong>${d.model || 'Unknown'}</strong>${d.size_bytes ? html` — ${formatBytes(d.size_bytes)}` : ''}
                   <div class="serial">${d.by_id}</div>
                 </li>`)}
             </ul>
@@ -2860,6 +3194,702 @@ class StorageModule extends LitElement {
       <div class="progress"><div style="width:${pct}%"></div></div>
       <div class="hint">${pct}% — ${s.step || ''}</div>
       <div class="hint">Tearing down the old array and wiping the drives. Keep this tab open.</div>
+    `;
+  }
+
+  // ---- locked LUKS: closed-mapper detect + unlock ----
+
+  _renderLockedLuksCard(l, reclaim) {
+    // Same shape as _renderStaleGroupCard but with two extra unlock
+    // actions and a clear "Encrypted (locked)" badge. A locked card
+    // SUPPRESSES the stale-RAID card for the same physical thing (see
+    // `_staleSignatureGroups`) — Reclaim & erase + Use array live HERE
+    // when a coherent reclaim group is resolved.
+    const memberIds = l.members || [];
+    const sizeStr = l.size_bytes ? formatBytes(l.size_bytes) : '';
+    const headline = l.kind === 'md'
+      ? ((l.profile || 'RAID').toUpperCase() + ' array /dev/' + (l.md_device || '?'))
+      : ('Disk /dev/' + (l.member_knames || [])[0]);
+    const showReformat = !!reclaim && !!reclaim.profile
+      && l.kind === 'md' && !!l.md_device;
+    return html`
+      <div class="pool-card">
+        <div class="pool-top">
+          <div>
+            <span class="pool-name">${navIcon('lock')}Locked encrypted volume</span>
+            <div class="pool-meta">
+              ${headline} · ${memberIds.length} drive(s)${sizeStr ? ' · ' + sizeStr : ''}
+            </div>
+            <div class="pool-meta" style="margin-top:2px;">
+              ${l.description || 'LUKS container is closed — contents are not accessible until unlocked.'}
+            </div>
+          </div>
+          <div class="pool-actions">
+            <span class="badge badge-warn">Locked</span>
+            ${l.master_key_unlocks ? html`
+              <button class="btn-row"
+                      title="The master encryption key was probed and DOES unlock this container."
+                      @click=${() => this._unlockWithMasterKey(l)}>Unlock with master key</button>` : ''}
+            <button class="btn-row"
+                    @click=${() => this._openUnlockModal(l)}>Unlock with passphrase…</button>
+            ${showReformat ? html`
+              <button class="btn-row warn"
+                      title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force. DESTROYS the existing encrypted contents."
+                      @click=${() => this._openReformatFromArray(reclaim)}>Use array (new filesystem)…</button>` : ''}
+            ${reclaim ? html`
+              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
+          </div>
+        </div>
+        ${this._renderMemberDrives(memberIds)}
+      </div>
+    `;
+  }
+
+  _openUnlockModal(l) {
+    this.unlockTarget = l;
+    this.unlockPassphrase = '';
+    // Defaults: save-key ON (recommended — without it the unlock is
+    // transient and won't survive reboot); adopt-master OFF (it modifies
+    // the LUKS header and expands the unlock surface to whoever has the
+    // master, so it's an explicit opt-in even though the section is
+    // expanded). Advanced section starts EXPANDED so the user sees both
+    // toggles without having to dig.
+    this.unlockSaveKey = true;
+    this.unlockAdoptMaster = false;
+    this.unlockShowAdvanced = true;
+    this.unlocking = false;
+    this.unlockError = '';
+  }
+
+  _closeUnlockModal() {
+    if (this.unlocking) return;
+    this.unlockTarget = null;
+    this.unlockPassphrase = '';
+    this.unlockSaveKey = true;
+    this.unlockAdoptMaster = false;
+    this.unlockShowAdvanced = true;
+    this.unlockError = '';
+  }
+
+  async _unlockWithMasterKey(l) {
+    // One-click path. No modal — the master probe already said it'd work.
+    this.unlocking = true;
+    this.unlockError = '';
+    try {
+      await unlockLuks(l.device, true, '');
+      await this.loadData();
+    } catch (e) {
+      // Surface the error briefly via the unlock modal so the user sees it.
+      this.unlockTarget = l;
+      this.unlockError = e.message || 'Failed to unlock with master key.';
+    } finally {
+      this.unlocking = false;
+    }
+  }
+
+  async _doUnlockWithPassphrase() {
+    if (!this.unlockTarget) return;
+    const pp = (this.unlockPassphrase || '');
+    if (!pp) {
+      this.unlockError = 'Enter the passphrase that unlocks this volume.';
+      return;
+    }
+    this.unlocking = true;
+    this.unlockError = '';
+    try {
+      await unlockLuks(this.unlockTarget.device, false, pp,
+                       this.unlockSaveKey, this.unlockAdoptMaster);
+      // Don't leave the passphrase in component state any longer than needed.
+      this.unlockPassphrase = '';
+      this.unlockTarget = null;
+      this.unlockSaveKey = false;
+      this.unlockAdoptMaster = false;
+      await this.loadData();
+    } catch (e) {
+      this.unlockError = e.message || 'Failed to unlock — wrong passphrase?';
+    } finally {
+      this.unlocking = false;
+    }
+  }
+
+  _renderUnlockModal() {
+    const l = this.unlockTarget;
+    if (!l) return '';
+    const memberIds = l.members || [];
+    const sizeStr = l.size_bytes ? formatBytes(l.size_bytes) : '';
+    const headline = l.kind === 'md'
+      ? ((l.profile || 'RAID').toUpperCase() + ' array /dev/' + (l.md_device || '?'))
+      : ('Disk /dev/' + (l.member_knames || [])[0]);
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeUnlockModal(); }}>
+        <div class="modal">
+          <h2>Unlock encrypted volume</h2>
+          <div class="sub">
+            ${headline} · ${memberIds.length} drive(s)${sizeStr ? ' · ' + sizeStr : ''}.
+            Enter the passphrase that unlocks the LUKS container.
+            ${l.master_key_unlocks
+              ? html`<br><em>(The master key already unlocks this volume — the
+                'Unlock with master key' button does that in one click.)</em>`
+              : ''}
+          </div>
+
+          <div class="field">
+            <label>Passphrase</label>
+            <input type="password"
+                   autocomplete="off"
+                   spellcheck="false"
+                   .value=${this.unlockPassphrase}
+                   placeholder="LUKS passphrase for this volume"
+                   @input=${(e) => { this.unlockPassphrase = e.target.value; }}
+                   @keydown=${(e) => { if (e.key === 'Enter' && !this.unlocking) this._doUnlockWithPassphrase(); }} />
+            <div class="hint">
+              Once unlocked, the mapper opens as
+              <code>/dev/mapper/unmanaged-${l.kind === 'md' ? l.md_device : (l.member_knames || [])[0]}</code>
+              and the filesystem inside becomes visible as a regular candidate.
+              By default this unlock is made persistent so the volume
+              auto-unlocks on reboot — expand <em>Advanced</em> below to
+              change.
+            </div>
+          </div>
+
+          <button class="advanced-toggle"
+                  style="background:none;border:none;color:var(--hf-accent);cursor:pointer;font-size:13px;padding:0;margin-bottom:10px;"
+                  @click=${() => { this.unlockShowAdvanced = !this.unlockShowAdvanced; }}>
+            ${this.unlockShowAdvanced ? '▾ Hide advanced options' : '▸ Advanced options'}
+          </button>
+
+          ${this.unlockShowAdvanced ? html`
+            <div class="field">
+              <label>
+                <input type="checkbox"
+                       .checked=${this.unlockSaveKey}
+                       @change=${(e) => { this.unlockSaveKey = !!e.target.checked; }} />
+                Save this passphrase for auto-unlock on boot <em>(Recommended)</em>
+              </label>
+              <div class="hint">
+                Writes the passphrase to
+                <code>/etc/nixos/secrets/luks-keys/&lt;luks-uuid&gt;.key</code>
+                (mode 0600, on the encrypted /etc/nixos). When you then click
+                'Mount existing filesystem' on the unlocked btrfs, the
+                resulting pool record references that keyfile in
+                /etc/crypttab so the volume auto-unlocks at every boot —
+                without ever needing the master key.
+              </div>
+            </div>
+
+            <div class="field">
+              <label>
+                <input type="checkbox"
+                       .checked=${this.unlockAdoptMaster}
+                       ?disabled=${!(this.encryptionStatus && this.encryptionStatus.master_key_configured)}
+                       @change=${(e) => { this.unlockAdoptMaster = !!e.target.checked; }} />
+                Also add the master encryption key as a LUKS slot
+              </label>
+              <div class="hint">
+                ${(this.encryptionStatus && this.encryptionStatus.master_key_configured)
+                  ? html`Runs <code>cryptsetup luksAddKey</code> to add your
+                    master key (the system recovery passphrase) as a new slot,
+                    authorized by the passphrase above. TPM2-enrolls it when a
+                    TPM is present, so the volume joins HomeFree's regular
+                    auto-unlock path. Your original passphrase keeps working
+                    as a separate slot.
+                    <br><br>
+                    <strong>Trade-offs:</strong>
+                    (1) writes a new slot to the LUKS header on disk —
+                    invalidates any external
+                    <code>cryptsetup luksHeaderBackup</code> you took before.
+                    (2) expands the unlock surface — anyone holding the
+                    master key can now unlock this volume.
+                    (3) the new TPM2-bound slot is sealed to your current
+                    Secure Boot policy (PCR 7), so a future Secure Boot key
+                    enrollment or firmware update will invalidate this
+                    volume's TPM slot at the same instant it invalidates the
+                    system disk's; the master passphrase still works as the
+                    prompt fallback.
+                    <br><br>
+                    If both options are on, TPM2 is primary at boot and the
+                    saved keyfile is the fallback.`
+                  : html`The master encryption key is not configured on this
+                    box — set it up first to enable.`}
+              </div>
+            </div>
+          ` : ''}
+
+          ${this.unlockError ? html`<div class="err-banner">${this.unlockError}</div>` : ''}
+
+          <div class="modal-actions">
+            <button class="btn" @click=${this._closeUnlockModal}
+                    ?disabled=${this.unlocking}>Cancel</button>
+            <button class="btn btn-primary"
+                    ?disabled=${this.unlocking || !this.unlockPassphrase}
+                    @click=${this._doUnlockWithPassphrase}>
+              ${this.unlocking ? 'Unlocking…' : 'Unlock'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ---- reformat: new filesystem on an existing mdadm array, no resync ----
+
+  // Open the modal from a btrfs-candidate card (the array currently has a
+  // btrfs on it). `c` is the candidate; `reclaim` is the resolved reclaim
+  // group (we use its `profile` field for the raid level).
+  _openReformatFromCandidate(c, reclaim) {
+    this.reformatTarget = {
+      md_device: c.md_device,
+      members: c.members || [],
+      profile: (reclaim && reclaim.profile) || c.profile,
+      label: c.label || '',
+      size_bytes: c.size_bytes || 0,
+      source: 'candidate',
+    };
+    this._resetReformatForm();
+  }
+
+  // Open the modal from a stale-RAID-array card (no btrfs on top, or a
+  // non-btrfs fs we don't surface as a candidate).
+  _openReformatFromArray(rec) {
+    this.reformatTarget = {
+      md_device: (rec.arrays || [])[0],
+      members: rec.member_ids || [],
+      profile: rec.profile,
+      label: '',
+      size_bytes: 0,
+      source: 'array',
+    };
+    this._resetReformatForm();
+  }
+
+  _resetReformatForm() {
+    // Seed defaults from the source: the existing label (if any) suggests
+    // a name; the mountpoint follows /mnt/<name>. Encryption defaults ON
+    // when the master key is configured (same heuristic as the create
+    // wizard) so the most common case — admin wants encrypted data — is
+    // a single click.
+    const seedName = (this.reformatTarget && this.reformatTarget.label) || '';
+    this.reformatName = seedName;
+    this.reformatMountpoint = seedName ? '/mnt/' + seedName : '';
+    this.reformatEncrypt = !!(this.encryptionStatus
+      && this.encryptionStatus.master_key_configured);
+    this.reformatConfirmText = '';
+    this.reformatting = false;
+    this.reformatStatus = null;
+    this.reformatError = '';
+  }
+
+  _closeReformat() {
+    if (this.reformatting) return;
+    this._stopPolling();
+    this.reformatTarget = null;
+    this.reformatError = '';
+  }
+
+  get _reformatCanSubmit() {
+    const nameOk = NAME_RE.test((this.reformatName || '').trim());
+    const mpOk = (this.reformatMountpoint || '').trim().startsWith('/');
+    const phraseOk = (this.reformatConfirmText || '').trim().toLowerCase()
+      === ERASE_CONFIRM_PHRASE.toLowerCase();
+    return nameOk && mpOk && phraseOk && !this.reformatting;
+  }
+
+  async _doReformat() {
+    if (!this.reformatTarget) return;
+    this.reformatting = true;
+    this.reformatError = '';
+    this.reformatStatus = { step: 'starting', progress: 0, message: 'Starting…' };
+    const payload = {
+      name: this.reformatName.trim(),
+      mountpoint: this.reformatMountpoint.trim(),
+      profile: this.reformatTarget.profile,
+      members: this.reformatTarget.members,
+      md_device: this.reformatTarget.md_device,
+      encrypted: !!(this.reformatEncrypt
+        && this.encryptionStatus
+        && this.encryptionStatus.master_key_configured),
+    };
+    try {
+      await reformatStoragePool(payload);
+      this._pollReformatStatus();
+    } catch (e) {
+      this.reformatting = false;
+      this.reformatError = e.message || 'Failed to start reformat.';
+    }
+  }
+
+  // Reuses the shared /api/storage/pools/create-status endpoint (the backend
+  // tracks reformat + create in the same single-flight slot).
+  _pollReformatStatus() {
+    this._stopPolling();
+    const tick = async () => {
+      try {
+        const s = await getStoragePoolCreateStatus();
+        this.reformatStatus = s;
+        if (s.error) {
+          this.reformatting = false;
+          this.reformatError = s.error;
+          return;
+        }
+        if (s.completed) {
+          this.reformatting = false;
+          await this.loadData();
+          // The new pool record will appear via loadData; emit it into the
+          // config flow so the standard pending-change / Apply path mounts
+          // it (same pattern as _onCreated).
+          this._emitPools();
+          return;
+        }
+      } catch (e) {
+        // transient — keep polling
+      }
+      this._pollTimer = setTimeout(tick, 1000);
+    };
+    this._pollTimer = setTimeout(tick, 800);
+  }
+
+  _renderReformatModal() {
+    const t = this.reformatTarget;
+    if (!t) return '';
+    const memberIds = t.members || [];
+    const sourceLabel = t.label ? "'" + t.label + "'" : '(unlabelled)';
+    const sizeLabel = t.size_bytes ? formatBytes(t.size_bytes) : '';
+    const encEnabled = !!(this.encryptionStatus
+      && this.encryptionStatus.master_key_configured);
+    const inProgress = this.reformatting
+      && this.reformatStatus
+      && !this.reformatStatus.completed
+      && !this.reformatStatus.error;
+    const pct = Math.round((this.reformatStatus || {}).progress || 0);
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeReformat(); }}>
+        <div class="modal">
+          ${inProgress ? html`
+            <h2>Reformatting array…</h2>
+            <div class="sub">${(this.reformatStatus || {}).message || 'Working…'}</div>
+            <div class="progress"><div style="width:${pct}%"></div></div>
+            <div class="hint">${pct}% — ${(this.reformatStatus || {}).step || ''}</div>
+            <div class="hint">No mdadm --create — the existing array is preserved. Keep this tab open.</div>
+          ` : (this.reformatStatus && this.reformatStatus.completed) ? html`
+            <h2>Volume reformatted</h2>
+            <div class="sub">${this.reformatStatus.message || 'Done.'}</div>
+            <div class="modal-actions">
+              <button class="btn btn-primary" @click=${this._closeReformat}>Done</button>
+            </div>
+          ` : html`
+            <h2>Use array (new filesystem)</h2>
+            <div class="sub">
+              Put a fresh filesystem on the existing
+              <strong>${(t.profile || 'raid').toUpperCase()}</strong> array
+              ${t.md_device ? html`(<code>${t.md_device}</code>)` : ''}
+              across ${memberIds.length} drive(s)${sizeLabel ? ' · ' + sizeLabel : ''}.
+              ${t.source === 'candidate' ? html`
+                The existing btrfs filesystem ${sourceLabel} will be
+                <strong>destroyed</strong>. The mdadm array itself is kept —
+                no resync.
+              ` : html`
+                The mdadm array itself is kept — no resync.
+              `}
+            </div>
+
+            <div class="field">
+              <label>Volume name</label>
+              <input type="text" placeholder="tank"
+                     .value=${this.reformatName}
+                     @input=${(e) => { this.reformatName = e.target.value; this.reformatMountpoint = '/mnt/' + e.target.value.trim(); }} />
+              <div class="hint">Letters, digits, '-' or '_'. Also used as the btrfs label.</div>
+            </div>
+
+            <div class="field">
+              <label>Mount point</label>
+              <input type="text" placeholder="/mnt/tank"
+                     .value=${this.reformatMountpoint}
+                     @input=${(e) => { this.reformatMountpoint = e.target.value; }} />
+            </div>
+
+            <div class="field">
+              <label>
+                <input type="checkbox"
+                       .checked=${encEnabled ? this.reformatEncrypt : false}
+                       ?disabled=${!encEnabled}
+                       @change=${(e) => { this.reformatEncrypt = !!e.target.checked; }} />
+                Encrypt this volume (LUKS-on-md)
+              </label>
+              <div class="hint">
+                ${encEnabled
+                  ? 'LUKS goes on /dev/' + (t.md_device || 'mdN') + ' (single mapper per array). Same master passphrase as the system disk.'
+                  : 'Master encryption key not configured — set it up first to enable.'}
+              </div>
+            </div>
+
+            <div class="field">
+              <label>To confirm reformatting (data on the array will be lost), type <code>${ERASE_CONFIRM_PHRASE}</code></label>
+              <input type="text"
+                     .value=${this.reformatConfirmText}
+                     @input=${(e) => { this.reformatConfirmText = e.target.value; }}
+                     placeholder=${ERASE_CONFIRM_PHRASE}
+                     autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+
+            ${this.reformatError ? html`<div class="err-banner">${this.reformatError}</div>` : ''}
+
+            <div class="modal-actions">
+              <button class="btn" @click=${this._closeReformat}
+                      ?disabled=${this.reformatting}>Cancel</button>
+              <button class="btn btn-danger"
+                      ?disabled=${!this._reformatCanSubmit}
+                      @click=${this._doReformat}>Reformat array</button>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  // ---- encryption: master-key panel, wizard toggle, setup modal ----
+
+  // Shown above the Volumes list. The user goal is: "is encryption usable
+  // here, and if not what do I do?" One-line summary + a single action.
+  _renderEncryptionPanel() {
+    const s = this.encryptionStatus;
+    if (!s) return '';                              // still loading
+    const cfg = !!s.master_key_configured;
+    const tpm = !!s.tpm_present;
+    const sbPending = !!s.secure_boot_pending;
+    const anyEncrypted = (this.pools || []).some((p) => p.encrypted);
+    // Hide the panel entirely when there is nothing actionable AND no
+    // encrypted volume exists yet — keeps the page short for boxes that
+    // never want encryption.
+    if (!cfg && !anyEncrypted && !sbPending) {
+      return html`
+        <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <strong>Encryption</strong>
+            Data volumes can be LUKS-encrypted with a master passphrase. Set up
+            the master key to enable the option in the create wizard.
+          </div>
+          <button class="btn" @click=${this._openMasterKeySetup}>Set up encryption key</button>
+        </div>`;
+    }
+    return html`
+      <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+        <div>
+          <strong>Encryption</strong>
+          ${cfg
+            ? html`Master key is configured. New volumes can be encrypted with the
+                   same passphrase you use to unlock the system disk.
+                   ${tpm ? '' : html`<br><span class="warn-line">No TPM2 detected — encrypted volumes will require the passphrase at every boot.</span>`}
+                   ${sbPending ? html`<br><span class="warn-line">Secure Boot enrollment is pending — enroll Secure Boot before creating new encrypted volumes, or every TPM-bound volume will re-lock when enrollment changes PCR 7 (the recovery passphrase still works).</span>` : ''}`
+            : html`<span class="warn-line">Encryption key not set.</span>
+                   Existing encrypted volumes still work, but creating a new encrypted volume requires the master key.
+                   <button class="link-btn" @click=${this._openMasterKeySetup}>Set it up</button>.`}
+        </div>
+      </div>
+    `;
+  }
+
+  // Inserted in the wizard between Mount point and the modal-actions row.
+  // Hides itself when there is exactly one drive selected with profile
+  // 'single' on an unconfigured-key box — keeps the wizard short — but we
+  // always render at least the disabled-with-hint state so the user knows
+  // encryption is a thing they could enable.
+  _renderEncryptField() {
+    const s = this.encryptionStatus || {};
+    const cfg = !!s.master_key_configured;
+    const tpm = !!s.tpm_present;
+    const sbPending = !!s.secure_boot_pending;
+    return html`
+      <div class="field">
+        <label>
+          <input type="checkbox"
+                 .checked=${cfg ? !!this.encryptToggle : false}
+                 ?disabled=${!cfg}
+                 @change=${this._handleEncryptToggle} />
+          Encrypt this volume (LUKS)
+          ${cfg ? '' : html`<button class="link-btn"
+                                    style="margin-left:8px"
+                                    @click=${(e) => { e.preventDefault(); this._openMasterKeySetup(); }}>
+            set up the master key
+          </button>`}
+        </label>
+        <div class="hint">
+          ${cfg
+            ? html`The selected drives will be LUKS-encrypted with your master
+                   recovery passphrase. ${tpm
+                     ? 'TPM2 auto-unlock at every boot (recovery passphrase fallback).'
+                     : 'No TPM2 found — the passphrase will be required at every boot.'}
+                   ${sbPending && this.encryptToggle ? html`<br><span class="warn-line">Secure Boot enrollment is pending — enrolling it later will re-lock all TPM-bound volumes at once (recovery passphrase still works).</span>` : ''}`
+            : 'Master encryption key has not been set up on this box yet.'}
+        </div>
+      </div>
+    `;
+  }
+
+  _handleEncryptToggle(e) {
+    this.encryptToggle = !!e.target.checked;
+  }
+
+  _openMasterKeySetup() {
+    this.masterKeySetupOpen = true;
+    // On a system-encrypted box, default to the paste-in tab — generating
+    // a fresh random value there would silently NOT match the system
+    // disk's existing LUKS slot (backend's generate() refuses too).
+    const sysEncrypted = !!(this.encryptionStatus && this.encryptionStatus.system_encrypted);
+    this.masterKeySetupMode = sysEncrypted ? 'paste' : 'generate';
+    this.masterKeyPasted = '';
+    this.masterKeyGenerated = '';
+    this.masterKeySaving = false;
+    this.masterKeyError = '';
+    this.masterKeyAck = false;
+  }
+
+  _closeMasterKeySetup() {
+    if (this.masterKeySaving) return;
+    this.masterKeySetupOpen = false;
+  }
+
+  async _generateMasterKey() {
+    this.masterKeySaving = true;
+    this.masterKeyError = '';
+    try {
+      const r = await generateStorageMasterKey();
+      this.masterKeyGenerated = r.passphrase || '';
+      // Refresh status so the wizard's Encrypt toggle becomes enabled
+      // without a full reload.
+      this.encryptionStatus = await getStorageEncryptionStatus().catch(
+        () => this.encryptionStatus);
+    } catch (e) {
+      this.masterKeyError = e.message || 'Failed to generate master key.';
+    } finally {
+      this.masterKeySaving = false;
+    }
+  }
+
+  async _setUserMasterKey() {
+    const value = (this.masterKeyPasted || '').trim();
+    if (value.length < 20) {
+      this.masterKeyError = 'Passphrase must be at least 20 characters.';
+      return;
+    }
+    this.masterKeySaving = true;
+    this.masterKeyError = '';
+    try {
+      await setStorageMasterKey(value);
+      this.encryptionStatus = await getStorageEncryptionStatus().catch(
+        () => this.encryptionStatus);
+      // No value to display back (the user typed it); close on success.
+      this.masterKeySetupOpen = false;
+    } catch (e) {
+      this.masterKeyError = e.message || 'Failed to save master key.';
+    } finally {
+      this.masterKeySaving = false;
+    }
+  }
+
+  // Modal: pick a mode (generate / paste); on generate-success the same
+  // modal swaps to a one-time display panel with a copy button + an
+  // I-saved-it checkbox before close is allowed.
+  _renderMasterKeySetup() {
+    const generated = this.masterKeyGenerated;
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeMasterKeySetup(); }}>
+        <div class="modal">
+          <h2>Set up master encryption key</h2>
+          ${generated ? html`
+            <div class="sub">
+              Save this passphrase somewhere safe NOW — it will not be shown
+              again. You will type this at the boot prompt if TPM2 unlock ever
+              fails, and the same passphrase will unlock every encrypted data
+              volume on this box.
+            </div>
+            <div class="preview-box" style="font-family:monospace;font-size:16px;letter-spacing:1px;user-select:all;word-break:break-all;">
+              ${generated}
+            </div>
+            <label class="ack" style="margin-top:8px;">
+              <input type="checkbox" .checked=${this.masterKeyAck}
+                     @change=${(e) => { this.masterKeyAck = e.target.checked; }} />
+              <span>I have saved this passphrase in a safe place.</span>
+            </label>
+            <div class="modal-actions">
+              <button class="btn btn-primary"
+                      ?disabled=${!this.masterKeyAck}
+                      @click=${this._closeMasterKeySetup}>Done</button>
+            </div>
+          ` : html`
+            <div class="sub">
+              The master key is the LUKS passphrase used to unlock every
+              encrypted data volume on this box. By default it is also the
+              passphrase you type to unlock the system disk if TPM2 unlock
+              fails — keep one passphrase, not several.
+            </div>
+
+            ${this.encryptionStatus && this.encryptionStatus.system_encrypted ? html`
+              <div class="banner warn" style="margin-bottom:12px;">
+                <strong>Your system disk is already encrypted.</strong>
+                Paste the recovery passphrase you saved at install time —
+                the backend will verify it actually unlocks the system
+                disk before saving. Generating a fresh random value here
+                would NOT match, so that option is disabled.
+              </div>` : ''}
+
+            <div class="field" style="display:flex;gap:8px;">
+              <button class="btn ${this.masterKeySetupMode === 'generate' ? 'btn-primary' : ''}"
+                      ?disabled=${!!(this.encryptionStatus && this.encryptionStatus.system_encrypted)}
+                      title=${(this.encryptionStatus && this.encryptionStatus.system_encrypted)
+                        ? 'Disabled: a fresh random value would not match the system disk slot.'
+                        : 'Generate a fresh 6-group passphrase.'}
+                      @click=${() => { this.masterKeySetupMode = 'generate'; this.masterKeyError = ''; }}>
+                Generate a new passphrase
+              </button>
+              <button class="btn ${this.masterKeySetupMode === 'paste' ? 'btn-primary' : ''}"
+                      @click=${() => { this.masterKeySetupMode = 'paste'; this.masterKeyError = ''; }}>
+                I have a passphrase
+              </button>
+            </div>
+
+            ${this.masterKeySetupMode === 'paste' ? html`
+              <div class="field">
+                <label>Master passphrase</label>
+                <input type="text"
+                       autocomplete="off"
+                       spellcheck="false"
+                       .value=${this.masterKeyPasted}
+                       placeholder="At least 20 printable-ASCII characters"
+                       @input=${(e) => { this.masterKeyPasted = e.target.value; }} />
+                <div class="hint">
+                  ${this.encryptionStatus && this.encryptionStatus.system_encrypted
+                    ? 'Verified against the system disk’s LUKS slot before saving — a typo is caught here, not at the next boot.'
+                    : 'No system disk encryption detected, so this is only the master key for new encrypted data volumes.'}
+                </div>
+              </div>
+            ` : html`
+              <div class="preview-box">
+                A fresh 6-group passphrase (about 155 bits of entropy) will
+                be generated and displayed once. Copy it to a password
+                manager before closing this dialog.
+              </div>
+            `}
+
+            ${this.masterKeyError ? html`<div class="err-banner">${this.masterKeyError}</div>` : ''}
+
+            <div class="modal-actions">
+              <button class="btn" @click=${this._closeMasterKeySetup}
+                      ?disabled=${this.masterKeySaving}>Cancel</button>
+              ${this.masterKeySetupMode === 'paste'
+                ? html`<button class="btn btn-primary"
+                               ?disabled=${this.masterKeySaving || (this.masterKeyPasted || '').trim().length < 20}
+                               @click=${this._setUserMasterKey}>
+                         ${this.masterKeySaving ? 'Saving…' : 'Save passphrase'}
+                       </button>`
+                : html`<button class="btn btn-primary"
+                               ?disabled=${this.masterKeySaving}
+                               @click=${this._generateMasterKey}>
+                         ${this.masterKeySaving ? 'Generating…' : 'Generate passphrase'}
+                       </button>`}
+            </div>
+          `}
+        </div>
+      </div>
     `;
   }
 }

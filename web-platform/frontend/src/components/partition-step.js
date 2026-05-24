@@ -25,7 +25,13 @@ class PartitionStep extends LitElement {
     disks: { type: Array },
     capabilities: { type: Object },
     loading: { type: Boolean },
-    showAdvanced: { type: Boolean },
+    // Optional admin-supplied recovery passphrase. Empty string means
+    // "auto-generate" (current default behavior); the value is then shown
+    // on the completion screen. When non-empty AND ≥ 20 chars, install.py
+    // uses it verbatim as the recovery passphrase and adds it as the
+    // system disk's LUKS slot 2.
+    userPassphrase: { type: String },
+    userPassphraseError: { type: String },
   };
 
   static styles = css`
@@ -96,12 +102,6 @@ class PartitionStep extends LitElement {
     .banner.danger { background: #fdecea; border: 1px solid #f5c6cb; color: #842029; }
     .banner > strong:first-child { display: block; margin-bottom: 4px; }
 
-    .advanced-toggle {
-      background: none; border: none; color: #667eea;
-      cursor: pointer; font-size: 14px; padding: 0; margin-top: 8px;
-    }
-    .advanced-toggle:hover { text-decoration: underline; }
-
     .link-btn {
       background: none; border: none; color: #667eea;
       cursor: pointer; font-size: 13px; padding: 0; text-decoration: underline;
@@ -121,7 +121,8 @@ class PartitionStep extends LitElement {
     this.disks = [];
     this.capabilities = null;
     this.loading = true;
-    this.showAdvanced = false;
+    this.userPassphrase = '';
+    this.userPassphraseError = '';
   }
 
   async connectedCallback() {
@@ -166,13 +167,20 @@ class PartitionStep extends LitElement {
     // RAID requires 2+ disks; collapse to 'none' otherwise.
     let raid = this.raid;
     if (this.selectedDisks.length < 2) raid = 'none';
-    return {
+    const cfg = {
       disks: [...this.selectedDisks],
       raid,
       use_encryption: this.useEncryption,
       use_swap: this.useSwap,
       use_lanzaboote: this.useLanzaboote && this.useEncryption && this.uefi,
     };
+    // Only forward a user-supplied passphrase when encryption is on AND it
+    // passes the length floor. install.py also rejects too-short input;
+    // mirroring the check here gives a fast UI signal.
+    if (this.useEncryption && this.userPassphrase && this.userPassphrase.length >= 20) {
+      cfg.user_passphrase = this.userPassphrase;
+    }
+    return cfg;
   }
 
   notifyParent() {
@@ -233,6 +241,19 @@ class PartitionStep extends LitElement {
     this.persist();
   }
 
+  handleUserPassphraseChange(e) {
+    const v = e.target.value;
+    this.userPassphrase = v;
+    // Inline validation: empty is fine (means auto-generate). Non-empty must
+    // be ≥ 20 chars. install.py applies the same threshold server-side.
+    if (v && v.length < 20) {
+      this.userPassphraseError = `Need at least 20 characters (you have ${v.length}).`;
+    } else {
+      this.userPassphraseError = '';
+    }
+    this.persist();
+  }
+
   // -- render -------------------------------------------------------
 
   renderEncryptionBanner() {
@@ -276,12 +297,47 @@ class PartitionStep extends LitElement {
       </div>`;
   }
 
-  renderAdvanced() {
-    // Secure Boot opt-in only makes sense with encryption + UEFI.
+  // Optional BYO recovery passphrase, shown directly under the encryption
+  // toggle (no "Advanced" disclosure — visible by default so the auto-generate
+  // behavior is discoverable). Only rendered when encryption is enabled —
+  // without LUKS there is no passphrase to be the recovery for.
+  renderPassphraseField() {
+    if (!this.useEncryption) return '';
+    return html`
+      <div style="margin-top:16px;">
+        <label for="user-passphrase" style="display:block;font-weight:600;color:#333;margin-bottom:4px;">
+          Recovery passphrase (optional)
+        </label>
+        <input id="user-passphrase" type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Leave empty to auto-generate"
+          .value=${this.userPassphrase}
+          @input=${this.handleUserPassphraseChange}
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:14px;" />
+        <p class="checkbox-hint" style="margin-top:6px;margin-left:0;">
+          Leave empty and HomeFree will generate a strong passphrase for you —
+          the generated value is shown on the installation completion screen
+          so you can copy it. Enter your own only if you have a reason, e.g.
+          reinstalling on the same hardware or using a password manager.
+          Minimum 20 printable-ASCII characters; you type it at the next boot.
+        </p>
+        ${this.userPassphraseError ? html`
+          <p class="checkbox-hint" style="margin-top:4px;margin-left:0;color:#842029;">
+            ${this.userPassphraseError}
+          </p>` : ''}
+      </div>`;
+  }
+
+  // Secure Boot is independent of encryption (key handling vs measured boot)
+  // and is now its own always-visible section. lanzaboote still requires
+  // UEFI + LUKS as a prerequisite, so the checkbox stays disabled (with a
+  // hint) when that prerequisite isn't met — visible, just not toggleable.
+  renderSecureBootSection() {
     const sbAvailable = this.useEncryption && this.uefi;
     return html`
       <div class="section">
-        <h3>Advanced</h3>
+        <h3>Secure Boot</h3>
         <div class="checkbox-group">
           <input type="checkbox" id="lanzaboote"
             .checked=${this.useLanzaboote}
@@ -295,7 +351,9 @@ class PartitionStep extends LitElement {
                 kernels. Requires a one-time manual BIOS step (putting
                 firmware into Setup Mode) after installation. Leave off
                 if you are not comfortable changing BIOS settings.`
-            : html`Available only with disk encryption on a UEFI system.`}
+            : !this.uefi
+              ? html`Available only on a UEFI system.`
+              : html`Available only when disk encryption is enabled above.`}
         </p>
       </div>`;
   }
@@ -364,7 +422,7 @@ class PartitionStep extends LitElement {
         ` : ''}
 
         <div class="section">
-          <h3>Encryption &amp; Options</h3>
+          <h3>Encryption</h3>
           <div class="checkbox-group">
             <input type="checkbox" id="encryption"
               .checked=${this.useEncryption}
@@ -374,8 +432,12 @@ class PartitionStep extends LitElement {
             </label>
           </div>
           ${this.renderEncryptionBanner()}
+          ${this.renderPassphraseField()}
+        </div>
 
-          <div class="checkbox-group" style="margin-top:16px;">
+        <div class="section">
+          <h3>Swap</h3>
+          <div class="checkbox-group">
             <input type="checkbox" id="swap"
               .checked=${this.useSwap}
               @change=${this.handleSwapChange} />
@@ -386,14 +448,9 @@ class PartitionStep extends LitElement {
               On a multi-disk install swap is not mirrored and
               hibernation is disabled.
             </p>` : ''}
-
-          <button class="advanced-toggle"
-            @click=${() => { this.showAdvanced = !this.showAdvanced; }}>
-            ${this.showAdvanced ? '▾ Hide advanced options' : '▸ Show advanced options'}
-          </button>
         </div>
 
-        ${this.showAdvanced ? this.renderAdvanced() : ''}
+        ${this.renderSecureBootSection()}
 
         <div class="banner warn">
           <strong>⚠️ Warning</strong>
