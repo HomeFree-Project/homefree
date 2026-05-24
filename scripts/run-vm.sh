@@ -583,14 +583,42 @@ cmd_run() {
         fi
     fi
 
+    # Track whether any disk was created fresh this run — either because it
+    # didn't exist or because the user accepted the wipe prompt above. Drives
+    # the OVMF VARS re-seed below: an installed system writes a UEFI BootOrder
+    # NvVar into OVMF_VARS pointing at the bootloader on that disk, and UEFI
+    # PREFERS that remembered BootOrder over QEMU's `-device …,bootindex=N`
+    # hints. Leaving a stale BootOrder paired with a fresh-empty disk hangs at
+    # the firmware "no bootable image" screen — the iso never gets a chance.
+    # Re-seeding OVMF_VARS from the matching template clears the NvVar and
+    # restores QEMU bootindex behavior (data-disk-0 first, iso second; empty
+    # disk-0 falls through to the iso).
+    local DISKS_FRESH=false
     for disk in "${ROUTER_DISKS[@]}"; do
         if [[ ! -f "$disk" ]]; then
             log_info "Creating VM disk: $disk (size: $VM_DISK_SIZE)"
             qemu-img create -f qcow2 "$disk" "$VM_DISK_SIZE"
+            DISKS_FRESH=true
         else
             log_info "Using existing disk: $disk"
         fi
     done
+
+    # Re-seed OVMF_VARS when any data disk is freshly created (see comment
+    # above the loop for the BootOrder-stickiness rationale). Only relevant
+    # when UEFI is in use and OVMF was discovered — the OVMF setup block
+    # above will have left `OVMF_CODE` empty otherwise. The stamp file is
+    # left in place: the firmware itself hasn't changed, only the disk it
+    # used to point at, so the existing OVMF_CODE hash is still valid.
+    if [[ "$DISKS_FRESH" == "true" && "$USE_UEFI" == "true" && -n "$OVMF_CODE" ]]; then
+        local _OVMF_VARS_TEMPLATE="${OVMF_CODE/OVMF_CODE.fd/OVMF_VARS.fd}"
+        if [[ -f "$_OVMF_VARS_TEMPLATE" && -f "$ROUTER_OVMF_VARS" ]]; then
+            log_info "Re-seeding $ROUTER_OVMF_VARS (data disk(s) created fresh;"
+            log_info "stale UEFI BootOrder would otherwise hang at the firmware screen)."
+            cp --reflink=never "$_OVMF_VARS_TEMPLATE" "$ROUTER_OVMF_VARS"
+            chmod 644 "$ROUTER_OVMF_VARS"
+        fi
+    fi
 
     # Build router QEMU command
     local -a ROUTER_QEMU_CMD=(

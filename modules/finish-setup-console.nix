@@ -38,7 +38,20 @@ let
   ## full-screen `clear`, which avoids the visible flash on every refresh.
   consoleScript = pkgs.writeShellScript "homefree-finish-setup-console" ''
     set -u
-    PATH=${lib.makeBinPath (with pkgs; [ coreutils gawk iproute2 ncurses ])}:$PATH
+    PATH=${lib.makeBinPath (with pkgs; [ coreutils gawk iproute2 ncurses systemd ])}:$PATH
+
+    ## Wait for getty@tty1 to actually release tty1 before we draw. The
+    ## ExecStartPre `systemctl --no-block stop getty@tty1.service` only
+    ## ENQUEUES the stop — synchronous `systemctl stop` deadlocks at the
+    ## 90s TimeoutStartSec because we are After=getty@tty1, which makes
+    ## systemd queue getty's stop behind OUR stop, behind our start
+    ## finishing, behind ExecStartPre returning. So we poll here for
+    ## getty to actually exit. Bounded — in the worst case we draw with
+    ## a frame of overlap, the next redraw 5s later cleans up.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      systemctl is-active --quiet getty@tty1.service || break
+      sleep 0.3
+    done
 
     carrier_file=/sys/class/net/${lanInterface}/carrier
     operstate_file=/sys/class/net/${lanInterface}/operstate
@@ -208,7 +221,18 @@ in
       ## Stop getty ourselves, post-condition. The `-` prefix tolerates
       ## getty already being inactive. This replaces `Conflicts` so a
       ## skipped unit (finished box) never disturbs the login.
-      ExecStartPre = "-${pkgs.systemd}/bin/systemctl stop getty@tty1.service";
+      ##
+      ## `--no-block` is REQUIRED. A synchronous `systemctl stop` would
+      ## deadlock for 90s: we are After=getty@tty1, so systemd queues
+      ## getty's stop transaction behind everything After=getty (= US),
+      ## which can't stop because it's mid-START (ExecStartPre is the
+      ## very call we're making). With `--no-block` the stop is enqueued
+      ## and ExecStartPre returns immediately; ExecStart begins and polls
+      ## for getty to actually exit (see consoleScript's wait loop)
+      ## before drawing. Symptom of the deadlock: journalctl shows
+      ## "start-pre operation timed out. Terminating." after 90s and
+      ## tty1 stays at the getty prompt with the MOTD warning.
+      ExecStartPre = "-${pkgs.systemd}/bin/systemctl --no-block stop getty@tty1.service";
       ExecStart = "${consoleScript}";
       ## Hand tty1 back to a normal login when the TUI exits.
       ExecStopPost = "-${pkgs.systemd}/bin/systemctl --no-block start getty@tty1.service";

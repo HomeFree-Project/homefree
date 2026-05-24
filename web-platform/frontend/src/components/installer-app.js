@@ -25,6 +25,8 @@ class InstallerApp extends LitElement {
       flex-direction: column;
       height: 100%;
       color-scheme: light;
+      background: var(--hf-bg);
+      color: var(--hf-text);
 
       --hf-bg:           #ffffff;
       --hf-surface:      #ffffff;

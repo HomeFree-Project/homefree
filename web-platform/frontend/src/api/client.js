@@ -153,6 +153,22 @@ export const getMountableDevices = () => get('/api/storage/mountable-devices');
 // unified Volumes section. Returns a list (length 0 or 1).
 export const getSystemVolumes = () => get('/api/storage/system-volumes');
 
+// Storage encryption (master key for data-pool LUKS containers). The master
+// key is the LUKS recovery passphrase persisted at
+// /etc/nixos/secrets/recovery-passphrase.txt — same value that unlocks the
+// system disk's recovery slot. The Storage UI uses these to gate the
+// "Encrypt this volume" toggle on first-time setup.
+export const getStorageEncryptionStatus = () =>
+  get('/api/storage/encryption/status');
+// Generate a fresh 6-base36 master passphrase. Returns it ONCE so the UI
+// can display it for the admin to save. Backend refuses if one already exists.
+export const generateStorageMasterKey = () =>
+  post('/api/storage/encryption/master-key/generate', {});
+// Persist a user-provided master passphrase (min 20 chars, printable ASCII).
+// Backend refuses if one already exists.
+export const setStorageMasterKey = (passphrase) =>
+  post('/api/storage/encryption/master-key/set', { passphrase });
+
 // Locale & Timezone — cached module-level so the network call only happens
 // once per page load. The data is large but immutable for the session, so
 // holding the promise eliminates the empty-dropdown flicker when navigating

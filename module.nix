@@ -742,15 +742,57 @@
               type = bool;
               default = false;
               description = ''
-                Whether members are LUKS containers unlocked at boot. Not
-                supported yet (planned for a later phase); set false.
+                Whether the volume's members are LUKS containers unlocked at boot.
+                The unlock key is the LUKS recovery passphrase at
+                `/etc/nixos/secrets/recovery-passphrase.txt` (the same value the
+                user types to unlock the system disk). Unlock is LATE — driven by
+                `/etc/crypttab` after root mount, with `nofail` so a missing /
+                failed disk never blocks the admin UI (AGENTS.md rule 10).
               '';
             };
 
             luks-mappers = lib.mkOption {
-              type = listOf str;
+              type = listOf (submodule {
+                options = {
+                  mapper = lib.mkOption {
+                    type = str;
+                    description = ''
+                      Mapper name exposed at `/dev/mapper/<mapper>`. Convention:
+                      `cryptd-<pool>-<i>` (1..N) for per-disk LUKS on btrfs-native
+                      profiles; `cryptd-<pool>` (single) for LUKS-on-md on parity
+                      profiles.
+                    '';
+                  };
+                  by-id = lib.mkOption {
+                    type = str;
+                    description = ''
+                      Stable identifier of the LUKS backing device — used to build
+                      the `/dev/disk/by-id/<by-id>` path in `/etc/crypttab`. For
+                      btrfs-native profiles this is a member disk's by-id (mirrors
+                      a row in `members`). For parity profiles it is the md
+                      array's `md-uuid-<X>` symlink (one entry per pool, the LUKS
+                      sits on the assembled `/dev/md`).
+                    '';
+                  };
+                  luks-uuid = lib.mkOption {
+                    type = str;
+                    description = ''
+                      LUKS2 container UUID captured at format time (via
+                      `cryptsetup luksUUID`). Invariant across cable/controller
+                      reseats — recorded for display, future rotation, and a
+                      defensive sanity-check before opening (catch a swapped disk
+                      before unlocking the wrong device).
+                    '';
+                  };
+                };
+              });
               default = [];
-              description = "Per-member LUKS mapper names; empty when not encrypted.";
+              description = ''
+                Per-member LUKS containers, populated by the pool create job when
+                `encrypted = true`. Empty otherwise. Length is one entry per disk
+                for btrfs-native profiles, and a single entry (for the md device)
+                for parity profiles (raid5/raid6).
+              '';
             };
 
             mount-options = lib.mkOption {

@@ -1469,3 +1469,56 @@ async def get_mountable_devices() -> Dict[str, Any]:
 @router.get("/system-volumes")
 async def get_system_volumes() -> Dict[str, Any]:
     return {"system_volumes": await asyncio.to_thread(StorageResolver.list_system_volumes)}
+
+
+# --- master encryption key (used by every data-pool LUKS container) ----------
+# See services/encryption_master_key.py for the path/format/trailing-newline
+# story. These three endpoints are the admin UI's surface for "set up the
+# master key before creating an encrypted volume."
+
+@router.get("/encryption/status")
+async def get_encryption_status() -> Dict[str, Any]:
+    from services.encryption_master_key import get_status
+    return await asyncio.to_thread(get_status)
+
+
+class GenerateMasterKeyResponse(BaseModel):
+    passphrase: str
+
+
+@router.post("/encryption/master-key/generate", response_model=GenerateMasterKeyResponse)
+async def post_generate_master_key() -> GenerateMasterKeyResponse:
+    """Generate + persist a fresh 6-base36 passphrase and return it ONCE so
+    the UI can display it for the admin to save. Refuses if one is already
+    configured (rotation is a future flow — it has to re-key every pool's
+    LUKS containers)."""
+    from services.encryption_master_key import generate
+    try:
+        value = await asyncio.to_thread(generate)
+    except PermissionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Could not write master key: {e}")
+    return GenerateMasterKeyResponse(passphrase=value)
+
+
+class SetMasterKeyRequest(BaseModel):
+    passphrase: str
+
+
+@router.post("/encryption/master-key/set")
+async def post_set_master_key(req: SetMasterKeyRequest) -> Dict[str, Any]:
+    """Persist a user-provided master passphrase. Same refusal rule as
+    generate — rotation isn't supported in this release."""
+    from services.encryption_master_key import set_user_value
+    try:
+        await asyncio.to_thread(set_user_value, req.passphrase)
+    except PermissionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Could not write master key: {e}")
+    return {"ok": True}

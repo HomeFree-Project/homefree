@@ -19,6 +19,9 @@ import {
   getMounts,
   getMountableDevices,
   getSystemVolumes,
+  getStorageEncryptionStatus,
+  generateStorageMasterKey,
+  setStorageMasterKey,
 } from '../../../api/client.js';
 
 /**
@@ -132,11 +135,28 @@ class StorageModule extends LitElement {
     createStatus: { state: true },
     createError: { state: true },
     ackBoot: { state: true },
+    encryptToggle: { state: true },     // wizard: encrypt this new volume?
     reclaimTarget: { state: true },
     reclaimConfirmText: { state: true },
     reclaiming: { state: true },
     reclaimStatus: { state: true },
     reclaimError: { state: true },
+    // Master encryption key (data-pool LUKS). Backend probes whether the
+    // master key file exists, whether a TPM is present, and whether Secure
+    // Boot enrollment is still pending (PCR-7 re-lock risk). null while
+    // loading; never undefined-checked downstream so it's safe to read
+    // optional fields with ?.
+    encryptionStatus: { state: true },
+    // Master-key setup modal state. Generate and paste-in flows live in one
+    // modal with a tab toggle; the generated value is shown ONCE after a
+    // successful generate (no second fetch — backend refuses).
+    masterKeySetupOpen: { state: true },
+    masterKeySetupMode: { state: true },    // 'generate' | 'paste'
+    masterKeyPasted: { state: true },
+    masterKeyGenerated: { state: true },
+    masterKeySaving: { state: true },
+    masterKeyError: { state: true },
+    masterKeyAck: { state: true },          // user confirmed they saved the value
   };
 
   static styles = css`
@@ -559,6 +579,14 @@ class StorageModule extends LitElement {
     this.reclaimStatus = null;
     this.reclaimError = '';
     this._pollTimer = null;
+    this.encryptionStatus = null;
+    this.masterKeySetupOpen = false;
+    this.masterKeySetupMode = 'generate';
+    this.masterKeyPasted = '';
+    this.masterKeyGenerated = '';
+    this.masterKeySaving = false;
+    this.masterKeyError = '';
+    this.masterKeyAck = false;
   }
 
   connectedCallback() {
@@ -599,16 +627,25 @@ class StorageModule extends LitElement {
     this.creating = false;
     this.createStatus = null;
     this.createError = '';
+    // Default ON when the master key is configured — once a box has
+    // encryption set up, the safer default is to encrypt new volumes too.
+    // Toggling OFF is one click; the user is in the wizard either way.
+    this.encryptToggle = !!(this.encryptionStatus && this.encryptionStatus.master_key_configured);
   }
 
   async loadData() {
     this.loading = true;
     this.loadError = '';
     try {
-      const [d, p, imp, pr, mr, md, sv] = await Promise.all([
+      const [d, p, imp, pr, mr, md, sv, enc] = await Promise.all([
         getStorageDrives(), getStoragePools(), getStorageImportable(),
         getPromotableBtrfs(), getMounts(), getMountableDevices(),
-        getSystemVolumes()]);
+        getSystemVolumes(),
+        // Encryption status is best-effort: if the endpoint 500s, the rest
+        // of the page must still render. Swallowing the rejection lets
+        // Promise.all settle even when this single probe fails.
+        getStorageEncryptionStatus().catch(() => null),
+      ]);
       this.drives = d.drives || [];
       this.pools = p.pools || [];
       this.importable = imp.importable || [];
@@ -616,6 +653,8 @@ class StorageModule extends LitElement {
       this.mountsRuntime = mr.mounts || [];
       this.mountableDevices = md.devices || [];
       this.systemVolumes = sv.system_volumes || [];
+      this.encryptionStatus = enc
+        || { master_key_configured: false, tpm_present: false, secure_boot_pending: false };
     } catch (e) {
       this.loadError = e.message || 'Failed to load storage information.';
       // Surface the error state, not perpetual skeletons.
@@ -845,7 +884,11 @@ class StorageModule extends LitElement {
       mountpoint: this.mountpoint.trim(),
       profile: this.profile,
       members: this.selected,
-      encrypted: false,
+      // Only honor the toggle when the master key is configured (the wizard
+      // disables it otherwise, but defend in depth).
+      encrypted: !!(this.encryptToggle
+                    && this.encryptionStatus
+                    && this.encryptionStatus.master_key_configured),
       force: this._selectedOverridable,
     };
     try {
@@ -1749,6 +1792,7 @@ class StorageModule extends LitElement {
 
         ${this.loadError ? html`<div class="err-banner">${this.loadError}</div>` : ''}
 
+        ${this._renderEncryptionPanel()}
         ${this._renderVolumes()}
         ${this._renderImportable()}
         ${this._renderShares()}
@@ -1757,6 +1801,7 @@ class StorageModule extends LitElement {
         ${this.promoteOpen ? this._renderPromoteModal() : ''}
         ${this.addMountOpen ? this._renderAddMountModal() : ''}
         ${this.addNetworkOpen ? this._renderAddNetworkShareModal() : ''}
+        ${this.masterKeySetupOpen ? this._renderMasterKeySetup() : ''}
       </div>
     `;
   }
@@ -2069,6 +2114,7 @@ class StorageModule extends LitElement {
             </div>
           </div>
           <div class="pool-actions">
+            ${p.encrypted ? html`<span class="badge badge-ok" title="Encrypted with LUKS; auto-unlock via TPM2 when present, recovery passphrase otherwise">🔒 Encrypted</span>` : ''}
             ${badge}
             ${enabled
               ? html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, false)}>Unmount</button>`
@@ -2662,6 +2708,8 @@ class StorageModule extends LitElement {
         <input type="text" placeholder="/mnt/tank" .value=${this.mountpoint} @input=${this._onMountpoint} />
       </div>
 
+      ${this._renderEncryptField()}
+
       ${escape ? html`
         <div class="data-escape">
           <strong>${escape.count === 1 ? 'This drive contains' : 'These drives contain'} existing data that will be wiped.</strong>
@@ -2860,6 +2908,236 @@ class StorageModule extends LitElement {
       <div class="progress"><div style="width:${pct}%"></div></div>
       <div class="hint">${pct}% — ${s.step || ''}</div>
       <div class="hint">Tearing down the old array and wiping the drives. Keep this tab open.</div>
+    `;
+  }
+
+  // ---- encryption: master-key panel, wizard toggle, setup modal ----
+
+  // Shown above the Volumes list. The user goal is: "is encryption usable
+  // here, and if not what do I do?" One-line summary + a single action.
+  _renderEncryptionPanel() {
+    const s = this.encryptionStatus;
+    if (!s) return '';                              // still loading
+    const cfg = !!s.master_key_configured;
+    const tpm = !!s.tpm_present;
+    const sbPending = !!s.secure_boot_pending;
+    const anyEncrypted = (this.pools || []).some((p) => p.encrypted);
+    // Hide the panel entirely when there is nothing actionable AND no
+    // encrypted volume exists yet — keeps the page short for boxes that
+    // never want encryption.
+    if (!cfg && !anyEncrypted && !sbPending) {
+      return html`
+        <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <strong>Encryption</strong>
+            Data volumes can be LUKS-encrypted with a master passphrase. Set up
+            the master key to enable the option in the create wizard.
+          </div>
+          <button class="btn" @click=${this._openMasterKeySetup}>Set up encryption key</button>
+        </div>`;
+    }
+    return html`
+      <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+        <div>
+          <strong>Encryption</strong>
+          ${cfg
+            ? html`Master key is configured. New volumes can be encrypted with the
+                   same passphrase you use to unlock the system disk.
+                   ${tpm ? '' : html`<br><span class="warn-line">No TPM2 detected — encrypted volumes will require the passphrase at every boot.</span>`}
+                   ${sbPending ? html`<br><span class="warn-line">Secure Boot enrollment is pending — enroll Secure Boot before creating new encrypted volumes, or every TPM-bound volume will re-lock when enrollment changes PCR 7 (the recovery passphrase still works).</span>` : ''}`
+            : html`<span class="warn-line">Encryption key not set.</span>
+                   Existing encrypted volumes still work, but creating a new encrypted volume requires the master key.
+                   <button class="link-btn" @click=${this._openMasterKeySetup}>Set it up</button>.`}
+        </div>
+      </div>
+    `;
+  }
+
+  // Inserted in the wizard between Mount point and the modal-actions row.
+  // Hides itself when there is exactly one drive selected with profile
+  // 'single' on an unconfigured-key box — keeps the wizard short — but we
+  // always render at least the disabled-with-hint state so the user knows
+  // encryption is a thing they could enable.
+  _renderEncryptField() {
+    const s = this.encryptionStatus || {};
+    const cfg = !!s.master_key_configured;
+    const tpm = !!s.tpm_present;
+    const sbPending = !!s.secure_boot_pending;
+    return html`
+      <div class="field">
+        <label>
+          <input type="checkbox"
+                 .checked=${cfg ? !!this.encryptToggle : false}
+                 ?disabled=${!cfg}
+                 @change=${this._handleEncryptToggle} />
+          Encrypt this volume (LUKS)
+          ${cfg ? '' : html`<button class="link-btn"
+                                    style="margin-left:8px"
+                                    @click=${(e) => { e.preventDefault(); this._openMasterKeySetup(); }}>
+            set up the master key
+          </button>`}
+        </label>
+        <div class="hint">
+          ${cfg
+            ? html`The selected drives will be LUKS-encrypted with your master
+                   recovery passphrase. ${tpm
+                     ? 'TPM2 auto-unlock at every boot (recovery passphrase fallback).'
+                     : 'No TPM2 found — the passphrase will be required at every boot.'}
+                   ${sbPending && this.encryptToggle ? html`<br><span class="warn-line">Secure Boot enrollment is pending — enrolling it later will re-lock all TPM-bound volumes at once (recovery passphrase still works).</span>` : ''}`
+            : 'Master encryption key has not been set up on this box yet.'}
+        </div>
+      </div>
+    `;
+  }
+
+  _handleEncryptToggle(e) {
+    this.encryptToggle = !!e.target.checked;
+  }
+
+  _openMasterKeySetup() {
+    this.masterKeySetupOpen = true;
+    this.masterKeySetupMode = 'generate';
+    this.masterKeyPasted = '';
+    this.masterKeyGenerated = '';
+    this.masterKeySaving = false;
+    this.masterKeyError = '';
+    this.masterKeyAck = false;
+  }
+
+  _closeMasterKeySetup() {
+    if (this.masterKeySaving) return;
+    this.masterKeySetupOpen = false;
+  }
+
+  async _generateMasterKey() {
+    this.masterKeySaving = true;
+    this.masterKeyError = '';
+    try {
+      const r = await generateStorageMasterKey();
+      this.masterKeyGenerated = r.passphrase || '';
+      // Refresh status so the wizard's Encrypt toggle becomes enabled
+      // without a full reload.
+      this.encryptionStatus = await getStorageEncryptionStatus().catch(
+        () => this.encryptionStatus);
+    } catch (e) {
+      this.masterKeyError = e.message || 'Failed to generate master key.';
+    } finally {
+      this.masterKeySaving = false;
+    }
+  }
+
+  async _setUserMasterKey() {
+    const value = (this.masterKeyPasted || '').trim();
+    if (value.length < 20) {
+      this.masterKeyError = 'Passphrase must be at least 20 characters.';
+      return;
+    }
+    this.masterKeySaving = true;
+    this.masterKeyError = '';
+    try {
+      await setStorageMasterKey(value);
+      this.encryptionStatus = await getStorageEncryptionStatus().catch(
+        () => this.encryptionStatus);
+      // No value to display back (the user typed it); close on success.
+      this.masterKeySetupOpen = false;
+    } catch (e) {
+      this.masterKeyError = e.message || 'Failed to save master key.';
+    } finally {
+      this.masterKeySaving = false;
+    }
+  }
+
+  // Modal: pick a mode (generate / paste); on generate-success the same
+  // modal swaps to a one-time display panel with a copy button + an
+  // I-saved-it checkbox before close is allowed.
+  _renderMasterKeySetup() {
+    const generated = this.masterKeyGenerated;
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeMasterKeySetup(); }}>
+        <div class="modal">
+          <h2>Set up master encryption key</h2>
+          ${generated ? html`
+            <div class="sub">
+              Save this passphrase somewhere safe NOW — it will not be shown
+              again. You will type this at the boot prompt if TPM2 unlock ever
+              fails, and the same passphrase will unlock every encrypted data
+              volume on this box.
+            </div>
+            <div class="preview-box" style="font-family:monospace;font-size:16px;letter-spacing:1px;user-select:all;word-break:break-all;">
+              ${generated}
+            </div>
+            <label class="ack" style="margin-top:8px;">
+              <input type="checkbox" .checked=${this.masterKeyAck}
+                     @change=${(e) => { this.masterKeyAck = e.target.checked; }} />
+              <span>I have saved this passphrase in a safe place.</span>
+            </label>
+            <div class="modal-actions">
+              <button class="btn btn-primary"
+                      ?disabled=${!this.masterKeyAck}
+                      @click=${this._closeMasterKeySetup}>Done</button>
+            </div>
+          ` : html`
+            <div class="sub">
+              The master key is the LUKS passphrase used to unlock every
+              encrypted data volume on this box. By default it is also the
+              passphrase you type to unlock the system disk if TPM2 unlock
+              fails — keep one passphrase, not several.
+            </div>
+
+            <div class="field" style="display:flex;gap:8px;">
+              <button class="btn ${this.masterKeySetupMode === 'generate' ? 'btn-primary' : ''}"
+                      @click=${() => { this.masterKeySetupMode = 'generate'; this.masterKeyError = ''; }}>
+                Generate a new passphrase
+              </button>
+              <button class="btn ${this.masterKeySetupMode === 'paste' ? 'btn-primary' : ''}"
+                      @click=${() => { this.masterKeySetupMode = 'paste'; this.masterKeyError = ''; }}>
+                I have a passphrase
+              </button>
+            </div>
+
+            ${this.masterKeySetupMode === 'paste' ? html`
+              <div class="field">
+                <label>Master passphrase</label>
+                <input type="text"
+                       autocomplete="off"
+                       spellcheck="false"
+                       .value=${this.masterKeyPasted}
+                       placeholder="At least 20 printable-ASCII characters"
+                       @input=${(e) => { this.masterKeyPasted = e.target.value; }} />
+                <div class="hint">
+                  If your system disk is already encrypted, paste the same
+                  recovery passphrase you used at install — so one passphrase
+                  unlocks everything.
+                </div>
+              </div>
+            ` : html`
+              <div class="preview-box">
+                A fresh 6-group passphrase (about 155 bits of entropy) will
+                be generated and displayed once. Copy it to a password
+                manager before closing this dialog.
+              </div>
+            `}
+
+            ${this.masterKeyError ? html`<div class="err-banner">${this.masterKeyError}</div>` : ''}
+
+            <div class="modal-actions">
+              <button class="btn" @click=${this._closeMasterKeySetup}
+                      ?disabled=${this.masterKeySaving}>Cancel</button>
+              ${this.masterKeySetupMode === 'paste'
+                ? html`<button class="btn btn-primary"
+                               ?disabled=${this.masterKeySaving || (this.masterKeyPasted || '').trim().length < 20}
+                               @click=${this._setUserMasterKey}>
+                         ${this.masterKeySaving ? 'Saving…' : 'Save passphrase'}
+                       </button>`
+                : html`<button class="btn btn-primary"
+                               ?disabled=${this.masterKeySaving}
+                               @click=${this._generateMasterKey}>
+                         ${this.masterKeySaving ? 'Generating…' : 'Generate passphrase'}
+                       </button>`}
+            </div>
+          `}
+        </div>
+      </div>
     `;
   }
 }

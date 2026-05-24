@@ -25,6 +25,7 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -45,6 +46,20 @@ _MKFS_BTRFS = _resolve_bin("mkfs.btrfs")
 _BLKID = _resolve_bin("blkid")
 _MDADM = _resolve_bin("mdadm")
 _UDEVADM = _resolve_bin("udevadm")
+_CRYPTSETUP = _resolve_bin("cryptsetup")
+_SYSTEMD_CRYPTENROLL = _resolve_bin("systemd-cryptenroll")
+_SHRED = _resolve_bin("shred")
+
+# LUKS recovery passphrase persisted by the installer. Same value as the
+# system disk's keyslot 2; this is the SINGLE MASTER KEY for every data-pool
+# LUKS container too (one master across system + data, per the plan). For
+# pre-feature unencrypted-system boxes it's seeded by the admin UI's
+# "set up master encryption key" flow.
+_RECOVERY_PP_PATH = "/etc/nixos/secrets/recovery-passphrase.txt"
+
+# Either node indicates a usable TPM2. When absent, encryption falls back to
+# passphrase-only unlock (boot-time prompt) — still legitimate, just attended.
+_TPM_DEV_PATHS = ("/dev/tpmrm0", "/dev/tpm0")
 
 # btrfs (-d data, -m metadata) profile args. Metadata stays redundant even for
 # a stripe (raid0 data + raid1 metadata) — cheap, and it protects the trees.
@@ -145,7 +160,25 @@ class StoragePoolService:
         if len(set(members)) != len(members):
             errs.append("The same drive is selected more than once.")
         if req.get("encrypted"):
-            errs.append("Encrypted volumes are not supported yet.")
+            # The pool create job uses the file content as the master LUKS
+            # passphrase; refuse early (before any disk touch) if it's missing
+            # or empty so the UI can route the user to the master-key setup
+            # flow without leaving a half-built array behind.
+            try:
+                if not os.path.isfile(_RECOVERY_PP_PATH):
+                    raise FileNotFoundError
+                with open(_RECOVERY_PP_PATH, "rb") as _f:
+                    if not _f.read().rstrip(b"\n"):
+                        raise ValueError("empty")
+            except (FileNotFoundError, PermissionError):
+                errs.append(
+                    "Encryption requested but the master encryption key is "
+                    "not configured. Set up the master key on the Storage "
+                    "page first.")
+            except (ValueError, OSError):
+                errs.append(
+                    "Encryption requested but the master encryption key "
+                    f"file at {_RECOVERY_PP_PATH} is empty or unreadable.")
 
         # Collisions with existing pools / mounts.
         try:
@@ -202,6 +235,14 @@ class StoragePoolService:
 
     @staticmethod
     def _run_create(req: Dict[str, Any]) -> None:
+        # Track LUKS state for rollback. If anything in the create flow fails
+        # after a member has been luksFormat'd / luksOpen'd, the except branch
+        # closes the mappers and erases the LUKS headers so a retry isn't
+        # blocked by "device is mapped" / "exists already".
+        opened_mappers: List[str] = []
+        formatted_devs: List[str] = []
+        master_pp_file: Optional[str] = None
+        encrypted = bool(req.get("encrypted"))
         try:
             name = req["name"].strip()
             mountpoint = req["mountpoint"].strip()
@@ -220,9 +261,9 @@ class StoragePoolService:
             for m in members:
                 d = drives.get(m)
                 if d is None:
-                    return StoragePoolService._error(f"Drive {m} is no longer present.")
+                    raise RuntimeError(f"Drive {m} is no longer present.")
                 if not d.get("eligible") and not (force and d.get("overridable")):
-                    return StoragePoolService._error(
+                    raise RuntimeError(
                         f"Drive {m} is not eligible: "
                         f"{d.get('ineligible_reason') or 'in use'}.")
                 member_models.append(d.get("model") or "Unknown")
@@ -230,14 +271,49 @@ class StoragePoolService:
             dev_paths = [f"/dev/disk/by-id/{m}" for m in members]
             for p in dev_paths:
                 if not os.path.exists(p):
-                    return StoragePoolService._error(f"Device path missing: {p}")
+                    raise RuntimeError(f"Device path missing: {p}")
+
+            # 1b. If encrypted, materialize the master passphrase into a /run
+            #     tempfile BEFORE any disk is touched, so a missing/empty key
+            #     surface as an error with the pool fully un-modified. The
+            #     rstrip(b"\n") matters: cryptsetup binds the keyslot to the
+            #     bytes the user types at the boot prompt — newline-stripped.
+            if encrypted:
+                master_pp_file = StoragePoolService._materialize_master_passphrase()
 
             # 2. Wipe old filesystem signatures.
             StoragePoolService._update("wipe", 20.0, "Wiping old filesystem signatures")
             for p in dev_paths:
                 rc, out = StoragePoolService._cmd([_WIPEFS, "-a", p])
                 if rc != 0:
-                    return StoragePoolService._error(f"wipefs failed on {p}: {out}")
+                    raise RuntimeError(f"wipefs failed on {p}: {out}")
+
+            luks_records: List[Dict[str, str]] = []
+
+            # 2b. Per-disk LUKS for btrfs-native encrypted volumes. The btrfs
+            #     IS the multi-device layer, so each disk gets its own mapper
+            #     and btrfs spans them. Parity volumes (raid5/raid6) instead
+            #     do LUKS-on-md after step 3 — single mapper per pool.
+            tpm_avail = StoragePoolService._tpm_present() if encrypted else False
+            if encrypted and profile not in _MD_PROFILES:
+                assert master_pp_file is not None  # set above under `if encrypted`
+                StoragePoolService._update(
+                    "encrypt", 30.0,
+                    f"Encrypting {len(members)} drive(s) (LUKS2)")
+                for i, m in enumerate(members):
+                    mapper = f"cryptd-{name}-{i + 1}"
+                    dev = f"/dev/disk/by-id/{m}"
+                    StoragePoolService._luks_format(dev, master_pp_file)
+                    formatted_devs.append(dev)
+                    StoragePoolService._luks_open(dev, mapper, master_pp_file)
+                    opened_mappers.append(mapper)
+                    if tpm_avail:
+                        StoragePoolService._tpm_enroll_best_effort(dev, master_pp_file)
+                    luks_records.append({
+                        "mapper": mapper,
+                        "by-id": m,
+                        "luks-uuid": StoragePoolService._luks_uuid(dev),
+                    })
 
             # 3. For a PARITY volume, assemble the md array first; btrfs then
             #    sits on the single resulting /dev/md device. md --create returns
@@ -245,7 +321,11 @@ class StoragePoolService:
             #    resync runs in the background (surfaced via /proc/mdstat).
             md_uuid = ""
             md_name = ""
-            mkfs_targets = dev_paths
+            if encrypted and profile not in _MD_PROFILES:
+                # btrfs spans the per-disk mappers.
+                mkfs_targets = [f"/dev/mapper/{r['mapper']}" for r in luks_records]
+            else:
+                mkfs_targets = list(dev_paths)
             if profile in _MD_PROFILES:
                 md_name = name
                 level = "5" if profile == "raid5" else "6"
@@ -268,7 +348,7 @@ class StoragePoolService:
                     "--run",
                 ] + dev_paths)
                 if rc != 0:
-                    return StoragePoolService._error(f"mdadm --create failed: {out}")
+                    raise RuntimeError(f"mdadm --create failed: {out}")
                 # The /dev/md/<name> by-name symlink is created by udev and is
                 # NOT reliably present right after --create (it depends on the
                 # mdadm udev naming rules / homehost — e.g. /dev/md/ may not even
@@ -278,27 +358,53 @@ class StoragePoolService:
                 StoragePoolService._cmd([_UDEVADM, "settle"])
                 md_dev = StoragePoolService._await_md_device(member_knames)
                 if not md_dev:
-                    return StoragePoolService._error(
+                    raise RuntimeError(
                         "RAID array was created but its device node did not "
                         "appear; check `cat /proc/mdstat`.")
                 md_name = os.path.basename(md_dev)   # kernel name, e.g. md127
                 md_uuid = StoragePoolService._md_uuid(md_dev)
                 mkfs_targets = [md_dev]
 
+                # 3b. LUKS-on-md for encrypted parity volumes. One LUKS
+                # container per pool (not per disk) — RHEL/Fedora's default
+                # encrypted-RAID layout. The header sits on the md device and
+                # is striped + parity-protected just like data.
+                if encrypted:
+                    assert master_pp_file is not None  # set above under `if encrypted`
+                    StoragePoolService._update(
+                        "encrypt", 50.0,
+                        "Encrypting the assembled array (LUKS2)")
+                    mapper = f"cryptd-{name}"
+                    StoragePoolService._luks_format(md_dev, master_pp_file)
+                    formatted_devs.append(md_dev)
+                    StoragePoolService._luks_open(md_dev, mapper, master_pp_file)
+                    opened_mappers.append(mapper)
+                    if tpm_avail:
+                        StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file)
+                    luks_records.append({
+                        "mapper": mapper,
+                        # /dev/disk/by-id/md-uuid-<X> appears via mdadm udev
+                        # rules once assembled — used by /etc/crypttab so the
+                        # unlock fires after homehost-driven assembly at boot.
+                        "by-id": f"md-uuid-{md_uuid}",
+                        "luks-uuid": StoragePoolService._luks_uuid(md_dev),
+                    })
+                    mkfs_targets = [f"/dev/mapper/{mapper}"]
+
             # 4. Create the btrfs filesystem (the one destructive, irreversible
             #    step). No record is written until this succeeds.
             data, meta = _PROFILE_ARGS[profile]
-            StoragePoolService._update("format", 55.0, "Creating btrfs filesystem")
+            StoragePoolService._update("format", 60.0, "Creating btrfs filesystem")
             rc, out = StoragePoolService._cmd(
                 [_MKFS_BTRFS, "-f", "-L", name, "-d", data, "-m", meta] + mkfs_targets)
             if rc != 0:
-                return StoragePoolService._error(f"mkfs.btrfs failed: {out}")
+                raise RuntimeError(f"mkfs.btrfs failed: {out}")
 
             # 5. Capture the filesystem UUID — the mount keys on this.
             StoragePoolService._update("identify", 70.0, "Reading filesystem UUID")
             uuid = StoragePoolService._fs_uuid(mkfs_targets[0])
             if not uuid:
-                return StoragePoolService._error("Could not read the new filesystem UUID.")
+                raise RuntimeError("Could not read the new filesystem UUID.")
 
             # 5b. Ensure /dev/disk/by-uuid/<uuid> exists (the mount keys on it).
             StoragePoolService._update("settle", 75.0, "Registering the filesystem")
@@ -318,22 +424,36 @@ class StoragePoolService:
                 "fs-uuid": uuid,
                 "md-uuid": md_uuid,
                 "md-device": md_name,
-                "encrypted": False,
-                "luks-mappers": [],
+                "encrypted": encrypted,
+                "luks-mappers": luks_records,
                 "mount-options": ["compress=zstd", "noatime"],
                 "device-timeout": "15s",
                 "created-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "member-models": member_models,
             }
             if not StoragePoolService._append_pool(record):
-                return StoragePoolService._error(
+                raise RuntimeError(
                     "Volume formatted but failed to write homefree-config.json.")
 
-            StoragePoolService._done(
-                f"Volume '{name}' created. Apply changes to mount it at {mountpoint}.")
+            msg = f"Volume '{name}' created. Apply changes to mount it at {mountpoint}."
+            if encrypted and not tpm_avail:
+                msg += (
+                    " No TPM2 found — the recovery passphrase will be required "
+                    "at every boot to unlock this volume.")
+            StoragePoolService._done(msg)
         except Exception as e:  # noqa: BLE001
             logger.exception("storage-pool create crashed")
-            StoragePoolService._error(f"Unexpected error: {e}")
+            # Roll back LUKS state in reverse order so the next attempt finds a
+            # clean disk set. `close` first (mappers cannot be erased while
+            # open), then erase the LUKS2 primary header, then wipefs to clear
+            # the secondary header at the disk tail.
+            for mapper in reversed(opened_mappers):
+                StoragePoolService._luks_close(mapper)
+            for dev in formatted_devs:
+                StoragePoolService._luks_erase(dev)
+            StoragePoolService._error(str(e) if str(e) else f"Unexpected error: {e}")
+        finally:
+            StoragePoolService._shred_tempfile(master_pp_file)
 
     # ----------------------------------------------------------- forget
 
@@ -656,3 +776,139 @@ class StoragePoolService:
         pools = list(storage.get("pools") or [])
         pools.append(record)
         return ConfigWriter.write_config({"storage": {**storage, "pools": pools}})
+
+    # ----------------------------------------------------- LUKS helpers
+    #
+    # All operations are bound to ONE master key: the LUKS recovery
+    # passphrase at /etc/nixos/secrets/recovery-passphrase.txt (the same
+    # value that unlocks the system disk's recovery slot). The passphrase
+    # is materialized to /run/hf-luks-XXXX (mode 600, no trailing newline)
+    # for the duration of a create job and shredded in `finally`.
+    #
+    # Trailing newline gotcha: the installer writes the recovery passphrase
+    # with `+ "\n"` (install.py:670), but cryptsetup binds the keyslot to
+    # the newline-stripped value (what the user types at the boot prompt).
+    # `_materialize_master_passphrase` strips the newline so the tempfile's
+    # bytes match the slot's bound bytes for both --key-file (raw bytes)
+    # and interactive (passphrase semantics) modes.
+
+    @staticmethod
+    def _tpm_present() -> bool:
+        return any(os.path.exists(p) for p in _TPM_DEV_PATHS)
+
+    @staticmethod
+    def _materialize_master_passphrase() -> str:
+        """Write the recovery passphrase (newline-stripped) to a private
+        tempfile and return its path. Caller MUST `_shred_tempfile` it."""
+        if not os.path.isfile(_RECOVERY_PP_PATH):
+            raise RuntimeError(
+                "Master encryption key not configured. Set up the master "
+                "key on the Storage page before creating an encrypted "
+                "volume.")
+        try:
+            with open(_RECOVERY_PP_PATH, "rb") as f:
+                pp = f.read().rstrip(b"\n")
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not read {_RECOVERY_PP_PATH}: {e}") from e
+        if not pp:
+            raise RuntimeError(
+                f"Master encryption key at {_RECOVERY_PP_PATH} is empty.")
+        fd, path = tempfile.mkstemp(prefix="hf-luks-", dir="/run")
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, pp)
+        finally:
+            os.close(fd)
+        return path
+
+    @staticmethod
+    def _shred_tempfile(path: Optional[str]) -> None:
+        if not path:
+            return
+        try:
+            subprocess.run([_SHRED, "-u", path], check=False, timeout=10)
+        except (subprocess.SubprocessError, OSError):
+            pass
+        # shred should have deleted it; clean up the fallback.
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _luks_format(dev: str, pp_file: str) -> None:
+        """cryptsetup luksFormat with the master key (passphrase as keyfile
+        bytes — equivalent because we stripped the trailing newline)."""
+        p = subprocess.run(
+            [_CRYPTSETUP, "luksFormat", "-q", "--type", "luks2",
+             "--key-file", pp_file, dev],
+            capture_output=True, text=True, timeout=120)
+        if p.returncode != 0:
+            raise RuntimeError(
+                f"cryptsetup luksFormat failed on {dev} "
+                f"(exit {p.returncode}): {(p.stderr or p.stdout or '').strip()}")
+
+    @staticmethod
+    def _luks_open(dev: str, mapper: str, pp_file: str) -> None:
+        p = subprocess.run(
+            [_CRYPTSETUP, "open", "--key-file", pp_file, dev, mapper],
+            capture_output=True, text=True, timeout=30)
+        if p.returncode != 0:
+            raise RuntimeError(
+                f"cryptsetup open failed on {dev} → {mapper} "
+                f"(exit {p.returncode}): {(p.stderr or p.stdout or '').strip()}")
+
+    @staticmethod
+    def _luks_close(mapper: str) -> None:
+        """Best-effort close (used in rollback paths). Missing/already-closed
+        mappers must not raise."""
+        try:
+            subprocess.run([_CRYPTSETUP, "close", mapper],
+                           check=False, capture_output=True, timeout=15)
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.warning("cryptsetup close %s: %s", mapper, e)
+
+    @staticmethod
+    def _luks_uuid(dev: str) -> str:
+        p = subprocess.run([_CRYPTSETUP, "luksUUID", dev],
+                           capture_output=True, text=True, timeout=10)
+        if p.returncode != 0:
+            raise RuntimeError(
+                f"cryptsetup luksUUID failed on {dev}: "
+                f"{(p.stderr or p.stdout or '').strip()}")
+        return (p.stdout or "").strip()
+
+    @staticmethod
+    def _luks_erase(dev: str) -> None:
+        """Wipe the LUKS header so a subsequent format attempt isn't blocked.
+        `cryptsetup erase -q` zeros the primary header at offset 0; the
+        wipefs follow-up clears the LUKS2 secondary header at disk tail.
+        Best-effort — used during rollback after a failed create."""
+        try:
+            subprocess.run([_CRYPTSETUP, "erase", "-q", dev],
+                           check=False, capture_output=True, timeout=30)
+            subprocess.run([_WIPEFS, "-a", dev],
+                           check=False, capture_output=True, timeout=30)
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.warning("LUKS rollback wipe failed on %s: %s", dev, e)
+
+    @staticmethod
+    def _tpm_enroll_best_effort(dev: str, pp_file: str) -> None:
+        """Enroll a TPM2 keyslot (sealed to PCR 7) so unattended boot can
+        unlock without typing the passphrase. NON-FATAL: a TPM in DA-lockout
+        or a flaky cheap TPM should not block volume creation — the keyslot-0
+        passphrase still works at the boot prompt, just attended."""
+        p = subprocess.run(
+            [_SYSTEMD_CRYPTENROLL,
+             f"--unlock-key-file={pp_file}",
+             "--tpm2-device=auto",
+             "--tpm2-pcrs=7",
+             dev],
+            capture_output=True, text=True, timeout=30)
+        if p.returncode != 0:
+            logger.warning(
+                "TPM2 enrollment failed on %s (exit %d): %s — passphrase "
+                "fallback still works at the boot prompt.",
+                dev, p.returncode, (p.stderr or p.stdout or '').strip())

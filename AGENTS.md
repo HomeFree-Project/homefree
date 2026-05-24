@@ -238,6 +238,14 @@ Situational knowledge — read the linked note when working in that area:
   External Proxies' enable/public live in their `service-config` entry, never
   `services.<label>`; per-row highlighting needs a `table-editor` `rowKey`.
   → `docs/agent-notes/undeployed-change-indication.md`
+- **Storage volume encryption** — data pools LUKS-unlock LATE via `/etc/crypttab`
+  (never initrd, per rule 10); ONE master passphrase across system+data lives at
+  `/etc/nixos/secrets/recovery-passphrase.txt`, MUST be `rstrip("\n")` before
+  use (slot is bound passphrase-semantics, file has trailing newline on old
+  installs); mixed layout = per-disk LUKS for btrfs-native, LUKS-on-md for
+  parity; reclaim MUST `cryptsetup close` before `mdadm --stop`; create has
+  rollback (close+erase) on any raised exception — don't add `return _error()`
+  in the encrypted path. → `docs/agent-notes/storage-encryption.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.
