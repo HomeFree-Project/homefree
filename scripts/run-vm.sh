@@ -20,6 +20,14 @@ USE_UEFI="${USE_UEFI:-true}"
 # installer set up a btrfs RAID. Defaults to 2 so RAID is testable out
 # of the box; override with --disks N (or -n 1 for a single-disk test).
 VM_DISKS="${VM_DISKS:-2}"
+# Extra (non-install) data disks for testing post-install storage flows —
+# creating btrfs/RAID volumes, encryption, reclaim — without consuming the
+# install disks. Defaults to 5 so the Storage admin module has enough drives
+# out of the box to exercise every layout (raid1, raid10, raid5, raid6).
+# Attached without bootindex so they don't interfere with the boot order;
+# the installer ignores them. Set EXTRA_DISKS=0 to skip them entirely.
+EXTRA_DISKS="${EXTRA_DISKS:-5}"
+EXTRA_DISK_SIZE="${EXTRA_DISK_SIZE:-8G}"
 # Emulated TPM2 (swtpm). Needed to test unattended LUKS auto-unlock.
 # Enabled by default; pass --no-tpm to test the passphrase-at-boot path.
 USE_TPM="${USE_TPM:-true}"
@@ -132,6 +140,11 @@ Options:
   -c, --cores N             CPU cores (default: 4).
   -d, --disk-size SIZE      Disk size for fresh installs (default: 50G).
   -n, --disks N             Number of data disks to attach (default: 2).
+  -e, --extra-disks N       Extra non-install data disks for testing
+                            post-install storage flows (default: 5; pass 0
+                            to skip). Attached without bootindex; installer
+                            ignores them.
+      --extra-disk-size SZ  Size for each extra disk (default: 8G).
       --tpm / --no-tpm      Emulated TPM2 on/off (default: on).
       --bridge              Use bridge networking instead of user-mode.
       --no-dev              Disable the virtiofs source share.
@@ -145,15 +158,16 @@ Options:
   -h, --help                Show this help.
 
 Environment variables: FLAKE_DIR, VM_MEMORY, VM_CORES, VM_DISK_SIZE,
-VM_DISKS, USE_TPM, BUILD_DIR, VM_STATE_DIR.
+VM_DISKS, EXTRA_DISKS, EXTRA_DISK_SIZE, USE_TPM, BUILD_DIR, VM_STATE_DIR.
 
 Examples:
-  $SCRIPT_NAME run                        # 2 disks + TPM2 + dev (default)
+  $SCRIPT_NAME run                        # 2 install + 5 extra + TPM2 + dev
   $SCRIPT_NAME run -n 1                   # single-disk install test
   $SCRIPT_NAME run --no-tpm               # passphrase-at-boot path
   $SCRIPT_NAME run --no-dev               # no source share
   $SCRIPT_NAME run --bridge               # router topology + dev share
   $SCRIPT_NAME run -l                     # bridge + lan-client VM
+  $SCRIPT_NAME run --extra-disks 0        # skip the Storage-test scratch disks
 EOF
 }
 
@@ -286,6 +300,14 @@ cmd_run() {
                 VM_DISKS="$2"
                 shift 2
                 ;;
+            -e|--extra-disks)
+                EXTRA_DISKS="$2"
+                shift 2
+                ;;
+            --extra-disk-size)
+                EXTRA_DISK_SIZE="$2"
+                shift 2
+                ;;
             --tpm)
                 USE_TPM=true
                 shift
@@ -365,6 +387,12 @@ cmd_run() {
     # --disks must be a positive integer.
     if ! [[ "$VM_DISKS" =~ ^[1-9][0-9]*$ ]]; then
         log_error "--disks must be a positive integer (got: $VM_DISKS)"
+        exit 1
+    fi
+
+    # --extra-disks must be a non-negative integer (0 = none).
+    if ! [[ "$EXTRA_DISKS" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        log_error "--extra-disks must be a non-negative integer (got: $EXTRA_DISKS)"
         exit 1
     fi
 
@@ -560,9 +588,25 @@ cmd_run() {
         fi
     done
 
-    # If any disk already exists, offer to wipe them all so the
+    # Extra (non-install) data disks: small qcow2s attached without bootindex
+    # so the installer never picks them. Used to test post-install Storage
+    # flows (Volume create, encryption, reclaim) without consuming the OS
+    # disks. Named separately so the "delete existing disks" wipe prompt
+    # below can keep them when only the install needs a fresh start, AND
+    # so they survive an install-disk wipe so a pool can persist across
+    # installer iterations.
+    local -a EXTRA_DISK_PATHS=()
+    local e
+    for (( e = 1; e <= EXTRA_DISKS; e++ )); do
+        EXTRA_DISK_PATHS+=("$VM_STATE_DIR/homefree-extra-$e.qcow2")
+    done
+
+    # If any INSTALL disk already exists, offer to wipe them all so the
     # installer runs from scratch (a stale disk would otherwise boot the
-    # previously installed system instead of the ISO).
+    # previously installed system instead of the ISO). Extras are wiped
+    # by a SEPARATE prompt below — wiping the install when the user wants
+    # to also blow away a test pool is a different decision, and the user
+    # may want to keep the pool across re-installs.
     local existing=false
     for disk in "${ROUTER_DISKS[@]}"; do
         [[ -f "$disk" ]] && existing=true
@@ -580,6 +624,26 @@ cmd_run() {
             done
         else
             log_info "Keeping existing virtual disk(s)"
+        fi
+    fi
+
+    # Separate prompt for extras so the user can keep a test pool around
+    # across installer iterations (or wipe it when starting clean).
+    local extras_existing=false
+    for disk in "${EXTRA_DISK_PATHS[@]}"; do
+        [[ -f "$disk" ]] && extras_existing=true
+    done
+    if [[ "$extras_existing" == "true" ]]; then
+        log_warning "Existing extra disk(s) found (storage-test scratch)."
+        echo ""
+        read -p "Delete extra disk(s) and start fresh? [y/N] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            for disk in "${EXTRA_DISK_PATHS[@]}"; do
+                rm -f "$disk" && log_success "Deleted: $disk"
+            done
+        else
+            log_info "Keeping existing extra disk(s)"
         fi
     fi
 
@@ -601,6 +665,18 @@ cmd_run() {
             DISKS_FRESH=true
         else
             log_info "Using existing disk: $disk"
+        fi
+    done
+
+    # Create any missing extras at the chosen size. We do NOT set DISKS_FRESH
+    # for extras: the OVMF BootOrder hangs on install-disk replacement, not
+    # extras (no bootloader ever lands on them).
+    for disk in "${EXTRA_DISK_PATHS[@]}"; do
+        if [[ ! -f "$disk" ]]; then
+            log_info "Creating extra disk: $disk (size: $EXTRA_DISK_SIZE)"
+            qemu-img create -f qcow2 "$disk" "$EXTRA_DISK_SIZE"
+        else
+            log_info "Using existing extra disk: $disk"
         fi
     done
 
@@ -659,6 +735,15 @@ cmd_run() {
         -drive "file=$ISO_PATH,if=none,id=cdrom,media=cdrom,readonly=on"
         -device "ide-cd,drive=cdrom,bootindex=1"
     )
+    # NOTE: extra (non-install) data disks are appended AT THE VERY END of
+    # the QEMU command (see end of cmd_run), after every other PCIe device.
+    # QEMU's q35 auto-allocator assigns PCIe slots in command-line order, and
+    # NixOS's predictable network interface names (enp<bus>s<slot>) derive
+    # from those slots. Inserting more `-device virtio-blk-pci` here would
+    # shift the NICs onto different slots, rename them, and silently break
+    # an already-installed system whose homefree-config.json wan-/lan-
+    # interface fields were baked in at install time. Adding them last keeps
+    # NIC slots stable across any extra-disks count.
 
     # Emulated TPM2 via swtpm: start the daemon on a unix socket and
     # attach it as a tpm-tis device so the guest sees /dev/tpmrm0.
@@ -774,10 +859,30 @@ cmd_run() {
         log_info "Source share: disabled (--no-dev). Wizard 'Development mode' will fail."
     fi
 
+    # Extra (non-install) data disks — ATTACHED LAST so the auto-allocated
+    # PCIe slots for the network NICs (and every other device above) are
+    # unaffected by the extras count. Predictable interface names (enp<bus>s<slot>)
+    # are derived from those slots; baking them into homefree-config.json at
+    # install time means a later disk-count change must not shift them or
+    # systemd-networkd loses the match and the box boots with both NICs DOWN.
+    # No bootindex on extras (installer + UEFI ignore them); serial=test-extra-N
+    # gives them a stable /dev/disk/by-id path the Storage UI can show.
+    local extra_idx=0
+    for disk in "${EXTRA_DISK_PATHS[@]}"; do
+        ROUTER_QEMU_CMD+=(
+            -drive "file=$disk,format=qcow2,if=none,id=extradisk$extra_idx,cache=writeback,discard=unmap"
+            -device "virtio-blk-pci,drive=extradisk$extra_idx,serial=test-extra-$((extra_idx + 1))"
+        )
+        extra_idx=$(( extra_idx + 1 ))
+    done
+
     # Launch router VM
     log_info "Launching router VM..."
     log_info "  ISO: $ISO_PATH"
     log_info "  Disks: ${#ROUTER_DISKS[@]} (${ROUTER_DISKS[*]})"
+    if (( ${#EXTRA_DISK_PATHS[@]} > 0 )); then
+        log_info "  Extra disks: ${#EXTRA_DISK_PATHS[@]} × $EXTRA_DISK_SIZE (${EXTRA_DISK_PATHS[*]})"
+    fi
     log_info "  TPM2: $USE_TPM"
     log_info "  Memory: ${VM_MEMORY}MB"
     log_info "  Cores: $VM_CORES"
