@@ -421,7 +421,7 @@ class StoragePoolService:
                 if rc != 0:
                     raise RuntimeError(f"wipefs failed on {p}: {out}")
 
-            luks_records: List[Dict[str, str]] = []
+            luks_records: List[Dict[str, Any]] = []
 
             # 2b. Per-disk LUKS for btrfs-native encrypted volumes. The btrfs
             #     IS the multi-device layer, so each disk gets its own mapper
@@ -440,12 +440,18 @@ class StoragePoolService:
                     formatted_devs.append(dev)
                     StoragePoolService._luks_open(dev, mapper, master_pp_file)
                     opened_mappers.append(mapper)
-                    if tpm_avail:
-                        StoragePoolService._tpm_enroll_best_effort(dev, master_pp_file)
+                    # Track the actual TPM2 enrollment result per disk —
+                    # crypttab generation gates `tpm2-device=auto` on this
+                    # (segfaults systemd-cryptsetup when the LUKS has no
+                    # TPM2 slot to unseal).
+                    tpm2_enrolled = (tpm_avail
+                        and StoragePoolService._tpm_enroll_best_effort(dev, master_pp_file))
                     luks_records.append({
                         "mapper": mapper,
                         "by-id": m,
                         "luks-uuid": StoragePoolService._luks_uuid(dev),
+                        "keyfile": "",
+                        "tpm2-enrolled": tpm2_enrolled,
                     })
 
             # 3. For a PARITY volume, assemble the md array first; btrfs then
@@ -512,8 +518,8 @@ class StoragePoolService:
                     formatted_devs.append(md_dev)
                     StoragePoolService._luks_open(md_dev, mapper, master_pp_file)
                     opened_mappers.append(mapper)
-                    if tpm_avail:
-                        StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file)
+                    tpm2_enrolled = (tpm_avail
+                        and StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file))
                     luks_records.append({
                         "mapper": mapper,
                         # /dev/disk/by-id/md-uuid-<X> appears via mdadm udev
@@ -521,6 +527,8 @@ class StoragePoolService:
                         # unlock fires after homehost-driven assembly at boot.
                         "by-id": f"md-uuid-{md_uuid}",
                         "luks-uuid": StoragePoolService._luks_uuid(md_dev),
+                        "keyfile": "",
+                        "tpm2-enrolled": tpm2_enrolled,
                     })
                     mkfs_targets = [f"/dev/mapper/{mapper}"]
 
@@ -680,7 +688,7 @@ class StoragePoolService:
                 raise RuntimeError(f"wipefs failed on {md_dev}: {out}")
 
             mkfs_target = md_dev
-            luks_records: List[Dict[str, str]] = []
+            luks_records: List[Dict[str, Any]] = []
             if encrypted:
                 assert master_pp_file is not None
                 tpm_avail = StoragePoolService._tpm_present()
@@ -692,12 +700,14 @@ class StoragePoolService:
                 formatted_devs.append(md_dev)
                 StoragePoolService._luks_open(md_dev, mapper, master_pp_file)
                 opened_mappers.append(mapper)
-                if tpm_avail:
-                    StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file)
+                tpm2_enrolled = (tpm_avail
+                    and StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file))
                 luks_records.append({
                     "mapper": mapper,
                     "by-id": f"md-uuid-{md_uuid}",
                     "luks-uuid": StoragePoolService._luks_uuid(md_dev),
+                    "keyfile": "",
+                    "tpm2-enrolled": tpm2_enrolled,
                 })
                 mkfs_target = f"/dev/mapper/{mapper}"
 
@@ -858,6 +868,11 @@ class StoragePoolService:
         # instead of reading "Drive(s) not present".
         StoragePoolService._ensure_by_uuid(fs_uuid, [cand.get("device")], timeout_s=20)
 
+        # Detect LUKS layer: when the candidate's btrfs sits on a /dev/mapper/X
+        # crypt mapper, record the LUKS info so /etc/crypttab auto-unlocks at
+        # boot (master TPM2 if keyfile is empty, or a stored per-volume keyfile
+        # — both modes handled by modules/storage-pools.nix's mkCrypttabLine).
+        luks_layer = StoragePoolService.resolve_candidate_luks(cand.get("device", ""))
         record = {
             "enabled": True,
             "name": name,
@@ -867,8 +882,8 @@ class StoragePoolService:
             "fs-uuid": fs_uuid,
             "md-uuid": "",
             "md-device": cand.get("md_device") or "",
-            "encrypted": False,
-            "luks-mappers": [],
+            "encrypted": luks_layer is not None,
+            "luks-mappers": [luks_layer] if luks_layer else [],
             "mount-options": ["compress=zstd", "noatime"],
             "device-timeout": "15s",
             "created-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -936,6 +951,8 @@ class StoragePoolService:
         StoragePoolService._ensure_by_uuid(
             fs_uuid, [cand.get("device")], timeout_s=15)
 
+        # Same LUKS-layer detection as Promote — see resolve_candidate_luks.
+        luks_layer = StoragePoolService.resolve_candidate_luks(cand.get("device", ""))
         pool = {
             "enabled": True,
             "name": name,
@@ -945,8 +962,8 @@ class StoragePoolService:
             "fs-uuid": fs_uuid,
             "md-uuid": "",
             "md-device": cand.get("md_device") or "",
-            "encrypted": False,
-            "luks-mappers": [],
+            "encrypted": luks_layer is not None,
+            "luks-mappers": [luks_layer] if luks_layer else [],
             "mount-options": ["compress=zstd", "noatime"],
             "device-timeout": "15s",
             "imported-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -984,6 +1001,259 @@ class StoragePoolService:
         if not ok:
             return ["Failed to write homefree-config.json."]
         return []
+
+    # --------------------------------------------- locked-LUKS unlock
+
+    @staticmethod
+    def unlock_locked_luks(device: str, use_master_key: bool,
+                           passphrase: str,
+                           save_key: bool = False,
+                           adopt_master: bool = False) -> Dict[str, Any]:
+        """Open a locked LUKS container persistently. Mapper name is
+        derived from the backing device's kernel name as
+        `unmanaged-<kname>` (e.g. `unmanaged-md127`, `unmanaged-vdg`) so
+        the same physical thing always opens under the same name.
+
+        `use_master_key=True` reads the master passphrase from
+        /etc/nixos/secrets/recovery-passphrase.txt; otherwise the
+        user-supplied `passphrase` is used. The key bytes are written to
+        a /run tempfile (mode 0600), passed via `--key-file`, and shredded
+        after — never lingering in a Python string.
+
+        Two optional post-unlock persistence steps for foreign-keyed
+        volumes (use_master_key=False) so a Promote afterwards can
+        record an actually auto-unlockable pool:
+
+          save_key=True
+            Write the user's passphrase bytes to
+            /etc/nixos/secrets/luks-keys/<luks-uuid>.key (mode 0600,
+            in a chmod-0700 dir). Promote stores this path in the pool's
+            luks-mappers[].keyfile so /etc/crypttab references it for
+            auto-unlock on boot. Survives backup/restore (rides /etc/nixos).
+
+          adopt_master=True
+            cryptsetup luksAddKey — adds the configured master key as a
+            new LUKS slot, authorized by the user's passphrase. Then
+            best-effort TPM2 enrolls the master slot (--tpm2-pcrs=7) so
+            unattended boot works. After this the master key file alone
+            can unlock the volume — the same auto-unlock path
+            HomeFree-created encrypted pools use.
+
+        Both can be set: TPM2 wins at boot, keyfile is the fallback if
+        the TPM is cleared (best of both — see the crypttab line in
+        modules/storage-pools.nix). Neither option is honored when
+        use_master_key=True (no foreign key to save; master is already a
+        slot).
+
+        Returns `{mapper, device, key_stored, master_adopted, luks_uuid}`
+        on success. Raises ValueError for a wrong key (cryptsetup exit 2)
+        or bad inputs, RuntimeError for tooling / state issues."""
+        if not device or not device.startswith("/dev/"):
+            raise ValueError("Device path must be an absolute /dev/ path.")
+        if not os.path.exists(device):
+            raise RuntimeError(f"Device {device} does not exist.")
+
+        # Verify it's actually a locked LUKS — refuse if no LUKS header,
+        # or if a mapper is already open (the caller is confused about state).
+        from resolvers.storage import _luks_uuid_of_device, _luks_holder_open
+        if not _luks_uuid_of_device(device):
+            raise ValueError(
+                f"{device} does not carry a LUKS header — nothing to unlock.")
+        if _luks_holder_open(device):
+            raise ValueError(
+                f"{device} already has an open LUKS mapper. Refresh the page; "
+                "it should show as a regular candidate now.")
+
+        # Resolve the key bytes.
+        if use_master_key:
+            from services.encryption_master_key import get_master_pp_bytes
+            pp = get_master_pp_bytes()
+            if not pp:
+                raise RuntimeError(
+                    "The master encryption key is not configured on this box.")
+        else:
+            if not passphrase:
+                raise ValueError("Passphrase is required.")
+            # rstrip a trailing newline only — every other whitespace stays
+            # (cryptsetup is byte-exact about what it binds to a keyslot).
+            pp = passphrase.encode("utf-8").rstrip(b"\n")
+            if not pp:
+                raise ValueError("Passphrase is empty after stripping the trailing newline.")
+
+        kname = os.path.basename(os.path.realpath(device))
+        mapper = f"unmanaged-{kname}"
+
+        # Refuse if the mapper name is already in use (some other open mapper
+        # — possibly a previous unlock that wasn't closed). Caller can resolve
+        # by closing the existing mapper first.
+        if os.path.exists(f"/dev/mapper/{mapper}"):
+            raise RuntimeError(
+                f"Mapper /dev/mapper/{mapper} already exists. Close it "
+                "first (cryptsetup close) or refresh the page.")
+
+        fd, path = tempfile.mkstemp(prefix="hf-luks-open-", dir="/run")
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, pp)
+        finally:
+            os.close(fd)
+        try:
+            p = subprocess.run(
+                [_CRYPTSETUP, "open", "--key-file", path, device, mapper],
+                capture_output=True, text=True, timeout=30)
+            if p.returncode != 0:
+                err = (p.stderr or p.stdout or "").strip()
+                # Exit 2 from cryptsetup = "No key available with this
+                # passphrase" — the typical wrong-key failure mode.
+                if p.returncode == 2 or "No key available" in err:
+                    raise ValueError(
+                        "That passphrase does not unlock this volume.")
+                raise RuntimeError(
+                    f"cryptsetup open failed (exit {p.returncode}): {err}")
+        except (subprocess.SubprocessError, OSError) as e:
+            raise RuntimeError(f"cryptsetup open failed: {e}") from e
+        finally:
+            StoragePoolService._shred_tempfile(path)
+
+        # Nudge udev so /sys/block/<dm-N> + the by-uuid symlink (if a
+        # filesystem on the mapper has one) come up before the next API
+        # call probes them. The btrfs scan is part of `btrfs filesystem
+        # show` which `list_promotable_btrfs` already runs, so the next
+        # poll will see the open mapper and its btrfs without help here.
+        try:
+            subprocess.run([_UDEVADM, "settle"], check=False, timeout=10)
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+        # Capture the LUKS UUID for the per-volume keyfile path AND for
+        # any subsequent Promote — recorded in the pool's luks-mappers
+        # entry as the stable id of this container.
+        from resolvers.storage import _luks_uuid_of_device
+        luks_uuid = _luks_uuid_of_device(device) or ""
+
+        # Persistence steps (foreign-keyed volumes only — use_master_key
+        # means master is already a slot, both options become no-ops).
+        key_stored = False
+        master_adopted = False
+        if not use_master_key and luks_uuid and (save_key or adopt_master):
+            # Both steps want the user's passphrase as auth/contents. Write
+            # it once to a /run tempfile; reuse for whichever ops are on.
+            user_fd, user_path = tempfile.mkstemp(prefix="hf-luks-userpp-", dir="/run")
+            try:
+                os.fchmod(user_fd, 0o600)
+                os.write(user_fd, pp)
+            finally:
+                os.close(user_fd)
+            try:
+                if save_key:
+                    StoragePoolService._save_luks_keyfile(luks_uuid, pp)
+                    key_stored = True
+                if adopt_master:
+                    master_adopted = StoragePoolService._adopt_master_slot(
+                        device, user_path)
+            finally:
+                StoragePoolService._shred_tempfile(user_path)
+
+        logger.info(
+            "Unlocked LUKS on %s → /dev/mapper/%s "
+            "(master_key=%s, save_key=%s, master_adopted=%s)",
+            device, mapper, use_master_key, key_stored, master_adopted)
+        return {
+            "mapper": mapper,
+            "device": f"/dev/mapper/{mapper}",
+            "luks_uuid": luks_uuid,
+            "key_stored": key_stored,
+            "master_adopted": master_adopted,
+        }
+
+    @staticmethod
+    def _save_luks_keyfile(luks_uuid: str, key_bytes: bytes) -> None:
+        """Persist a LUKS unlock key at
+        /etc/nixos/secrets/luks-keys/<luks-uuid>.key (mode 0600, in a
+        chmod-0700 dir). Promote later references this path from the
+        pool's luks-mappers[].keyfile so /etc/crypttab auto-unlocks the
+        volume on boot. Lives under /etc/nixos which IS the backed-up
+        location — survives restore.
+
+        Uses plain `os` calls instead of utils/privileged.py because
+        admin-api runs as root (services/admin-web/default.nix) and does
+        NOT need pkexec; the privileged helpers are designed for the
+        installer's non-root user and would try to invoke
+        /etc/homefree-installer/pkexec-wrapper.sh which doesn't exist on
+        the installed system."""
+        keys_dir = "/etc/nixos/secrets/luks-keys"
+        # exist_ok=True so re-saves don't bomb. mode arg on os.makedirs
+        # is masked by umask, so we explicitly chmod afterwards.
+        os.makedirs(keys_dir, exist_ok=True)
+        os.chmod(keys_dir, 0o700)
+        keyfile = f"{keys_dir}/{luks_uuid}.key"
+        # Open with O_WRONLY|O_CREAT|O_TRUNC at 0600 from the start — never
+        # widen-then-narrow (which would race with anything scanning the
+        # dir). The on-disk bytes MUST match what cryptsetup binds to the
+        # slot: `key_bytes` is already newline-stripped by the unlock path;
+        # write verbatim, no encoding round-trip.
+        fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, key_bytes)
+        finally:
+            os.close(fd)
+        # Defensive — if the file existed before, the mode is preserved
+        # across O_TRUNC, so re-chmod to guarantee 0600 regardless.
+        os.chmod(keyfile, 0o600)
+        logger.info("Persisted LUKS keyfile at %s (mode 0600, dir 0700)", keyfile)
+
+    @staticmethod
+    def _adopt_master_slot(device: str, user_pp_file: str) -> bool:
+        """Add the configured master encryption key as a NEW LUKS slot on
+        `device`, authorized by `user_pp_file` (the unlock passphrase the
+        user just typed). On success, also best-effort TPM2-enrolls the
+        master slot so unattended boot via the existing
+        tpm2-device=auto,tpm2-pcrs=7 crypttab path works.
+
+        Returns True iff the luksAddKey succeeded (TPM2 enrollment is
+        best-effort — non-fatal if it fails, e.g. no TPM). Raises
+        RuntimeError if the master key isn't configured."""
+        from services.encryption_master_key import get_master_pp_bytes
+        master_pp = get_master_pp_bytes()
+        if not master_pp:
+            raise RuntimeError(
+                "Cannot adopt master key: the master encryption key is not "
+                "configured on this box.")
+        # luksAddKey reads the NEW key from the second positional arg as a
+        # keyfile (raw bytes to EOF) — so both files must have NO trailing
+        # newline (the user_pp_file already has none; master_pp is read via
+        # get_master_pp_bytes which strips it). Same byte-match invariant
+        # as the create flow's slot binding.
+        master_fd, master_path = tempfile.mkstemp(prefix="hf-luks-master-", dir="/run")
+        try:
+            os.fchmod(master_fd, 0o600)
+            os.write(master_fd, master_pp)
+        finally:
+            os.close(master_fd)
+        try:
+            p = subprocess.run(
+                [_CRYPTSETUP, "luksAddKey", "-q",
+                 "--key-file", user_pp_file, device, master_path],
+                capture_output=True, text=True, timeout=30)
+            if p.returncode != 0:
+                # No raise — adoption is opt-in user request; log + return
+                # False so the UI can surface a partial-success message.
+                logger.warning(
+                    "Adopt-master luksAddKey failed on %s (exit %d): %s",
+                    device, p.returncode,
+                    (p.stderr or p.stdout or "").strip())
+                return False
+            # Best-effort TPM2 enroll — same call shape as the create path.
+            if StoragePoolService._tpm_present():
+                try:
+                    StoragePoolService._tpm_enroll_best_effort(device, master_path)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "TPM2 enrollment after adopt-master failed on %s: %s",
+                        device, e)
+            return True
+        finally:
+            StoragePoolService._shred_tempfile(master_path)
 
     # ----------------------------------------------------------- helpers
 
@@ -1102,6 +1372,92 @@ class StoragePoolService:
         return any(os.path.exists(p) for p in _TPM_DEV_PATHS)
 
     @staticmethod
+    def resolve_candidate_luks(candidate_device: str) -> Optional[Dict[str, Any]]:
+        """Given a btrfs candidate's device path (the `device` field from
+        list_promotable_btrfs / list_importable), return the luks-mappers
+        entry to record on Promote/Attach when the path is a `/dev/mapper/X`
+        crypt device — None when the candidate is unencrypted.
+
+        Walks ONE slave level: a btrfs sitting on a LUKS mapper sitting on
+        either an md device (LUKS-on-md / parity) OR a raw disk (single-
+        disk LUKS). Per-disk LUKS in a btrfs-native raid1/raid10 is not
+        surfaced by list_promotable_btrfs anyway (the multi-device-native
+        rejection branch), so we don't have to handle N-mapper cases here.
+
+        The returned `keyfile` is the path of an existing saved keyfile
+        at /etc/nixos/secrets/luks-keys/<luks-uuid>.key (set during a
+        prior unlock with `save_key=True`), or empty when the volume is
+        master-keyed (crypttab will use TPM2 + passphrase fallback)."""
+        if not candidate_device or not candidate_device.startswith("/dev/mapper/"):
+            return None
+        mapper_name = os.path.basename(candidate_device)
+        try:
+            real_dm = os.path.basename(os.path.realpath(candidate_device))
+        except OSError:
+            return None
+        try:
+            dm_uuid = open(f"/sys/block/{real_dm}/dm/uuid").read().strip()
+        except OSError:
+            return None
+        if not dm_uuid.startswith("CRYPT-"):
+            return None
+
+        # Walk one slave level to the LUKS backing device.
+        try:
+            slaves = sorted(os.listdir(f"/sys/block/{real_dm}/slaves"))
+        except OSError:
+            return None
+        if len(slaves) != 1:
+            return None  # a crypt mapper should have exactly one backing dev
+        backing_name = slaves[0]
+        backing_dev = f"/dev/{backing_name}"
+
+        from resolvers.storage import _luks_uuid_of_device, _by_id_map
+        luks_uuid = _luks_uuid_of_device(backing_dev)
+        if not luks_uuid:
+            return None
+
+        # The `by-id` field is what modules/storage-pools.nix's crypttab line
+        # references: /dev/disk/by-id/<by-id>. For LUKS-on-md we use the
+        # md-uuid-<X> symlink (mirrors the create + reformat conventions);
+        # for LUKS-on-disk we use the disk's own by-id.
+        if backing_name.startswith("md"):
+            md_uuid = ""
+            try:
+                p = subprocess.run(
+                    [_MDADM, "--detail", "--export", backing_dev],
+                    capture_output=True, text=True, timeout=15)
+                for line in (p.stdout or "").splitlines():
+                    if line.startswith("MD_UUID="):
+                        md_uuid = line.split("=", 1)[1].strip()
+                        break
+            except (subprocess.SubprocessError, OSError):
+                pass
+            if not md_uuid:
+                return None
+            by_id = f"md-uuid-{md_uuid}"
+        else:
+            by_id = _by_id_map().get(backing_name) or ""
+            if not by_id:
+                return None
+
+        keyfile_path = f"/etc/nixos/secrets/luks-keys/{luks_uuid}.key"
+        keyfile = keyfile_path if os.path.isfile(keyfile_path) else ""
+        # Probe TPM2 enrollment on the LUKS so the crypttab generator can
+        # decide whether to include `tpm2-device=auto`. Including that opt
+        # against a LUKS with no TPM2 slot SEGFAULTS systemd-cryptsetup
+        # (observed on systemd 260 — boot fails with core-dump). See the
+        # `mkCrypttabLine` comment in modules/storage-pools.nix.
+        tpm2_enrolled = StoragePoolService._luks_has_tpm2_slot(backing_dev)
+        return {
+            "mapper": mapper_name,
+            "by-id": by_id,
+            "luks-uuid": luks_uuid,
+            "keyfile": keyfile,
+            "tpm2-enrolled": tpm2_enrolled,
+        }
+
+    @staticmethod
     def _materialize_master_passphrase() -> str:
         """Write the recovery passphrase (newline-stripped) to a private
         tempfile and return its path. Caller MUST `_shred_tempfile` it."""
@@ -1200,11 +1556,16 @@ class StoragePoolService:
             logger.warning("LUKS rollback wipe failed on %s: %s", dev, e)
 
     @staticmethod
-    def _tpm_enroll_best_effort(dev: str, pp_file: str) -> None:
+    def _tpm_enroll_best_effort(dev: str, pp_file: str) -> bool:
         """Enroll a TPM2 keyslot (sealed to PCR 7) so unattended boot can
         unlock without typing the passphrase. NON-FATAL: a TPM in DA-lockout
         or a flaky cheap TPM should not block volume creation — the keyslot-0
-        passphrase still works at the boot prompt, just attended."""
+        passphrase still works at the boot prompt, just attended.
+
+        Returns True iff enrollment succeeded — the caller records this in
+        the pool's luks-mappers[].tpm2-enrolled so the crypttab generator
+        knows whether to include `tpm2-device=auto` (which segfaults
+        systemd-cryptsetup when the LUKS has no TPM2 slot)."""
         p = subprocess.run(
             [_SYSTEMD_CRYPTENROLL,
              f"--unlock-key-file={pp_file}",
@@ -1217,3 +1578,30 @@ class StoragePoolService:
                 "TPM2 enrollment failed on %s (exit %d): %s — passphrase "
                 "fallback still works at the boot prompt.",
                 dev, p.returncode, (p.stderr or p.stdout or '').strip())
+            return False
+        return True
+
+    @staticmethod
+    def _luks_has_tpm2_slot(device: str) -> bool:
+        """True iff `device` is a LUKS container with at least one TPM2-bound
+        keyslot enrolled via systemd-cryptenroll. Used by
+        resolve_candidate_luks to set the pool record's
+        luks-mappers[].tpm2-enrolled correctly at Promote time.
+
+        `systemd-cryptenroll <device>` with no other args lists existing
+        slot-type rows; TPM2 slots show 'tpm2' in their TYPE column. We
+        don't need to parse precisely — substring is enough; the
+        master-keyed create path uses --tpm2-device=auto so the row reads
+        'tpm2' on success."""
+        try:
+            p = subprocess.run(
+                [_SYSTEMD_CRYPTENROLL, device],
+                capture_output=True, text=True, timeout=10)
+            if p.returncode != 0:
+                return False
+            for line in (p.stdout or "").splitlines():
+                if "tpm2" in line.lower():
+                    return True
+        except (subprocess.SubprocessError, OSError):
+            pass
+        return False

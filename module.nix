@@ -784,6 +784,46 @@
                       before unlocking the wrong device).
                     '';
                   };
+                  keyfile = lib.mkOption {
+                    type = str;
+                    default = "";
+                    description = ''
+                      Absolute path to a keyfile that auto-unlocks this LUKS
+                      container at boot. Empty (the default) means the volume
+                      is master-keyed: /etc/crypttab uses `none` as the
+                      keyfile field with `tpm2-device=auto,tpm2-pcrs=7` so
+                      TPM2 auto-unlocks and the recovery passphrase prompts as
+                      fallback. Non-empty (typically
+                      `/etc/nixos/secrets/luks-keys/<luks-uuid>.key`) means
+                      the volume was adopted with a foreign passphrase — the
+                      crypttab entry references the keyfile directly; if the
+                      master key was ALSO adopted as a slot (luksAddKey),
+                      TPM2 is still tried first and the keyfile is the
+                      backup. The /etc/nixos/secrets directory is backed up,
+                      so the keyfile survives restore.
+                    '';
+                  };
+                  tpm2-enrolled = lib.mkOption {
+                    type = bool;
+                    default = true;
+                    description = ''
+                      Whether this LUKS container has a TPM2-bound keyslot
+                      (`systemd-cryptenroll --tpm2-device=auto`). When TRUE
+                      the generated /etc/crypttab line includes
+                      `tpm2-device=auto,tpm2-pcrs=7` so systemd-cryptsetup
+                      tries TPM2 unseal first at boot. When FALSE those opts
+                      are OMITTED — critical, because a `tpm2-device=auto`
+                      opt against a LUKS with NO TPM2 slot causes
+                      systemd-cryptsetup to SEGFAULT inside `tpm2_unseal`
+                      instead of falling through to the keyfile / prompt
+                      (observed on systemd 260 — boot fails with
+                      `core-dump`). Default true preserves the original
+                      master-keyed behavior for legacy pool records (which
+                      don't carry this field); foreign-keyed pools adopted
+                      via the unlock flow set it explicitly based on a
+                      probe of the live LUKS slots.
+                    '';
+                  };
                 };
               });
               default = [];

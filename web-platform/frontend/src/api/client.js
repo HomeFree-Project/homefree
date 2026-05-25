@@ -159,6 +159,32 @@ export const getMountableDevices = () => get('/api/storage/mountable-devices');
 // unified Volumes section. Returns a list (length 0 or 1).
 export const getSystemVolumes = () => get('/api/storage/system-volumes');
 
+// Locked LUKS containers — encrypted volumes detected on the box whose
+// mappers are NOT open (so the contents are unreadable until someone
+// unlocks). Each record carries `master_key_unlocks` so the UI shows a
+// one-click "Unlock with master key" for HomeFree-keyed volumes and a
+// passphrase modal for foreign-keyed ones.
+export const getLockedLuks = () => get('/api/storage/locked-luks');
+// Persistently open a locked LUKS container. Pass `useMasterKey=true` to
+// authorize via the configured master key, or supply `passphrase` for a
+// foreign-keyed volume. The two persistence flags are honored only for
+// foreign-key unlocks (no-ops with master):
+//   saveKey       — write the passphrase to
+//                   /etc/nixos/secrets/luks-keys/<luks-uuid>.key so
+//                   Promote can record it as the crypttab keyfile
+//                   (auto-unlock on boot).
+//   adoptMaster   — `cryptsetup luksAddKey` to add the master key as a
+//                   new LUKS slot + TPM2-enroll, so the volume joins
+//                   the regular master-keyed unlock path.
+// Returns {mapper, device, luks_uuid, key_stored, master_adopted}.
+export const unlockLuks = (
+  device, useMasterKey, passphrase, saveKey = false, adoptMaster = false,
+) =>
+  post('/api/storage/luks/unlock', {
+    device, use_master_key: !!useMasterKey, passphrase: passphrase || '',
+    save_key: !!saveKey, adopt_master: !!adoptMaster,
+  });
+
 // Storage encryption (master key for data-pool LUKS containers). The master
 // key is the LUKS recovery passphrase persisted at
 // /etc/nixos/secrets/recovery-passphrase.txt — same value that unlocks the

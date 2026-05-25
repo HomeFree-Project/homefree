@@ -79,6 +79,7 @@ def _resolve_bin(name: str) -> str:
 
 
 _LSBLK = _resolve_bin("lsblk")
+_CRYPTSETUP = _resolve_bin("cryptsetup")
 _FINDMNT = _resolve_bin("findmnt")
 _BTRFS = _resolve_bin("btrfs")
 _PVS = _resolve_bin("pvs")
@@ -165,6 +166,50 @@ def _underlying_disks(dev: str) -> Set[str]:
         if len(parts) >= 2 and parts[1] == "disk":
             disks.add(parts[0])
     return disks
+
+
+def _luks_uuid_of_device(dev_path: str) -> Optional[str]:
+    """Return the LUKS2 header UUID from a device, or None if the device
+    is not a LUKS container. Wraps `cryptsetup luksUUID <dev>` — exits 0
+    with the UUID on stdout for LUKS, non-zero otherwise. Time-bounded so a
+    flaky disk can't wedge the resolver. Uses `_resolve_bin` because the
+    admin-api unit's PATH does NOT include cryptsetup directly (only the
+    nix-rebuild / git / etc. bins) — a bare `subprocess.run(["cryptsetup",
+    ...])` would FileNotFoundError → return None → silently dropping every
+    locked-LUKS detection. Mirrors the same pattern as storage_pool's
+    `_CRYPTSETUP` resolution."""
+    try:
+        p = subprocess.run(
+            [_CRYPTSETUP, "luksUUID", dev_path],
+            capture_output=True, text=True, timeout=_CMD_TIMEOUT_S)
+        if p.returncode != 0:
+            return None
+        return (p.stdout or "").strip() or None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def _luks_holder_open(dev_path: str) -> bool:
+    """True iff there is at least one active dm CRYPT- holder backed by
+    `dev_path` — i.e. someone has the LUKS container open. Used to skip
+    locked-LUKS detection on volumes that are already open (those flow
+    through the regular btrfs candidate path)."""
+    real = os.path.basename(os.path.realpath(dev_path))
+    holders = Path(f"/sys/block/{real}/holders")
+    if not holders.is_dir():
+        return False
+    try:
+        children = list(holders.iterdir())
+    except OSError:
+        return False
+    for h in children:
+        try:
+            uuid = (h / "dm" / "uuid").read_text().strip()
+        except OSError:
+            continue
+        if uuid.startswith("CRYPT-"):
+            return True
+    return False
 
 
 def _btrfs_md_backing(dev_path: str) -> Optional[str]:
@@ -1057,6 +1102,117 @@ class StorageResolver:
         return out
 
     @staticmethod
+    def list_locked_luks() -> List[Dict[str, Any]]:
+        """LUKS containers that EXIST on the box but have no open mapper
+        — i.e. encrypted volumes we can detect (LUKS header is on a raw
+        device or md array) but whose contents are inaccessible until
+        someone unlocks them. Scoped to:
+
+          - assembled md devices (the LUKS-on-md parity case — encrypted
+            raid5/raid6 volumes whose mapper was never opened or closed
+            after Remove)
+          - raw disks not in md / LVM / OS / swap / ESP / mounted (the
+            single-disk encrypted case)
+
+        Per-disk LUKS in a btrfs-native raid1/raid10 set is NOT surfaced
+        here — multi-unlock orchestration is a separate flow (each member
+        disk would have its own locked LUKS container; we'd need to unlock
+        all N before the multi-device btrfs becomes assemblable). Those
+        members appear as ineligible/has-data drives via the regular path.
+
+        Each entry carries `master_key_unlocks: bool` — the result of a
+        non-destructive `cryptsetup --test-passphrase` probe against the
+        master key — so the UI can show a one-click 'Unlock with master
+        key' for HomeFree-keyed volumes and 'Unlock with passphrase…' as
+        the fallback for foreign-keyed ones."""
+        try:
+            from services.encryption_master_key import master_key_unlocks
+        except ImportError:
+            def master_key_unlocks(_):  # type: ignore[misc]
+                return False
+        by_id = _by_id_map()
+        nodes = _lsblk_disk_nodes()
+        os_disks = _os_disks()
+        swap_disks = _swap_disks()
+        esp_disks = {k for k, n in nodes.items() if _scan_node(n)[3]}
+        all_mounted_btrfs_disks = _mounted_btrfs_disks()
+        protected = os_disks | all_mounted_btrfs_disks | swap_disks | esp_disks
+        arrays = _md_member_map()
+
+        # Disks already claimed by an assembled md array — don't re-list them
+        # as bare LUKS candidates; the md device above them is the right unit.
+        md_member_disks: Set[str] = set()
+        for info in arrays.values():
+            for part in info.get("members", []):
+                md_member_disks |= _underlying_disks(f"/dev/{part}")
+
+        out: List[Dict[str, Any]] = []
+
+        # 1. LUKS-on-md (the parity case).
+        for md_kname, info in arrays.items():
+            dev_path = f"/dev/{md_kname}"
+            if not os.path.exists(dev_path):
+                continue
+            luks_uuid = _luks_uuid_of_device(dev_path)
+            if not luks_uuid:
+                continue
+            if _luks_holder_open(dev_path):
+                continue  # already open — regular btrfs candidate flow handles it
+            member_knames: Set[str] = set()
+            for part in info.get("members", []):
+                member_knames |= _underlying_disks(f"/dev/{part}")
+            member_ids = [by_id[k] for k in sorted(member_knames) if by_id.get(k)]
+            level = (info.get("level") or "").lower()
+            profile = level if level in ("raid5", "raid6") else None
+            level_disp = level.upper() if level else "RAID"
+            out.append({
+                "id": f"luks:{md_kname}",
+                "kind": "md",
+                "device": dev_path,
+                "luks_uuid": luks_uuid,
+                "size_bytes": _dev_size_bytes(dev_path) or 0,
+                "md_device": md_kname,
+                "members": member_ids,
+                "member_knames": sorted(member_knames),
+                "profile": profile,
+                "master_key_unlocks": bool(master_key_unlocks(dev_path)),
+                "description": (
+                    f"{level_disp} array /dev/{md_kname} holds a LUKS "
+                    f"container (locked) across {len(member_knames)} drive(s)"),
+            })
+
+        # 2. LUKS-on-raw-disk (the single-disk case).
+        for name in sorted(nodes.keys()):
+            if name in protected or name in md_member_disks:
+                continue
+            bid = by_id.get(name)
+            if not bid:
+                continue
+            dev_path = f"/dev/{name}"
+            if not os.path.exists(dev_path):
+                continue
+            luks_uuid = _luks_uuid_of_device(dev_path)
+            if not luks_uuid:
+                continue
+            if _luks_holder_open(dev_path):
+                continue
+            out.append({
+                "id": f"luks:{name}",
+                "kind": "disk",
+                "device": dev_path,
+                "luks_uuid": luks_uuid,
+                "size_bytes": _dev_size_bytes(dev_path) or 0,
+                "md_device": "",
+                "members": [bid],
+                "member_knames": [name],
+                "profile": None,
+                "master_key_unlocks": bool(master_key_unlocks(dev_path)),
+                "description": f"LUKS container on /dev/{name} (locked)",
+            })
+
+        return out
+
+    @staticmethod
     def list_mounts() -> List[Dict[str, Any]]:
         """Every `homefree.mounts` row paired with live runtime — same idea as
         `list_pools`, so the Disk Mounts UI can render each entry as a
@@ -1573,6 +1729,52 @@ async def get_mountable_devices() -> Dict[str, Any]:
 @router.get("/system-volumes")
 async def get_system_volumes() -> Dict[str, Any]:
     return {"system_volumes": await asyncio.to_thread(StorageResolver.list_system_volumes)}
+
+
+# --- locked-LUKS containers (closed mappers — detect + offer unlock) ---
+
+@router.get("/locked-luks")
+async def get_locked_luks() -> Dict[str, Any]:
+    return {"locked": await asyncio.to_thread(StorageResolver.list_locked_luks)}
+
+
+class UnlockLuksRequest(BaseModel):
+    """Either set `use_master_key: true` to unlock with the configured
+    master key, or supply `passphrase` (foreign key). One of the two must
+    yield a non-empty key.
+
+    The two persistence flags are honored only for foreign-keyed unlocks
+    (use_master_key=False) — they're no-ops when the master is used (the
+    master key is already a slot + already known to HomeFree):
+
+      save_key       — write the user's passphrase to
+                       /etc/nixos/secrets/luks-keys/<luks-uuid>.key so
+                       Promote can record it as the crypttab keyfile
+                       (auto-unlock on boot).
+      adopt_master   — `cryptsetup luksAddKey` to add the master key as
+                       a new LUKS slot + TPM2-enroll, so the volume
+                       joins the regular master-keyed unlock path."""
+    device: str
+    use_master_key: bool = False
+    passphrase: str = ""
+    save_key: bool = False
+    adopt_master: bool = False
+
+
+@router.post("/luks/unlock")
+async def post_unlock_luks(req: UnlockLuksRequest) -> Dict[str, Any]:
+    from services.storage_pool import StoragePoolService
+    try:
+        result = await asyncio.to_thread(
+            StoragePoolService.unlock_locked_luks,
+            req.device, req.use_master_key, req.passphrase,
+            req.save_key, req.adopt_master)
+    except ValueError as e:
+        # Wrong key / bad inputs → 400. The UI surfaces this verbatim.
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return result
 
 
 # --- master encryption key (used by every data-pool LUKS container) ----------

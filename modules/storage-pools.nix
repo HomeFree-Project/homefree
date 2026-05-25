@@ -75,16 +75,35 @@ let
     };
   };
 
-  # Late-unlock crypttab line for one LUKS mapper. `none` = no keyfile; the
-  # systemd-cryptsetup unit tries the TPM2-sealed slot first (per the
-  # tpm2-device/tpm2-pcrs opts) and falls back to the boot-prompt passphrase.
+  # Late-unlock crypttab line for one LUKS mapper.
+  #
+  # Field-3 (keyfile path) is set from `m.keyfile`:
+  #   - empty  → `none`  (no per-volume keyfile; rely on TPM/prompt)
+  #   - non-empty → the saved-key path (foreign-keyed volume adopted via the
+  #     unlock flow)
+  #
+  # The `tpm2-device=auto,tpm2-pcrs=7` opts are emitted ONLY when the LUKS
+  # actually has a TPM2-bound keyslot (`m.tpm2-enrolled`). This is critical:
+  # passing `tpm2-device=auto` against a LUKS with NO TPM2 slot causes
+  # systemd-cryptsetup to SEGFAULT inside `tpm2_unseal` instead of falling
+  # back to the keyfile / prompt — boot fails with `core-dump`, observed on
+  # systemd 260. So omit the opts for foreign-keyed volumes that haven't had
+  # the master adopted (tpm2-enrolled defaults true for legacy records that
+  # came from the master-keyed create flow, which DOES enroll a TPM slot).
+  #
   # `nofail` makes a missing backing device (e.g. pulled disk) non-fatal —
   # systemd skips the unit and boot continues; the admin UI flags the volume.
   # `discard` propagates fstrim through the LUKS layer (matches the system
   # disk's `allowDiscards=true`).
   mkCrypttabLine = m:
-    "${m.mapper} /dev/disk/by-id/${m.by-id} none "
-    + "tpm2-device=auto,tpm2-pcrs=7,nofail,x-systemd.device-timeout=15s,luks,discard";
+    let
+      keyfileField = if m.keyfile == "" then "none" else m.keyfile;
+      tpmOpts = if (m.tpm2-enrolled or true)
+                then "tpm2-device=auto,tpm2-pcrs=7,"
+                else "";
+    in
+    "${m.mapper} /dev/disk/by-id/${m.by-id} ${keyfileField} "
+    + "${tpmOpts}nofail,x-systemd.device-timeout=15s,luks,discard";
 in
 {
   fileSystems = builtins.listToAttrs (map mkFileSystem pools);

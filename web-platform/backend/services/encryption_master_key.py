@@ -162,6 +162,48 @@ def _shred(path: str) -> None:
             pass
 
 
+def get_master_pp_bytes() -> Optional[bytes]:
+    """Public accessor for the materialized master-key bytes (newline-stripped).
+    Returns None if the master key is not configured or unreadable. Callers
+    that hand bytes to cryptsetup should write to a /run tempfile (mode 0600)
+    and shred after — never let the value linger in a Python string longer
+    than needed."""
+    return _read_pp_bytes()
+
+
+def master_key_unlocks(device_path: str) -> bool:
+    """Non-destructive probe: would the master key unlock `device_path`?
+    Returns True iff `cryptsetup open --test-passphrase --key-file <master>
+    <device_path>` exits 0. False on:
+      - master key not configured / empty
+      - cryptsetup missing
+      - any non-zero exit (wrong key OR transient tool error — fail closed
+        so we never falsely advertise a one-click unlock that won't work).
+    `--test-passphrase` does NOT activate the device, so this is safe to
+    call from a list_* probe; the tempfile is shredded after."""
+    pp = _read_pp_bytes()
+    if not pp:
+        return False
+    cryptsetup = shutil.which("cryptsetup") or "/run/current-system/sw/bin/cryptsetup"
+    if not os.path.exists(cryptsetup):
+        return False
+    fd, path = tempfile.mkstemp(prefix="hf-luks-probe-", dir="/run")
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, pp)
+    finally:
+        os.close(fd)
+    try:
+        p = subprocess.run(
+            [cryptsetup, "open", "--test-passphrase", "--key-file", path, device_path],
+            capture_output=True, timeout=10)
+        return p.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+    finally:
+        _shred(path)
+
+
 def _read_pp_bytes() -> Optional[bytes]:
     try:
         with open(RECOVERY_PP_PATH, "rb") as f:
