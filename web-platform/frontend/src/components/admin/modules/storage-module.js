@@ -7,6 +7,7 @@ import {
   getStoragePools,
   previewStoragePool,
   createStoragePool,
+  reformatStoragePool,
   getStoragePoolCreateStatus,
   forgetStoragePool,
   restoreStoragePool,
@@ -157,6 +158,17 @@ class StorageModule extends LitElement {
     masterKeySaving: { state: true },
     masterKeyError: { state: true },
     masterKeyAck: { state: true },          // user confirmed they saved the value
+    // Reformat-existing-array modal: put a new filesystem on an already-
+    // assembled mdadm array WITHOUT re-running mdadm --create (no resync).
+    // Reuses the create-status poll endpoint (shared single-flight slot).
+    reformatTarget: { state: true },        // { md_device, members, profile, label?, size_bytes? }
+    reformatName: { state: true },
+    reformatMountpoint: { state: true },
+    reformatEncrypt: { state: true },
+    reformatConfirmText: { state: true },
+    reformatting: { state: true },
+    reformatStatus: { state: true },
+    reformatError: { state: true },
   };
 
   static styles = css`
@@ -587,6 +599,14 @@ class StorageModule extends LitElement {
     this.masterKeySaving = false;
     this.masterKeyError = '';
     this.masterKeyAck = false;
+    this.reformatTarget = null;
+    this.reformatName = '';
+    this.reformatMountpoint = '';
+    this.reformatEncrypt = false;
+    this.reformatConfirmText = '';
+    this.reformatting = false;
+    this.reformatStatus = null;
+    this.reformatError = '';
   }
 
   connectedCallback() {
@@ -1358,6 +1378,16 @@ class StorageModule extends LitElement {
     // `_staleSignatureGroups` so the user sees ONE card per physical thing
     // with both "Mount existing filesystem" and "Reclaim & erase…".
     const showReclaim = !!reclaim && !isMounted && !isPendingRemove;
+    // "Use array (new filesystem)" — appears for btrfs-on-mdadm candidates
+    // (c.md_device set) so the admin can throw away the existing filesystem
+    // and start a new one on the SAME assembled array, skipping the
+    // multi-TB resync a fresh mdadm --create would force. Only offered when
+    // the reclaim group carries a recognised parity profile (raid5/raid6);
+    // a btrfs that happens to live on a non-parity md device would not fit
+    // our btrfs-on-mdadm reformat path.
+    const showReformat = !isMounted && !isPendingRemove
+      && !!c.md_device
+      && !!reclaim && !!reclaim.profile;
     // Pending-removal: use the original pool's name + mountpoint (what
     // the user picked when they created the volume) — the candidate's
     // suggested_name (mount-point basename) usually matches, but isn't
@@ -1388,6 +1418,10 @@ class StorageModule extends LitElement {
               <button class="btn-row" @click=${() => this._openPromote(c)}>
                 ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
               </button>`}
+            ${showReformat ? html`
+              <button class="btn-row warn"
+                      title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
+                      @click=${() => this._openReformatFromCandidate(c, reclaim)}>Use array (new filesystem)…</button>` : ''}
             ${showReclaim ? html`
               <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
           </div>
@@ -1404,6 +1438,15 @@ class StorageModule extends LitElement {
   // deleted Drives-table set-box.
   _renderStaleGroupCard(rec) {
     const memberIds = rec.member_ids || [];
+    // Reformat is offered when the leftover group IS an assembled mdadm
+    // parity array (raid5/raid6) with no btrfs candidate covering it (an
+    // assembled-but-empty array, or an array carrying a non-btrfs fs we
+    // don't surface as a candidate). The candidate path handles
+    // btrfs-on-mdadm with its own merged card. `rec.profile` is non-null
+    // only for raid5/raid6 mdadm groups (backend filter).
+    const showReformat = rec.kind === 'mdadm'
+      && !!rec.profile
+      && (rec.arrays || []).length > 0;
     return html`
       <div class="pool-card">
         <div class="pool-top">
@@ -1415,6 +1458,10 @@ class StorageModule extends LitElement {
           </div>
           <div class="pool-actions">
             <span class="badge badge-warn">Leftover</span>
+            ${showReformat ? html`
+              <button class="btn-row warn"
+                      title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
+                      @click=${() => this._openReformatFromArray(rec)}>Use array (new filesystem)…</button>` : ''}
             <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
           </div>
         </div>
@@ -1848,6 +1895,7 @@ class StorageModule extends LitElement {
         ${this.addMountOpen ? this._renderAddMountModal() : ''}
         ${this.addNetworkOpen ? this._renderAddNetworkShareModal() : ''}
         ${this.masterKeySetupOpen ? this._renderMasterKeySetup() : ''}
+        ${this.reformatTarget ? this._renderReformatModal() : ''}
       </div>
     `;
   }
@@ -2974,6 +3022,221 @@ class StorageModule extends LitElement {
       <div class="progress"><div style="width:${pct}%"></div></div>
       <div class="hint">${pct}% — ${s.step || ''}</div>
       <div class="hint">Tearing down the old array and wiping the drives. Keep this tab open.</div>
+    `;
+  }
+
+  // ---- reformat: new filesystem on an existing mdadm array, no resync ----
+
+  // Open the modal from a btrfs-candidate card (the array currently has a
+  // btrfs on it). `c` is the candidate; `reclaim` is the resolved reclaim
+  // group (we use its `profile` field for the raid level).
+  _openReformatFromCandidate(c, reclaim) {
+    this.reformatTarget = {
+      md_device: c.md_device,
+      members: c.members || [],
+      profile: (reclaim && reclaim.profile) || c.profile,
+      label: c.label || '',
+      size_bytes: c.size_bytes || 0,
+      source: 'candidate',
+    };
+    this._resetReformatForm();
+  }
+
+  // Open the modal from a stale-RAID-array card (no btrfs on top, or a
+  // non-btrfs fs we don't surface as a candidate).
+  _openReformatFromArray(rec) {
+    this.reformatTarget = {
+      md_device: (rec.arrays || [])[0],
+      members: rec.member_ids || [],
+      profile: rec.profile,
+      label: '',
+      size_bytes: 0,
+      source: 'array',
+    };
+    this._resetReformatForm();
+  }
+
+  _resetReformatForm() {
+    // Seed defaults from the source: the existing label (if any) suggests
+    // a name; the mountpoint follows /mnt/<name>. Encryption defaults ON
+    // when the master key is configured (same heuristic as the create
+    // wizard) so the most common case — admin wants encrypted data — is
+    // a single click.
+    const seedName = (this.reformatTarget && this.reformatTarget.label) || '';
+    this.reformatName = seedName;
+    this.reformatMountpoint = seedName ? '/mnt/' + seedName : '';
+    this.reformatEncrypt = !!(this.encryptionStatus
+      && this.encryptionStatus.master_key_configured);
+    this.reformatConfirmText = '';
+    this.reformatting = false;
+    this.reformatStatus = null;
+    this.reformatError = '';
+  }
+
+  _closeReformat() {
+    if (this.reformatting) return;
+    this._stopPolling();
+    this.reformatTarget = null;
+    this.reformatError = '';
+  }
+
+  get _reformatCanSubmit() {
+    const nameOk = NAME_RE.test((this.reformatName || '').trim());
+    const mpOk = (this.reformatMountpoint || '').trim().startsWith('/');
+    const phraseOk = (this.reformatConfirmText || '').trim().toLowerCase()
+      === ERASE_CONFIRM_PHRASE.toLowerCase();
+    return nameOk && mpOk && phraseOk && !this.reformatting;
+  }
+
+  async _doReformat() {
+    if (!this.reformatTarget) return;
+    this.reformatting = true;
+    this.reformatError = '';
+    this.reformatStatus = { step: 'starting', progress: 0, message: 'Starting…' };
+    const payload = {
+      name: this.reformatName.trim(),
+      mountpoint: this.reformatMountpoint.trim(),
+      profile: this.reformatTarget.profile,
+      members: this.reformatTarget.members,
+      md_device: this.reformatTarget.md_device,
+      encrypted: !!(this.reformatEncrypt
+        && this.encryptionStatus
+        && this.encryptionStatus.master_key_configured),
+    };
+    try {
+      await reformatStoragePool(payload);
+      this._pollReformatStatus();
+    } catch (e) {
+      this.reformatting = false;
+      this.reformatError = e.message || 'Failed to start reformat.';
+    }
+  }
+
+  // Reuses the shared /api/storage/pools/create-status endpoint (the backend
+  // tracks reformat + create in the same single-flight slot).
+  _pollReformatStatus() {
+    this._stopPolling();
+    const tick = async () => {
+      try {
+        const s = await getStoragePoolCreateStatus();
+        this.reformatStatus = s;
+        if (s.error) {
+          this.reformatting = false;
+          this.reformatError = s.error;
+          return;
+        }
+        if (s.completed) {
+          this.reformatting = false;
+          await this.loadData();
+          // The new pool record will appear via loadData; emit it into the
+          // config flow so the standard pending-change / Apply path mounts
+          // it (same pattern as _onCreated).
+          this._emitPools();
+          return;
+        }
+      } catch (e) {
+        // transient — keep polling
+      }
+      this._pollTimer = setTimeout(tick, 1000);
+    };
+    this._pollTimer = setTimeout(tick, 800);
+  }
+
+  _renderReformatModal() {
+    const t = this.reformatTarget;
+    if (!t) return '';
+    const memberIds = t.members || [];
+    const sourceLabel = t.label ? "'" + t.label + "'" : '(unlabelled)';
+    const sizeLabel = t.size_bytes ? formatBytes(t.size_bytes) : '';
+    const encEnabled = !!(this.encryptionStatus
+      && this.encryptionStatus.master_key_configured);
+    const inProgress = this.reformatting
+      && this.reformatStatus
+      && !this.reformatStatus.completed
+      && !this.reformatStatus.error;
+    const pct = Math.round((this.reformatStatus || {}).progress || 0);
+    return html`
+      <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeReformat(); }}>
+        <div class="modal">
+          ${inProgress ? html`
+            <h2>Reformatting array…</h2>
+            <div class="sub">${(this.reformatStatus || {}).message || 'Working…'}</div>
+            <div class="progress"><div style="width:${pct}%"></div></div>
+            <div class="hint">${pct}% — ${(this.reformatStatus || {}).step || ''}</div>
+            <div class="hint">No mdadm --create — the existing array is preserved. Keep this tab open.</div>
+          ` : (this.reformatStatus && this.reformatStatus.completed) ? html`
+            <h2>Volume reformatted</h2>
+            <div class="sub">${this.reformatStatus.message || 'Done.'}</div>
+            <div class="modal-actions">
+              <button class="btn btn-primary" @click=${this._closeReformat}>Done</button>
+            </div>
+          ` : html`
+            <h2>Use array (new filesystem)</h2>
+            <div class="sub">
+              Put a fresh filesystem on the existing
+              <strong>${(t.profile || 'raid').toUpperCase()}</strong> array
+              ${t.md_device ? html`(<code>${t.md_device}</code>)` : ''}
+              across ${memberIds.length} drive(s)${sizeLabel ? ' · ' + sizeLabel : ''}.
+              ${t.source === 'candidate' ? html`
+                The existing btrfs filesystem ${sourceLabel} will be
+                <strong>destroyed</strong>. The mdadm array itself is kept —
+                no resync.
+              ` : html`
+                The mdadm array itself is kept — no resync.
+              `}
+            </div>
+
+            <div class="field">
+              <label>Volume name</label>
+              <input type="text" placeholder="tank"
+                     .value=${this.reformatName}
+                     @input=${(e) => { this.reformatName = e.target.value; this.reformatMountpoint = '/mnt/' + e.target.value.trim(); }} />
+              <div class="hint">Letters, digits, '-' or '_'. Also used as the btrfs label.</div>
+            </div>
+
+            <div class="field">
+              <label>Mount point</label>
+              <input type="text" placeholder="/mnt/tank"
+                     .value=${this.reformatMountpoint}
+                     @input=${(e) => { this.reformatMountpoint = e.target.value; }} />
+            </div>
+
+            <div class="field">
+              <label>
+                <input type="checkbox"
+                       .checked=${encEnabled ? this.reformatEncrypt : false}
+                       ?disabled=${!encEnabled}
+                       @change=${(e) => { this.reformatEncrypt = !!e.target.checked; }} />
+                Encrypt this volume (LUKS-on-md)
+              </label>
+              <div class="hint">
+                ${encEnabled
+                  ? 'LUKS goes on /dev/' + (t.md_device || 'mdN') + ' (single mapper per array). Same master passphrase as the system disk.'
+                  : 'Master encryption key not configured — set it up first to enable.'}
+              </div>
+            </div>
+
+            <div class="field">
+              <label>To confirm reformatting (data on the array will be lost), type <code>${ERASE_CONFIRM_PHRASE}</code></label>
+              <input type="text"
+                     .value=${this.reformatConfirmText}
+                     @input=${(e) => { this.reformatConfirmText = e.target.value; }}
+                     placeholder=${ERASE_CONFIRM_PHRASE}
+                     autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+
+            ${this.reformatError ? html`<div class="err-banner">${this.reformatError}</div>` : ''}
+
+            <div class="modal-actions">
+              <button class="btn" @click=${this._closeReformat}
+                      ?disabled=${this.reformatting}>Cancel</button>
+              <button class="btn btn-danger"
+                      ?disabled=${!this._reformatCanSubmit}
+                      @click=${this._doReformat}>Reformat array</button>
+            </div>
+          `}
+        </div>
+      </div>
     `;
   }
 

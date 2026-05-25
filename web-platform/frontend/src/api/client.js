@@ -118,6 +118,12 @@ export const previewStoragePool = (members, profile) =>
   post('/api/storage/preview', { members, profile });
 export const createStoragePool = (payload) =>
   post('/api/storage/pools/create', payload);
+// Reformat: put a NEW filesystem on an existing mdadm parity array WITHOUT
+// re-running mdadm --create (skips the multi-TB resync at the cost of any
+// data currently on the array). Status reported via the same create-status
+// endpoint — the in-flight slot is shared.
+export const reformatStoragePool = (payload) =>
+  post('/api/storage/pools/reformat', payload);
 export const getStoragePoolCreateStatus = () =>
   get('/api/storage/pools/create-status');
 export const forgetStoragePool = (name) =>

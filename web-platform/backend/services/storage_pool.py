@@ -195,6 +195,107 @@ class StoragePoolService:
             errs.append(f"Mount point '{mountpoint}' is already in use.")
         return errs
 
+    # ------------------------------------------------------ reformat validation
+    #
+    # Reformat is "use this existing mdadm array, put a NEW filesystem on it"
+    # — for the case where an admin has e.g. a 4×12TB RAID6 that already
+    # resynced (which takes a DAY or more) and wants to throw away whatever
+    # filesystem is on top and start fresh, optionally encrypted, WITHOUT
+    # re-creating the array (which would force another day of resync). The
+    # member disks are NOT wiped; only /dev/md<N> is reformatted.
+
+    @staticmethod
+    def validate_reformat_request(req: Dict[str, Any]) -> List[str]:
+        """Pre-flight checks for `reformat`. Validates the new pool's name +
+        mountpoint + encryption shape, and that the target md array exists +
+        no filesystem on it is currently mounted. Underlying member disks
+        are NOT validated as `eligible` — they're already in an md array,
+        so the normal eligibility check would (correctly) refuse them."""
+        errs: List[str] = []
+        name = (req.get("name") or "").strip()
+        mountpoint = (req.get("mountpoint") or "").strip()
+        md_device = (req.get("md_device") or "").strip()
+        members = req.get("members") or []
+        profile = req.get("profile")
+
+        if not _NAME_RE.match(name):
+            errs.append(
+                "Pool name must be 1–32 characters: letters, digits, '-' or "
+                "'_', starting with a letter or digit.")
+        if not mountpoint.startswith("/"):
+            errs.append("Mount point must be an absolute path (e.g. /mnt/tank).")
+        if profile not in _MD_PROFILES:
+            errs.append(
+                f"Reformat only supports parity profiles (raid5/raid6); got "
+                f"'{profile}'. For btrfs-native arrays the existing data is "
+                "the array — there is no separate md layer to preserve.")
+        if not md_device:
+            errs.append("Reformat requires the target md device name (e.g. md127).")
+        if not members:
+            errs.append("Reformat requires the array's member by-id list.")
+
+        # Refuse if any filesystem backed by the md device is currently mounted.
+        if md_device:
+            md_kname = os.path.basename(md_device)
+            try:
+                with open("/proc/mounts") as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) < 2 or not parts[0].startswith("/dev/"):
+                            continue
+                        # Resolve the source through /sys/block holders so a
+                        # mounted LUKS mapper on top of /dev/md<N> also counts.
+                        src_kname = os.path.basename(os.path.realpath(parts[0]))
+                        if src_kname == md_kname:
+                            errs.append(
+                                f"/dev/{md_kname} (or a filesystem on top of it) "
+                                f"is currently mounted at {parts[1]}. Unmount "
+                                "first, then retry.")
+                            break
+                        # Walk up: is parts[0] a dm device whose slave is the md?
+                        slaves_dir = f"/sys/block/{src_kname}/slaves"
+                        if os.path.isdir(slaves_dir):
+                            if md_kname in os.listdir(slaves_dir):
+                                errs.append(
+                                    f"A filesystem on top of /dev/{md_kname} is "
+                                    f"currently mounted at {parts[1]} (via "
+                                    f"{parts[0]}). Unmount first, then retry.")
+                                break
+            except OSError:
+                pass
+
+        if req.get("encrypted"):
+            try:
+                if not os.path.isfile(_RECOVERY_PP_PATH):
+                    raise FileNotFoundError
+                with open(_RECOVERY_PP_PATH, "rb") as _f:
+                    if not _f.read().rstrip(b"\n"):
+                        raise ValueError("empty")
+            except (FileNotFoundError, PermissionError):
+                errs.append(
+                    "Encryption requested but the master encryption key is "
+                    "not configured. Set up the master key on the Storage "
+                    "page first.")
+            except (ValueError, OSError):
+                errs.append(
+                    "Encryption requested but the master encryption key "
+                    f"file at {_RECOVERY_PP_PATH} is empty or unreadable.")
+
+        # Collisions with existing pools / mounts.
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        existing = ((cfg.get("storage") or {}).get("pools")) or []
+        if any(p.get("name") == name for p in existing):
+            errs.append(f"A volume named '{name}' already exists.")
+        used = {p.get("mountpoint") for p in existing}
+        used |= {m.get("mount-point") for m in (cfg.get("mounts") or [])}
+        used |= _proc_mount_points()
+        if mountpoint and mountpoint in used:
+            errs.append(f"Mount point '{mountpoint}' is already in use.")
+        return errs
+
     # ------------------------------------------------------------- start
 
     @staticmethod
@@ -230,6 +331,38 @@ class StoragePoolService:
         }
         StoragePoolService._thread = threading.Thread(
             target=StoragePoolService._run_create, args=(req,), daemon=True)
+        StoragePoolService._thread.start()
+        return True
+
+    @staticmethod
+    def start_reformat(req: Dict[str, Any]) -> bool:
+        """Spawn the reformat job. Same single-flight slot + rebuild guard
+        as `start`; the in-flight status is reported via the same
+        `/api/storage/pools/create-status` endpoint."""
+        if StoragePoolService._running:
+            return False
+        try:
+            from services.storage_reclaim import StorageReclaimService
+            if StorageReclaimService._running:
+                return False
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from services.nix_operations import NixOperations
+            if NixOperations.get_rebuild_status().get("running"):
+                raise StoragePoolBusy("A system rebuild is in progress.")
+        except StoragePoolBusy:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+        StoragePoolService._running = True
+        StoragePoolService._status = {
+            "step": "starting", "progress": 0.0,
+            "message": "Preparing to reformat array",
+            "completed": False, "error": None,
+        }
+        StoragePoolService._thread = threading.Thread(
+            target=StoragePoolService._run_reformat, args=(req,), daemon=True)
         StoragePoolService._thread.start()
         return True
 
@@ -447,6 +580,178 @@ class StoragePoolService:
             # clean disk set. `close` first (mappers cannot be erased while
             # open), then erase the LUKS2 primary header, then wipefs to clear
             # the secondary header at the disk tail.
+            for mapper in reversed(opened_mappers):
+                StoragePoolService._luks_close(mapper)
+            for dev in formatted_devs:
+                StoragePoolService._luks_erase(dev)
+            StoragePoolService._error(str(e) if str(e) else f"Unexpected error: {e}")
+        finally:
+            StoragePoolService._shred_tempfile(master_pp_file)
+
+    # ----------------------------------------------------------- reformat
+
+    @staticmethod
+    def _run_reformat(req: Dict[str, Any]) -> None:
+        """Re-format an existing mdadm parity array with a fresh filesystem
+        (optionally LUKS-encrypted), WITHOUT tearing down + re-syncing the
+        array. The motivating case: a 4×12TB RAID6 took a day to resync;
+        the admin wants to scrap its current filesystem (e.g. unmanaged
+        btrfs, or one created without encryption) and start fresh — they
+        should not have to pay that resync cost again.
+
+        Steps:
+          1. Materialize the master passphrase if encrypted.
+          2. Locate /dev/md<N> + verify it is assembled.
+          3. Close any LUKS mapper currently sitting on /dev/md<N> so we
+             can re-format it (an open mapper holds the device).
+          4. wipefs /dev/md<N> to clear the existing filesystem / LUKS
+             signature.
+          5. If encrypted: luksFormat + luksOpen + TPM-enroll on /dev/md<N>.
+          6. mkfs.btrfs on the (LUKS mapper or) md device.
+          7. Capture the new fs-uuid + ensure /dev/disk/by-uuid/<uuid>.
+          8. Record the pool. Same shape as a fresh raid5/6 create except
+             `members`/`md-uuid`/`md-device` come from the EXISTING array
+             (not recomputed via mdadm --create).
+
+        Rollback mirrors _run_create: any failure after LUKS state is set
+        up closes the mapper + erases the LUKS header on /dev/md<N>.
+        """
+        opened_mappers: List[str] = []
+        formatted_devs: List[str] = []
+        master_pp_file: Optional[str] = None
+        encrypted = bool(req.get("encrypted"))
+        try:
+            name = req["name"].strip()
+            mountpoint = req["mountpoint"].strip()
+            profile = req["profile"]
+            members = req["members"]
+            md_device_in = req["md_device"].strip()
+            md_kname = os.path.basename(md_device_in)  # accept "md127" OR "/dev/md127"
+            md_dev = f"/dev/{md_kname}"
+
+            StoragePoolService._update("validate", 5.0, "Validating the array")
+            if not os.path.exists(md_dev):
+                raise RuntimeError(
+                    f"{md_dev} does not exist or is not assembled. The array "
+                    "must be present to reformat in place.")
+            # Re-read the live md-uuid (don't trust the client value).
+            md_uuid = StoragePoolService._md_uuid(md_dev)
+            if not md_uuid:
+                raise RuntimeError(
+                    f"Could not read the md UUID for {md_dev}; refusing to "
+                    "reformat without a stable array identifier.")
+
+            # Look up member models for the pool record (cosmetic but matches
+            # _run_create's record shape). Best-effort.
+            member_models: List[str] = []
+            drives = {d.get("by_id"): d
+                      for d in StorageResolver.list_drives() if d.get("by_id")}
+            for m in members:
+                d = drives.get(m)
+                member_models.append((d or {}).get("model") or "Unknown")
+
+            if encrypted:
+                master_pp_file = StoragePoolService._materialize_master_passphrase()
+
+            # Close any LUKS mapper currently holding /dev/md<N>. Without this,
+            # `wipefs` on the md device fails with EBUSY. The helper is the
+            # same /sys/block/<X>/holders walk that storage_reclaim uses; we
+            # call cryptsetup close on every CRYPT- holder we find.
+            holders_dir = f"/sys/block/{md_kname}/holders"
+            if os.path.isdir(holders_dir):
+                for h in sorted(os.listdir(holders_dir)):
+                    try:
+                        uuid = open(
+                            f"{holders_dir}/{h}/dm/uuid").read().strip()
+                        mapper_name = open(
+                            f"{holders_dir}/{h}/dm/name").read().strip()
+                    except OSError:
+                        continue
+                    if uuid.startswith("CRYPT-") and mapper_name:
+                        StoragePoolService._update(
+                            "luks-close", 15.0,
+                            f"Closing existing LUKS mapper {mapper_name}")
+                        StoragePoolService._luks_close(mapper_name)
+
+            StoragePoolService._update(
+                "wipe", 25.0, f"Wiping existing filesystem signatures on {md_dev}")
+            rc, out = StoragePoolService._cmd([_WIPEFS, "-a", md_dev])
+            if rc != 0:
+                raise RuntimeError(f"wipefs failed on {md_dev}: {out}")
+
+            mkfs_target = md_dev
+            luks_records: List[Dict[str, str]] = []
+            if encrypted:
+                assert master_pp_file is not None
+                tpm_avail = StoragePoolService._tpm_present()
+                mapper = f"cryptd-{name}"
+                StoragePoolService._update(
+                    "encrypt", 40.0,
+                    "Encrypting the array (LUKS2 on the md device)")
+                StoragePoolService._luks_format(md_dev, master_pp_file)
+                formatted_devs.append(md_dev)
+                StoragePoolService._luks_open(md_dev, mapper, master_pp_file)
+                opened_mappers.append(mapper)
+                if tpm_avail:
+                    StoragePoolService._tpm_enroll_best_effort(md_dev, master_pp_file)
+                luks_records.append({
+                    "mapper": mapper,
+                    "by-id": f"md-uuid-{md_uuid}",
+                    "luks-uuid": StoragePoolService._luks_uuid(md_dev),
+                })
+                mkfs_target = f"/dev/mapper/{mapper}"
+
+            data, meta = _PROFILE_ARGS[profile]
+            StoragePoolService._update(
+                "format", 60.0, "Creating btrfs filesystem on the array")
+            rc, out = StoragePoolService._cmd(
+                [_MKFS_BTRFS, "-f", "-L", name, "-d", data, "-m", meta, mkfs_target])
+            if rc != 0:
+                raise RuntimeError(f"mkfs.btrfs failed: {out}")
+
+            StoragePoolService._update("identify", 75.0, "Reading filesystem UUID")
+            uuid = StoragePoolService._fs_uuid(mkfs_target)
+            if not uuid:
+                raise RuntimeError("Could not read the new filesystem UUID.")
+
+            StoragePoolService._update("settle", 85.0, "Registering the filesystem")
+            if not StoragePoolService._ensure_by_uuid(uuid, [mkfs_target]):
+                logger.warning(
+                    "storage-pool: by-uuid for %s did not appear after reformat; "
+                    "the volume is built but its mount may need a udev trigger.",
+                    uuid)
+
+            StoragePoolService._update("record", 90.0, "Recording pool configuration")
+            record = {
+                "enabled": True,
+                "name": name,
+                "mountpoint": mountpoint,
+                "profile": profile,
+                "members": members,
+                "fs-uuid": uuid,
+                "md-uuid": md_uuid,
+                "md-device": md_kname,
+                "encrypted": encrypted,
+                "luks-mappers": luks_records,
+                "mount-options": ["compress=zstd", "noatime"],
+                "device-timeout": "15s",
+                "created-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "member-models": member_models,
+                "reformatted-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            if not StoragePoolService._append_pool(record):
+                raise RuntimeError(
+                    "Volume formatted but failed to write homefree-config.json.")
+
+            msg = (f"Volume '{name}' reformatted on the existing array. "
+                   f"Apply changes to mount it at {mountpoint}.")
+            if encrypted and not StoragePoolService._tpm_present():
+                msg += (
+                    " No TPM2 found — the recovery passphrase will be required "
+                    "at every boot to unlock this volume.")
+            StoragePoolService._done(msg)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("storage-pool reformat crashed")
             for mapper in reversed(opened_mappers):
                 StoragePoolService._luks_close(mapper)
             for dev in formatted_devs:

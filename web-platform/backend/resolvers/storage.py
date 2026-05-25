@@ -362,12 +362,19 @@ def _reclaim_groups() -> List[Dict[str, Any]]:
             disks |= _underlying_disks(f"/dev/{part}")
         vgs = sorted({vg for pv, vg in pv_vg.items() if vg
                       and os.path.basename(os.path.realpath(pv)) == md})
-        level = (info["level"] or "raid").upper()
+        level_raw = (info["level"] or "").lower()
+        level = level_raw.upper() if level_raw else "RAID"
         desc = f"{level} array /dev/{md} across {len(disks)} drive(s)"
         if vgs:
             desc += f", with LVM group {', '.join(vgs)}"
+        # Normalize the md raid level into HomeFree's profile vocabulary so
+        # the Reformat UI knows whether this is a raid5/raid6 array (the
+        # only kinds that fit btrfs-on-mdadm reformat). Anything else stays
+        # null and the UI hides the Reformat button for that group.
+        profile = level_raw if level_raw in ("raid5", "raid6") else None
         groups.append({
             "id": f"md:{md}", "kind": "mdadm", "arrays": [f"/dev/{md}"],
+            "profile": profile,
             "vgs": vgs, "disks": sorted(disks), "description": desc,
         })
         claimed |= disks
@@ -698,6 +705,10 @@ class StorageResolver:
                         "vgs": g["vgs"], "description": g["description"],
                         "member_knames": g["disks"],
                         "member_ids": [by_id[dk] for dk in g["disks"] if by_id.get(dk)],
+                        # md raid level if this is an mdadm group (raid5/raid6
+                        # → eligible for Reformat; otherwise null). Synthesized
+                        # single-disk groups never have a profile (no md layer).
+                        "profile": g.get("profile"),
                     }
             row["reclaimable"] = reclaim is not None
             row["reclaim"] = reclaim
@@ -1374,6 +1385,42 @@ async def post_create(req: CreateRequest) -> Dict[str, Any]:
 async def get_create_status() -> Dict[str, Any]:
     from services.storage_pool import StoragePoolService
     return StoragePoolService.get_status()
+
+
+class ReformatRequest(BaseModel):
+    """Reformat an existing mdadm array with a fresh filesystem (skip resync).
+    `members` is the by-id list of the array's existing member disks;
+    `md_device` is the kernel name ('md127') or full path ('/dev/md127')."""
+    name: str
+    mountpoint: str
+    profile: str          # raid5 | raid6
+    members: List[str]
+    md_device: str
+    encrypted: bool = False
+
+
+@router.post("/pools/reformat")
+async def post_reformat(req: ReformatRequest) -> Dict[str, Any]:
+    """Put a new filesystem on an existing mdadm array WITHOUT re-running
+    mdadm --create (avoids the day-long resync at multi-TB sizes). Status
+    is reported via the same /pools/create-status endpoint."""
+    from services.storage_pool import StoragePoolService, StoragePoolBusy
+    payload = {
+        "name": req.name, "mountpoint": req.mountpoint, "profile": req.profile,
+        "members": req.members, "md_device": req.md_device,
+        "encrypted": req.encrypted,
+    }
+    errs = await asyncio.to_thread(
+        StoragePoolService.validate_reformat_request, payload)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    try:
+        started = StoragePoolService.start_reformat(payload)
+    except StoragePoolBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not started:
+        raise HTTPException(status_code=409, detail="A volume operation is already running.")
+    return {"started": True}
 
 
 @router.post("/pools/forget")
