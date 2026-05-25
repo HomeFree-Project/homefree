@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import '../../shared/config-section.js';
 import '../../shared/table-editor.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
+import { navIcon } from '../../../shared/icons.js';
 import {
   getStorageDrives,
   getStoragePools,
@@ -10,6 +11,7 @@ import {
   reformatStoragePool,
   getStoragePoolCreateStatus,
   forgetStoragePool,
+  destroyStoragePool,
   restoreStoragePool,
   reclaimStorageDisks,
   getStorageReclaimStatus,
@@ -375,13 +377,24 @@ class StorageModule extends LitElement {
     .pool-actions { display: flex; gap: 8px; align-items: center; }
 
     .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px;
       font-size: 11px; font-weight: 600; white-space: nowrap;
     }
     .badge-ok { background: var(--hf-accent-soft); color: var(--hf-accent); }
     .badge-warn { background: var(--hf-warn-soft); color: var(--hf-warn); }
     .badge-err { background: rgba(239,68,68,0.15); color: var(--hf-err); }
     .badge-muted { background: var(--hf-surface-3); color: var(--hf-text-muted); }
+    /* Lucide nav icons render as 24x24 by default; scale them down inside
+       badges and inline-with-title spans so they match the surrounding
+       text weight. The currentColor stroke is set by the parent
+       (.badge / .pool-name), so the icon tints with that color
+       automatically. */
+    .badge svg { width: 12px; height: 12px; }
+    .pool-name svg {
+      width: 16px; height: 16px;
+      vertical-align: -3px; margin-right: 6px;
+    }
 
     .inline-confirm {
       margin-top: 10px; padding: 10px; border-radius: 8px;
@@ -743,9 +756,15 @@ class StorageModule extends LitElement {
   }
 
   // Drives that don't already live inside some other card. Anything in a
-  // pool, mount, btrfs candidate, stale-signature group, locked-LUKS card,
-  // OR System card is already represented somewhere; the remainder are the
-  // cards we render at the top of the unified Volumes list.
+  // pool, mount, btrfs candidate, MULTI-disk reclaim group, locked-LUKS
+  // card, OR System card is already represented somewhere; the remainder
+  // are the cards we render at the top of the unified Volumes list.
+  //
+  // SINGLE-disk reclaim groups are NOT a reason to exclude — those drives
+  // STAY in the Available list and their Reclaim button rides on the
+  // Available drive card itself. Reclaim-blocked disks (mounted, can't
+  // wipe) are also excluded because the wizard wouldn't accept them
+  // either; the stale-group card surfaces the "unmount to reclaim" hint.
   _unassociatedDrives() {
     const claimed = this._claimedDriveIds;
     const candidateDisks = new Set();
@@ -754,7 +773,14 @@ class StorageModule extends LitElement {
     }
     const staleDisks = new Set();
     for (const d of (this.drives || [])) {
-      if ((d.reclaim || d.reclaim_blocked) && d.by_id) staleDisks.add(d.by_id);
+      if (!d.by_id) continue;
+      // Multi-disk reclaim group → render as standalone stale-group card.
+      const memberCount = (d.reclaim?.member_ids || []).length;
+      if (memberCount > 1) staleDisks.add(d.by_id);
+      // Mounted-but-reclaimable (reclaim_blocked) → exclude from Available
+      // either way (single OR multi-disk); the stale-group card surfaces
+      // the blocker explanation.
+      else if (d.reclaim_blocked) staleDisks.add(d.by_id);
     }
     // Disks backing a locked-LUKS card belong to that card alone — without
     // this filter a single-disk LUKS like /dev/vdg shows up TWICE: once as
@@ -796,9 +822,12 @@ class StorageModule extends LitElement {
     return (this.promotable || []).filter((c) => !mountUuids.has(c.fs_uuid));
   }
 
-  // Leftover RAID/LVM signature groups, deduped by reclaim id. Each group
-  // is rendered once with all its members listed inside the card; the user
-  // gets a single Reclaim & erase action on the group, never per-drive.
+  // Leftover RAID/LVM signature groups, deduped by reclaim id. Only
+  // MULTI-disk reclaim groups (mdadm / LVM / multi-disk-stale) get
+  // their own card here — a single-disk reclaim is rendered as a Reclaim
+  // button on the disk's existing card (Available drive, btrfs
+  // candidate, locked-LUKS), so no extra noise.
+  //
   // Suppresses groups whose disks are entirely covered by:
   //   - a btrfs candidate (merge into candidate card), OR
   //   - a pool record (pending or applied) — e.g. right after a Reformat
@@ -832,6 +861,11 @@ class StorageModule extends LitElement {
     const byId = new Map();
     for (const d of (this.drives || [])) {
       if (!d.reclaim) continue;
+      // Skip single-disk groups — the disk's own card (Available drive,
+      // candidate, etc.) shows the Reclaim button instead. This is what
+      // keeps a plain "Contains ext4" Available card from sprouting a
+      // duplicate "Unmanaged drive" stale-group card.
+      if ((d.reclaim.member_ids || []).length <= 1) continue;
       const id = d.reclaim.id;
       if (covered.has(id)) continue;
       if (!byId.has(id)) byId.set(id, d.reclaim);
@@ -1428,6 +1462,8 @@ class StorageModule extends LitElement {
           <div class="pool-actions">
             ${useExistingCand ? html`
               <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>` : ''}
+            ${d.reclaim ? html`
+              <button class="btn-row delete" @click=${() => this._openReclaim(d.reclaim)}>Reclaim &amp; erase…</button>` : ''}
           </div>
         </div>
         <div class="pool-members">${d.by_id || d.name}</div>
@@ -1642,6 +1678,7 @@ class StorageModule extends LitElement {
             <div class="pool-meta">${s['fs-type'] || '?'} · root mount <code>/</code></div>
           </div>
           <div class="pool-actions">
+            ${s.encrypted ? html`<span class="badge badge-ok" title="System disk is LUKS-encrypted; auto-unlocked by TPM2 (recovery passphrase as fallback at the boot prompt)">${navIcon('lock')}Encrypted</span>` : ''}
             <span class="badge badge-muted">Read-only</span>
           </div>
         </div>
@@ -1778,6 +1815,32 @@ class StorageModule extends LitElement {
       this._emitPools();
     } catch (e) {
       this.loadError = e.message || 'Failed to remove volume.';
+    }
+  }
+
+  // Destroy a managed pool in one shot: unmount → close LUKS → tear down
+  // md → wipe member disks → remove the pool record. Backend handles
+  // unmount + reclaim atomically; the wipe runs as a background reclaim
+  // job (the existing /api/storage/reclaim-status surface). The pool's
+  // card is gone immediately on success.
+  async _destroyPool(p) {
+    const members = p.members || [];
+    const ok = await confirmDialog({
+      title: `Reclaim & erase "${p.name}"?`,
+      message:
+        `ALL DATA on ${members.length} drive(s) will be DESTROYED and the ` +
+        `pool record removed. The volume will be unmounted, LUKS/RAID torn ` +
+        `down, and the disks wiped. This is irreversible.`,
+      confirmText: 'Reclaim & erase',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await destroyStoragePool(p.name);
+      await this.loadData();
+      this._emitPools();
+    } catch (e) {
+      this.loadError = e.message || 'Failed to start reclaim.';
     }
   }
 
@@ -2326,12 +2389,15 @@ class StorageModule extends LitElement {
             </div>
           </div>
           <div class="pool-actions">
-            ${p.encrypted ? html`<span class="badge badge-ok" title="Encrypted with LUKS; auto-unlock via TPM2 when present, recovery passphrase otherwise">🔒 Encrypted</span>` : ''}
+            ${p.encrypted ? html`<span class="badge badge-ok" title="Encrypted with LUKS; auto-unlock via TPM2 when present, recovery passphrase otherwise">${navIcon('lock')}Encrypted</span>` : ''}
             ${badge}
             ${enabled
               ? html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, false)}>Unmount</button>`
               : html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, true)}>Mount</button>`}
             <button class="btn-row delete" @click=${() => this._removeVolume(p)}>Remove…</button>
+            <button class="btn-row delete"
+                    title="Unmount, tear down LUKS/RAID, wipe drives, and remove the pool record — all in one step. Use Remove if you just want to unmanage the volume without destroying its data."
+                    @click=${() => this._destroyPool(p)}>Reclaim &amp; erase…</button>
           </div>
         </div>
 
@@ -3145,7 +3211,7 @@ class StorageModule extends LitElement {
       <div class="pool-card">
         <div class="pool-top">
           <div>
-            <span class="pool-name">🔒 Locked encrypted volume</span>
+            <span class="pool-name">${navIcon('lock')}Locked encrypted volume</span>
             <div class="pool-meta">
               ${headline} · ${memberIds.length} drive(s)${sizeStr ? ' · ' + sizeStr : ''}
             </div>

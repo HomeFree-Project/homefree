@@ -128,6 +128,11 @@ export const getStoragePoolCreateStatus = () =>
   get('/api/storage/pools/create-status');
 export const forgetStoragePool = (name) =>
   post('/api/storage/pools/forget', { name });
+// Atomic destroy: unmount → close LUKS → tear down md → wipe disks →
+// remove pool record. The pool card's "Reclaim & erase" uses this so
+// the user doesn't have to Remove → Apply → Reclaim as three steps.
+export const destroyStoragePool = (name) =>
+  post('/api/storage/pools/destroy', { name });
 // Re-add a pool record verbatim. Used by the Undo Remove flow with the
 // appliedConfig record so the post-undo state byte-matches applied (no
 // pending diff afterward).

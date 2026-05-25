@@ -126,6 +126,62 @@ in
   # with an instance's own mdadm.conf.
   boot.swraid.enable = lib.mkIf (mdPools != []) true;
 
+  # NixOS's mdadm udev rules assemble arrays but DON'T reliably create the
+  # `/dev/disk/by-id/md-uuid-<X>` and `/dev/disk/by-uuid/<luks-uuid>`
+  # symlinks after assembly. An explicit `udevadm trigger --action=change
+  # /dev/md<N>` makes udev re-probe and produces every expected symlink.
+  # Without this, `/etc/crypttab` lines for LUKS-on-md (which reference the
+  # md-uuid by-id path) fail with `dependency` at boot, the cryptsetup
+  # unit core-dumps (older systemd) or just never starts (newer), and the
+  # mount unit sits inactive forever — the UI then reads "Drive(s) not
+  # present". This oneshot prods udev for every parity volume's md device
+  # BEFORE cryptsetup.target activates, so the symlinks exist by the time
+  # the cryptsetup units try to look them up.
+  systemd.services."homefree-storage-md-trigger" = lib.mkIf (mdPools != []) {
+    description = "Trigger udev on assembled md devices so by-id/by-uuid symlinks exist before cryptsetup";
+    wantedBy = [ "cryptsetup.target" ];
+    before = [ "cryptsetup.target" ];
+    after = [ "systemd-udev-trigger.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      TimeoutStartSec = "30s";
+    };
+    script = ''
+${lib.concatMapStringsSep "\n" (p: ''
+      if [ -e /dev/${p.md-device} ]; then
+        ${config.systemd.package}/bin/udevadm trigger --action=change /dev/${p.md-device} || true
+      fi'') mdPools}
+      ${config.systemd.package}/bin/udevadm settle --timeout=15 || true
+    '';
+  };
+
+  # Switch-to-configuration counterpart of homefree-storage-md-trigger:
+  # at boot the systemd service above fires before cryptsetup.target, but
+  # during a `nixos-rebuild switch` cryptsetup.target is already active so
+  # the service isn't re-triggered. Without this activation hook a
+  # freshly-Promoted encrypted parity volume requires a reboot before its
+  # cryptsetup unit can find /dev/disk/by-id/md-uuid-<X> — the user
+  # rightfully complains. The hook (a) prods udev so the symlinks exist
+  # NOW, (b) explicitly starts each encrypted pool's cryptsetup unit, and
+  # (c) starts the mount unit. Each step is idempotent; failures are
+  # swallowed so a broken volume can't block the whole Apply.
+  system.activationScripts.homefreeStorageMdTrigger = lib.mkIf (encryptedPools != []) {
+    text = ''
+${lib.concatMapStringsSep "\n" (p: ''
+      if [ -e /dev/${p.md-device} ]; then
+        ${config.systemd.package}/bin/udevadm trigger --action=change /dev/${p.md-device} || true
+      fi'') (lib.filter (p: p.md-device != "") encryptedPools)}
+      ${config.systemd.package}/bin/udevadm settle --timeout=15 || true
+${lib.concatMapStringsSep "\n" (m: ''
+      esc=$(${config.systemd.package}/bin/systemd-escape "${m.mapper}")
+      ${config.systemd.package}/bin/systemctl start "systemd-cryptsetup@$esc.service" 2>/dev/null || true'') encryptedMappers}
+${lib.concatMapStringsSep "\n" (p: ''
+      ${config.systemd.package}/bin/systemctl start "${utils.escapeSystemdPath p.mountpoint}.mount" 2>/dev/null || true'') encryptedPools}
+    '';
+    deps = [ "etc" ];
+  };
+
   # cryptsetup must be available before the FIRST encrypted pool is created
   # (the closure is computed BEFORE that pool's record exists, so we cannot
   # gate this on `encryptedPools != []`). Negligible closure-size cost; lets

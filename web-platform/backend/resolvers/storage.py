@@ -733,10 +733,26 @@ class StorageResolver:
             # excluded so a stray boot disk can't be reclaimed in one click
             # — the existing overridable+wizard path handles that case with
             # explicit ackBoot confirmation.
+            #
+            # Reclaim is offered for any disk with SOMETHING to wipe —
+            # filesystem signature, md/LVM membership, or a btrfs we've
+            # already detected. The `not eligible` gate was previously
+            # used to discriminate "user can pick this in the wizard"
+            # (eligible) from "user needs explicit Reclaim" (ineligible),
+            # but that left a hole: cold btrfs / LUKS / unmounted-ext4
+            # disks are EligibleAccording-to-the-wizard yet surface in
+            # the UI on cards that don't have a wizard entry (btrfs
+            # candidate, locked-LUKS, Available drive). Without a
+            # reclaim group, those cards had no destructive action at
+            # all. Now: any disk with by-id + a data signature + not
+            # OS/swap/ESP gets a group. The frontend keeps cards
+            # consistent: multi-disk groups → stale-group card;
+            # single-disk → button moves onto whichever card already
+            # represents the disk (Available / candidate / locked-LUKS).
             reclaim = None
             reclaim_blocked = None
             grp = disk_to_group.get(name)
-            if (not eligible and row["by_id"]
+            if (row["by_id"]
                     and name not in os_disks and name not in swap_disks
                     and not esp
                     and (grp or md or lvm or has_data or name in btrfs_disks)):
@@ -1146,6 +1162,26 @@ class StorageResolver:
             for part in info.get("members", []):
                 md_member_disks |= _underlying_disks(f"/dev/{part}")
 
+        # LUKS UUIDs already referenced by a managed pool record (post-Promote
+        # state — pool exists in homefree-config.json but the mapper is still
+        # closed until the next boot opens it via /etc/crypttab). Without
+        # this, a freshly-promoted encrypted volume shows up TWICE in the UI:
+        # once as the pool's "testkey3" card under Disk Mounts (with a
+        # Drive(s) not present badge — the btrfs isn't readable yet) AND
+        # once as a "Locked encrypted volume" card under Available. We
+        # suppress the locked card for any LUKS whose UUID is already in
+        # luks-mappers — the pool card is the single source of truth for a
+        # managed volume regardless of the mapper's open/closed state.
+        recorded_luks_uuids: Set[str] = set()
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        for p in ((cfg.get("storage") or {}).get("pools") or []):
+            for m in (p.get("luks-mappers") or []):
+                if isinstance(m, dict) and m.get("luks-uuid"):
+                    recorded_luks_uuids.add(m["luks-uuid"])
+
         out: List[Dict[str, Any]] = []
 
         # 1. LUKS-on-md (the parity case).
@@ -1156,6 +1192,8 @@ class StorageResolver:
             luks_uuid = _luks_uuid_of_device(dev_path)
             if not luks_uuid:
                 continue
+            if luks_uuid in recorded_luks_uuids:
+                continue  # already a managed pool — its card is the truth
             if _luks_holder_open(dev_path):
                 continue  # already open — regular btrfs candidate flow handles it
             member_knames: Set[str] = set()
@@ -1194,6 +1232,8 @@ class StorageResolver:
             luks_uuid = _luks_uuid_of_device(dev_path)
             if not luks_uuid:
                 continue
+            if luks_uuid in recorded_luks_uuids:
+                continue  # already a managed pool — its card is the truth
             if _luks_holder_open(dev_path):
                 continue
             out.append({
@@ -1328,12 +1368,28 @@ class StorageResolver:
                 if st:
                     total = st.f_blocks * st.f_frsize
                     used = (st.f_blocks - st.f_bfree) * st.f_frsize
+                # `encrypted` = root mount sits on a LUKS mapper. Check the
+                # realpath's dm/uuid: a CRYPT-LUKS{1,2}-* prefix means the
+                # block device is an unlocked LUKS container. Covers both
+                # single-disk root (cryptroot) and the disko-multi-disk
+                # btrfs-raid1 layout (cryptd1+cryptd2 each mapped).
+                encrypted = False
+                if real:
+                    real_base = os.path.basename(real)
+                    try:
+                        dm_uuid = (
+                            Path(f"/sys/block/{real_base}/dm/uuid")
+                            .read_text().strip())
+                        encrypted = dm_uuid.startswith("CRYPT-")
+                    except OSError:
+                        pass
                 return [{
                     "mount-point": mp,
                     "device": dev_spec,
                     "fs-type": fstype,
                     "device_real": real,
                     "disk_by_ids": disk_by_ids,
+                    "encrypted": encrypted,
                     "runtime": {
                         "mounted": True,
                         "used_bytes": used,
@@ -1608,6 +1664,24 @@ async def post_reformat(req: ReformatRequest) -> Dict[str, Any]:
     if not started:
         raise HTTPException(status_code=409, detail="A volume operation is already running.")
     return {"started": True}
+
+
+class DestroyRequest(BaseModel):
+    name: str
+
+
+@router.post("/pools/destroy")
+async def post_destroy_pool(req: DestroyRequest) -> Dict[str, Any]:
+    """Atomic destroy: unmount → tear down LUKS/md → wipe disks → remove
+    pool record. The pool card's `Reclaim & erase` button uses this so the
+    user doesn't have to do Remove → Apply → Reclaim as three steps. The
+    wipe runs in the background reclaim job — status via
+    /api/storage/reclaim-status."""
+    from services.storage_pool import StoragePoolService
+    errs = await asyncio.to_thread(StoragePoolService.destroy_pool, req.name)
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    return {"ok": True}
 
 
 @router.post("/pools/forget")

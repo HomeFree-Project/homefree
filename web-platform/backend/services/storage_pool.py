@@ -770,6 +770,74 @@ class StoragePoolService:
         finally:
             StoragePoolService._shred_tempfile(master_pp_file)
 
+    # ----------------------------------------------------------- destroy
+
+    @staticmethod
+    def destroy_pool(name: str) -> List[str]:
+        """Destroy a managed pool: unmount → close LUKS mappers → tear
+        down md → wipe member disks → remove the pool record. The
+        destructive complement to `forget` (which is non-destructive —
+        record only). Used by the pool card's "Reclaim & erase" button
+        so the user doesn't have to do Remove → Apply → wait-for-unmount
+        → Reclaim as three separate steps.
+
+        Returns [] on success or a list of error strings. The reclaim
+        half (mdadm --stop, LUKS close, wipefs, sgdisk) is delegated to
+        StorageReclaimService."""
+        try:
+            cfg = ConfigReader.read_config()
+        except Exception:  # noqa: BLE001
+            return ["Could not read homefree-config.json."]
+        existing = ((cfg.get("storage") or {}).get("pools")) or []
+        pool = next((p for p in existing if p.get("name") == name), None)
+        if pool is None:
+            return [f"No pool named '{name}'."]
+        members = pool.get("members") or []
+        mountpoint = pool.get("mountpoint") or ""
+
+        # 1. Unmount the live filesystem (best-effort). Try a normal
+        # umount first, fall back to umount -l (lazy) so a stray shell
+        # cwd inside the mountpoint doesn't block — the kernel detaches
+        # on last close.
+        if mountpoint:
+            umount = _resolve_bin("umount")
+            rc, _ = StoragePoolService._cmd([umount, mountpoint])
+            if rc != 0:
+                StoragePoolService._cmd([umount, "-l", mountpoint])
+
+        # 2. Run the existing reclaim flow over the member disks. It
+        # handles LUKS close + mdadm --stop + wipefs + sgdisk and refuses
+        # if anything's still mounted (which we just umounted).
+        try:
+            from services.storage_reclaim import (
+                StorageReclaimService, StorageReclaimBusy,
+            )
+        except ImportError as e:
+            return [f"Could not load reclaim service: {e}"]
+        errs = StorageReclaimService.validate_request(members)
+        if errs:
+            return errs
+        try:
+            started = StorageReclaimService.start(members)
+        except StorageReclaimBusy as e:
+            return [str(e)]
+        if not started:
+            return ["A storage operation is already running."]
+
+        # 3. Remove the pool record from homefree-config.json. The
+        # reclaim job runs in the background; the record removal here
+        # means the UI's pool card disappears immediately and the wipe
+        # runs to completion off the request thread (status visible via
+        # /api/storage/reclaim-status). Spread the existing `storage`
+        # object so sibling sub-keys (e.g. `shares`) survive — same
+        # pattern as `forget`.
+        storage = cfg.get("storage") or {}
+        new_pools = [p for p in (storage.get("pools") or []) if p.get("name") != name]
+        if not ConfigWriter.write_config({"storage": {**storage, "pools": new_pools}}):
+            return ["Wipe started but failed to remove the pool record from "
+                    "homefree-config.json — Apply to clean up the entry."]
+        return []
+
     # ----------------------------------------------------------- forget
 
     @staticmethod
