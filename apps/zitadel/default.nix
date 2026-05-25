@@ -772,7 +772,7 @@ in
           ## colour and is rewritten at flip time (no nixos-rebuild
           ## needed to change the upstream). See lib/blue-green.nix.
           upstream-snippet = "oauth2_proxy_reverse_proxy";
-          public = false;
+          public = config.homefree.service-options.zitadel.public;
         };
       }
     ]);
