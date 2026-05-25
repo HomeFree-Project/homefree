@@ -297,7 +297,7 @@ class FinishedStep extends LitElement {
 
         <div class="warning">
           <strong>📚 Documentation:</strong>
-          Visit <code>https://git.homefree.host/homefree/homefree</code> for complete
+          Visit <code>https://github.com/HomeFree-Project/homefree</code> for complete
           documentation on configuring HomeFree services and advanced features.
         </div>
 

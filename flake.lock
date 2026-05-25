@@ -406,11 +406,11 @@
         "rev": "1188703198df20487945ab4e2b51b0377ee915b9",
         "revCount": 51,
         "type": "git",
-        "url": "https://git.homefree.host/homefree/nixvim-config"
+        "url": "https://github.com/HomeFree-Project/nixvim-config"
       },
       "original": {
         "type": "git",
-        "url": "https://git.homefree.host/homefree/nixvim-config"
+        "url": "https://github.com/HomeFree-Project/nixvim-config"
       }
     },
     "pre-commit-hooks-nix": {

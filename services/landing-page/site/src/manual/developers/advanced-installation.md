@@ -36,7 +36,7 @@ Note the IPv4 address on the wired interface — you'll need it shortly.
 ## 3. Clone the sample config on your workstation
 
 ```
-git clone https://git.homefree.host/homefree/sample-config
+git clone https://github.com/HomeFree-Project/sample-config
 cd sample-config
 ```
 

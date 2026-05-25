@@ -58,7 +58,7 @@ ALT_INPUT_NAME = "homefree-alt"
 
 # The official HomeFree repository — what `homefree-base` always points at,
 # and what the build uses when no alternate base is enabled.
-OFFICIAL_HOMEFREE_URL = "git+https://git.homefree.host/homefree/homefree.git"
+OFFICIAL_HOMEFREE_URL = "git+https://github.com/HomeFree-Project/homefree.git"
 
 # Input names already used by the generated flake.nix / its outputs args /
 # its let-block. Registering a custom flake under one of these would shadow
