@@ -167,6 +167,34 @@ def _underlying_disks(dev: str) -> Set[str]:
     return disks
 
 
+def _btrfs_md_backing(dev_path: str) -> Optional[str]:
+    """For a btrfs member device path, return the md kernel name (e.g.
+    'md127') that backs it — directly, or through ONE LUKS layer — or None.
+    This lets `list_importable` / `list_promotable_btrfs` recognize a
+    btrfs-on-mdadm volume whether or not LUKS sits between the btrfs and
+    the md device (HomeFree's encrypted-parity layout: btrfs on
+    /dev/mapper/cryptd-<pool> on /dev/md<N>). Without this, the basename of
+    a LUKS mapper (e.g. 'cryptd-tank') doesn't start with 'md' and the
+    md-detection in those resolvers misses it, dropping the volume into
+    the 'native multi-device, layout unknown offline' rejection branch."""
+    base = os.path.basename(dev_path)
+    if base.startswith("md"):
+        return base
+    # /dev/mapper/<X> → walk one slave level. If the single slave is an md
+    # device, we have LUKS-on-md. Anything else (mapper on a single disk,
+    # mapper on partitions, etc.) is not md-backed for our purposes.
+    real = os.path.basename(os.path.realpath(dev_path))  # dm-N
+    slaves_dir = f"/sys/block/{real}/slaves"
+    if os.path.isdir(slaves_dir):
+        try:
+            slaves = os.listdir(slaves_dir)
+        except OSError:
+            return None
+        if len(slaves) == 1 and slaves[0].startswith("md"):
+            return slaves[0]
+    return None
+
+
 def _mounted_btrfs_disks() -> Set[str]:
     """Physical disks backing any *mounted* btrfs filesystem (the root mirror
     and any existing pool). This is the check that protects a multi-device OS
@@ -815,8 +843,11 @@ class StorageResolver:
                 continue
             if any(os.path.realpath(d) in mounted_real for d in devs):
                 continue
-            md_dev = next((os.path.basename(d) for d in devs
-                           if os.path.basename(d).startswith("md")), None)
+            # Resolve through ONE LUKS layer too — a btrfs on
+            # /dev/mapper/cryptd-X on /dev/mdN is the encrypted-parity
+            # layout and must be treated as md-backed, not as single-disk
+            # or multi-device-native (the latter would reject it outright).
+            md_dev = next((m for m in (_btrfs_md_backing(d) for d in devs) if m), None)
             if md_dev:
                 info = arrays.get(md_dev) or {}
                 members: Set[str] = set()
@@ -950,8 +981,8 @@ class StorageResolver:
                 continue
 
             # Member resolution + profile (mirrors `list_importable`).
-            md_dev = next((os.path.basename(d) for d in devs
-                           if os.path.basename(d).startswith("md")), None)
+            # See `_btrfs_md_backing` for the LUKS-on-md detection.
+            md_dev = next((m for m in (_btrfs_md_backing(d) for d in devs) if m), None)
             if md_dev:
                 info = arrays.get(md_dev) or {}
                 member_knames: Set[str] = set()

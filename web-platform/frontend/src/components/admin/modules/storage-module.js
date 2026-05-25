@@ -760,12 +760,30 @@ class StorageModule extends LitElement {
   // Leftover RAID/LVM signature groups, deduped by reclaim id. Each group
   // is rendered once with all its members listed inside the card; the user
   // gets a single Reclaim & erase action on the group, never per-drive.
-  // Suppresses groups whose disks are entirely covered by a btrfs candidate
-  // — those merge into the candidate card (one card per physical thing
-  // with BOTH "Mount existing filesystem" and "Reclaim & erase…").
+  // Suppresses groups whose disks are entirely covered by:
+  //   - a btrfs candidate (merge into candidate card), OR
+  //   - a pool record (pending or applied) — e.g. right after a Reformat
+  //     the new `tank` pool record claims md127's member by-ids, so the
+  //     leftover-RAID-array card for the SAME md127 would be a duplicate.
   _staleSignatureGroups() {
     const covered = new Set();
     for (const g of this._candidateReclaimMap().values()) covered.add(g.id);
+    // Pool records → cover their underlying reclaim groups by member-set.
+    const poolMemberSets = (this.config?.storage?.pools || []).map(
+      (p) => new Set(p.members || []));
+    if (poolMemberSets.length) {
+      for (const d of (this.drives || [])) {
+        if (!d.reclaim) continue;
+        const memberIds = d.reclaim.member_ids || [];
+        if (memberIds.length === 0) continue;
+        for (const poolMembers of poolMemberSets) {
+          if (memberIds.every((id) => poolMembers.has(id))) {
+            covered.add(d.reclaim.id);
+            break;
+          }
+        }
+      }
+    }
     const byId = new Map();
     for (const d of (this.drives || [])) {
       if (!d.reclaim) continue;
