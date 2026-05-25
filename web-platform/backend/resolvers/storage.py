@@ -635,24 +635,50 @@ class StorageResolver:
             row["existing_label"] = label
 
             # Reclaim: a disk that belongs to a teardownable structure (md/LVM)
-            # can be wiped back to Available — but only once nothing is mounted on
-            # it. NEVER offered for os/swap disks. When it IS still mounted we
+            # OR carries a single-disk unmanaged filesystem can be wiped back
+            # to Available — but only once nothing is mounted on it. NEVER
+            # offered for os/swap/ESP disks. When it IS still mounted we
             # withhold Reclaim (can't wipe a live filesystem) and instead set
             # `reclaim_blocked` so the UI can explain why and surface what's
-            # holding the mount. A plain mounted btrfs that is NOT on an md/LVM
-            # group (e.g. an ordinary data disk) is not in disk_to_group and sets
-            # no md/lvm flag, so it stays simply "in use" — never reclaimable.
+            # holding the mount.
+            #
+            # The `has_data or name in btrfs_disks` extension covers the
+            # "single disk with a filesystem (or LUKS) but no md/LVM" case —
+            # e.g. an unmanaged cold btrfs, a LUKS container holding an
+            # unmanaged btrfs (mapper open and holding the disk), an
+            # unmanaged ext4. Without this, such a disk shows ineligible "in
+            # use by another device" with no Reclaim button and no way to
+            # be picked in the create wizard (which only takes eligible
+            # drives) — i.e. no UI path to reuse it. ESP-bearing disks are
+            # excluded so a stray boot disk can't be reclaimed in one click
+            # — the existing overridable+wizard path handles that case with
+            # explicit ackBoot confirmation.
             reclaim = None
             reclaim_blocked = None
             grp = disk_to_group.get(name)
             if (not eligible and row["by_id"]
                     and name not in os_disks and name not in swap_disks
-                    and (grp or md or lvm)):
-                g = grp or {
-                    "id": f"disk:{name}", "kind": "stale", "arrays": [],
-                    "vgs": [], "disks": [name],
-                    "description": "leftover RAID/LVM signature",
-                }
+                    and not esp
+                    and (grp or md or lvm or has_data or name in btrfs_disks)):
+                if grp:
+                    g = grp
+                else:
+                    # Single-disk reclaim — synthesize a one-disk group. The
+                    # description differentiates the case so the UI can show
+                    # something meaningful per scenario.
+                    if md or lvm:
+                        desc = "leftover RAID/LVM signature"
+                    elif fstype:
+                        desc = f"unmanaged {fstype} filesystem"
+                        if label:
+                            desc += f" '{label}'"
+                    else:
+                        desc = "single disk with existing data"
+                    g = {
+                        "id": f"disk:{name}", "kind": "stale", "arrays": [],
+                        "vgs": [], "disks": [name],
+                        "description": desc,
+                    }
                 if (name in btrfs_disks) or mounted:
                     blk: List[Dict[str, Any]] = []
                     seen_pids = set()

@@ -247,9 +247,25 @@ in
       ## It still picks up real content changes (the file is re-read
       ## and re-adapted every reload); `--force` only bypasses the
       ## "adapted JSON identical" short-circuit, which we WANT.
+      ##
+      ## CRITICAL: pass a LIST starting with `""` (the empty-entry
+      ## clearing line) — NOT a plain string. NixOS auto-emits a
+      ## clearing `ExecStart=` before any serviceConfig.ExecStart
+      ## override, but it does NOT do the same for ExecReload. With a
+      ## plain-string `lib.mkForce` here, the upstream caddy.service's
+      ## `ExecReload=… /etc/caddy/Caddyfile --force` STAYS in effect
+      ## and our override gets APPENDED — systemd runs BOTH on reload,
+      ## the upstream one fails (Caddyfile doesn't exist; we use
+      ## caddy_config), and `systemctl reload caddy` exits non-zero.
+      ## That breaks the blue/green flip's caddy step → flip aborts →
+      ## new admin-api code never goes live. The empty list entry forces
+      ## the `ExecReload=` clear line to be emitted before our value,
+      ## so the new ExecReload fully replaces the upstream one.
       {
-        ExecReload = lib.mkForce
-          "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile";
+        ExecReload = lib.mkForce [
+          ""
+          "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile"
+        ];
       }
     ];
   };

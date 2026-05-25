@@ -27,7 +27,10 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import string
+import subprocess
+import tempfile
 from typing import Dict, Optional
 
 from utils.privileged import (
@@ -61,6 +64,102 @@ _MIN_PASTED_LEN = 20
 # before encryption is enabled while SB enrollment is still pending — every
 # data-pool TPM2 slot is bound to PCR 7, which SB enrollment WILL change.
 _SECUREBOOT_STATUS_PATH = "/var/lib/homefree/secureboot-status"
+
+# Disko's GPT partlabel convention for each system disk's root LUKS partition
+# (web-platform/backend/services/disko_builder.py:114 -- `disk-d<N>-root`).
+# We look these up by partlabel for verify-against-system-disk checks.
+_SYSTEM_LUKS_PARTLABEL_FMT = "/dev/disk/by-partlabel/disk-d{n}-root"
+_MAX_SYSTEM_DISKS = 8
+
+
+def _find_system_luks_partition() -> Optional[str]:
+    """Return the path of a system disk's LUKS partition we can probe to
+    verify a candidate master passphrase, or None if no system LUKS is
+    detected (unencrypted-system install). Disko names each disk's root
+    LUKS via the GPT partlabel `disk-d<N>-root`; we try d1..d8."""
+    for i in range(1, _MAX_SYSTEM_DISKS + 1):
+        p = _SYSTEM_LUKS_PARTLABEL_FMT.format(n=i)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def system_is_encrypted() -> bool:
+    """True iff this box's system disk uses LUKS (a `disk-d<N>-root`
+    partlabel exists). Used by the master-key setup flow to decide
+    whether to require the paste-existing-passphrase path vs allowing
+    a fresh generate."""
+    return _find_system_luks_partition() is not None
+
+
+def _verify_against_system_disk(value: bytes) -> Optional[str]:
+    """Test the given passphrase against the system disk's LUKS slot(s)
+    via `cryptsetup open --test-passphrase`. Returns:
+      None  — verification passed, OR there is no system LUKS to test
+              against, OR cryptsetup failed for tooling reasons (logged,
+              fail-open so a transient glitch doesn't lock the admin out).
+      <str> — a user-facing error message: the passphrase definitively
+              does NOT match any slot on the system disk.
+
+    Non-destructive: `--test-passphrase` only checks the unlock, it does
+    NOT activate the device. The tempfile holding the value is shredded
+    after, matching storage_pool.py's pattern for the same secret bytes.
+    """
+    part = _find_system_luks_partition()
+    if part is None:
+        return None  # unencrypted-system box — nothing to verify against
+    cryptsetup = shutil.which("cryptsetup") or "/run/current-system/sw/bin/cryptsetup"
+    if not os.path.exists(cryptsetup):
+        logger.warning(
+            "encryption_master_key: cryptsetup not found; skipping system-"
+            "disk verification of pasted master passphrase.")
+        return None
+    fd, path = tempfile.mkstemp(prefix="hf-luks-verify-", dir="/run")
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, value)
+    finally:
+        os.close(fd)
+    try:
+        p = subprocess.run(
+            [cryptsetup, "open", "--test-passphrase", "--key-file", path, part],
+            capture_output=True, text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning(
+            "encryption_master_key: cryptsetup --test-passphrase failed on "
+            "%s (%s); skipping verification.", part, e)
+        _shred(path)
+        return None
+    finally:
+        _shred(path)
+    if p.returncode == 0:
+        return None  # one of the slots matched — passphrase is valid
+    # Exit 2 = "no key available with this passphrase" (the typo case);
+    # other non-zero = tooling problem (treat as fail-open).
+    if p.returncode == 2:
+        return (
+            "That passphrase does not unlock this system's disk encryption. "
+            "Check the recovery passphrase you saved at install time — it "
+            "must match for new encrypted data volumes to share the same "
+            "unlock with the system disk.")
+    logger.warning(
+        "encryption_master_key: cryptsetup --test-passphrase on %s exited "
+        "%d (stderr: %s); treating as inconclusive and allowing the write.",
+        part, p.returncode, (p.stderr or "").strip())
+    return None
+
+
+def _shred(path: str) -> None:
+    """Best-effort shred + unlink of a tempfile holding key bytes."""
+    try:
+        subprocess.run(["shred", "-u", path], check=False, timeout=10)
+    except (subprocess.SubprocessError, OSError):
+        pass
+    if os.path.exists(path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def _read_pp_bytes() -> Optional[bytes]:
@@ -101,11 +200,15 @@ def get_status() -> Dict[str, bool]:
 
     Keys are chosen so a missing or stale TPM doesn't block the admin from
     enabling encryption — fallback is the passphrase prompt, still a valid
-    unlock path."""
+    unlock path. `system_encrypted` lets the UI default the master-key
+    setup modal to the paste-in tab on a system-encrypted box, since
+    generating a fresh random value there would NOT match the system
+    disk's existing LUKS slot (the backend's generate() refuses too)."""
     return {
         "master_key_configured": is_configured(),
         "tpm_present": tpm_present(),
         "secure_boot_pending": secure_boot_pending(),
+        "system_encrypted": system_is_encrypted(),
     }
 
 
@@ -131,9 +234,14 @@ def _write_passphrase(value: bytes) -> None:
 
 def generate() -> str:
     """Generate and persist a fresh 6-base36-group passphrase. Refuses if
-    one is already configured — that's the rotation path, which is a
-    separate, future flow (the rotation needs to luksChangeKey across every
-    pool's LUKS containers).
+    one is already configured (rotation is a separate, future flow that
+    has to luksChangeKey across every pool's LUKS containers).
+
+    Also refuses when the SYSTEM disk is encrypted but the master-key file
+    is missing — a freshly-generated random value would NOT unlock the
+    system disk, silently splitting "the unlock passphrase" into two
+    different ones. The admin must paste their existing recovery
+    passphrase (set_user_value) in that case.
 
     Returns the plaintext value so the UI can display it ONCE for the admin
     to copy. Subsequent reads need to go through the backend."""
@@ -142,6 +250,14 @@ def generate() -> str:
             "A master encryption key is already configured. Rotation is "
             "not supported in this release — to change the value, all "
             "encrypted pools would have to be rekeyed.")
+    if system_is_encrypted():
+        raise PermissionError(
+            "This system's disk is already encrypted, so generating a "
+            "fresh random master key would NOT match its existing LUKS "
+            "slot. Use the 'I have a passphrase' tab and paste the "
+            "recovery passphrase you saved at install time instead — "
+            "that keeps one passphrase unlocking both the system disk "
+            "and any new encrypted data volumes.")
     groups = ["".join(secrets.choice(_ALPHABET) for _ in range(_GROUP_LEN))
               for _ in range(_GROUP_COUNT)]
     value = "-".join(groups)
@@ -156,7 +272,12 @@ _USER_VALUE_RE = re.compile(r"^[\x20-\x7e]+$")  # printable ASCII only
 
 def set_user_value(value: str) -> None:
     """Persist a user-provided passphrase as the master key. Validates
-    length + character set; refuses if a key is already configured."""
+    length + character set; refuses if a key is already configured. On a
+    box whose system disk uses LUKS, ALSO verifies that the value actually
+    unlocks an existing slot on the system disk (via cryptsetup
+    --test-passphrase) — catches a typo'd paste before it silently
+    diverges from the system passphrase the admin will type at the boot
+    prompt. Skipped on unencrypted-system boxes (nothing to verify)."""
     if is_configured():
         raise PermissionError(
             "A master encryption key is already configured.")
@@ -168,6 +289,12 @@ def set_user_value(value: str) -> None:
         raise ValueError(
             "Passphrase contains characters that cannot be typed at the "
             "boot prompt — use printable ASCII only.")
+    # Verify against the system disk's LUKS slot(s) when there IS a system
+    # disk to verify against. Returns None on pass / no-op / tool failure;
+    # a string error message on definitive mismatch.
+    mismatch = _verify_against_system_disk(value.encode("ascii"))
+    if mismatch is not None:
+        raise ValueError(mismatch)
     _write_passphrase(value.encode("ascii"))
     logger.info(
         "Persisted user-provided master encryption key (length=%d).",

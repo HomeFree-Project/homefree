@@ -126,6 +126,33 @@ The master-key setup endpoints (`/api/storage/encryption/master-key/{generate,se
 deliberately REFUSE if a key is already configured — fail-loud, not
 silently-overwrite.
 
+## Master-key setup verifies against the system disk
+
+For boxes installed with LUKS but BEFORE the master-key file existed (e.g.
+`/etc/nixos/secrets/recovery-passphrase.txt` is missing because the install
+predates this feature), the admin pastes the recovery passphrase they saved
+at install. Two safety checks live in `encryption_master_key.py` so a typo
+doesn't silently diverge:
+
+- **`set_user_value` verifies the pasted value against an existing system
+  LUKS slot** via `cryptsetup open --test-passphrase --key-file <tempfile>
+  /dev/disk/by-partlabel/disk-d<N>-root` (disko's partlabel convention; try
+  d1..d8 — `_find_system_luks_partition`). Exit 2 = no slot matches = reject
+  the paste with a clear error. Exit 0 = save. Other non-zero or missing
+  cryptsetup = log + fail-open (don't lock the admin out over a transient
+  tooling glitch). Skipped on unencrypted-system boxes (no partlabel exists
+  to test against — `system_is_encrypted()` returns False).
+- **`generate` refuses on a system-encrypted box** (`system_is_encrypted()`
+  is True). A freshly-generated random value would NOT match the system
+  disk's LUKS slot, splitting "the unlock passphrase" silently into two
+  values. The endpoint returns 409 with a message pointing the admin to
+  the paste-in flow. The UI also reads `system_encrypted` from
+  `get_status()` and defaults the setup modal to the Paste tab + disables
+  the Generate tab on such boxes.
+
+Both checks are non-destructive (`--test-passphrase` does not activate the
+device; both run on a /run tempfile that's shredded after).
+
 ## In-place encryption is unsupported
 
 The UI doesn't offer "encrypt this existing unencrypted volume." A LUKS

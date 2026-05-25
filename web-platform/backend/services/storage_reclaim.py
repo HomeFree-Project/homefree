@@ -22,6 +22,7 @@ Mutually exclusive with pool creation (one storage operation at a time).
 """
 
 import logging
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -183,7 +184,13 @@ class StorageReclaimService:
             #    fail with "device in use". Covers both encrypted layouts:
             #    per-disk LUKS (mapper sits on a member disk) and LUKS-on-md
             #    (mapper sits on the assembled array).
-            crypt_devs = sorted(set(knames) | set(arrays))
+            # NORMALIZE to kernel names: `knames` is already short ('vdc'), but
+            # `arrays` contains /dev paths ('/dev/md127' per
+            # resolvers/storage.py:370). `_crypt_mappers_on` reads
+            # /sys/block/<name>/holders, which only exists for kernel names —
+            # passing '/dev/md127' silently looks up an empty path and the
+            # LUKS-on-md mapper isn't found. basename strips both.
+            crypt_devs = sorted({os.path.basename(d) for d in (list(knames) + list(arrays))})
             open_mappers = StorageReclaimService._crypt_mappers_on(crypt_devs)
             for mapper in open_mappers:
                 StorageReclaimService._update(

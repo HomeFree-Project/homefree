@@ -740,14 +740,45 @@ class StorageModule extends LitElement {
   // Leftover RAID/LVM signature groups, deduped by reclaim id. Each group
   // is rendered once with all its members listed inside the card; the user
   // gets a single Reclaim & erase action on the group, never per-drive.
+  // Suppresses groups whose disks are entirely covered by a btrfs candidate
+  // — those merge into the candidate card (one card per physical thing
+  // with BOTH "Mount existing filesystem" and "Reclaim & erase…").
   _staleSignatureGroups() {
+    const covered = new Set();
+    for (const g of this._candidateReclaimMap().values()) covered.add(g.id);
     const byId = new Map();
     for (const d of (this.drives || [])) {
       if (!d.reclaim) continue;
       const id = d.reclaim.id;
+      if (covered.has(id)) continue;
       if (!byId.has(id)) byId.set(id, d.reclaim);
     }
     return [...byId.values()];
+  }
+
+  // For each btrfs candidate, the reclaim group that covers ALL its member
+  // drives — or null if the members split across multiple groups, or none
+  // of them are reclaimable. Used by both the candidate card (to render an
+  // inline Reclaim & erase button) AND `_staleSignatureGroups` (to suppress
+  // the duplicate stale-group card for the same physical thing).
+  _candidateReclaimMap() {
+    const drivesById = new Map((this.drives || []).map((d) => [d.by_id, d]));
+    const out = new Map();
+    for (const c of (this.promotable || [])) {
+      const memberIds = c.members || [];
+      if (memberIds.length === 0) continue;
+      let id = null;
+      let group = null;
+      let coherent = true;
+      for (const m of memberIds) {
+        const r = drivesById.get(m)?.reclaim;
+        if (!r) { coherent = false; break; }
+        if (id === null) { id = r.id; group = r; }
+        else if (r.id !== id) { coherent = false; break; }
+      }
+      if (coherent && group) out.set(c.fs_uuid, group);
+    }
+    return out;
   }
 
   get _claimedDriveIds() {
@@ -781,6 +812,16 @@ class StorageModule extends LitElement {
   _openWizard() {
     this._resetWizard();
     this.wizardOpen = true;
+  }
+
+  // Sole entry point to the create-volume wizard — opens with NO drive
+  // preselected, the user picks any subset (1..N) via the step-1 checkbox
+  // list. Wired to the Volumes section header's "+ Create volume" button.
+  // Earlier the wizard was also entered from per-drive "Create" buttons,
+  // but those were ambiguous about multi-drive support and have been
+  // removed; this is now the only way in.
+  _openCreateVolume() {
+    this._openWizard();
   }
 
   _closeWizard() {
@@ -1253,25 +1294,21 @@ class StorageModule extends LitElement {
         ? html`<span class="badge badge-err">FAIL</span>`
         : 'OK';
     }
-    // "Mount existing filesystem" only makes sense when the drive's
-    // filesystem is in the backend's mountable list — otherwise the click
-    // would open a modal that can't actually mount anything for this drive
-    // (LUKS, swap, weird fs). Hide the button in that case; the data-badge
-    // already makes the "contains data" state visible.
+    // The per-drive "Create" / "Wipe and Create" buttons are gone — every
+    // create flow now starts from the top-level "+ Create volume" button in
+    // the Volumes section header (one canonical entry, no ambiguity about
+    // whether the per-drive button supports multi-drive RAID). The wizard's
+    // per-row "Contains <fs> — will be wiped" warning still surfaces the
+    // data-loss risk when the user checks a has-data drive.
+    //
+    // "Mount existing filesystem" stays per-drive — that one IS genuinely
+    // scoped to a single drive (mounting one disk's filesystem in place,
+    // not building a new array). Only shown when the drive's filesystem is
+    // in the backend's mountable list; for LUKS / swap / weird fs the
+    // data-badge already makes the state visible.
     const useExistingCand = hasData
       ? (this.mountableDevices || []).find((m) => m.disk_by_id === d.by_id)
       : null;
-    // All Available-tier action buttons use the compact .btn-row style —
-    // same as the Mounted-tier buttons, same as table-editor buttons
-    // elsewhere in the admin UI. Create on a has-data drive gets the warn
-    // variant (yellow outline) since the click wipes data; blank drives
-    // get plain .btn-row.
-    const createCls = hasData ? 'btn-row warn' : 'btn-row';
-    const createLabel = hasData ? 'Wipe and Create' : 'Create';
-    const buttons = useExistingCand ? html`
-      <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>
-      <button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`
-      : html`<button class="${createCls}" @click=${() => this._createFromDrive(d)}>${createLabel}</button>`;
     return html`
       <div class="pool-card">
         <div class="pool-top">
@@ -1282,33 +1319,45 @@ class StorageModule extends LitElement {
               ${hasData ? html`<span class="data-badge">Contains ${dataKind}${dataLabel}</span>` : ''}
             </div>
           </div>
-          <div class="pool-actions">${buttons}</div>
+          <div class="pool-actions">
+            ${useExistingCand ? html`
+              <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>` : ''}
+          </div>
         </div>
         <div class="pool-members">${d.by_id || d.name}</div>
       </div>
     `;
   }
 
-  // Unmanaged btrfs filesystem (single OR multi-drive). Four states:
+  // Unmanaged btrfs filesystem (single OR multi-drive). Three states:
   //   * removed (pending pool removal — Available tier, amber styling) →
   //     title = original pool name, "Removing" badge, single "Mount
   //     existing filesystem" button that directly undoes the remove
-  //     (re-promotes with the original name + mountpoint). No Wipe
-  //     option: the user clicked Remove, not Wipe.
+  //     (re-promotes with the original name + mountpoint).
   //   * mount_point set, no pending removal (Mounted tier — an
   //     externally-mounted btrfs that could be elevated to managed) →
-  //     "Promote to volume…" + "Not a managed volume" badge. No Create:
-  //     wiping a mounted filesystem from the UI is a footgun.
-  //   * mount_point empty + SINGLE drive (Available tier — cold btrfs
-  //     on one disk) → "Mount existing filesystem" + "Wipe and Create".
-  //     Parity with non-btrfs Available drives.
-  //   * mount_point empty + multi-drive → "Mount existing filesystem"
-  //     only. Wiping a multi-drive btrfs needs to tear down the md
-  //     array first (Reclaim), so no Create here.
-  _renderCandidateBtrfsCard(c, removed) {
+  //     "Promote to volume…" + "Not a managed volume" badge.
+  //   * mount_point empty (Available tier — cold btrfs, single OR
+  //     multi-drive) → "Mount existing filesystem" only. To wipe and
+  //     reuse the underlying drive(s), the user goes through the
+  //     top-level "+ Create volume" and selects them there; the wizard's
+  //     per-row warning surfaces the data-loss risk. (Earlier this card
+  //     had a per-drive "Wipe and Create" shortcut, removed for parity
+  //     with the rest of the Available tier — one canonical create entry.)
+  _renderCandidateBtrfsCard(c, removed, reclaim) {
     const memberIds = c.members || [];
     const isMounted = !!c.mount_point;
     const isPendingRemove = !!removed;
+    // Reclaim is exposed here ONLY when the candidate's underlying drives are
+    // entirely covered by a single reclaim group (computed in
+    // _candidateReclaimMap) AND nothing is currently mounted on those drives
+    // AND we're not mid-pending-removal (Apply hasn't unmounted yet — the
+    // backend will report reclaim_blocked in that state anyway, so the
+    // resolved `reclaim` will be null until after Apply). When this fires
+    // the standalone stale-signature card is suppressed by
+    // `_staleSignatureGroups` so the user sees ONE card per physical thing
+    // with both "Mount existing filesystem" and "Reclaim & erase…".
+    const showReclaim = !!reclaim && !isMounted && !isPendingRemove;
     // Pending-removal: use the original pool's name + mountpoint (what
     // the user picked when they created the volume) — the candidate's
     // suggested_name (mount-point basename) usually matches, but isn't
@@ -1320,9 +1369,6 @@ class StorageModule extends LitElement {
       ? removed.name
       : (c.label ? '‘' + c.label + '’' : '(unlabelled btrfs)');
     const mountPath = isPendingRemove ? removed.mountpoint : c.mount_point;
-    const singleDrive = (!isMounted && !isPendingRemove && memberIds.length === 1)
-      ? (this.drives || []).find((d) => d.by_id === memberIds[0])
-      : null;
     return html`
       <div class="pool-card ${isPendingRemove ? 'undeployed removed' : ''}">
         <div class="pool-top">
@@ -1342,8 +1388,8 @@ class StorageModule extends LitElement {
               <button class="btn-row" @click=${() => this._openPromote(c)}>
                 ${isMounted ? 'Promote to volume…' : 'Mount existing filesystem'}
               </button>`}
-            ${singleDrive ? html`
-              <button class="btn-row warn" @click=${() => this._createFromDrive(singleDrive)}>Wipe and Create</button>` : ''}
+            ${showReclaim ? html`
+              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
           </div>
         </div>
         ${isPendingRemove ? html`
@@ -1872,6 +1918,11 @@ class StorageModule extends LitElement {
     const uncoveredRemovedPools = removedPools.filter(
       (a) => !coveredRemovedPoolUuids.has(a['fs-uuid']));
 
+    // Reclaim groups indexed by btrfs-candidate fs_uuid — each candidate
+    // that covers a complete reclaim group renders Reclaim & erase INLINE
+    // (no separate stale-signature card for the same physical thing).
+    const candReclaim = this._candidateReclaimMap();
+
     // Tier 0 — AVAILABLE: drives/things not currently mounted (or in the
     // process of being unmounted on the next Apply). SortKey prefix '0…'
     // pins them above the Mounted tiers in the single-sort pass.
@@ -1888,9 +1939,11 @@ class StorageModule extends LitElement {
         sortKey: '0b:' + (x.c.fs_uuid || ''),
         data: x.c,
         removed: x.removedPool,
+        reclaim: candReclaim.get(x.c.fs_uuid) || null,
       })),
       ...unmountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '0b:' + (c.fs_uuid || ''), data: c,
+        reclaim: candReclaim.get(c.fs_uuid) || null,
       })),
       ...this._unassociatedDrives().map((d) => ({
         kind: 'available', sortKey: '0c:' + (d.by_id || d.name || ''), data: d,
@@ -1920,6 +1973,10 @@ class StorageModule extends LitElement {
       }),
       ...mountedCandidates.map((c) => ({
         kind: 'btrfs-candidate', sortKey: '1:' + (c.mount_point || ''), data: c,
+        // Reclaim is hidden on mounted candidates anyway (backend reports
+        // reclaim_blocked instead of reclaim while a filesystem is live);
+        // we still attach the resolved group for consistency.
+        reclaim: candReclaim.get(c.fs_uuid) || null,
       })),
       // Fallback ghost cards for removed pools whose live mount isn't
       // detected as a candidate (e.g. btrfs scan timing). The covered
@@ -1943,7 +2000,7 @@ class StorageModule extends LitElement {
     const renderItem = (it) => {
       switch (it.kind) {
         case 'available':         return this._renderAvailableDriveCard(it.data);
-        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data, it.removed);
+        case 'btrfs-candidate':   return this._renderCandidateBtrfsCard(it.data, it.removed, it.reclaim);
         case 'stale':             return this._renderStaleGroupCard(it.data);
         case 'system':            return this._renderSystemCard(it.data);
         case 'pool':              return this._renderPoolCard(it.data);
@@ -1959,6 +2016,12 @@ class StorageModule extends LitElement {
       <config-section title="Volumes"
         description="Storage volumes attached to this box — local disks, network shares, managed pools, and unassigned drives">
         <button slot="actions" class="btn" @click=${this.loadData}>↻ Refresh</button>
+        <button slot="actions" class="btn"
+                ?disabled=${(this.selectableDrives || []).length === 0}
+                title=${(this.selectableDrives || []).length > 0
+                  ? 'Create a new local volume from one or more unassigned drives.'
+                  : 'No unassigned drives available.'}
+                @click=${this._openCreateVolume}>+ Create volume</button>
         <button slot="actions" class="btn" @click=${this._openAddNetwork}>+ Add Network Mount</button>
         <button slot="actions" class="btn" @click=${this._openAddCustom}>+ Add custom device</button>
         ${loadingPools
@@ -2151,6 +2214,13 @@ class StorageModule extends LitElement {
   _reclaimGroupTitle(rec) {
     if (rec.kind === 'mdadm') return 'RAID array';
     if (rec.kind === 'lvm') return 'LVM volume group';
+    // `stale` covers both leftover RAID/LVM signatures (typically multi-disk
+    // remnants) AND single-disk unmanaged filesystems (e.g. an unmanaged
+    // btrfs or a LUKS container holding one). Use the per-disk title for the
+    // 1-drive case so the card doesn't read as a "group" of one.
+    if (rec.kind === 'stale' && (rec.member_ids || []).length === 1) {
+      return 'Unmanaged drive';
+    }
     return 'Disk group';
   }
 
@@ -2388,17 +2458,10 @@ class StorageModule extends LitElement {
     this.addMountSource = '__custom__';
   }
 
-  // Per-drive entry points. The section-header "+ Add volume" router is gone
-  // — instead, each unassociated drive's card carries its own Create / Use
-  // existing buttons, so the user clicks the action right next to the noun.
-  _createFromDrive(d) {
-    if (!d || !d.by_id) return;
-    this._openWizard();              // resets, then we pre-seed
-    this.selected = [d.by_id];
-    this._ensureProfileStillValid();  // auto-picks Single (only 1 drive)
-    this._refreshPreview();
-  }
-
+  // Per-drive "Mount existing filesystem" — opens the AddMount modal
+  // with the drive's existing filesystem pre-selected as the source. The
+  // sibling per-drive Create button is gone; all create flows route through
+  // the top-level "+ Create volume" entry point.
   _useExistingFromDrive(d) {
     if (!d || !d.by_id) return;
     const cand = (this.mountableDevices || []).find(
@@ -2642,6 +2705,9 @@ class StorageModule extends LitElement {
 
       <div class="field">
         <label>Drives <span class="hint">(${this.selected.length} selected)</span></label>
+        <div class="hint" style="margin:-4px 0 8px 0;">
+          Check 2+ drives for a RAID layout; check all 4 for double-parity RAID6.
+        </div>
         <div class="drive-pick">
           ${this.selectableDrives.map((d) => {
             const warn = d.overridable;
@@ -2996,7 +3062,11 @@ class StorageModule extends LitElement {
 
   _openMasterKeySetup() {
     this.masterKeySetupOpen = true;
-    this.masterKeySetupMode = 'generate';
+    // On a system-encrypted box, default to the paste-in tab — generating
+    // a fresh random value there would silently NOT match the system
+    // disk's existing LUKS slot (backend's generate() refuses too).
+    const sysEncrypted = !!(this.encryptionStatus && this.encryptionStatus.system_encrypted);
+    this.masterKeySetupMode = sysEncrypted ? 'paste' : 'generate';
     this.masterKeyPasted = '';
     this.masterKeyGenerated = '';
     this.masterKeySaving = false;
@@ -3084,8 +3154,21 @@ class StorageModule extends LitElement {
               fails — keep one passphrase, not several.
             </div>
 
+            ${this.encryptionStatus && this.encryptionStatus.system_encrypted ? html`
+              <div class="banner warn" style="margin-bottom:12px;">
+                <strong>Your system disk is already encrypted.</strong>
+                Paste the recovery passphrase you saved at install time —
+                the backend will verify it actually unlocks the system
+                disk before saving. Generating a fresh random value here
+                would NOT match, so that option is disabled.
+              </div>` : ''}
+
             <div class="field" style="display:flex;gap:8px;">
               <button class="btn ${this.masterKeySetupMode === 'generate' ? 'btn-primary' : ''}"
+                      ?disabled=${!!(this.encryptionStatus && this.encryptionStatus.system_encrypted)}
+                      title=${(this.encryptionStatus && this.encryptionStatus.system_encrypted)
+                        ? 'Disabled: a fresh random value would not match the system disk slot.'
+                        : 'Generate a fresh 6-group passphrase.'}
                       @click=${() => { this.masterKeySetupMode = 'generate'; this.masterKeyError = ''; }}>
                 Generate a new passphrase
               </button>
@@ -3105,9 +3188,9 @@ class StorageModule extends LitElement {
                        placeholder="At least 20 printable-ASCII characters"
                        @input=${(e) => { this.masterKeyPasted = e.target.value; }} />
                 <div class="hint">
-                  If your system disk is already encrypted, paste the same
-                  recovery passphrase you used at install — so one passphrase
-                  unlocks everything.
+                  ${this.encryptionStatus && this.encryptionStatus.system_encrypted
+                    ? 'Verified against the system disk’s LUKS slot before saving — a typo is caught here, not at the next boot.'
+                    : 'No system disk encryption detected, so this is only the master key for new encrypted data volumes.'}
                 </div>
               </div>
             ` : html`
