@@ -190,6 +190,12 @@ export const unlockLuks = (
     save_key: !!saveKey, adopt_master: !!adoptMaster,
   });
 
+// Assemble an offline mdadm array detected by the resolver — non-destructive.
+// The page reloads after success; whatever is INSIDE the array (locked LUKS,
+// cold btrfs, empty) then surfaces via the existing detection paths.
+export const assembleMdadmArray = (arrayUuid) =>
+  post('/api/storage/mdadm/assemble', { array_uuid: arrayUuid });
+
 // Storage encryption (master key for data-pool LUKS containers). The master
 // key is the LUKS recovery passphrase persisted at
 // /etc/nixos/secrets/recovery-passphrase.txt — same value that unlocks the

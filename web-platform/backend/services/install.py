@@ -970,6 +970,17 @@ class InstallationService:
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
 """
+            # RAID1 mirror: disko provisions a second ESP on disk 2
+            # mounted at /boot2. systemd-boot only installs to /boot, so
+            # without this rsync /boot2 stays empty and the machine
+            # cannot boot off disk 2 if disk 1 dies. NixOS does not have
+            # a mirroredBoots option for systemd-boot (only for grub /
+            # extlinux), so we mirror via extraInstallCommands.
+            if part['raid'] == 'raid1':
+                bootloader += """  boot.loader.systemd-boot.extraInstallCommands = ''
+    ${pkgs.rsync}/bin/rsync -a --delete /boot/ /boot2/
+  '';
+"""
         else:
             bootloader = f"""  # Bootloader (BIOS)
   boot.loader.grub.enable = true;

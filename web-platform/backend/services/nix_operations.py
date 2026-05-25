@@ -421,17 +421,21 @@ class NixOperations:
             # resolves to a local working tree. A root input ref is
             # normally a string node name; a list is a follows-path
             # (rare for root inputs) — we only strip the simple case.
+            # Also collect the on-disk PATH each one points at so we
+            # can invalidate Nix's fetcher cache for them below.
             strip_nodes = set()
             strip_names = []
+            local_paths: List[str] = []
             for input_name, target in root_input_refs.items():
                 if not isinstance(target, str):
                     continue
-                node = nodes.get(target, {})
-                if NixOperations._input_is_local_working_tree(
-                    node.get("locked", {})
-                ):
+                locked = nodes.get(target, {}).get("locked", {})
+                if NixOperations._input_is_local_working_tree(locked):
                     strip_nodes.add(target)
                     strip_names.append(input_name)
+                    p = NixOperations._local_input_path(locked)
+                    if p:
+                        local_paths.append(p)
 
             if not strip_nodes:
                 # All-remote lock (production install) — nothing to do.
@@ -461,6 +465,16 @@ class NixOperations:
             except Exception as e:
                 logger.warning(f"Could not rewrite flake.lock for refresh: {e}")
                 return
+
+            # Cache-bust: drop fetcher-cache rows that key on each local
+            # tree's HEAD commit. `git+file://` keys its cache by the last
+            # commit hash, NOT by working-tree content — so without this
+            # the re-lock below just hits the cache and gets the pre-edit
+            # NAR hash back, the rebuild builds stale code, and the
+            # user's Apply silently does nothing. See
+            # _invalidate_local_input_fetcher_cache() for the discovery
+            # story and what the cache row keys look like.
+            NixOperations._invalidate_local_input_fetcher_cache(local_paths)
 
             # Re-lock: Nix re-resolves the stripped inputs from flake.nix,
             # re-hashing the live working tree. --allow-dirty(-locks) are
@@ -519,6 +533,121 @@ class NixOperations:
             url = locked.get("url", "")
             return url.startswith("file://") or url.startswith("/")
         return False
+
+    @staticmethod
+    def _local_input_path(locked: dict) -> str:
+        """Filesystem path backing a local-working-tree flake input. Empty
+        if the entry isn't one (callers gate on _input_is_local_working_tree
+        first) or the path can't be derived."""
+        ltype = locked.get("type", "")
+        if ltype == "path":
+            return locked.get("path") or ""
+        if ltype == "git":
+            url = locked.get("url", "")
+            if url.startswith("file://"):
+                return url[len("file://"):]
+            if url.startswith("/"):
+                return url
+        return ""
+
+    @staticmethod
+    def _invalidate_local_input_fetcher_cache(paths: List[str]) -> None:
+        """Drop Nix fetcher-cache rows that key on the HEAD commit of any
+        local working-tree input.
+
+        Why this matters: Nix's `git+file://` fetcher computes a "fingerprint"
+        from the input's last commit hash and caches the resulting NAR hash
+        by it. Subsequent edits to TRACKED files in the working tree do NOT
+        change the fingerprint, so the fetcher cheerfully returns the
+        cached pre-edit NAR hash. The only ways to bust this are: commit
+        the edits (changes the commit hash → new fingerprint → cache miss)
+        or evict the cache row directly. Stripping the lock entry and
+        re-running `nix flake lock` is NOT enough on its own — the re-lock
+        hits the same cache.
+
+        Cache row shape (sqlite `Cache` table, `sourcePathToHash`
+        domain plus the two git-metadata domains):
+            key   = JSON: `{"fingerprint":"<commit>", ...}`
+            value = JSON: `{"hash":"sha256-..."}`
+            primary key (domain, key)
+
+        Best-effort throughout: missing cache file, missing git, locked DB,
+        or future filename version bumps all just log and continue. The
+        cache filename version may change (currently v4) — glob to cover
+        a future Nix bump."""
+        if not paths:
+            return
+        # Resolve where Nix stores the fetcher cache. Matches Nix's own
+        # ${XDG_CACHE_HOME:-$HOME/.cache}/nix lookup.
+        cache_root = Path(
+            os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+        cache_dir = cache_root / "nix"
+        try:
+            cache_files = sorted(cache_dir.glob("fetcher-cache-v*.sqlite"))
+        except OSError:
+            return
+        if not cache_files:
+            return
+
+        # The fingerprint is the input's HEAD commit hash.
+        fingerprints: set = set()
+        for p in paths:
+            try:
+                r = subprocess.run(
+                    ["git", "-C", p, "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                sha = (r.stdout or "").strip()
+                if r.returncode == 0 and sha:
+                    fingerprints.add(sha)
+                else:
+                    # `path:` inputs aren't git repos. Nothing keyed on a
+                    # commit to invalidate, so they're harmless to skip
+                    # (their cache lookups are content-addressed differently).
+                    logger.debug(
+                        f"No git HEAD for local input {p}: "
+                        f"{(r.stderr or '').strip()}"
+                    )
+            except (subprocess.TimeoutExpired, OSError) as e:
+                logger.warning(
+                    f"Could not read HEAD for local input {p}: {e}")
+        if not fingerprints:
+            return
+
+        try:
+            import sqlite3
+        except ImportError:
+            logger.warning(
+                "sqlite3 unavailable — cannot invalidate fetcher cache; "
+                "local-tree edits may need a `git commit` to take effect.")
+            return
+
+        for db in cache_files:
+            try:
+                # Short busy_timeout in case Nix has the DB open from a
+                # concurrent eval. We're not racing for correctness — the
+                # cache is best-effort — so a brief wait is enough.
+                with sqlite3.connect(str(db), timeout=5) as conn:
+                    cur = conn.cursor()
+                    total = 0
+                    for sha in fingerprints:
+                        cur.execute(
+                            "DELETE FROM Cache WHERE key LIKE ?",
+                            (f"%{sha}%",),
+                        )
+                        total += cur.rowcount or 0
+                    conn.commit()
+                logger.info(
+                    f"Invalidated {total} fetcher-cache row(s) in "
+                    f"{db.name} for local input HEAD(s) "
+                    f"{sorted(fingerprints)}")
+            except sqlite3.OperationalError as e:
+                logger.warning(
+                    f"Could not invalidate {db.name} (DB busy or "
+                    f"missing table): {e}")
+            except Exception as e:
+                logger.warning(
+                    f"Unexpected error invalidating {db.name}: {e}")
 
     @staticmethod
     def get_full_log() -> str:

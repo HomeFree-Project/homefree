@@ -84,6 +84,7 @@ _FINDMNT = _resolve_bin("findmnt")
 _BTRFS = _resolve_bin("btrfs")
 _PVS = _resolve_bin("pvs")
 _BLKID = _resolve_bin("blkid")
+_MDADM = _resolve_bin("mdadm")
 
 # Same constraint `StoragePoolService._NAME_RE` enforces; duplicated here to
 # avoid the resolver depending on the service layer (one-way dep).
@@ -256,6 +257,27 @@ def _mounted_btrfs_disks() -> Set[str]:
     return disks
 
 
+def _btrfs_disks_for_path(path: str) -> Set[str]:
+    """Physical disks backing the btrfs filesystem mounted at `path`.
+
+    Empty set if `path` is not a btrfs mount or btrfs-progs is missing.
+    Resolves multi-device btrfs (RAID0/1/10): /proc/mounts only names one
+    member, so callers that need the full membership must go through btrfs
+    itself."""
+    try:
+        out = _run([_BTRFS, "filesystem", "show", path])
+    except Exception:  # noqa: BLE001
+        return set()
+    disks: Set[str] = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("devid") and " path " in line:
+            dev = line.split(" path ", 1)[1].strip()
+            if dev:
+                disks |= _underlying_disks(dev)
+    return disks
+
+
 def _os_disks() -> Set[str]:
     """Disks backing /, /boot, /boot2 (boot-critical). Belt-and-suspenders on
     top of the mounted-btrfs set (which already covers a btrfs root)."""
@@ -404,6 +426,81 @@ def _md_member_map() -> Dict[str, Dict[str, Any]]:
     return arrays
 
 
+def _offline_md_member_map() -> Dict[str, Dict[str, Any]]:
+    """Mdadm arrays present on disk superblocks but NOT currently assembled
+    (no /dev/md*; /proc/mdstat may not even exist on a fresh-install host
+    with boot.swraid still off). Keyed by array UUID (lowercase, raw
+    colon-separated form), not md kname.
+
+    Returns {uuid: {"members": [member knames], "level": "raid6",
+    "name": "data"}}. Empty when mdadm is missing, no offline arrays
+    exist, or detection fails. Best-effort throughout."""
+    # Already-assembled UUIDs (normalized hex-only) so we don't double-list
+    # an array that's already surfaced via the assembled path.
+    assembled: Set[str] = set()
+    for md_kname in _md_member_map().keys():
+        try:
+            raw = (Path(f"/sys/block/{md_kname}/md/uuid")
+                   .read_text().strip().lower())
+            assembled.add(re.sub(r"[^0-9a-f]", "", raw))
+        except OSError:
+            pass
+
+    # Members surface as top-level disks OR partitions (lsblk recurses).
+    out = _run([_LSBLK, "-J", "-b", "-o", "NAME,KNAME,TYPE,FSTYPE,LABEL"])
+    try:
+        roots = json.loads(out or "{}").get("blockdevices", [])
+    except json.JSONDecodeError:
+        return {}
+    members: List[str] = []
+
+    def _walk(nodes: List[Dict[str, Any]]) -> None:
+        for n in nodes:
+            if (n.get("fstype") or "").lower() == "linux_raid_member":
+                kn = n.get("kname") or n.get("name")
+                if kn:
+                    members.append(kn)
+            for c in (n.get("children") or []):
+                _walk([c])
+
+    _walk(roots)
+
+    arrays: Dict[str, Dict[str, Any]] = {}
+    for kn in members:
+        examine = _run([_MDADM, "--examine", f"/dev/{kn}"])
+        if not examine.strip():
+            continue
+        uuid_raw = ""
+        level = ""
+        name = ""
+        for line in examine.splitlines():
+            s = line.strip()
+            if s.startswith("Array UUID"):
+                uuid_raw = s.split(":", 1)[1].strip().lower()
+            elif s.startswith("Raid Level"):
+                level = s.split(":", 1)[1].strip().lower()
+            elif s.startswith("Name"):
+                # "Name : homefree:data  (local to host homefree)" — keep
+                # the trailing token after the host prefix so the user-
+                # facing label is just "data".
+                rhs = s.split(":", 1)[1].strip().split()[0:1]
+                full = rhs[0] if rhs else ""
+                name = full.split(":", 1)[1] if ":" in full else full
+        if not uuid_raw:
+            continue
+        uuid_norm = re.sub(r"[^0-9a-f]", "", uuid_raw)
+        if uuid_norm in assembled:
+            continue
+        a = arrays.setdefault(
+            uuid_raw, {"members": [], "level": "", "name": ""})
+        a["members"].append(kn)
+        if level and not a["level"]:
+            a["level"] = level
+        if name and not a["name"]:
+            a["name"] = name
+    return arrays
+
+
 def _pv_vg_map() -> Dict[str, str]:
     """{pv_path: vg_name} from `pvs`. Empty when LVM tooling is absent or there
     are no PVs (a PV with no VG maps to "")."""
@@ -449,6 +546,38 @@ def _reclaim_groups() -> List[Dict[str, Any]]:
             "id": f"md:{md}", "kind": "mdadm", "arrays": [f"/dev/{md}"],
             "profile": profile,
             "vgs": vgs, "disks": sorted(disks), "description": desc,
+        })
+        claimed |= disks
+
+    # Offline mdadm arrays (members present on disk but no /dev/md*). Surface
+    # them as their own group so the four-disk RAID6 doesn't render as four
+    # orphan Available cards. The frontend offers an Assemble action; once
+    # assembled, the contents fall through to the existing locked-LUKS /
+    # btrfs-candidate / assembled-mdadm flows. `_offline_md_member_map()`
+    # already filters out arrays that ARE assembled, so no double-listing.
+    for uuid, info in _offline_md_member_map().items():
+        disks: Set[str] = set()
+        for kn in info["members"]:
+            disks |= _underlying_disks(f"/dev/{kn}")
+        disks -= claimed  # don't shadow assembled arrays / LVMs
+        if not disks:
+            continue
+        level_raw = (info.get("level") or "").lower()
+        level = level_raw.upper() if level_raw else "RAID"
+        name = info.get("name") or "(unnamed)"
+        profile = level_raw if level_raw in ("raid5", "raid6") else None
+        groups.append({
+            "id": f"md-uuid:{uuid}",
+            "kind": "mdadm-offline",
+            "arrays": [],
+            "array_uuid": uuid,
+            "array_name": name,
+            "profile": profile,
+            "vgs": [],
+            "disks": sorted(disks),
+            "description": (
+                f"{level} array '{name}' (offline) across "
+                f"{len(disks)} drive(s)"),
         })
         claimed |= disks
 
@@ -798,6 +927,12 @@ class StorageResolver:
                         # → eligible for Reformat; otherwise null). Synthesized
                         # single-disk groups never have a profile (no md layer).
                         "profile": g.get("profile"),
+                        # mdadm-offline groups carry the array identity so the
+                        # frontend can call /api/storage/mdadm/assemble and so
+                        # the reformat flow can assemble on-demand without
+                        # round-tripping back through the resolver.
+                        "array_uuid": g.get("array_uuid"),
+                        "array_name": g.get("array_name"),
                     }
             row["reclaimable"] = reclaim is not None
             row["reclaim"] = reclaim
@@ -1362,6 +1497,12 @@ class StorageResolver:
                 except OSError:
                     real = ""
                 disks = _underlying_disks(real) if real else set()
+                # btrfs multi-device: /proc/mounts only lists one member.
+                # Expand to every member so the System card groups the
+                # whole mirror and the other members don't leak into the
+                # "Available" list.
+                if fstype.lower() == "btrfs":
+                    disks |= _btrfs_disks_for_path(mp)
                 disk_by_ids = [by_id[k] for k in sorted(disks) if by_id.get(k)]
                 st = _statvfs_safe(mp)
                 used = total = None
@@ -1632,13 +1773,16 @@ async def get_create_status() -> Dict[str, Any]:
 
 class ReformatRequest(BaseModel):
     """Reformat an existing mdadm array with a fresh filesystem (skip resync).
-    `members` is the by-id list of the array's existing member disks;
-    `md_device` is the kernel name ('md127') or full path ('/dev/md127')."""
+    `members` is the by-id list of the array's existing member disks. Exactly
+    one of `md_device` (assembled-array path: 'md127' or '/dev/md127') or
+    `array_uuid` (offline-array path: the assemble step runs first) is
+    required."""
     name: str
     mountpoint: str
     profile: str          # raid5 | raid6
     members: List[str]
-    md_device: str
+    md_device: str = ""
+    array_uuid: str = ""
     encrypted: bool = False
 
 
@@ -1651,6 +1795,7 @@ async def post_reformat(req: ReformatRequest) -> Dict[str, Any]:
     payload = {
         "name": req.name, "mountpoint": req.mountpoint, "profile": req.profile,
         "members": req.members, "md_device": req.md_device,
+        "array_uuid": req.array_uuid,
         "encrypted": req.encrypted,
     }
     errs = await asyncio.to_thread(
@@ -1849,6 +1994,33 @@ async def post_unlock_luks(req: UnlockLuksRequest) -> Dict[str, Any]:
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return result
+
+
+# --- mdadm assemble (offline arrays detected by _offline_md_member_map) ----
+#
+# When the Storage page surfaces an offline mdadm group, the user clicks
+# "Reuse existing filesystem…" to bring up the array (non-destructive). The
+# resulting /dev/md<N> then feeds the existing locked-LUKS / btrfs-candidate /
+# stale-mdadm detection paths — whichever applies to the array's contents.
+
+class AssembleMdadmRequest(BaseModel):
+    """`array_uuid` is the mdadm Array UUID as reported by
+    `mdadm --examine` ('xxxxxxxx:xxxxxxxx:xxxxxxxx:xxxxxxxx', case-insensitive,
+    `:` or `-` separators tolerated)."""
+    array_uuid: str
+
+
+@router.post("/mdadm/assemble")
+async def post_assemble_mdadm(req: AssembleMdadmRequest) -> Dict[str, Any]:
+    from services.storage_pool import StoragePoolService
+    try:
+        md_device = await asyncio.to_thread(
+            StoragePoolService.assemble_offline_array, req.array_uuid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"md_device": md_device}
 
 
 # --- master encryption key (used by every data-pool LUKS container) ----------

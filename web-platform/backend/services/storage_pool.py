@@ -215,6 +215,7 @@ class StoragePoolService:
         name = (req.get("name") or "").strip()
         mountpoint = (req.get("mountpoint") or "").strip()
         md_device = (req.get("md_device") or "").strip()
+        array_uuid = (req.get("array_uuid") or "").strip()
         members = req.get("members") or []
         profile = req.get("profile")
 
@@ -229,8 +230,12 @@ class StoragePoolService:
                 f"Reformat only supports parity profiles (raid5/raid6); got "
                 f"'{profile}'. For btrfs-native arrays the existing data is "
                 "the array — there is no separate md layer to preserve.")
-        if not md_device:
-            errs.append("Reformat requires the target md device name (e.g. md127).")
+        # Offline-array path: caller supplies array_uuid instead of md_device;
+        # _run_reformat assembles before validating /dev/md<N>.
+        if not md_device and not array_uuid:
+            errs.append(
+                "Reformat requires either md_device (assembled array) or "
+                "array_uuid (offline array to assemble first).")
         if not members:
             errs.append("Reformat requires the array's member by-id list.")
 
@@ -333,6 +338,80 @@ class StoragePoolService:
             target=StoragePoolService._run_create, args=(req,), daemon=True)
         StoragePoolService._thread.start()
         return True
+
+    @staticmethod
+    def assemble_offline_array(array_uuid: str) -> str:
+        """Assemble an mdadm array by UUID and return its /dev/md<N> path.
+
+        Idempotent — if the array is already assembled the existing /dev/md*
+        is returned. On a first-install host boot.swraid is off (no pool
+        records exist yet), so the md kernel module may not be loaded; a
+        best-effort `modprobe md_mod` precedes the assemble. The caller is
+        responsible for permission gating — this runs as the admin backend
+        user, which already executes destructive disk ops elsewhere."""
+        uuid = (array_uuid or "").strip().lower()
+        if not uuid:
+            raise ValueError("array_uuid is required.")
+        # Same regex semantics as mdadm itself — 32 hex digits separated by
+        # colons, dashes, or no separator. Refuse anything else so we never
+        # pass arbitrary input to a subprocess.
+        if not re.fullmatch(r"[0-9a-f:\-]+", uuid) or len(
+                re.sub(r"[^0-9a-f]", "", uuid)) != 32:
+            raise ValueError(f"Malformed mdadm UUID: {array_uuid!r}")
+        norm = re.sub(r"[^0-9a-f]", "", uuid)
+
+        def _find_md_for(uuid_norm: str) -> Optional[str]:
+            try:
+                lines = open("/proc/mdstat").read().splitlines()
+            except OSError:
+                return None
+            for line in lines:
+                if " : " not in line:
+                    continue
+                md_kname = line.split(" : ", 1)[0].strip()
+                if not md_kname.startswith("md"):
+                    continue
+                try:
+                    raw = open(
+                        f"/sys/block/{md_kname}/md/uuid").read().strip().lower()
+                except OSError:
+                    continue
+                if re.sub(r"[^0-9a-f]", "", raw) == uuid_norm:
+                    return f"/dev/{md_kname}"
+            return None
+
+        # Already assembled? Return its node and skip the modprobe + assemble.
+        existing = _find_md_for(norm)
+        if existing and os.path.exists(existing):
+            return existing
+
+        # Best-effort module load. On a kernel that builds md_mod in-tree this
+        # silently no-ops; failure here doesn't preclude mdadm from succeeding
+        # (it triggers udev which may load the module itself).
+        modprobe = _resolve_bin("modprobe")
+        StoragePoolService._cmd([modprobe, "md_mod"])
+
+        rc, out = StoragePoolService._cmd(
+            [_MDADM, "--assemble", "--scan", f"--uuid={uuid}"])
+        if rc != 0:
+            raise RuntimeError(
+                f"mdadm --assemble failed for {uuid}: {out}")
+
+        # mdadm + udev can lag — poll briefly for the array to surface in
+        # /proc/mdstat and for /dev/md<N> to materialize.
+        deadline = time.time() + 15
+        md_dev: Optional[str] = None
+        while time.time() < deadline:
+            md_dev = _find_md_for(norm)
+            if md_dev and os.path.exists(md_dev):
+                # Settle udev so /sys/block/<md>/holders and friends are
+                # populated by the time the caller queries them.
+                StoragePoolService._cmd([_UDEVADM, "settle"])
+                return md_dev
+            time.sleep(0.5)
+        raise RuntimeError(
+            f"Array {uuid} did not appear after assemble (mdadm output: "
+            f"{out!r}, md found: {md_dev!r}).")
 
     @staticmethod
     def start_reformat(req: Dict[str, Any]) -> bool:
@@ -633,7 +712,24 @@ class StoragePoolService:
             mountpoint = req["mountpoint"].strip()
             profile = req["profile"]
             members = req["members"]
-            md_device_in = req["md_device"].strip()
+            md_device_in = (req.get("md_device") or "").strip()
+            array_uuid = (req.get("array_uuid") or "").strip()
+
+            # Offline-array path: no /dev/md* exists yet, but the resolver
+            # surfaced an `mdadm-offline` group whose array_uuid is in the
+            # request. Assemble first, then proceed exactly as the
+            # already-assembled path would. Idempotent if the array
+            # happens to have come up in the meantime.
+            if not md_device_in:
+                if not array_uuid:
+                    raise RuntimeError(
+                        "Reformat request needs md_device or array_uuid.")
+                StoragePoolService._update(
+                    "assemble", 3.0,
+                    f"Assembling offline array {array_uuid}")
+                md_device_in = StoragePoolService.assemble_offline_array(
+                    array_uuid)
+
             md_kname = os.path.basename(md_device_in)  # accept "md127" OR "/dev/md127"
             md_dev = f"/dev/{md_kname}"
 

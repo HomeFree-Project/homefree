@@ -27,6 +27,7 @@ import {
   setStorageMasterKey,
   getLockedLuks,
   unlockLuks,
+  assembleMdadmArray,
 } from '../../../api/client.js';
 
 /**
@@ -186,6 +187,12 @@ class StorageModule extends LitElement {
     unlockShowAdvanced: { state: true },  // expand the persistence-options panel
     unlocking: { state: true },
     unlockError: { state: true },
+    // Offline mdadm assemble: in-flight array_uuid (or null) + last error.
+    // _lastAssembleUuid scopes the error display to the card the user
+    // clicked on so a stale error doesn't bleed across rerenders.
+    assembling: { state: true },
+    assembleError: { state: true },
+    _lastAssembleUuid: { state: true },
   };
 
   static styles = css`
@@ -647,6 +654,9 @@ class StorageModule extends LitElement {
     this.unlockShowAdvanced = false;
     this.unlocking = false;
     this.unlockError = '';
+    this.assembling = null;
+    this.assembleError = '';
+    this._lastAssembleUuid = '';
   }
 
   connectedCallback() {
@@ -1560,6 +1570,47 @@ class StorageModule extends LitElement {
   // deleted Drives-table set-box.
   _renderStaleGroupCard(rec) {
     const memberIds = rec.member_ids || [];
+    // Offline mdadm arrays (mdadm metadata on disk but no /dev/md*) get
+    // their own button set: a non-destructive Assemble (then the existing
+    // unlock / candidate / assembled-mdadm flows take over depending on
+    // what's inside) and the same direct-reformat shortcut as assembled
+    // arrays. We can't preview the inner contents without assembling
+    // first — RAID5/6 stripe reconstruction needs the kernel md layer.
+    if (rec.kind === 'mdadm-offline') {
+      const canReformat = !!rec.profile && !!rec.array_uuid;
+      return html`
+        <div class="pool-card">
+          <div class="pool-top">
+            <div>
+              <span class="pool-name">${this._reclaimGroupTitle(rec)}</span>
+              <div class="pool-meta">
+                ${memberIds.length} drive(s) · ${rec.description}
+              </div>
+            </div>
+            <div class="pool-actions">
+              <span class="badge badge-warn">Offline</span>
+              <button class="btn-row"
+                      ?disabled=${this.assembling === rec.array_uuid}
+                      title="Bring the array online so its existing filesystem can be unlocked / mounted. Non-destructive."
+                      @click=${() => this._doAssembleArray(rec)}
+                >${this.assembling === rec.array_uuid
+                  ? 'Assembling…' : 'Reuse existing filesystem…'}</button>
+              ${canReformat ? html`
+                <button class="btn-row warn"
+                        ?disabled=${this.assembling === rec.array_uuid}
+                        title="Assemble the array and put a new filesystem on it — skips the day-long resync a fresh array build would force. Existing data on the array is lost."
+                        @click=${() => this._openReformatFromArray(rec)}>Use array (new filesystem)…</button>` : ''}
+              <button class="btn-row delete"
+                      ?disabled=${this.assembling === rec.array_uuid}
+                      @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
+            </div>
+          </div>
+          ${this.assembleError && this._lastAssembleUuid === rec.array_uuid ? html`
+            <div class="pool-error">${this.assembleError}</div>` : ''}
+          ${this._renderMemberDrives(memberIds)}
+        </div>
+      `;
+    }
     // Reformat is offered when the leftover group IS an assembled mdadm
     // parity array (raid5/raid6) with no btrfs candidate covering it (an
     // assembled-but-empty array, or an array carrying a non-btrfs fs we
@@ -1590,6 +1641,28 @@ class StorageModule extends LitElement {
         ${this._renderMemberDrives(memberIds)}
       </div>
     `;
+  }
+
+  // Bring an offline mdadm array online. Non-destructive: the resolver
+  // surfaces an `mdadm-offline` group with array_uuid; this calls the new
+  // backend route and refreshes. After refresh the array's contents
+  // (locked LUKS / cold btrfs / empty) flow through the existing
+  // detection paths — there is no new render code on the post-assemble
+  // side.
+  async _doAssembleArray(rec) {
+    const uuid = rec && rec.array_uuid;
+    if (!uuid || this.assembling) return;
+    this.assembling = uuid;
+    this._lastAssembleUuid = uuid;
+    this.assembleError = '';
+    try {
+      await assembleMdadmArray(uuid);
+      await this.loadData();
+    } catch (e) {
+      this.assembleError = e.message || 'Failed to assemble the array.';
+    } finally {
+      this.assembling = null;
+    }
   }
 
   // Mount cards mirror Volume cards: title + subtitle, real-state badge,
@@ -2430,6 +2503,11 @@ class StorageModule extends LitElement {
 
   _reclaimGroupTitle(rec) {
     if (rec.kind === 'mdadm') return 'RAID array';
+    if (rec.kind === 'mdadm-offline') {
+      return rec.array_name
+        ? `RAID array '${rec.array_name}' (offline)`
+        : 'RAID array (offline)';
+    }
     if (rec.kind === 'lvm') return 'LVM volume group';
     // `stale` covers both leftover RAID/LVM signatures (typically multi-disk
     // remnants) AND single-disk unmanaged filesystems (e.g. an unmanaged
@@ -3449,13 +3527,17 @@ class StorageModule extends LitElement {
   }
 
   // Open the modal from a stale-RAID-array card (no btrfs on top, or a
-  // non-btrfs fs we don't surface as a candidate).
+  // non-btrfs fs we don't surface as a candidate). Accepts both assembled
+  // (`rec.arrays = ['/dev/md127']`) and offline (`rec.kind ===
+  // 'mdadm-offline'`, `rec.array_uuid` set) groups — the backend assembles
+  // on-demand when md_device is empty but array_uuid is present.
   _openReformatFromArray(rec) {
     this.reformatTarget = {
-      md_device: (rec.arrays || [])[0],
+      md_device: (rec.arrays || [])[0] || '',
+      array_uuid: rec.array_uuid || '',
       members: rec.member_ids || [],
       profile: rec.profile,
-      label: '',
+      label: rec.array_name || '',
       size_bytes: 0,
       source: 'array',
     };
@@ -3504,7 +3586,8 @@ class StorageModule extends LitElement {
       mountpoint: this.reformatMountpoint.trim(),
       profile: this.reformatTarget.profile,
       members: this.reformatTarget.members,
-      md_device: this.reformatTarget.md_device,
+      md_device: this.reformatTarget.md_device || '',
+      array_uuid: this.reformatTarget.array_uuid || '',
       encrypted: !!(this.reformatEncrypt
         && this.encryptionStatus
         && this.encryptionStatus.master_key_configured),
