@@ -1819,29 +1819,19 @@ class StorageModule extends LitElement {
   }
 
   // Destroy a managed pool in one shot: unmount → close LUKS → tear down
-  // md → wipe member disks → remove the pool record. Backend handles
-  // unmount + reclaim atomically; the wipe runs as a background reclaim
-  // job (the existing /api/storage/reclaim-status surface). The pool's
-  // card is gone immediately on success.
-  async _destroyPool(p) {
-    const members = p.members || [];
-    const ok = await confirmDialog({
-      title: `Reclaim & erase "${p.name}"?`,
-      message:
-        `ALL DATA on ${members.length} drive(s) will be DESTROYED and the ` +
-        `pool record removed. The volume will be unmounted, LUKS/RAID torn ` +
-        `down, and the disks wiped. This is irreversible.`,
-      confirmText: 'Reclaim & erase',
-      variant: 'danger',
+  // md → wipe member disks → remove the pool record. Routes through the
+  // same _openReclaim modal as the drive/candidate/stale-group buttons,
+  // so the user has to type the ERASE_CONFIRM_PHRASE — destroying a
+  // pool is at least as destructive as reclaiming its drives (wipes
+  // every member plus tears down LUKS/md) and deserves the same gate.
+  // The destroy_pool_name field flips _doReclaim into pool-destroy
+  // mode (synchronous backend call, no reclaim-status polling).
+  _destroyPool(p) {
+    this._openReclaim({
+      description: `the volume "${p.name}"`,
+      member_ids: p.members || [],
+      destroy_pool_name: p.name,
     });
-    if (!ok) return;
-    try {
-      await destroyStoragePool(p.name);
-      await this.loadData();
-      this._emitPools();
-    } catch (e) {
-      this.loadError = e.message || 'Failed to start reclaim.';
-    }
   }
 
   // ---- import (re-attach an existing on-disk volume; non-destructive) ----
@@ -1987,8 +1977,20 @@ class StorageModule extends LitElement {
     this.reclaimError = '';
     this.reclaimStatus = { step: 'starting', progress: 0, message: 'Starting…' };
     try {
-      await reclaimStorageDisks(this.reclaimTarget.member_ids);
-      this._pollReclaim();
+      if (this.reclaimTarget.destroy_pool_name) {
+        // Pool-destroy path: backend does the whole thing synchronously
+        // (unmount → close mappers → mdadm --stop → wipefs/sgdisk →
+        // remove record). No background job to poll.
+        await destroyStoragePool(this.reclaimTarget.destroy_pool_name);
+        this.reclaiming = false;
+        this.reclaimStatus = null;
+        this.reclaimTarget = null;
+        await this.loadData();
+        this._emitPools();
+      } else {
+        await reclaimStorageDisks(this.reclaimTarget.member_ids);
+        this._pollReclaim();
+      }
     } catch (e) {
       this.reclaiming = false;
       this.reclaimStatus = null;       // back to the confirm view so it's retryable
@@ -3133,9 +3135,12 @@ class StorageModule extends LitElement {
 
   _renderReclaimModal() {
     const r = this.reclaimTarget;
-    const members = (r.member_ids || [])
-      .map((id) => (this.drives || []).find((d) => d.by_id === id))
-      .filter(Boolean);
+    // For pool-destroy, drives[] may not contain absent/wiped members.
+    // Fall back to a by-id-only entry so the count and identity match
+    // what's actually being destroyed.
+    const members = (r.member_ids || []).map(
+      (id) => (this.drives || []).find((d) => d.by_id === id) || { by_id: id, model: null, size_bytes: null }
+    );
     const inProgress = this.reclaiming || (this.reclaimStatus && !this.reclaimError);
     return html`
       <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeReclaim(); }}>
@@ -3150,7 +3155,7 @@ class StorageModule extends LitElement {
             <ul class="erase-list">
               ${members.map((d) => html`
                 <li>
-                  <strong>${d.model || 'Unknown'}</strong> — ${formatBytes(d.size_bytes)}
+                  <strong>${d.model || 'Unknown'}</strong>${d.size_bytes ? html` — ${formatBytes(d.size_bytes)}` : ''}
                   <div class="serial">${d.by_id}</div>
                 </li>`)}
             </ul>

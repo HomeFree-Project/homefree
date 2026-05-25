@@ -781,9 +781,19 @@ class StoragePoolService:
         so the user doesn't have to do Remove → Apply → wait-for-unmount
         → Reclaim as three separate steps.
 
-        Returns [] on success or a list of error strings. The reclaim
-        half (mdadm --stop, LUKS close, wipefs, sgdisk) is delegated to
-        StorageReclaimService."""
+        Does the work INLINE using the pool record's own knowledge of
+        luks-mappers, md-device, and members — does NOT go through
+        StorageReclaimService.validate_request, which would refuse when
+        the disks are no longer in a reclaimable state (e.g. they were
+        already wiped earlier by a stale tank-candidate Reclaim and the
+        user re-Promoted before the UI refreshed → the pool record
+        points at empty disks, the validate gate says 'in use', the
+        record gets stuck). Every step is best-effort; the final goal
+        is the pool record gone — wipe is desirable but not strictly
+        required, since a disk with no signature is already wipefs-
+        equivalent.
+
+        Returns [] on success or a list of error strings."""
         try:
             cfg = ConfigReader.read_config()
         except Exception:  # noqa: BLE001
@@ -794,48 +804,71 @@ class StoragePoolService:
             return [f"No pool named '{name}'."]
         members = pool.get("members") or []
         mountpoint = pool.get("mountpoint") or ""
+        md_device = pool.get("md-device") or ""
+        luks_mappers = pool.get("luks-mappers") or []
+
+        umount = _resolve_bin("umount")
+        sgdisk = _resolve_bin("sgdisk")
 
         # 1. Unmount the live filesystem (best-effort). Try a normal
         # umount first, fall back to umount -l (lazy) so a stray shell
         # cwd inside the mountpoint doesn't block — the kernel detaches
-        # on last close.
-        if mountpoint:
-            umount = _resolve_bin("umount")
+        # on last close. Non-fatal if the mount unit was never started.
+        if mountpoint and os.path.ismount(mountpoint):
             rc, _ = StoragePoolService._cmd([umount, mountpoint])
             if rc != 0:
                 StoragePoolService._cmd([umount, "-l", mountpoint])
 
-        # 2. Run the existing reclaim flow over the member disks. It
-        # handles LUKS close + mdadm --stop + wipefs + sgdisk and refuses
-        # if anything's still mounted (which we just umounted).
+        # 2. Close any LUKS mappers the pool record knows about (managed
+        # encrypted pools). Then sweep /sys/block/<dev>/holders for any
+        # other CRYPT- mapper that might be open on the disks (e.g. an
+        # unmanaged-X mapper from an earlier unlock that was never
+        # adopted). Mapper-close has to happen before mdadm --stop;
+        # an open mapper holds its backing device.
+        for m in luks_mappers:
+            mapper = m.get("mapper") if isinstance(m, dict) else None
+            if mapper:
+                StoragePoolService._luks_close(mapper)
+        # Cover stray mappers on the same physical disks too.
         try:
-            from services.storage_reclaim import (
-                StorageReclaimService, StorageReclaimBusy,
-            )
-        except ImportError as e:
-            return [f"Could not load reclaim service: {e}"]
-        errs = StorageReclaimService.validate_request(members)
-        if errs:
-            return errs
-        try:
-            started = StorageReclaimService.start(members)
-        except StorageReclaimBusy as e:
-            return [str(e)]
-        if not started:
-            return ["A storage operation is already running."]
+            from services.storage_reclaim import StorageReclaimService
+            knames = [os.path.basename(os.path.realpath(f"/dev/disk/by-id/{m}"))
+                      for m in members]
+            scan_devs = sorted({k for k in knames if k} | ({md_device} if md_device else set()))
+            for mapper in StorageReclaimService._crypt_mappers_on(scan_devs):
+                StoragePoolService._luks_close(mapper)
+        except (ImportError, OSError) as e:  # noqa: BLE001
+            logger.warning("destroy_pool: stray-mapper scan failed: %s", e)
 
-        # 3. Remove the pool record from homefree-config.json. The
-        # reclaim job runs in the background; the record removal here
-        # means the UI's pool card disappears immediately and the wipe
-        # runs to completion off the request thread (status visible via
-        # /api/storage/reclaim-status). Spread the existing `storage`
-        # object so sibling sub-keys (e.g. `shares`) survive — same
-        # pattern as `forget`.
+        # 3. Stop the md array if the pool is parity-backed. Best-effort
+        # — a missing/already-stopped array is fine.
+        if md_device and os.path.exists(f"/dev/{md_device}"):
+            StoragePoolService._cmd([_MDADM, "--stop", f"/dev/{md_device}"])
+
+        # 4. Wipe each member disk (wipefs clears fs signatures, sgdisk
+        # zaps the partition table). Best-effort per disk so one
+        # missing/dead disk can't block the rest.
+        for member in members:
+            dev = f"/dev/disk/by-id/{member}"
+            if not os.path.exists(dev):
+                continue
+            # Also zero any leftover md superblock so a stale signature
+            # doesn't make the disk auto-assemble into a phantom array
+            # on the next boot.
+            StoragePoolService._cmd([_MDADM, "--zero-superblock", "--force", dev])
+            StoragePoolService._cmd([_WIPEFS, "-a", dev])
+            StoragePoolService._cmd([sgdisk, "--zap-all", dev])
+
+        StoragePoolService._cmd([_UDEVADM, "settle"])
+
+        # 5. Remove the pool record from homefree-config.json. Spread
+        # the existing `storage` object so sibling sub-keys (e.g.
+        # `shares`) survive — same pattern as `forget`.
         storage = cfg.get("storage") or {}
         new_pools = [p for p in (storage.get("pools") or []) if p.get("name") != name]
         if not ConfigWriter.write_config({"storage": {**storage, "pools": new_pools}}):
-            return ["Wipe started but failed to remove the pool record from "
-                    "homefree-config.json — Apply to clean up the entry."]
+            return ["Wiped the volume but failed to remove the pool record "
+                    "from homefree-config.json — re-Remove from the UI."]
         return []
 
     # ----------------------------------------------------------- forget
