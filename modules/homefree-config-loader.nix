@@ -195,6 +195,18 @@ in
       }) (jsonData.storage.shares or []);
     };
 
+    ## System-disk LUKS + TPM2 first-boot enrollment. Flipped to true by
+    ## the installer (services/install.py) when the user opts into LUKS at
+    ## install time. Scoped to SYSTEM disks (root + swap) only — data
+    ## pools are encrypted independently per-pool via homefree.storage.
+    ## The `or false` keeps older homefree-config.json files evaluating
+    ## cleanly — boxes installed before this module landed keep their
+    ## locally-imported homefree-encryption.nix doing the work until they
+    ## migrate the JSON key and drop the stale import.
+    system-disk-encryption = {
+      enable = jsonData.system-disk-encryption.enable or false;
+    };
+
     ## Local btrfs timeline snapshots (snapper). Off by default; the chained
     ## `or` tolerates older JSON without the key, and the retention defaults
     ## match module.nix's homefree.snapshots.retention.

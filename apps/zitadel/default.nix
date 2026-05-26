@@ -772,7 +772,11 @@ in
           ## colour and is rewritten at flip time (no nixos-rebuild
           ## needed to change the upstream). See lib/blue-green.nix.
           upstream-snippet = "oauth2_proxy_reverse_proxy";
-          public = false;
+          ## Track the user-facing zitadel.public toggle: opening sso.<domain>
+          ## externally implies auth.<domain> must be reachable too, since any
+          ## public oauth2-protected service redirects unauthenticated requests
+          ## to https://auth.<domain>/oauth2/start. Two endpoints, one toggle.
+          public = config.homefree.service-options.zitadel.public;
         };
       }
     ]);
