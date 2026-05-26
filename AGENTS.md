@@ -14,10 +14,15 @@ separate deployments. It is *not* one machine's config.
 - **Shared code** (this repo): `profiles/`, `services/`, `apps/`,
   `modules/`, `web-platform/`, `module.nix`, `configuration.nix`.
   Everything here ships to every HomeFree box.
-- **Instance config** lives elsewhere — `/etc/nixos/` on an installed
-  system (`configuration.nix`, `homefree-config.json`,
-  `homefree-configuration.nix`, per-instance assets). Never put
-  instance-specific files in this repo.
+- **Instance state** lives elsewhere — `/etc/nixos/` on an installed
+  system. ONLY these files belong there: `flake.nix` (wires the
+  shared loader), `homefree-config.json` (per-instance config),
+  `configuration.nix` (instance hardware/bootloader overrides),
+  `disko.nix` (filesystem layout), `hardware-configuration.nix`,
+  optional `custom-flakes.nix`, and the encrypted `secrets/` dir.
+- **The boundary is bidirectional.** Never put instance-specific
+  files in this repo, AND never put shared/generic code in
+  `/etc/nixos`. See rule 12.
 
 ## Rules for changes
 
@@ -129,6 +134,26 @@ separate deployments. It is *not* one machine's config.
     every box on rebuild). There is currently **no migration system**, so
     default to backwards-compatible changes; introducing a migration
     mechanism is a maintainer decision, not something to improvise.
+
+12. **Generic code does not belong in `/etc/nixos`.** The instance tree
+    is *state*, not *source* — anything that would also apply to a
+    second HomeFree box belongs in this shared repo (`profiles/`,
+    `services/`, `apps/`, `modules/`), behind a config-driven toggle
+    if it should be opt-in. A `.nix` module dropped into `/etc/nixos`
+    is invisible to every other deployment and rots there forever; the
+    very existence of `homefree-configuration.nix` (now deprecated)
+    happened because generated/shared logic was written into the
+    instance tree, and a binding added later in shared code silently
+    failed on every existing box. The temptation is real: dropping a
+    file in `/etc/nixos` is faster than threading a new option through
+    `module.nix` + the loader + a shared module. Don't take the
+    shortcut. If you are tempted to write any `.nix` file under
+    `/etc/nixos/` other than the seven listed in "What this repository
+    is" above, STOP and ask. `configuration.nix` is the one ambiguous
+    file — it legitimately holds instance hardware/bootloader overrides
+    but is also the easiest place to accidentally drop generic logic;
+    apply the same test (would this apply to another HomeFree box? →
+    it does not belong there).
 
 ## Version control
 
