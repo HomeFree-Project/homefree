@@ -1,39 +1,43 @@
-/* HomeFree landing page — tile-light animation + copy button.
-   Keep this small and dependency-free. No anime.js bundle. */
+/* HomeFree landing page — product-tour carousel + copy button.
+   Keep this small and dependency-free. */
 
 (() => {
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // ── Product tour carousel: prev/next + dots + keyboard nav.
+  //    Single slide at a time, .is-active class drives visibility.
+  //    The CSS hides nav buttons until data-carousel-ready is set,
+  //    so if JS fails to load the first slide still renders alone.
+  const carousel = document.querySelector('[data-carousel]');
+  if (carousel) {
+    const slides = Array.from(carousel.querySelectorAll('[data-carousel-slides] .tour-slide'));
+    const dots   = Array.from(carousel.querySelectorAll('[data-carousel-dots] .tour-dot'));
+    const prev   = carousel.querySelector('[data-carousel-prev]');
+    const next   = carousel.querySelector('[data-carousel-next]');
 
-  // ── App-tile stagger: tiles light up on a slow loop, evoking SSO
-  //    sign-ins propagating across the surface. Random subset each cycle
-  //    so it doesn't feel mechanical. Pauses when tab is hidden.
-  const tiles = Array.from(document.querySelectorAll('[data-animate-tiles] .app-tile'));
-  if (tiles.length && !reduceMotion) {
-    const litCount = Math.max(2, Math.min(4, Math.floor(tiles.length / 5)));
+    if (slides.length > 1) {
+      let active = 0;
 
-    const cycle = () => {
-      if (document.hidden) return;
-      // pick `litCount` unique tiles
-      const picked = new Set();
-      while (picked.size < litCount) {
-        picked.add(Math.floor(Math.random() * tiles.length));
-      }
-      // stagger the lighting and unlight previous cycle's tiles
-      tiles.forEach((t, i) => {
-        if (picked.has(i)) {
-          setTimeout(() => t.classList.add('lit'), (i % litCount) * 220);
-        } else {
-          t.classList.remove('lit');
-        }
+      const setActive = (i) => {
+        active = (i + slides.length) % slides.length;
+        slides.forEach((s, k) => s.classList.toggle('is-active', k === active));
+        dots.forEach((d, k) => {
+          const on = k === active;
+          d.classList.toggle('is-active', on);
+          d.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+      };
+
+      prev?.addEventListener('click', () => setActive(active - 1));
+      next?.addEventListener('click', () => setActive(active + 1));
+      dots.forEach((d, k) => d.addEventListener('click', () => setActive(k)));
+
+      carousel.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); setActive(active - 1); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); setActive(active + 1); }
       });
-    };
 
-    cycle();
-    setInterval(cycle, 2400);
-  } else if (tiles.length && reduceMotion) {
-    // For reduced motion, gently mark a couple permanently lit so
-    // the "this is SSO-active" visual cue still reads.
-    tiles.slice(0, 2).forEach(t => t.classList.add('lit'));
+      // Reveal the controls now that JS is wired up.
+      carousel.setAttribute('data-carousel-ready', '');
+    }
   }
 
   // ── Copy install command
