@@ -1804,11 +1804,18 @@ class StorageModule extends LitElement {
 
   _mountUndeployed(mp) {
     if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return false;
-    const current = (this.config?.mounts || []).find((m) => m['mount-point'] === mp);
-    if (!current) return false;
+    const matches = (this.config?.mounts || []).filter((m) => m['mount-point'] === mp);
+    if (!matches.length) return false;
+    // Duplicate rows at the same mount-point are an undeployed change
+    // regardless of how they compare to applied — the duplicate itself is the
+    // pending change (and one of them will be dropped by the auto-dedup the
+    // backend applies on the next rebuild). Flag both so the amber doesn't go
+    // blind when find()-by-mount-point happens to match an identical applied
+    // twin.
+    if (matches.length > 1) return true;
     const applied = (this.appliedConfig?.mounts || []).find((m) => m['mount-point'] === mp);
     if (!applied) return true;
-    return stableKey(current) !== stableKey(applied);
+    return stableKey(matches[0]) !== stableKey(applied);
   }
 
   _mountPendingLabel(m) {
@@ -2270,9 +2277,16 @@ class StorageModule extends LitElement {
       ...uncoveredRemovedPools.map((a) => ({
         kind: 'pool-removed', sortKey: '1:' + (a.mountpoint || ''), data: a,
       })),
+      // Pending disk-mount removals belong in the Available tier (the
+      // inverse of the Mount-existing flow that put them in Disk Mounts), so
+      // the pending state isn't visually "still mounted". Mirrors the pool
+      // removal pattern (`pendingRemovalCandidates` at sortKey '0b:'). '0d:'
+      // sorts after candidates / unassociated drives already in '0a:'..'0c:'.
+      // Network mounts stay in tier '2' — Available is drive-centric and a
+      // network mount has no underlying drive to surface there.
       ...removedMounts.map((m) => ({
         kind: 'mount-removed',
-        sortKey: (this._isNetworkMount(m) ? '2:' : '1:') + (m['mount-point'] || ''),
+        sortKey: (this._isNetworkMount(m) ? '2:' : '0d:') + (m['mount-point'] || ''),
         data: m,
       })),
     ];
@@ -2802,6 +2816,20 @@ class StorageModule extends LitElement {
     const mp = this.addMountPoint.trim();
     if (!device || !fsType || !mp.startsWith('/')) return;
     this.addMountError = '';
+
+    // Refuse to append a second row for a mount-point that already exists.
+    // Without this, hitting Add when the same mount-point happens to be in
+    // pendingConfig.mounts (race against autosave, a quick double-click, an
+    // earlier add the user didn't notice) silently produces a duplicate row
+    // — and per-row amber goes blind because _mountUndeployed looks rows up
+    // by mount-point so both duplicates resolve to the same applied twin.
+    const existing = (this.config?.mounts || []).find(
+      (m) => (m['mount-point'] || '') === mp);
+    if (existing) {
+      this.addMountError = `"${mp}" is already a configured mount — `
+        + 'remove the existing entry first or pick a different mount point.';
+      return;
+    }
 
     // Route btrfs → managed pool when the candidate is promote-eligible. This
     // makes the "Add existing filesystem" path automatically write to
