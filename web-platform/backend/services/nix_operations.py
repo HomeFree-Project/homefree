@@ -1021,9 +1021,16 @@ class NixOperations:
             with open(NixOperations.LATEST_STATUS, 'w') as f:
                 json.dump(status_data, f, indent=2)
 
-            # On full success, mark the on-disk config as "applied" so the
-            # /api/config/dirty endpoint can stop reporting unapplied changes.
-            if exit_code == 0 and not partial_success:
+            # Mark on-disk config as "applied" whenever activation reached the
+            # box — i.e. clean success OR partial_success (generation activated,
+            # some services failed to start). The CONFIG side is fully deployed
+            # in both cases; service-start failures are an orthogonal runtime
+            # concern already surfaced via the rebuild log + status badge. The
+            # earlier `exit_code == 0` gate left the UI permanently yellow on
+            # any box with even one transiently-failing container, because the
+            # snapshot never refreshed and /api/config/dirty kept reporting
+            # diffs against the pre-apply state.
+            if exit_code == 0 or partial_success:
                 NixOperations._mark_config_applied()
 
             NixOperations._cleanup_old_logs()

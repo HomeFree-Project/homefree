@@ -39,7 +39,15 @@ let
   ## Instance config sets this; with no default, enabling the service
   ## without a deviceId fails Nix evaluation — surfaces the missing
   ## config at build time instead of at container boot.
-  deviceId = config.homefree.service-options.zwave-js-ui.deviceId;
+  rawDeviceId = config.homefree.service-options.zwave-js-ui.deviceId;
+  ## Accept either the bare id ("usb-0658_0200-if00") or the full path
+  ## ("/dev/serial/by-id/usb-0658_0200-if00"). The admin UI and the
+  ## option description both say "bare id", but the field is a free
+  ## text input and users routinely paste the result of `ls -l
+  ## /dev/serial/by-id/*` (full path). Without this strip, the bind
+  ## mount becomes `/dev/serial/by-id//dev/serial/by-id/...` and podman
+  ## exits 125 on first start.
+  deviceId = lib.removePrefix "/dev/serial/by-id/" rawDeviceId;
   deviceArg = "/dev/serial/by-id/${deviceId}:/dev/zwave";
 
   preStart = ''

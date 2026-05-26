@@ -510,6 +510,16 @@ in
   systemd.services.podman-immich-machine-learning = lib.mkIf config.homefree.service-options.immich.enable {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
+    serviceConfig = {
+      # Ensure the ML cache dir exists before podman tries to bind-mount it.
+      # Otherwise statfs fails → podman exits 125 → cascade into a failed-
+      # dependency for immich-server (which Requires= this unit), even though
+      # immich-server's preStart is what otherwise creates /var/cache/immich.
+      # Fresh installs and restored boxes hit this first-boot.
+      ExecStartPre = [ "!${pkgs.writeShellScript "immich-ml-prestart" ''
+        mkdir -p /var/cache/immich
+      ''}" ];
+    };
   };
 
   systemd.services.podman-immich-redis = lib.mkIf config.homefree.service-options.immich.enable {

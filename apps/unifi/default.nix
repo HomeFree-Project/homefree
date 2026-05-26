@@ -70,11 +70,30 @@ in
 
       extraOptions = [
         # "--pull=always"
-        "--privileged"
+        # UniFi OS Server runs systemd as PID 1 inside the container. The
+        # canonical recipe (upstream docker-compose.yaml at
+        # https://github.com/lemker/unifi-os-server/blob/main/docker-compose.yaml)
+        # is two caps + host cgroup namespace + a cgroup bind mount — NOT
+        # --privileged. We deliberately do not use --privileged: with it,
+        # podman bind-mounts host /dev into the container, the image's
+        # in-container systemd starts agetty@ttyN against /dev/tty1..6,
+        # races the host getty, and the physical console flips to
+        # `uos login:`. That's a recovery-surface failure (AGENTS.md
+        # rule 10) — the maintainer had to reboot to an older generation
+        # to reclaim tty1. The cgroupns=host + /sys/fs/cgroup bind below
+        # is the documented modern (cgroup v2) way to give an in-container
+        # systemd the cgroup access it needs without granting it the host
+        # device tree.
+        "--cap-add=NET_RAW"
+        "--cap-add=NET_ADMIN"
+        "--cgroupns=host"
+        "--add-host=host.docker.internal:host-gateway"
         "--stop-signal=SIGRTMIN+3"
-        "--mount=type=tmpfs,target=/run,tmpfs-size=104857600"
+        # `exec` on /run and /tmp: systemd drops helper binaries into
+        # these and execs them; default tmpfs is `noexec` under podman.
+        "--mount=type=tmpfs,target=/run,tmpfs-size=104857600,exec"
         "--mount=type=tmpfs,target=/run/lock,tmpfs-size=104857600"
-        "--mount=type=tmpfs,target=/tmp,tmpfs-size=104857600"
+        "--mount=type=tmpfs,target=/tmp,tmpfs-size=104857600,exec"
       ];
 
       ports = [
@@ -112,6 +131,12 @@ in
 
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
+        # Required pair with --cgroupns=host above: in-container systemd
+        # writes to the cgroup tree it sees here. Without this bind mount
+        # (or with --privileged, which implicitly provides it), starting
+        # systemd-managed services inside the container fails with
+        # cgroup-mount errors.
+        "/sys/fs/cgroup:/sys/fs/cgroup:rw"
         "${containerDataPath}/data:/data"
         "${containerDataPath}/unifi:/var/lib/unifi"
         "${containerDataPath}/mongodb:/var/lib/mongodb"

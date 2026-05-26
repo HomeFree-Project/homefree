@@ -284,6 +284,22 @@ in
   };
 
   config = {
+    ## Reserve NetBird's host-published ports from the kernel's ephemeral
+    ## range (32768–60999). Without this, an outbound TCP connection
+    ## (most commonly tailscaled, but anything making outbound TCP) can
+    ## randomly grab one of these as its source port — then podman's
+    ## `bind(0.0.0.0:<port>)` for the relay/mgmt/dashboard fails with
+    ## `address already in use`, the unit goes into a restart loop, and
+    ## the box ships with a flaky Apply (rebuild exits 4, UI stays
+    ## yellow). Reserving here means the kernel won't auto-assign these
+    ## for outbound — listener binds always succeed. Only ports inside
+    ## the ephemeral range need this; ones below 32768 (e.g. 10000) are
+    ## already safe. ip_local_reserved_ports accepts ranges and
+    ## comma-separated lists. Set unconditionally — the cost is zero
+    ## when NetBird is disabled (kernel just reserves three numbers).
+    boot.kernel.sysctl."net.ipv4.ip_local_reserved_ports" =
+      "${toString netbirdMgmtPort},${toString netbirdRelayPort},${toString netbirdDashboardPort}";
+
     ## ── NetBird server containers ──────────────────────────────────────
     ## All five containers are always rendered when NetBird is
     ## enabled. Pre-provisioning, the management + dashboard
