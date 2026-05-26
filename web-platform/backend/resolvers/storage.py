@@ -773,6 +773,23 @@ class StorageResolver:
                        if dk in disk_to_group for mp in mps}
         blockers_by_mp = _blockers_for_mountpoints(blocked_mps) if blocked_mps else {}
 
+        # Mountpoints that HomeFree itself manages via `homefree.mounts`. A
+        # disk mounted ONLY at one of these can be Erase'd in one shot — the
+        # reclaim service auto-unmounts and drops the config row before the
+        # wipe. Surfaced below via reclaim["auto_unmount_mountpoints"], which
+        # the UI uses to render an Erase button on the mount-card.
+        try:
+            _hf_cfg = ConfigReader.read_config() or {}
+        except Exception:  # noqa: BLE001
+            _hf_cfg = {}
+        homefree_mountpoints = {
+            (m.get("mount-point") or "").rstrip("/") or (m.get("mount-point") or "")
+            for m in (_hf_cfg.get("mounts") or []) if m.get("mount-point")
+        }
+
+        def _norm_mp(mp: str) -> str:
+            return mp.rstrip("/") or mp
+
         # All unmanaged btrfs filesystems on this box (mounted or not, single
         # or multi-drive). Indexed by member kname so each drive row carries a
         # `promotable_btrfs` hint — the UI uses it both to render an inline
@@ -912,11 +929,33 @@ class StorageResolver:
                             if b["pid"] not in seen_pids:
                                 seen_pids.add(b["pid"])
                                 blk.append(b)
-                    reclaim_blocked = {
-                        "description": g["description"],
-                        "mountpoints": disk_mounts.get(name, []),
-                        "blockers": blk,
-                    }
+                    # A disk mounted ONLY at HomeFree-managed mountpoints (no
+                    # process blockers, not a managed btrfs covered by the
+                    # candidate-reclaim path) is still erasable in one shot —
+                    # the reclaim service auto-unmounts and drops the rows.
+                    disk_mps = disk_mounts.get(name, [])
+                    auto_unmount: List[str] = []
+                    if (name not in btrfs_disks) and disk_mps and not blk:
+                        if all(_norm_mp(mp) in homefree_mountpoints
+                               for mp in disk_mps):
+                            auto_unmount = list(disk_mps)
+                    if auto_unmount:
+                        reclaim = {
+                            "id": g["id"], "kind": g["kind"], "arrays": g["arrays"],
+                            "vgs": g["vgs"], "description": g["description"],
+                            "member_knames": g["disks"],
+                            "member_ids": [by_id[dk] for dk in g["disks"] if by_id.get(dk)],
+                            "profile": g.get("profile"),
+                            "array_uuid": g.get("array_uuid"),
+                            "array_name": g.get("array_name"),
+                            "auto_unmount_mountpoints": auto_unmount,
+                        }
+                    else:
+                        reclaim_blocked = {
+                            "description": g["description"],
+                            "mountpoints": disk_mps,
+                            "blockers": blk,
+                        }
                 else:
                     reclaim = {
                         "id": g["id"], "kind": g["kind"], "arrays": g["arrays"],

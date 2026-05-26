@@ -33,6 +33,8 @@ from resolvers.storage import (
     _resolve_bin,
     _underlying_disks,
 )
+from services.config_reader import ConfigReader
+from services.config_writer import ConfigWriter
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ _SGDISK = _resolve_bin("sgdisk")
 _VGCHANGE = _resolve_bin("vgchange")
 _UDEVADM = _resolve_bin("udevadm")
 _CRYPTSETUP = _resolve_bin("cryptsetup")
+_UMOUNT = _resolve_bin("umount")
 
 _CMD_TIMEOUT_S = 180
 
@@ -172,7 +175,20 @@ class StorageReclaimService:
             vgs: List[str] = group["vgs"]
             target_disks = set(knames)
 
-            # 2. Refuse if any filesystem backed by a target disk is mounted.
+            # 2a. Auto-unmount any HomeFree-managed mountpoints sitting on the
+            #     target disks, then drop those rows from homefree-config.json.
+            #     This is what makes Erase work on the mount-card for an NTFS
+            #     (or other) drive added via the Disk Mounts table — the user's
+            #     destructive confirmation in the modal authorizes both the
+            #     unmount AND the drop-from-config that follow. Non-HomeFree
+            #     mounts (e.g. an fstab line we didn't write) are left alone
+            #     and surface as the regular "still mounted" error below.
+            if not StorageReclaimService._auto_unmount_homefree(target_disks):
+                return  # _error already populated by the helper on failure
+
+            # 2b. Refuse if any filesystem backed by a target disk is still
+            #     mounted (i.e. mounted by someone other than us — a manual
+            #     mount, an fstab line outside homefree.mounts, etc).
             if StorageReclaimService._mounted_on(target_disks):
                 return StorageReclaimService._error(
                     "A filesystem on these drives is still mounted — unmount it "
@@ -243,6 +259,89 @@ class StorageReclaimService:
             StorageReclaimService._error(f"Unexpected error: {e}")
 
     # ----------------------------------------------------------- helpers
+
+    @staticmethod
+    def _auto_unmount_homefree(target_disks: set) -> bool:
+        """For any HomeFree-managed mount (`homefree.mounts` row) sitting on a
+        target disk: `umount` it, then drop the row from `homefree-config.json`.
+        Returns True on success (incl. nothing-to-do), False on failure (in
+        which case `_error` has been populated).
+
+        Re-derives everything from the LIVE box + the current on-disk config —
+        never trusts client-side data. The matching mount rows are identified
+        purely by mount-point string equality (normalised by stripping a
+        trailing slash), which is what the resolver promised the UI."""
+        # Live mountpoints, indexed by the disks they sit on.
+        disk_mounts: Dict[str, List[str]] = {}
+        try:
+            for line in Path("/proc/mounts").read_text().splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].startswith("/dev/"):
+                    mp = parts[1].replace("\\040", " ")
+                    for dk in _underlying_disks(parts[0]):
+                        disk_mounts.setdefault(dk, [])
+                        if mp not in disk_mounts[dk]:
+                            disk_mounts[dk].append(mp)
+        except OSError:
+            return True  # nothing we can do; let the next mounted check decide
+
+        # Mountpoints on target disks (de-duplicated, normalised).
+        def _norm(mp: str) -> str:
+            return mp.rstrip("/") or mp
+
+        target_mps: List[str] = []
+        for dk in target_disks:
+            for mp in disk_mounts.get(dk, []):
+                if mp not in target_mps:
+                    target_mps.append(mp)
+        if not target_mps:
+            return True
+
+        # Pair them up with current homefree.mounts rows.
+        try:
+            cfg = ConfigReader.read_config() or {}
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        hf_mounts = list(cfg.get("mounts") or [])
+        hf_by_mp: Dict[str, Dict[str, Any]] = {}
+        for m in hf_mounts:
+            mp = m.get("mount-point")
+            if mp:
+                hf_by_mp[_norm(mp)] = m
+
+        to_unmount = [mp for mp in target_mps if _norm(mp) in hf_by_mp]
+        if not to_unmount:
+            return True  # nothing HomeFree-managed; the next check will gate
+
+        StorageReclaimService._update(
+            "auto-unmount", 8.0,
+            f"Unmounting {len(to_unmount)} HomeFree-managed mount(s)")
+        for mp in to_unmount:
+            rc, out = StorageReclaimService._cmd([_UMOUNT, mp])
+            if rc != 0:
+                StorageReclaimService._error(
+                    f"Could not unmount {mp}: {out}. "
+                    "Close any open files/programs using this drive and retry.")
+                return False
+
+        # Drop the matched rows from homefree-config.json. Write the FULL
+        # remaining list (ConfigWriter does a whole-array replace for
+        # `mounts`). If the write fails after a successful unmount the
+        # filesystem table is briefly out of sync with config, but the disk
+        # is no longer mounted so the wipe below is still safe; the user
+        # just needs to retry or re-Apply.
+        drop_norm = {_norm(mp) for mp in to_unmount}
+        remaining = [m for m in hf_mounts
+                     if _norm(m.get("mount-point") or "") not in drop_norm]
+        if len(remaining) != len(hf_mounts):
+            if not ConfigWriter.write_config({"mounts": remaining}):
+                StorageReclaimService._error(
+                    "Unmounted the drive but could not update "
+                    "homefree-config.json. Retry the Erase, or remove the "
+                    "leftover mount row manually.")
+                return False
+
+        return True
 
     @staticmethod
     def _mounted_on(target_disks: set) -> bool:

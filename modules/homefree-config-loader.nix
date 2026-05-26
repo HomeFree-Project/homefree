@@ -68,6 +68,12 @@ in
       ## null, profiles/.../configuration.nix leaves the account's
       ## initialHashedPassword in place (see hashedPassword consumer).
       hashedPassword = jsonData.system.hashedPassword or null;
+      ## Boot mirror toggle. The installer writes `true` when the
+      ## install chose raid1 (which provisions an ESP on disk 2 at
+      ## /boot2 via disko_builder). `or false` so older JSON files
+      ## that predate this key still evaluate cleanly. Consumed by
+      ## modules/boot-mirror.nix.
+      bootMirror = jsonData.system.bootMirror or false;
     };
 
     network = {

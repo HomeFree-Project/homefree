@@ -3,6 +3,7 @@ import '../../shared/config-section.js';
 import '../../shared/table-editor.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
 import { navIcon } from '../../../shared/icons.js';
+import { surfaceUrl } from '../../../shared/surface-switcher.js';
 import {
   getStorageDrives,
   getStoragePools,
@@ -62,9 +63,11 @@ const PROFILES = [
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 
-// homefree.mounts entries are split across two Storage sections by direction:
-// network (this box mounts a remote share IN — below NFS Shares) vs local disk
-// (mount an existing local device — below Volumes). Default fs-type is nfs.
+// homefree.mounts entries are split across two Volumes-list tiers by direction:
+// network (this box mounts a remote share IN — the "Network Mounts" tier) vs
+// local disk (mount an existing local device — the "Disk Mounts" tier).
+// Default fs-type is nfs. Outbound NFS shares (this box exports OUT) now live
+// on a separate Shared Folders page; see shared-folders-module.js.
 const NETWORK_FS = ['nfs', 'cifs', 'smb', 'smbfs'];
 
 // Both destructive flows (create a volume, reclaim drives) wipe whole drives,
@@ -199,32 +202,42 @@ class StorageModule extends LitElement {
     :host { display: block; }
     .module-container { width: 100%; }
 
-    .help-box {
-      background: rgba(59, 130, 246, 0.08);
-      border-left: 4px solid var(--hf-accent);
-      padding: 14px 18px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      color: var(--hf-text-muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .help-box strong { color: var(--hf-text); }
-    .help-box > strong:first-child { display: block; margin-bottom: 6px; font-size: 14px; }
     code {
       background: var(--hf-surface-2);
       padding: 1px 5px; border-radius: 3px;
       font-family: var(--hf-font-mono, monospace); font-size: 12px;
     }
-    .mount-cmds {
-      margin-top: 12px; padding: 12px; border-radius: 8px;
-      background: var(--hf-surface-2); border: 1px solid var(--hf-border);
+    /* Compact actionable notice strip — used by the Encryption panel above
+       the Volumes list. Bordered + tinted so it reads as an inline status
+       message, with its action button right-aligned on desktop and stacked
+       below the text on mobile. */
+    .notice-box {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-accent);
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
     }
-    .mount-cmds-head { font-size: 12px; color: var(--hf-text-muted); margin-bottom: 8px; }
-    .mount-cmd-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; flex-wrap: wrap; }
-    .mc-name { font-size: 13px; color: var(--hf-text); min-width: 90px; font-weight: 500; }
-    .mc-target { user-select: all; }  /* click-drag selects the whole target */
-
+    .notice-box strong { color: var(--hf-text); }
+    .notice-box > div > strong:first-child {
+      display: block; margin-bottom: 4px; font-size: 14px;
+    }
+    .notice-box .skeleton-title { width: 110px; height: 14px; }
+    .notice-box .skeleton-sub   { width: 280px; height: 11px; margin-top: 8px; }
+    @media (max-width: 640px) {
+      .notice-box {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .notice-box .btn { align-self: flex-start; }
+    }
     .section-head {
       display: flex; align-items: center; justify-content: space-between;
       gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
@@ -238,6 +251,7 @@ class StorageModule extends LitElement {
       background: var(--hf-surface-2); color: var(--hf-text);
       font-size: 13px; font-weight: 500; font-family: inherit;
       cursor: pointer; transition: all 0.15s;
+      text-decoration: none; display: inline-flex; align-items: center;
     }
     .btn:hover { background: var(--hf-surface-3); border-color: var(--hf-text-subtle); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -258,6 +272,7 @@ class StorageModule extends LitElement {
       padding: 5px 12px; border-radius: 6px;
       font-size: 12px; font-weight: 500; font-family: inherit;
       transition: all 0.15s;
+      white-space: nowrap;
     }
     .btn-row:hover { background: var(--hf-surface-3); border-color: var(--hf-text-subtle); }
     .btn-row:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -381,7 +396,13 @@ class StorageModule extends LitElement {
     }
     .usage-bar { height: 6px; border-radius: 3px; background: var(--hf-surface-3); margin-top: 10px; overflow: hidden; }
     .usage-fill { height: 100%; background: var(--hf-accent); }
-    .pool-actions { display: flex; gap: 8px; align-items: center; }
+    .pool-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    @media (max-width: 640px) {
+      .pool-card { padding: 12px; }
+      .pool-top { flex-direction: column; align-items: stretch; }
+      .pool-actions { justify-content: flex-start; }
+    }
 
     .badge {
       display: inline-flex; align-items: center; gap: 4px;
@@ -1246,12 +1267,12 @@ class StorageModule extends LitElement {
             <div class="pool-meta">${a.profile} · mount <code>${a.mountpoint}</code></div>
           </div>
           <div class="pool-actions">
-            <span class="badge badge-warn">Removing</span>
+            <span class="badge badge-warn">Pending unmanage</span>
             ${canUndo ? html`
               <button class="btn-row" @click=${() => this._undoRemoveVolume(a)}>Undo</button>` : ''}
           </div>
         </div>
-        <div class="pending-note">⟳ Will be removed (unmounted) on Apply — data stays on the disks</div>
+        <div class="pending-note">⟳ Will be unmounted and removed from config on Apply — data on the disks is preserved</div>
       </div>
     `;
   }
@@ -1271,25 +1292,6 @@ class StorageModule extends LitElement {
     } catch (e) {
       this.loadError = e.message || 'Failed to undo remove.';
     }
-  }
-
-  // NFS shares are plain config rows (no imperative action) — edited via a
-  // table-editor like Mounts. We emit the full storage object (spreading the
-  // current pools) so a shares edit never drops the volumes list.
-  _handleSharesChange(e) {
-    // The table-editor keys its per-row diff on `name` (rowKey="name", see
-    // _renderShares). Strip any leftover synthetic `id` on the way out: an
-    // earlier attempt to add a stable `id` regressed — pre-existing shares had
-    // no id in the deployed applied-config, so stamping one made them show as
-    // BOTH changed and removed whenever the list changed (e.g. adding a
-    // sibling). Renaming a share still reads as remove+add in the diff (minor,
-    // and consistent with the other config tables); adding/editing is clean.
-    const rows = (e.detail.data || []).map(({ id, ...r }) => r);
-    this.dispatchEvent(new CustomEvent('config-change', {
-      detail: { config: { storage: { ...(this.config?.storage || {}), shares: rows } }, module: 'storage' },
-      bubbles: true,
-      composed: true,
-    }));
   }
 
   // OS-root snapshot opt-in (homefree.snapshots.system.enable, a TOP-LEVEL
@@ -1314,64 +1316,6 @@ class StorageModule extends LitElement {
     if (!this.appliedConfig || !Object.keys(this.appliedConfig).length) return false;
     return !!this.config?.snapshots?.system?.enable
       !== !!this.appliedConfig?.snapshots?.system?.enable;
-  }
-
-  // The LAN subnet (homefree.network.lan-subnet) is the sensible default for
-  // a new NFS share's "Allowed clients" — anything on the LAN can mount it,
-  // matching the typical home/single-network use case. Hardcoded fallback
-  // matches the schema default in module.nix.
-  _defaultAllowedClients() {
-    return this.config?.network?.['lan-subnet'] || '10.0.0.0/24';
-  }
-
-  _renderShares() {
-    const shares = this.config?.storage?.shares || [];
-    const applied = this.appliedConfig?.storage?.shares || [];
-    // Exact NFS mount target per share, so clients use the full export PATH
-    // (e.g. 10.0.0.1:/mnt/ellis) instead of the share name (/ellis).
-    const lan = this.config?.network?.['lan-address'] || '<server-ip>';
-    const mountable = shares.filter((s) => s.enabled !== false && s.path);
-    const defAllowed = this._defaultAllowedClients();
-    const columns = [
-      { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
-      { key: 'name', label: 'Name', type: 'text', placeholder: 'media' },
-      { key: 'path', label: 'Path', type: 'path', placeholder: '/mnt/tank/media', rootPath: '/mnt' },
-      { key: 'allowed', label: 'Allowed clients', type: 'tags',
-        default: defAllowed, placeholder: 'e.g. 10.0.0.0/24, 10.0.0.42' },
-      { key: 'read-only', label: 'Read-only', type: 'boolean', default: false },
-    ];
-    return html`
-      <config-section title="NFS Shares" description="Export a volume (or a folder within one) over NFS to your LAN">
-        <table-editor
-          .columns=${columns}
-          .data=${shares}
-          .appliedData=${applied}
-          .rowKey=${'name'}
-          addLabel="Add NFS share"
-          .neutralBooleans=${true}
-          @data-change=${this._handleSharesChange}
-        ></table-editor>
-        <div class="hint" style="margin-top:8px">
-          NFS uses host/subnet trust (no per-user login) — clients matching any
-          listed CIDR or IP may mount the share. New shares default to your
-          LAN subnet (<code>${defAllowed}</code>); remove that chip and add
-          individual IPs to lock a share down. SMB and per-user access are a
-          later phase.
-        </div>
-        ${mountable.length ? html`
-          <div class="mount-cmds">
-            <div class="mount-cmds-head">Mount from a LAN client — use the full export path, not the share name:</div>
-            ${mountable.map((s) => html`
-              <div class="mount-cmd-row">
-                <span class="mc-name">${s.name}</span>
-                <code class="mc-target">${lan}:${s.path}</code>
-              </div>`)}
-            <div class="hint" style="margin-top:8px">
-              e.g. <code class="mc-target">sudo mount -t nfs ${lan}:${mountable[0].path} /mnt/${mountable[0].name}</code>
-            </div>
-          </div>` : ''}
-      </config-section>
-    `;
   }
 
   // ---- mounts (homefree.mounts) — split by direction into two sections ----
@@ -1473,7 +1417,7 @@ class StorageModule extends LitElement {
             ${useExistingCand ? html`
               <button class="btn-row" @click=${() => this._useExistingFromDrive(d)}>Mount existing filesystem</button>` : ''}
             ${d.reclaim ? html`
-              <button class="btn-row delete" @click=${() => this._openReclaim(d.reclaim)}>Reclaim &amp; erase…</button>` : ''}
+              <button class="btn-row delete" @click=${() => this._openReclaim(d.reclaim)}>Erase…</button>` : ''}
           </div>
         </div>
         <div class="pool-members">${d.by_id || d.name}</div>
@@ -1542,7 +1486,7 @@ class StorageModule extends LitElement {
           </div>
           <div class="pool-actions">
             ${isPendingRemove
-              ? html`<span class="badge badge-warn">Removing</span>`
+              ? html`<span class="badge badge-warn">Pending unmanage</span>`
               : (isMounted ? html`<span class="badge badge-warn">Not a managed volume</span>` : '')}
             ${isPendingRemove ? html`
               <button class="btn-row" @click=${() => this._undoRemoveVolume(removed)}>Mount existing filesystem</button>`
@@ -1555,7 +1499,7 @@ class StorageModule extends LitElement {
                       title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
                       @click=${() => this._openReformatFromCandidate(c, reclaim)}>Use array (new filesystem)…</button>` : ''}
             ${showReclaim ? html`
-              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
+              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Erase…</button>` : ''}
           </div>
         </div>
         ${isPendingRemove ? html`
@@ -1602,7 +1546,7 @@ class StorageModule extends LitElement {
                         @click=${() => this._openReformatFromArray(rec)}>Use array (new filesystem)…</button>` : ''}
               <button class="btn-row delete"
                       ?disabled=${this.assembling === rec.array_uuid}
-                      @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
+                      @click=${() => this._openReclaim(rec)}>Erase…</button>
             </div>
           </div>
           ${this.assembleError && this._lastAssembleUuid === rec.array_uuid ? html`
@@ -1635,7 +1579,7 @@ class StorageModule extends LitElement {
               <button class="btn-row warn"
                       title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force."
                       @click=${() => this._openReformatFromArray(rec)}>Use array (new filesystem)…</button>` : ''}
-            <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Reclaim &amp; erase…</button>
+            <button class="btn-row delete" @click=${() => this._openReclaim(rec)}>Erase…</button>
           </div>
         </div>
         ${this._renderMemberDrives(memberIds)}
@@ -1696,6 +1640,16 @@ class StorageModule extends LitElement {
       ? (this.promotable || []).find((p) => p.fs_uuid === fsUuid)
       : null;
 
+    // Erase: backend marks the underlying drive(s) with a reclaim descriptor
+    // when the mount is HomeFree-managed (auto_unmount_mountpoints set); the
+    // reclaim service does umount + drop-from-config + wipe in one shot. We
+    // look the drive up by_id and reuse its reclaim group (mount-card is
+    // always single-drive from the UI's perspective).
+    const eraseDrive = byIds.length === 1
+      ? (this.drives || []).find((d) => d.by_id === byIds[0])
+      : null;
+    const eraseGroup = eraseDrive && eraseDrive.reclaim ? eraseDrive.reclaim : null;
+
     return html`
       <div class="pool-card ${undeployed ? 'undeployed' : ''}">
         <div class="pool-top">
@@ -1712,7 +1666,11 @@ class StorageModule extends LitElement {
               : html`<button class="btn-row" @click=${() => this._toggleMountEnabled(mp, true)}>Mount</button>`}
             ${promoteCand ? html`
               <button class="btn-row" @click=${() => this._openPromote(promoteCand)}>Promote to volume…</button>` : ''}
-            <button class="btn-row delete" @click=${() => this._removeMount(m)}>Remove…</button>
+            <button class="btn-row delete" @click=${() => this._removeMount(m)}>Unmanage…</button>
+            ${eraseGroup ? html`
+              <button class="btn-row delete"
+                      title="Unmount, drop the mount row from config, and wipe the drive — all in one step."
+                      @click=${() => this._openReclaim(eraseGroup)}>Erase…</button>` : ''}
           </div>
         </div>
 
@@ -1783,11 +1741,11 @@ class StorageModule extends LitElement {
             <div class="pool-meta">${m['fs-type'] || '?'} · device <code>${m.device || '—'}</code></div>
           </div>
           <div class="pool-actions">
-            <span class="badge badge-warn">Pending removal</span>
+            <span class="badge badge-warn">Pending unmanage</span>
             <button class="btn-row" @click=${() => this._undoRemoveMount(m)}>Undo</button>
           </div>
         </div>
-        <div class="pending-note">⟳ Will be unmounted and removed on Apply</div>
+        <div class="pending-note">⟳ Will be unmounted and removed from config on Apply — data on the drive is preserved</div>
       </div>
     `;
   }
@@ -1858,11 +1816,13 @@ class StorageModule extends LitElement {
   async _removeMount(m) {
     const mp = m['mount-point'] || '(unnamed mount)';
     const ok = await confirmDialog({
-      title: `Remove "${mp}" from Disk Mounts?`,
-      message: 'The mount config row is dropped — on Apply the box stops '
-             + 'mounting this device here. The filesystem on the device is '
-             + 'left untouched; you can re-add the mount later.',
-      confirmText: 'Remove',
+      title: `Stop managing "${mp}"?`,
+      message: 'HomeFree will stop managing this mount. On Apply the row is '
+             + 'removed from config and the box stops mounting this device '
+             + 'here. The filesystem on the device is left untouched — data '
+             + 'is preserved and you can re-add the mount later. (To wipe '
+             + 'the drive instead, use Erase.)',
+      confirmText: 'Unmanage',
       variant: 'danger',
     });
     if (!ok) return;
@@ -1879,13 +1839,13 @@ class StorageModule extends LitElement {
 
   async _removeVolume(p) {
     const ok = await confirmDialog({
-      title: `Remove volume "${p.name}"?`,
+      title: `Stop managing volume "${p.name}"?`,
       message:
-        'The btrfs filesystem and its data stay on the disks — this only removes ' +
-        'it from HomeFree’s configuration, and you can re-attach it later from ' +
-        '“Available to attach”. Apply afterwards to unmount. (To wipe the ' +
-        'drives instead, use Reclaim.)',
-      confirmText: 'Remove',
+        'HomeFree will stop managing this volume. On Apply the box stops ' +
+        'mounting it. The btrfs filesystem and its data stay on the disks — ' +
+        'you can re-attach it later from "Available to attach". (To wipe the ' +
+        'drives instead, use Erase.)',
+      confirmText: 'Unmanage',
       variant: 'danger',
     });
     if (!ok) return;
@@ -1894,7 +1854,7 @@ class StorageModule extends LitElement {
       await this.loadData();
       this._emitPools();
     } catch (e) {
-      this.loadError = e.message || 'Failed to remove volume.';
+      this.loadError = e.message || 'Failed to unmanage volume.';
     }
   }
 
@@ -2085,7 +2045,23 @@ class StorageModule extends LitElement {
         const s = await getStorageReclaimStatus();
         this.reclaimStatus = s;
         if (s.error) { this.reclaiming = false; this.reclaimError = s.error; return; }
-        if (s.completed) { this.reclaiming = false; await this.loadData(); return; }
+        if (s.completed) {
+          this.reclaiming = false;
+          // When the Erase auto-unmounted a HomeFree-managed mount, the
+          // backend has already dropped that row from homefree-config.json.
+          // Mirror that in admin-app's pendingConfig so the displayed config
+          // doesn't surface a stale mount-card pointing at a wiped drive.
+          const dropped = this.reclaimTarget?.auto_unmount_mountpoints || [];
+          if (dropped.length) {
+            const norm = (mp) => (mp || '').replace(/\/+$/, '') || mp || '';
+            const drop = new Set(dropped.map(norm));
+            const next = (this.config?.mounts || [])
+              .filter((row) => !drop.has(norm(row['mount-point'])));
+            this._emitMounts(next);
+          }
+          await this.loadData();
+          return;
+        }
       } catch (e) {
         // transient — keep polling
       }
@@ -2099,27 +2075,11 @@ class StorageModule extends LitElement {
   render() {
     return html`
       <div class="module-container">
-        <div class="help-box">
-          <strong>Storage volumes</strong>
-          Combine unused drives into a local <code>btrfs</code> data volume for
-          media, files, or backups. Creating a volume <strong>erases</strong> the
-          selected drives. The OS drive and any in-use drive can never be
-          selected. After creating a volume, click <strong>Apply</strong> to mount
-          it. For four or more large drives, <strong>double parity (RAID6)</strong>
-          gives the most usable space while surviving two drive failures; parity
-          volumes build on Linux md and sync in the background after creation.
-          To reuse drives that already belong to another array or volume (e.g. an
-          imported NAS), click <strong>Reclaim</strong> next to a drive in the
-          table below — that releases and wipes the whole group, after which the
-          drives become selectable here.
-        </div>
-
         ${this.loadError ? html`<div class="err-banner">${this.loadError}</div>` : ''}
 
         ${this._renderEncryptionPanel()}
         ${this._renderVolumes()}
         ${this._renderImportable()}
-        ${this._renderShares()}
         ${this.wizardOpen ? this._renderWizard() : ''}
         ${this.reclaimTarget ? this._renderReclaimModal() : ''}
         ${this.promoteOpen ? this._renderPromoteModal() : ''}
@@ -2314,8 +2274,10 @@ class StorageModule extends LitElement {
     };
 
     return html`
-      <config-section title="Volumes"
-        description="Storage volumes attached to this box — local disks, network shares, managed pools, and unassigned drives">
+      <config-section title="Volumes">
+        <a slot="actions" class="btn" target="_blank" rel="noopener"
+           href="${surfaceUrl('manual')}storage/"
+           title="Open the Storage section of the HomeFree manual in a new tab">Help</a>
         <button slot="actions" class="btn" @click=${this.loadData}>↻ Refresh</button>
         <button slot="actions" class="btn"
                 ?disabled=${(this.selectableDrives || []).length === 0}
@@ -2483,10 +2445,10 @@ class StorageModule extends LitElement {
             ${enabled
               ? html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, false)}>Unmount</button>`
               : html`<button class="btn-row" @click=${() => this._togglePoolEnabled(p.name, true)}>Mount</button>`}
-            <button class="btn-row delete" @click=${() => this._removeVolume(p)}>Remove…</button>
+            <button class="btn-row delete" @click=${() => this._removeVolume(p)}>Unmanage…</button>
             <button class="btn-row delete"
-                    title="Unmount, tear down LUKS/RAID, wipe drives, and remove the pool record — all in one step. Use Remove if you just want to unmanage the volume without destroying its data."
-                    @click=${() => this._destroyPool(p)}>Reclaim &amp; erase…</button>
+                    title="Unmount, tear down LUKS/RAID, wipe drives, and remove the pool record — all in one step. Use Unmanage if you just want to stop managing the volume without destroying its data."
+                    @click=${() => this._destroyPool(p)}>Erase…</button>
           </div>
         </div>
 
@@ -3226,7 +3188,7 @@ class StorageModule extends LitElement {
     const blk = rb.blockers || [];
     return html`
       <div class="reclaim-hint">
-        Mounted${mps ? ' at ' + mps : ''} — unmount it (Apply) to reclaim these drives.
+        Mounted${mps ? ' at ' + mps : ''} — unmount it (Apply) to erase these drives.
         ${blk.length ? html`
           <div class="blockers">
             Currently held open by ${blk.length} process${blk.length === 1 ? '' : 'es'} —
@@ -3252,12 +3214,21 @@ class StorageModule extends LitElement {
       <div class="overlay" @click=${(e) => { if (e.target === e.currentTarget) this._closeReclaim(); }}>
         <div class="modal">
           ${inProgress ? this._renderReclaimProgress() : html`
-            <h2>Reclaim drives — this erases them</h2>
+            <h2>Erase drives</h2>
             <div class="sub">
               This releases ${r.description}. All data on the following
               ${members.length} drive(s) is <strong>permanently destroyed</strong>,
               after which they become available for a new volume:
             </div>
+            ${(r.auto_unmount_mountpoints || []).length ? html`
+              <div class="sub" style="margin-top:6px">
+                The following HomeFree-managed mount(s) will be unmounted and
+                removed from config first:
+                <ul style="margin:6px 0 0 18px">
+                  ${(r.auto_unmount_mountpoints || []).map((mp) => html`
+                    <li><code>${mp}</code></li>`)}
+                </ul>
+              </div>` : ''}
             <ul class="erase-list">
               ${members.map((d) => html`
                 <li>
@@ -3275,7 +3246,7 @@ class StorageModule extends LitElement {
             ${this.reclaimError ? html`<div class="err-banner">${this.reclaimError}</div>` : ''}
             <div class="modal-actions">
               <button class="btn" @click=${this._closeReclaim}>Cancel</button>
-              <button class="btn btn-danger" ?disabled=${!this._reclaimConfirmed} @click=${this._doReclaim}>Reclaim drives</button>
+              <button class="btn btn-danger" ?disabled=${!this._reclaimConfirmed} @click=${this._doReclaim}>Erase drives</button>
             </div>`}
         </div>
       </div>
@@ -3287,7 +3258,7 @@ class StorageModule extends LitElement {
     const pct = Math.round(s.progress || 0);
     if (s.completed) {
       return html`
-        <h2>Drives reclaimed</h2>
+        <h2>Drives erased</h2>
         <div class="sub">${s.message || 'Done.'}</div>
         <div class="preview-box">The drives are now available. Use <strong>Create volume</strong> to build a new volume.</div>
         <div class="modal-actions">
@@ -3295,7 +3266,7 @@ class StorageModule extends LitElement {
         </div>`;
     }
     return html`
-      <h2>Reclaiming drives…</h2>
+      <h2>Erasing drives…</h2>
       <div class="sub">${s.message || 'Working…'}</div>
       <div class="progress"><div style="width:${pct}%"></div></div>
       <div class="hint">${pct}% — ${s.step || ''}</div>
@@ -3343,7 +3314,7 @@ class StorageModule extends LitElement {
                       title="Put a new filesystem on the existing RAID array — skips the day-long resync a fresh array build would force. DESTROYS the existing encrypted contents."
                       @click=${() => this._openReformatFromArray(reclaim)}>Use array (new filesystem)…</button>` : ''}
             ${reclaim ? html`
-              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Reclaim &amp; erase…</button>` : ''}
+              <button class="btn-row delete" @click=${() => this._openReclaim(reclaim)}>Erase…</button>` : ''}
           </div>
         </div>
         ${this._renderMemberDrives(memberIds)}
@@ -3763,7 +3734,19 @@ class StorageModule extends LitElement {
   // here, and if not what do I do?" One-line summary + a single action.
   _renderEncryptionPanel() {
     const s = this.encryptionStatus;
-    if (!s) return '';                              // still loading
+    // First-load skeleton — shimmer matches the volume-card skeletons so the
+    // page reads as "still loading" rather than empty. Once `loadData` resolves
+    // it's replaced with the real notice (or hidden, if nothing actionable).
+    if (!s) {
+      return html`
+        <div class="notice-box">
+          <div>
+            <span class="skeleton skeleton-title"></span>
+            <div><span class="skeleton skeleton-sub"></span></div>
+          </div>
+          <span class="skeleton skeleton-badge"></span>
+        </div>`;
+    }
     const cfg = !!s.master_key_configured;
     const tpm = !!s.tpm_present;
     const sbPending = !!s.secure_boot_pending;
@@ -3773,7 +3756,7 @@ class StorageModule extends LitElement {
     // never want encryption.
     if (!cfg && !anyEncrypted && !sbPending) {
       return html`
-        <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+        <div class="notice-box">
           <div>
             <strong>Encryption</strong>
             Data volumes can be LUKS-encrypted with a master passphrase. Set up
@@ -3783,7 +3766,7 @@ class StorageModule extends LitElement {
         </div>`;
     }
     return html`
-      <div class="help-box" style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+      <div class="notice-box">
         <div>
           <strong>Encryption</strong>
           ${cfg

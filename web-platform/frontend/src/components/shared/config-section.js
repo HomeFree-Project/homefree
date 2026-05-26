@@ -92,6 +92,18 @@ class ConfigSection extends LitElement {
     .section-content.collapsed {
       display: none;
     }
+
+    @media (max-width: 640px) {
+      .section-header { padding: 14px 16px; }
+      .section-header-content {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+      .section-header-right { justify-content: flex-start; }
+      .section-header-actions { flex-wrap: wrap; }
+      .section-content { padding: 16px; }
+    }
   `;
 
   constructor() {

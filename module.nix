@@ -235,6 +235,23 @@
           You'll need the corresponding private key to decrypt and manage secrets.
         '';
       };
+
+      ## Set true when the box has a RAID1 boot mirror — a second ESP
+      ## on disk 2 mounted at /boot2 (disko provisions it). systemd-boot
+      ## only installs into /boot, so without an extraInstallCommands
+      ## rsync hook /boot2 stays empty and disk 2 cannot boot if disk 1
+      ## dies. modules/boot-mirror.nix applies the hook when this is on.
+      ## The installer flips this on when raid='raid1' is selected;
+      ## single-disk installs leave it false.
+      bootMirror = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Mirror /boot/ to /boot2/ after every systemd-boot install.
+          Required for RAID1 setups where disk 2 has its own ESP at
+          /boot2; a no-op on single-disk installs.
+        '';
+      };
     };
 
     ## @TODO: This section doesn't make sense. Some network config is in "system" above

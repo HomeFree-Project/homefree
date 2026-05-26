@@ -155,7 +155,8 @@ class InstallationService:
     "hashedPassword": "@@hashed_password@@",
     "localDomain": "lan",
     "additionalDomains": [],
-    "authorizedKeys": []
+    "authorizedKeys": [],
+    "bootMirror": @@system_boot_mirror@@
   },
   "network": {
     "wan-interface": "@@wan_interface@@",
@@ -900,20 +901,15 @@ class InstallationService:
             bootloader = """  # Bootloader: managed by secureboot.nix (lanzaboote)
 """
         elif fw_type == "efi":
+            # The boot-mirror rsync hook (for raid='raid1' installs that
+            # have a second ESP at /boot2) is no longer emitted here.
+            # It lives in shared code under modules/boot-mirror.nix and
+            # is gated on homefree.system.bootMirror, set from the JSON
+            # field of the same name (see HOMEFREE_JSON_TEMPLATE below
+            # and modules/homefree-config-loader.nix).
             bootloader = """  # Bootloader (UEFI)
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
-"""
-            # RAID1 mirror: disko provisions a second ESP on disk 2
-            # mounted at /boot2. systemd-boot only installs to /boot, so
-            # without this rsync /boot2 stays empty and the machine
-            # cannot boot off disk 2 if disk 1 dies. NixOS does not have
-            # a mirroredBoots option for systemd-boot (only for grub /
-            # extlinux), so we mirror via extraInstallCommands.
-            if part['raid'] == 'raid1':
-                bootloader += """  boot.loader.systemd-boot.extraInstallCommands = ''
-    ${pkgs.rsync}/bin/rsync -a --delete /boot/ /boot2/
-  '';
 """
         else:
             bootloader = f"""  # Bootloader (BIOS)
@@ -1049,6 +1045,13 @@ class InstallationService:
         # homefree.storage.
         system_disk_encryption_enable = "true" if use_encryption else "false"
 
+        # Boot mirror toggle. Flipped on when raid='raid1' is selected —
+        # disko_builder provisions a second ESP on disk 2 at /boot2 in
+        # that case, and modules/boot-mirror.nix applies the rsync hook
+        # that keeps it in sync with /boot. Single-disk and raid0 leave
+        # it false (no /boot2 to mirror to).
+        system_boot_mirror = "true" if part['raid'] == 'raid1' else "false"
+
         # Determine network configuration values for JSON
         if wan_interface and lan_interface:
             router_enable = "true"
@@ -1125,6 +1128,7 @@ class InstallationService:
             'lanzaboote_module': lanzaboote_module,
             'secureboot_import': secureboot_import,
             'system_disk_encryption_enable': system_disk_encryption_enable,
+            'system_boot_mirror': system_boot_mirror,
         }
 
         # Generate homefree-config.json first

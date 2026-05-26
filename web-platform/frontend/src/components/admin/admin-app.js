@@ -14,6 +14,7 @@ import './modules/network-module.js';
 import './modules/lan-clients-module.js';
 import './modules/dns-module.js';
 import './modules/storage-module.js';
+import './modules/shared-folders-module.js';
 import './modules/extra-proxies-module.js';
 import './modules/proxied-domains-module.js';
 import './modules/services-module.js';
@@ -901,6 +902,11 @@ class AdminApp extends LitElement {
       {
         id: 'storage',
         title: 'Storage',
+        section: 'System'
+      },
+      {
+        id: 'shared-folders',
+        title: 'Shared Folders',
         section: 'System'
       },
       {
@@ -2325,7 +2331,11 @@ class AdminApp extends LitElement {
       case 'system': return 'system';
       case 'dns': return 'dns';
       case 'mounts': return 'storage';   // Mounts UI merged into the Storage page
-      case 'storage': return 'storage';
+      case 'storage':
+        // storage.shares lives on its own page (Shared Folders); volumes/pools
+        // and everything else under storage.* stay on Storage.
+        if (seg[1] === 'shares') return 'shared-folders';
+        return 'storage';
       case 'snapshots': return 'storage';
       case 'service-config': return 'extra-proxies';
       case 'proxied-domains': return 'proxied-domains';
@@ -2778,6 +2788,15 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></storage-module>
+        `;
+
+      case 'shared-folders':
+        return html`
+          <shared-folders-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            @config-change=${this.handleConfigChange}
+          ></shared-folders-module>
         `;
 
       case 'extra-proxies':
