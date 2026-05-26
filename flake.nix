@@ -20,7 +20,7 @@
     lanzaboote.url = "github:nix-community/lanzaboote/v0.4.3";
     lanzaboote.inputs.nixpkgs.follows = "nixpkgs";
 
-    nixvim-config.url = "git+https://github.com/HomeFree-Project/nixvim-config";
+    nixvim-config.url = "git+https://git.homefree.host/homefree/nixvim-config";
 
     nix-editor.url = "github:snowfallorg/nix-editor";
 

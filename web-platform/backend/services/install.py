@@ -60,11 +60,11 @@ class InstallationService:
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    homefree-base.url = "git+https://github.com/HomeFree-Project/homefree.git";@@lanzaboote_input@@
+    homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git";@@lanzaboote_input@@
     # >>> homefree-base-override (managed - do not edit by hand) >>>@@base_override_region@@
     # <<< homefree-base-override <<<
     # >>> homefree-developers-inputs (managed - do not edit by hand) >>>
-    homefree-navidrome.url = "git+https://github.com/HomeFree-Project/homefree-navidrome.git";
+    homefree-navidrome.url = "git+https://git.homefree.host/homefree/homefree-navidrome.git";
     # <<< homefree-developers-inputs <<<
   };
 
@@ -208,7 +208,7 @@ class InstallationService:
         "id": "navidrome",
         "name": "Navidrome",
         "type": "remote",
-        "url": "git+https://github.com/HomeFree-Project/homefree-navidrome.git",
+        "url": "git+https://git.homefree.host/homefree/homefree-navidrome.git",
         "inputName": "homefree-navidrome",
         "moduleAttr": "default",
         "enabled": true,
@@ -232,7 +232,7 @@ class InstallationService:
 # This file is for system-specific settings only.
 #
 # To rebuild: sudo nixos-rebuild switch --flake /etc/nixos#@@hostname@@
-# See: https://github.com/HomeFree-Project/homefree
+# See: https://git.homefree.host/homefree/homefree
 
 { config, pkgs, ... }:
 
