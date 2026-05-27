@@ -2156,8 +2156,19 @@ class ServicesModule extends LitElement {
     // inside their parent's group box. Also hide the HomeFree Admin
     // itself: it is the surface you are looking at, not a manageable app.
     const HIDDEN_LABELS = new Set(['admin', 'admin-api']);
+    // Infrastructure services (Zitadel, oauth2-proxy, ntfy, etc. —
+    // anything tagged sso.kind="infra" in module.nix) are system
+    // wiring, not user-managed apps. Same posture the SSO admin page
+    // already uses for these (services-module.js line 1566). Without
+    // this filter they appear on App Configuration with a checkbox
+    // wired to homefree.services.<label>.enable, and the act of
+    // rendering the row + saving can pollute homefree-config.json
+    // with an inadvertent `enable: false` that then beats the
+    // alerts-module's auto-enable on the next rebuild.
     const parentServices = this.services.filter(
-      service => !service.parent && !HIDDEN_LABELS.has(service.label)
+      service => !service.parent
+        && !HIDDEN_LABELS.has(service.label)
+        && service.sso_kind !== 'infra'
     );
 
     // Sort against the LAST-APPLIED server state, not the merged

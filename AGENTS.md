@@ -213,6 +213,14 @@ Situational knowledge — read the linked note when working in that area:
   snapshot, and `flake update <input>` will NOT re-hash a dirty tree.
   The lock node must be stripped and re-locked, or edits silently don't
   take effect. → `docs/agent-notes/flake-lock-local-input-refresh.md`
+- **Local-flake `.git` ACL** — a root-run rebuild's git+file: fetcher
+  writes inside the developer's source `.git` as root, eventually
+  locking the owning user out of their own `objects/` subdirs and
+  silently corrupting refs (commit object never lands; ref points at a
+  ghost). Registering a local flake via the Developers UI applies an
+  owner-rwX ACL so root's writes stay writable for the developer.
+  Hand-edited local inputs bypass this and need the ACL applied
+  manually. → `docs/agent-notes/local-flake-acl.md`
 - **JSON→Nix mapping lives in a shared module** — `homefree-config.json`
   is the per-instance source of truth; the box's `flake.nix` reads it and
   the SHARED `modules/homefree-config-loader.nix` maps it into `homefree.*`

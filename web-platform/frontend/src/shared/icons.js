@@ -41,6 +41,10 @@ const PATHS = {
   'json-config': svg`<path d="M16 18 22 12 16 6"/><path d="M8 6 2 12 8 18"/>`,
   'build-logs': svg`<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>`,
   updates: svg`<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>`,
+  // Lucide `bell-ring` — bell with motion lines flanking it. Reads
+  // unambiguously as notifications/alerts at the small nav size; sits
+  // between Shared Folders and Updates in the System section.
+  alerts: svg`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/><path d="M22 8c0-2.3-.8-4.3-2-6"/>`,
   // --- admin: Applications section -----------------------------------
   // (the admin "Apps" nav item shares the `apps` icon defined below)
   backups: svg`<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>`,

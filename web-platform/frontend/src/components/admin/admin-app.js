@@ -24,6 +24,7 @@ import './modules/sso-module.js';
 import './modules/users-module.js';
 import './modules/status-module.js';
 import './modules/updates-module.js';
+import './modules/alerts-module.js';
 import './modules/abuse-blocking-module.js';
 import './modules/speed-test-module.js';
 import './modules/developers-module.js';
@@ -919,6 +920,11 @@ class AdminApp extends LitElement {
       {
         id: 'shared-folders',
         title: 'Shared Folders',
+        section: 'System'
+      },
+      {
+        id: 'alerts',
+        title: 'Alerts',
         section: 'System'
       },
       {
@@ -2022,6 +2028,17 @@ class AdminApp extends LitElement {
       merged.snapshots = { ...(this.serverConfig.snapshots || {}), ...this.pendingConfig.snapshots };
     }
 
+    // Alerts: same shape as snapshots / network. The Alerts module
+    // emits the WHOLE alerts subtree on every edit (the engine config
+    // is small), so a shallow per-key replace is enough — sibling
+    // edits to other modules' top-level keys are untouched. Without
+    // this merge, edits made on the Alerts page live only in
+    // pendingConfig and vanish on Save (the undeployed-change
+    // indication gotcha doc covers this failure mode).
+    if (this.pendingConfig.alerts !== undefined) {
+      merged.alerts = { ...(this.serverConfig.alerts || {}), ...this.pendingConfig.alerts };
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
@@ -2352,6 +2369,7 @@ class AdminApp extends LitElement {
       case 'service-config': return 'extra-proxies';
       case 'proxied-domains': return 'proxied-domains';
       case 'backups': return 'backups';
+      case 'alerts': return 'alerts';
       case 'sso': return 'sso';
       case 'developers': return 'developers';
       case 'network':
@@ -2820,6 +2838,16 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></shared-folders-module>
+        `;
+
+      case 'alerts':
+        return html`
+          <alerts-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            .undeployedPaths=${this.undeployedPaths}
+            @config-change=${this.handleConfigChange}
+          ></alerts-module>
         `;
 
       case 'extra-proxies':

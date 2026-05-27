@@ -366,6 +366,16 @@ in
           else [];
         paths = [];
       };
+
+      ## Log level. Default is "info"; bumped to "debug" so the DERP
+      ## server logs every client connect/disconnect with the reason
+      ## (write timeout, normal close, etc.) — needed to root-cause
+      ## the "derp.Recv: EOF every 1-30 min" issue. The reverse-proxy
+      ## tweaks in the Caddy block below are the conservative fix
+      ## for the suspected cause; this log level lets us verify.
+      ## See docs/agent-notes (when written) for diagnosis context.
+      ## Revert to "info" once the root cause is confirmed and fixed.
+      log.level = "debug";
     };
   };
 
@@ -486,6 +496,118 @@ in
 
       $HEADSCALE nodes approve-routes -i "$NODE_ID" -r "${lan-subnet}"
     '';
+  };
+
+  ## DERP EOF observability — small rollup that summarises every 10 min
+  ## how many `derp.Recv: EOF` events tailscaled has logged since the
+  ## previous tick. Without this, the EOFs are a single line buried in
+  ## the journal; the rollup makes them grep-able and gives a clear
+  ## before/after signal when tuning the Caddy /derp block above.
+  ##
+  ## Output (visible via `journalctl -u headscale-derp-eof-rollup`):
+  ##   "DERP EOFs in last 600s: <n>  (1-min cadence: <rate>/min)"
+  ## A value of 0 across consecutive ticks means the fix worked.
+  systemd.services.headscale-derp-eof-rollup = lib.mkIf headscaleEnabled {
+    description = "Rollup of tailscaled DERP EOF events (diagnosis aid)";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      ## journalctl read access — root keeps this simple. Output goes
+      ## back to the journal under THIS unit's name.
+    };
+    script = ''
+      WINDOW_SEC=600
+      COUNT=$(${pkgs.systemd}/bin/journalctl -u tailscaled.service \
+                --since "$WINDOW_SEC seconds ago" --no-pager 2>/dev/null \
+              | ${pkgs.gnugrep}/bin/grep -c "derp.Recv: EOF" || true)
+      RATE_PER_MIN=$(( COUNT * 60 / WINDOW_SEC ))
+      echo "DERP EOFs in last ''${WINDOW_SEC}s: $COUNT  (~$RATE_PER_MIN/min)"
+    '';
+  };
+
+  systemd.timers.headscale-derp-eof-rollup = lib.mkIf headscaleEnabled {
+    description = "Rollup of tailscaled DERP EOF events every 10 minutes";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "5min";
+      OnUnitInactiveSec = "10min";
+      Unit = "headscale-derp-eof-rollup.service";
+    };
+  };
+
+  ## DNS bridge for Tailscale clients.
+  ##
+  ## PROBLEM. Tailscale clients periodically probe the box's
+  ## Tailscale-interface IP on port 53 as a "configured DNS reachable?"
+  ## health check. Headscale pushes `lan-address` (10.0.0.1) as the
+  ## resolver, and queries to 10.0.0.1:53 DO arrive (via the
+  ## advertised 10.0.0.0/24 subnet route), but the probe ALSO checks
+  ## the box's Tailscale-side address (e.g. 100.64.0.2:53). AdGuard
+  ## binds only on `lan-address` + loopback (see apps/adguard) — it
+  ## intentionally avoids 0.0.0.0 to keep clear of podman's
+  ## aardvark-dns on 10.88.0.1:53 — so the Tailscale-IP probe gets
+  ## connection-refused and surfaces "DNS unavailable" in the
+  ## Tailscale client UI even when actual lookups still work.
+  ##
+  ## SOLUTION. A tiny dnsmasq running with `--bind-dynamic
+  ## --interface=tailscale0` listens on whatever IPs tailscaled
+  ## assigns to that interface, with NO static config knob — the IP
+  ## isn't known at Nix eval time (headscale chooses it at
+  ## registration). dnsmasq watches the interface for address
+  ## add/remove events and rebinds, so the listener follows the IP
+  ## even across reprovisions. All queries are forwarded to AdGuard
+  ## on 127.0.0.1:53, keeping filtering + upstream consistent with
+  ## non-Tailscale clients.
+  ##
+  ## --no-resolv / --no-hosts: dnsmasq must NOT consult /etc/resolv.conf
+  ## or /etc/hosts; it's purely a forwarder. CAP_NET_BIND_SERVICE
+  ## ambient cap lets it bind 53 while running as `nobody`.
+  systemd.services.tailscale-dns-bridge = lib.mkIf headscaleEnabled {
+    description = "DNS forwarder on tailscale0 → AdGuard (127.0.0.1:53)";
+    after = [ "tailscaled.service" "tailscaled-autoconnect.service" ];
+    requires = [ "tailscaled.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = lib.concatStringsSep " " [
+        "${pkgs.dnsmasq}/bin/dnsmasq"
+        "--no-daemon"
+        "--port=53"
+        "--bind-dynamic"
+        "--interface=tailscale0"
+        "--no-resolv"
+        "--no-hosts"
+        "--server=127.0.0.1#53"
+        ## Defensive: never bind on these even if --bind-dynamic
+        ## could see them — AdGuard / aardvark-dns already own
+        ## port 53 there and dnsmasq starting up faster than them
+        ## could otherwise win the bind race. lan-interface comes
+        ## from homefree.network so this is portable across
+        ## instances (no hardcoded `enp102s0` / similar).
+        "--except-interface=lo"
+        "--except-interface=${config.homefree.network.lan-interface}"
+        "--except-interface=podman0"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      User = "nobody";
+      Group = "nobody";
+      AmbientCapabilities = "CAP_NET_BIND_SERVICE";
+      CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
+      NoNewPrivileges = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectControlGroups = true;
+      RestrictRealtime = true;
+      ## tailscale0 may not exist yet on first startup if tailscaled
+      ## is still establishing. dnsmasq exits on missing interface,
+      ## but Restart=always brings it back; once tailscaled raises
+      ## tailscale0 the next start succeeds and --bind-dynamic
+      ## adopts the IP.
+    };
   };
 
   ## Headplane is the Headscale admin UI. From 0.7 it ships a NixOS
@@ -843,12 +965,48 @@ in
             respond 200
           }
 
-          # Handle DERP relay connections (requires HTTP upgrade)
+          # Handle DERP relay connections (requires HTTP upgrade).
+          #
+          # The DERP server (embedded Tailscale code) sends a keepalive
+          # frame every 60s ± 5s jitter to every connected client. Each
+          # write to the client uses tcpWriteTimeout, which defaults to
+          # 2 seconds (DefaultTCPWiteTimeout in derp_server.go — note
+          # the upstream typo). If ANY single keepalive write can't be
+          # flushed to the client within 2s — because Caddy was
+          # buffering, the upstream pool decided the connection was
+          # "idle" and pruned it, or backpressure stalled the write —
+          # the DERP server force-closes the connection and the client
+          # logs `derp.Recv: EOF`. That is the failure mode we see
+          # every 1-30 min in tailscaled logs.
+          #
+          # The block below lays out every Caddy knob that touches
+          # long-lived upgraded connections, set conservatively so
+          # nothing on our side can introduce a 2s+ stall:
+          #   transport http versions 1.1: DERP requires HTTP/1.1
+          #     Upgrade; h2 negotiation would break it.
+          #   read_timeout / write_timeout 0: no upstream timeouts.
+          #     Caddy's default is "until upstream closes" but explicit
+          #     is safer.
+          #   keepalive 24h, dial_timeout 5s: keep the upstream socket
+          #     alive across keepalives; only fail dialing if upstream
+          #     is genuinely unreachable.
+          #   flush_interval -1: do not coalesce writes from upstream;
+          #     each keepalive flushes immediately. Caddy auto-detects
+          #     Upgrade and does this anyway, but explicit makes it
+          #     auditable.
           @derp {
             path /derp /derp/*
           }
           handle @derp {
             reverse_proxy http://${lan-address}:${toString config.services.headscale.port} {
+              transport http {
+                versions 1.1
+                read_timeout 0
+                write_timeout 0
+                dial_timeout 5s
+                keepalive 24h
+              }
+              flush_interval -1
               header_up Connection {http.request.header.Connection}
               header_up Upgrade {http.request.header.Upgrade}
             }

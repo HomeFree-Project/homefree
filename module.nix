@@ -1127,6 +1127,357 @@
       });
     };
 
+    ## Alerts framework. A small in-process polling engine that runs on
+    ## a systemd timer, evaluates a registry of named "sources" (disk
+    ## temperature, backup health, service liveness, …) on each tick,
+    ## persists per-source state with hysteresis so transient blips
+    ## don't spam, and dispatches transition events (open / close) to a
+    ## set of named "channels" (ntfy push, email, …). v1 ships only the
+    ## `disk-temperature` source and the `ntfy` channel; the option
+    ## tree is shaped so additional sources / channels can be added
+    ## without further schema churn — each new source becomes a new
+    ## entry under `sources`, each new channel a new entry under
+    ## `channels`. Code lives in web-platform/backend/services/alerts_*
+    ## (engine + sources + channels) and web-platform/backend/
+    ## homefree_alerts_engine.py (timer entrypoint).
+    alerts = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Master toggle for the alerts engine. Off by default so a
+          fresh HomeFree box does not poll, write state, or surface a
+          notification surface unless the user has explicitly opted in
+          (typically from the admin UI Alerts page).
+        '';
+      };
+
+      interval = lib.mkOption {
+        type = lib.types.str;
+        default = "1min";
+        description = ''
+          Poll interval in systemd OnUnitInactiveSec syntax. Sets how
+          often each enabled source is re-evaluated. The window from
+          first-cross-threshold to first-notification is bounded by
+          this; a tighter interval shortens the lag but also re-walks
+          smartctl / filesystem stats more often. 1 minute matches the
+          drive-temp sampler's own cadence (admin-web/default.nix
+          SAMPLE_INTERVAL) so a fresh temp reading triggers an alert
+          within ~2 ticks instead of waiting a sampler tick + a 5-min
+          alerts tick.
+        '';
+      };
+
+      channels = {
+        ntfy = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              Dispatch alert events to the self-hosted ntfy server
+              (services/ntfy). When true the alerts engine POSTs to
+              `http://127.0.0.1:2586/<topic>` for every open/close
+              event; the paired phone subscribed to `<topic>` gets a
+              push. Setting this also auto-enables
+              `homefree.services.ntfy` (see services/alerts/default.nix).
+            '';
+          };
+        };
+      };
+
+      sources = {
+        disk-temperature = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Monitor every disk's reported SMART temperature; fire
+              when any disk reaches the threshold for its drive class
+              (HDD / SSD / NVMe), clear when it drops back below
+              `threshold - hysteresis-c`.
+
+              Per-class thresholds are necessary because safe operating
+              ranges differ a lot across classes: spinning platters
+              start losing MTBF around 45-50°C, while modern NVMe
+              controllers idle at 60°C and only throttle near 80°C. A
+              single global value made one of them wrong — either
+              alert spam from healthy NVMe drives, or HDDs cooking
+              unnoticed. Defaults here match the per-class warn
+              thresholds the Hardware page already uses.
+            '';
+          };
+
+          thresholds = {
+            hdd-c = lib.mkOption {
+              type = lib.types.int;
+              default = 45;
+              description = ''
+                Temperature in °C at which a SPINNING (HDD / platter)
+                drive is considered hot enough to alert on. Default
+                45°C matches the Hardware page's warn colour and the
+                consensus rule-of-thumb for 7200-RPM NAS drives whose
+                MTBF curve climbs above this temperature.
+              '';
+            };
+
+            ssd-c = lib.mkOption {
+              type = lib.types.int;
+              default = 60;
+              description = ''
+                Temperature in °C at which a SATA SSD is considered
+                hot enough to alert on. Default 60°C matches the
+                Hardware page's warn colour — typical SSDs are spec'd
+                to 70°C, so warn 10°C earlier to leave headroom.
+              '';
+            };
+
+            nvme-c = lib.mkOption {
+              type = lib.types.int;
+              default = 70;
+              description = ''
+                Temperature in °C at which an NVMe drive is considered
+                hot enough to alert on. Default 70°C matches the
+                Hardware page's warn colour. NVMe controllers begin
+                thermal throttling around 80°C; warning 10°C earlier
+                catches a cooling problem before performance suffers.
+              '';
+            };
+          };
+
+          hysteresis-c = lib.mkOption {
+            type = lib.types.int;
+            default = 4;
+            description = ''
+              Degrees BELOW the per-class threshold the disk must drop
+              to before the engine considers the alert resolved.
+              Prevents flap when a disk hovers right at the threshold.
+              Applies to every class uniformly.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+            description = ''
+              Channel names this source's events dispatch to. Each
+              entry must match an enabled channel under
+              `homefree.alerts.channels`. Entries pointing at a
+              disabled channel are silently skipped — the alert still
+              fires and is recorded in history, it just produces no
+              outbound notification.
+            '';
+          };
+        };
+
+        disk-space = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Watch every locally-mounted filesystem and fire when any
+              one passes `threshold-percent` full. Reads /proc/mounts
+              + statvfs(); no smartctl, no external daemons. Mount
+              membership is recomputed every tick so a removable disk
+              that disappears is silently dropped instead of producing
+              "could not stat" noise.
+            '';
+          };
+
+          threshold-percent = lib.mkOption {
+            type = lib.types.int;
+            default = 90;
+            description = ''
+              Percent-full at which a filesystem alerts. 90 is the
+              consensus warn level for general-purpose filesystems —
+              writes start slowing well before 100 (extent / metadata
+              allocators get fragmentation-bound) and 10% headroom is
+              enough to fit a few hours of typical NAS ingest.
+            '';
+          };
+
+          hysteresis-percent = lib.mkOption {
+            type = lib.types.int;
+            default = 3;
+            description = ''
+              Once firing, a filesystem only clears by dropping to
+              `threshold-percent - hysteresis-percent`. Prevents flap
+              when a filesystem hovers right at the threshold and
+              writes/deletes a few files per tick.
+            '';
+          };
+
+          fs-types = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [
+              ## Real local filesystems.
+              "ext2" "ext3" "ext4" "xfs" "btrfs" "zfs" "f2fs" "jfs"
+              "reiserfs"
+              ## Real removable / interop filesystems.
+              "ntfs" "ntfs3" "vfat" "exfat"
+              ## Real network filesystems (worth watching even when
+              ## remote — out-of-space on NFS will still break writes).
+              "nfs" "nfs4" "cifs"
+            ];
+            description = ''
+              Allowlist of filesystem types to monitor. Everything not
+              in this list is silently skipped (the standard set of
+              kernel virtual filesystems — tmpfs, sysfs, proc, cgroup,
+              overlay, squashfs, etc. — would otherwise generate noise
+              and would never fill up usefully). Customise to also
+              watch e.g. fuse mounts.
+            '';
+          };
+
+          skip-mount-prefixes = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [
+              ## Kernel / runtime — never user data.
+              "/proc" "/sys" "/dev" "/run"
+              ## Container layer storage (the active layer is on /,
+              ## which we DO monitor; the per-container overlays are
+              ## ephemeral and shouldn't generate alerts).
+              "/var/lib/docker" "/var/lib/containers"
+              ## NixOS profile / boot dirs — small fixed-size, and the
+              ## user can't usefully react if they fill up (it'd take
+              ## a `nix-collect-garbage` from the OS side).
+              "/boot"
+            ];
+            description = ''
+              Mountpoints whose path equals one of these, or starts with
+              one followed by '/', are skipped even if their fs-type is
+              on the allowlist. Catches transient mounts (docker layers,
+              snap loopbacks under /var/lib/snapd) that wouldn't be
+              actionable from a user push.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+            description = ''
+              Channel names this source's events dispatch to. See
+              disk-temperature.channels for semantics.
+            '';
+          };
+        };
+
+        smart = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire when ANY drive reports a SMART overall-health FAIL
+              (smartctl -H). Uses the existing PhysicalDrivesResolver
+              data, so the same drive enumeration powers the Hardware
+              page and this alert. Drives that don't expose SMART
+              (USB enclosures, some NVMe controllers) are silently
+              ignored — absence of SMART is not failure.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        sensor-temperature = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              CPU / NVMe controller / GPU temperatures from hwmon
+              (the same sensors the Hardware page Sensors panel shows).
+              Per-class thresholds — silicon classes have very different
+              safe operating ranges, just like the disk-temperature
+              source's HDD/SSD/NVMe split.
+            '';
+          };
+
+          thresholds = {
+            cpu-c = lib.mkOption {
+              type = lib.types.int;
+              default = 80;
+              description = ''
+                Temperature in °C at which a CPU sensor alerts. Modern
+                CPUs throttle around 95-100°C; 80 leaves comfortable
+                headroom for sustained workloads without spamming on
+                normal burst loads (an idle box jumps to 70+ briefly
+                during compaction / scrubs without a real cooling
+                problem).
+              '';
+            };
+
+            nvme-c = lib.mkOption {
+              type = lib.types.int;
+              default = 70;
+              description = ''
+                Temperature in °C at which an NVMe controller sensor
+                alerts. Mirrors disk-temperature.thresholds.nvme-c —
+                controllers begin thermal throttling around 80, this
+                gives a 10°C heads-up. The drive's media temperature
+                (separate sensor) is covered by the disk-temperature
+                source.
+              '';
+            };
+
+            gpu-c = lib.mkOption {
+              type = lib.types.int;
+              default = 80;
+              description = ''
+                Temperature in °C at which a GPU sensor alerts. GPUs
+                routinely hit 70+ under load; 80 is the typical
+                "fan-curve aggressive" inflection. Lower this for
+                fanless / passive cooling, raise for gaming-tier cards
+                that are designed to sit at 75-85 under load.
+              '';
+            };
+          };
+
+          hysteresis-c = lib.mkOption {
+            type = lib.types.int;
+            default = 4;
+            description = ''
+              Degrees BELOW the per-class threshold the sensor must
+              drop to before clearing. Same shape and rationale as
+              disk-temperature.hysteresis-c.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        services-down = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire when any enabled service in `homefree.service-config`
+              has a systemd unit in the `failed` state. Iterates
+              service-config entries with `enable = true`, runs
+              `systemctl is-active` for each unit in their
+              `systemd-service-names`, and reports the failures.
+
+              We deliberately only alert on `failed` — `inactive` is
+              ambiguous (a successful Type=oneshot RemainAfterExit=
+              false unit is `inactive` and that's fine), and
+              `activating` / `deactivating` are transient. A unit that
+              SHOULD be running but is stopped via `systemctl stop`
+              will not alert; that's a deliberate admin action.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+      };
+    };
+
     ## Per-app `homefree.services.<name>` option declarations now live
     ## in each app's own `apps/<name>/default.nix` (alongside its
     ## `homefree.service-options.<name>` decl), so an app fully owns

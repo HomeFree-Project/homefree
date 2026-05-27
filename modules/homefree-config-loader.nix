@@ -326,6 +326,71 @@ in
         };
       });
 
+    ## Alerts framework. Off by default; `or`-defaults preserve
+    ## backwards compat with older homefree-config.json files (rule 11)
+    ## and mirror the option defaults in module.nix.
+    alerts =
+      let
+        a = jsonData.alerts or {};
+        ch = a.channels or {};
+        src = a.sources or {};
+        diskTemp = src.disk-temperature or {};
+        dtThr = diskTemp.thresholds or {};
+        diskSpace = src.disk-space or {};
+        smart = src.smart or {};
+        sensorTemp = src.sensor-temperature or {};
+        stThr = sensorTemp.thresholds or {};
+        servicesDown = src.services-down or {};
+      in {
+        enable = a.enable or false;
+        interval = a.interval or "1min";
+        channels.ntfy.enable = (ch.ntfy or {}).enable or false;
+        sources.disk-temperature = {
+          enable        = diskTemp.enable or true;
+          hysteresis-c  = diskTemp.hysteresis-c or 4;
+          channels      = diskTemp.channels or [ "ntfy" ];
+          thresholds = {
+            hdd-c  = dtThr.hdd-c  or 45;
+            ssd-c  = dtThr.ssd-c  or 60;
+            nvme-c = dtThr.nvme-c or 70;
+          };
+        };
+        sources.disk-space = {
+          enable              = diskSpace.enable or true;
+          threshold-percent   = diskSpace.threshold-percent or 90;
+          hysteresis-percent  = diskSpace.hysteresis-percent or 3;
+          fs-types            = diskSpace.fs-types or [
+            "ext2" "ext3" "ext4" "xfs" "btrfs" "zfs" "f2fs" "jfs"
+            "reiserfs" "ntfs" "ntfs3" "vfat" "exfat"
+            "nfs" "nfs4" "cifs"
+          ];
+          skip-mount-prefixes = diskSpace.skip-mount-prefixes or [
+            "/proc" "/sys" "/dev" "/run"
+            "/var/lib/docker" "/var/lib/containers"
+            "/boot"
+          ];
+          channels            = diskSpace.channels or [ "ntfy" ];
+        };
+        sources.smart = {
+          enable   = smart.enable or true;
+          channels = smart.channels or [ "ntfy" ];
+        };
+        sources.sensor-temperature = {
+          enable       = sensorTemp.enable or true;
+          hysteresis-c = sensorTemp.hysteresis-c or 4;
+          channels     = sensorTemp.channels or [ "ntfy" ];
+          thresholds = {
+            cpu-c  = stThr.cpu-c  or 80;
+            nvme-c = stThr.nvme-c or 70;
+            gpu-c  = stThr.gpu-c  or 80;
+          };
+        };
+        sources.services-down = {
+          enable   = servicesDown.enable or true;
+          channels = servicesDown.channels or [ "ntfy" ];
+        };
+      };
+
     backups = {
       enable = jsonData.backups.enable;
       to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;

@@ -26,6 +26,7 @@ that predate this feature.
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -740,6 +741,100 @@ class DevelopersService:
                 )
 
     @staticmethod
+    def _ensure_writable_for_owner(flakes: List[Dict[str, Any]]) -> None:
+        """
+        Grant the owning user POSIX rwX ACLs on each enabled local flake's
+        `.git` (recursive, plus a default ACL so files created later inherit
+        it). The complement of `_register_safe_directories`: that lets root
+        *open* a user-owned repo; this lets the user *keep writing* to it
+        after root has written into it.
+
+        Why: the rebuild runs as root, and Nix's git+file: fetcher shells
+        out to `git` against the source path to resolve/hash the input.
+        Those git invocations write into `.git` (refreshing the index,
+        dropping temp object subdirs, packing on a dirty-tree copy). The
+        new files are root-owned, mode 0644/0755. A later user-side
+        `git rebase` (or any operation that lands a loose object) can then
+        fail silently to write into a root-owned `objects/<xx>/` subdir:
+        git updates refs first, hits the write failure on the object, and
+        leaves a ref pointing at a commit whose object never persisted.
+        Recovering requires resetting the ref and re-doing the work.
+
+        The ACL keeps the owning user rwX on every file under `.git`,
+        regardless of who creates it, so root writes from the rebuild are
+        no longer destructive to the developer's checkout. The default
+        ACL covers files created in the future.
+
+        Best-effort: a missing `setfacl`, a non-ACL filesystem, or a
+        worktree-style `.git` file (gitdir indirection) downgrades to a
+        logged warning — the rebuild still proceeds. The protection is a
+        durability hedge, not a hard prerequisite.
+
+        See docs/agent-notes/local-flake-acl.md.
+        """
+        if shutil.which("setfacl") is None:
+            logger.warning(
+                "setfacl not on PATH — local-flake .git directories will "
+                "not be ACL-protected against root-owned writes from the "
+                "rebuild. Install the `acl` package to enable this."
+            )
+            return
+
+        current_uid = os.getuid()
+        for f in DevelopersService._enabled(flakes):
+            if f.get("type") != "local":
+                continue
+            url = f.get("url", "")
+            prefix = "git+file://"
+            if not url.startswith(prefix):
+                continue
+            path = Path(url[len(prefix):])
+            gitdir = path / ".git"
+            if not gitdir.is_dir():
+                logger.info(
+                    f"Skipping ACL setup for {path}: {gitdir} is not a "
+                    "directory (worktree gitdir-file or bare repo)"
+                )
+                continue
+            try:
+                owner_uid = gitdir.stat().st_uid
+            except OSError as e:
+                logger.warning(
+                    f"Could not stat {gitdir} for ACL setup: {e}"
+                )
+                continue
+            if owner_uid == current_uid:
+                continue
+            ok = True
+            for args in (
+                ["setfacl", "-R", "-m", f"u:{owner_uid}:rwX", str(gitdir)],
+                ["setfacl", "-R", "-d", "-m", f"u:{owner_uid}:rwX", str(gitdir)],
+            ):
+                try:
+                    subprocess.run(
+                        args, capture_output=True, text=True,
+                        timeout=60, check=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    logger.warning(
+                        f"setfacl failed for {gitdir}: "
+                        f"{(e.stderr or '').strip() or e}"
+                    )
+                    ok = False
+                    break
+                except Exception as e:
+                    logger.warning(
+                        f"setfacl unexpectedly failed for {gitdir}: {e}"
+                    )
+                    ok = False
+                    break
+            if ok:
+                logger.info(
+                    f"Applied owner-rwX ACL to {gitdir} (uid {owner_uid}) "
+                    "so root-owned writes from nixos-rebuild stay writable"
+                )
+
+    @staticmethod
     def _persist_developers(updates: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """
         Merge `updates` into the `developers` section of homefree-config.json.
@@ -796,8 +891,11 @@ class DevelopersService:
             return False, err
 
         # Local flakes are usually owned by the admin's user, not root;
-        # allow-list them so the root-run rebuild can open the repo.
+        # allow-list them so the root-run rebuild can open the repo, and
+        # ACL them so root's writes from the rebuild don't lock the owner
+        # out of their own .git later.
         DevelopersService._register_safe_directories(flakes)
+        DevelopersService._ensure_writable_for_owner(flakes)
         DevelopersService._git_add()
         return True, None
 
@@ -837,10 +935,12 @@ class DevelopersService:
             return False, err
 
         # An enabled local override repo is usually owned by the admin's
-        # user, not root; allow-list it so the root-run rebuild can open it.
-        # Only the effective (actually-applied) override needs this.
-        # _register_safe_directories reads only type/url/enabled.
+        # user, not root; allow-list it so the root-run rebuild can open
+        # it, and ACL its .git so root's writes from the rebuild stay
+        # writable for the owner. Only the effective (actually-applied)
+        # override needs this. Both helpers read only type/url/enabled.
         DevelopersService._register_safe_directories([effective])
+        DevelopersService._ensure_writable_for_owner([effective])
         DevelopersService._git_add()
         return True, None
 
