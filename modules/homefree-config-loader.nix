@@ -329,14 +329,33 @@ in
     backups = {
       enable = jsonData.backups.enable;
       to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;
-      ## Each extra-from-paths entry is { path = ...; enabled = ...; }.
-      ## A bare string is normalized to { path = <str>; enabled = true; }
+      ## Each extra-from-paths entry is { id; path; enabled }.
+      ##
+      ## `id` is the stable per-entry identifier that owns the restic
+      ## repository label (extra-path-<id>) so reordering or deleting
+      ## rows can never rewire an existing repo to a different source
+      ## path. The on-activation migration in services/backup/default.nix
+      ## persists `id` into homefree-config.json (legacy entries get
+      ## id = str(current_index) so their existing labels are preserved
+      ## bit-identically). Until that migration has written the JSON,
+      ## we fall back here at eval time to the current array index, so
+      ## the FIRST rebuild after upgrade produces unchanged labels even
+      ## before the activation script has run.
+      ##
+      ## A bare string is normalized to { path = <str>; enabled = true }
       ## so older homefree-config.json files (pre-schema-change) keep
       ## evaluating without a separate migration step.
-      extra-from-paths = map (entry:
-        if builtins.isString entry
-          then { path = entry; enabled = true; }
-          else { path = entry.path; enabled = entry.enabled or true; }
+      extra-from-paths = lib.imap0 (index: entry:
+        let
+          base =
+            if builtins.isString entry
+              then { path = entry; enabled = true; }
+              else { path = entry.path; enabled = entry.enabled or true; };
+          rawId =
+            if builtins.isAttrs entry && entry ? id then entry.id else "";
+        in base // {
+          id = if rawId == "" then toString index else rawId;
+        }
       ) (jsonData.backups.extra-from-paths or []);
       backblaze = {
         enable = jsonData.backups.backblaze-enable;

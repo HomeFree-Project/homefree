@@ -62,6 +62,10 @@ Commands:
     list-all-paths          List backup root paths for every repo (JSON)
     restore SERVICE [ID]    Restore a service from backup (latest or specific snapshot ID)
     restore-all             Restore all services from their latest backups
+    purge SERVICE           Delete an orphaned extra-path-<id> restic repo.
+                            Requires an explicit --source (local|backblaze)
+                            and only accepts labels matching extra-path-*
+                            (or the legacy extra-paths). Destructive.
 
 Options:
     -h, --help             Show this help message
@@ -245,6 +249,69 @@ list_services() {
         return 0
     fi
     echo "$repos"
+}
+
+# Delete an orphaned extra-path-<id> restic repository's underlying
+# storage. Destructive: removes the data, not just restic snapshots.
+#
+# Safety: only labels matching extra-path-* (or the legacy combined
+# extra-paths) are accepted, so a typo or misuse cannot nuke a
+# production service's offsite backup. The source must be specified
+# explicitly (--source local|backblaze); SOURCE=auto is rejected so a
+# missing flag cannot purge the wrong place. Caller (admin UI) is
+# responsible for cross-checking that the label is genuinely an
+# orphan before invoking this.
+purge_repo() {
+    local service="$1"
+
+    if [[ "$service" != "extra-paths" ]] \
+        && ! [[ "$service" =~ ^extra-path-[A-Za-z0-9_-]+$ ]]; then
+        log_error "purge: refusing to purge '$service' - only extra-path-* (or legacy extra-paths) labels are accepted"
+        return 2
+    fi
+
+    if [[ "$SOURCE" != "local" ]] && [[ "$SOURCE" != "backblaze" ]]; then
+        log_error "purge: --source must be 'local' or 'backblaze' (not '$SOURCE')"
+        return 2
+    fi
+
+    if [[ "$SOURCE" == "backblaze" ]]; then
+        load_b2_env
+        if ! b2_available; then
+            log_error "purge: Backblaze is not configured (need BACKBLAZE_BUCKET and credentials in $RESTIC_ENV_FILE)"
+            return 1
+        fi
+        local conf
+        conf=$(mktemp)
+        # shellcheck disable=SC2064
+        trap "rm -f '$conf'" RETURN
+        {
+            echo "[b2]"
+            echo "type = b2"
+            echo "account = ${B2_ACCOUNT_ID:-}"
+            echo "key = ${B2_ACCOUNT_KEY:-}"
+        } > "$conf"
+        log_info "Purging Backblaze prefix b2:${BACKBLAZE_BUCKET}/${service}"
+        if rclone --config "$conf" purge "b2:${BACKBLAZE_BUCKET}/${service}"; then
+            log_success "Purged Backblaze repo: $service"
+            return 0
+        fi
+        log_error "Failed to purge Backblaze repo: $service"
+        return 1
+    fi
+
+    local repo_path="${BACKUP_LOCAL_PATH}/${service}"
+    if [[ ! -d "$repo_path" ]]; then
+        log_warn "purge: local repo does not exist: $repo_path"
+        return 0
+    fi
+    log_info "Purging local repo $repo_path"
+    if rm -rf -- "$repo_path"; then
+        log_success "Purged local repo: $service"
+        return 0
+    fi
+    log_error "Failed to purge local repo: $repo_path"
+    return 1
 }
 
 # List snapshots for a specific service.
@@ -770,7 +837,7 @@ main() {
     # First pass: extract command and all args
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            list-services|list-snapshots|list-paths|list-all-paths|restore|restore-all)
+            list-services|list-snapshots|list-paths|list-all-paths|restore|restore-all|purge)
                 COMMAND="$1"
                 shift
                 COMMAND_ARGS=("$@")
@@ -809,7 +876,7 @@ main() {
                 SKIP_CONFIRMATION="true"
                 shift
                 ;;
-            list-services|list-snapshots|list-paths|list-all-paths|restore|restore-all)
+            list-services|list-snapshots|list-paths|list-all-paths|restore|restore-all|purge)
                 # Skip command name
                 shift
                 ;;
@@ -873,6 +940,18 @@ main() {
                 load_restic_password
                 restore_all "${COMMAND_ARGS[0]:-latest}"
                 exit 0
+                ;;
+            purge)
+                if [[ ${#COMMAND_ARGS[@]} -lt 1 ]]; then
+                    log_error "Missing repo label"
+                    usage
+                    exit 1
+                fi
+                check_root
+                ## restic password not required: purge removes storage,
+                ## not snapshots through restic.
+                purge_repo "${COMMAND_ARGS[0]}"
+                exit $?
                 ;;
             "")
                 log_error "No command specified"

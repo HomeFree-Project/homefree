@@ -45,15 +45,21 @@ let
     }) config.homefree.service-config)
     ## Backup the system config
     ++ [{ label = "system-config"; paths = [ "/etc/nixos" ]; }]
-    ## Backup each extra path individually. Iterate over the FULL list
-    ## (including disabled entries) so the index → label mapping
-    ## (extra-path-N) never shifts when an entry is disabled or
-    ## re-enabled; an existing restic repository keeps its identity.
+    ## Backup each extra path individually. The label
+    ## (extra-path-<id>) is owned by the entry's stable `id`, NOT by
+    ## its position in the array — so disabling, deleting, or
+    ## reordering rows can never rewire an existing restic repository
+    ## to a different source path. `id` is filled in by the JSON→Nix
+    ## loader (modules/homefree-config-loader.nix) and persisted into
+    ## homefree-config.json by the on-activation migration below; the
+    ## index-fallback there preserves existing extra-path-N labels
+    ## bit-identically on the first rebuild after upgrade.
     ## A disabled entry yields an empty `paths` list, which the
     ## `filtered-backup-from-paths` filter below drops, so no backup
-    ## unit is generated for it.
+    ## unit is generated for it. Orphaned repos (id no longer in the
+    ## config) are left in place — purge them via the admin UI.
     ++ (lib.imap0 (index: entry: {
-      label = "extra-path-${toString index}";
+      label = "extra-path-${if entry.id != "" then entry.id else toString index}";
       paths = if entry.enabled then [ entry.path ] else [];
     }) config.homefree.backups.extra-from-paths);
   ## filter out any entries without backup paths
@@ -397,4 +403,134 @@ in
       ++ lib.optionals backblaze-enabled
         (lib.map (entry: mkUnitOverride entry "backblaze") backup-from-paths)
     );
+
+  ## --------------------------------------------------------------------
+  ## On-activation migration: persist stable `id`s into
+  ## backups.extra-from-paths in /etc/nixos/homefree-config.json.
+  ##
+  ## Without an id, the restic repository label was derived from the
+  ## entry's position in the array (extra-path-N via lib.imap0). That
+  ## meant deleting a middle row shifted every later index down by one,
+  ## rewiring existing restic repositories to back up DIFFERENT source
+  ## paths — silently corrupting snapshot history. The fix is to bind
+  ## the label to a stable per-entry id; this script runs once per
+  ## rebuild and fills in `id = str(current_index)` for any legacy
+  ## entry that lacks one, so existing extra-path-N labels (and their
+  ## restic repos) are preserved bit-identically across the upgrade.
+  ##
+  ## Idempotent: a no-op when every entry already has a non-empty id.
+  ## Tolerates malformed JSON / missing file (fresh installs run before
+  ## the installer has written the config). Runs unconditionally —
+  ## the migration matters even when backups are currently disabled.
+  ## --------------------------------------------------------------------
+  system.activationScripts.homefree-backup-extra-paths-id-migrate = {
+    text = ''
+      ${pkgs.python3}/bin/python3 ${pkgs.writeText "homefree-backup-extra-paths-id-migrate.py" ''
+        """Persist stable ids into backups.extra-from-paths in
+        homefree-config.json. See services/backup/default.nix for
+        rationale.
+        """
+        import json
+        import os
+        import stat
+        import sys
+        import tempfile
+
+        CONFIG = "/etc/nixos/homefree-config.json"
+
+        def main() -> int:
+            if not os.path.exists(CONFIG):
+                return 0
+            try:
+                with open(CONFIG, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                print(
+                    f"homefree-backup-id-migrate: cannot read "
+                    f"{CONFIG}: {e}",
+                    file=sys.stderr,
+                )
+                return 0
+
+            backups = data.get("backups")
+            if not isinstance(backups, dict):
+                return 0
+            entries = backups.get("extra-from-paths")
+            if not isinstance(entries, list):
+                return 0
+
+            changed = False
+            new_entries = []
+            for index, entry in enumerate(entries):
+                if isinstance(entry, str):
+                    new_entries.append({
+                        "id": str(index),
+                        "path": entry,
+                        "enabled": True,
+                    })
+                    changed = True
+                elif isinstance(entry, dict):
+                    has_id = (
+                        isinstance(entry.get("id"), str)
+                        and entry.get("id") != ""
+                    )
+                    if has_id:
+                        new_entries.append(entry)
+                    else:
+                        merged = {"id": str(index)}
+                        for k, v in entry.items():
+                            if k == "id":
+                                continue
+                            merged[k] = v
+                        new_entries.append(merged)
+                        changed = True
+                else:
+                    new_entries.append(entry)
+
+            if not changed:
+                return 0
+
+            backups["extra-from-paths"] = new_entries
+
+            target_dir = os.path.dirname(CONFIG)
+            current_mode = None
+            try:
+                current_mode = stat.S_IMODE(os.stat(CONFIG).st_mode)
+            except OSError:
+                pass
+
+            fd, tmp = tempfile.mkstemp(
+                dir=target_dir,
+                prefix=".homefree-config.",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(data, indent=2, sort_keys=False))
+                    f.write("\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                if current_mode is not None:
+                    os.chmod(tmp, current_mode)
+                os.replace(tmp, CONFIG)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+
+            print(
+                f"homefree-backup-id-migrate: assigned stable ids to "
+                f"{len(new_entries)} extra-from-paths entries",
+                file=sys.stderr,
+            )
+            return 0
+
+        if __name__ == "__main__":
+            sys.exit(main())
+      ''}
+    '';
+    deps = [];
+  };
 }

@@ -1868,6 +1868,23 @@
           (s: { path = s; enabled = true; })
           (lib.types.submodule {
             options = {
+              id = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = ''
+                  Stable identifier for this entry. Owns the restic
+                  repository label (extra-path-<id>) so the repo
+                  identity is independent of array position — deleting
+                  or reordering rows never reassigns an existing
+                  repository to a different source path. Existing
+                  deployments are migrated to id = the original array
+                  index by an on-activation step; new entries allocate
+                  the next unused integer. When empty (legacy entries
+                  that have not yet hit the migration), the backup
+                  module falls back to the current array index to
+                  preserve existing labels.
+                '';
+              };
               path = lib.mkOption {
                 type = lib.types.str;
                 description = "Source directory to back up";
@@ -1877,9 +1894,10 @@
                 default = true;
                 description = ''
                   Whether this path is currently included in scheduled
-                  backups. A disabled entry keeps its slot in the list
-                  so its restic repository label (extra-path-N) stays
-                  stable when it is re-enabled.
+                  backups. Disabling preserves the entry's restic
+                  repository so re-enabling later resumes against the
+                  same snapshot history. Deletion is also safe — the
+                  repo is orphaned in place, not reassigned.
                 '';
               };
             };
@@ -1964,6 +1982,13 @@
             default = [];
             description = "Additional custom paths to include in backups";
             submodule-fields = [
+              {
+                path = "id";
+                type = "str";
+                default = "";
+                description = "Stable identifier owning the restic repo label (extra-path-<id>). Allocated automatically; not user-edited.";
+                hidden = true;
+              }
               {
                 path = "path";
                 type = "str";

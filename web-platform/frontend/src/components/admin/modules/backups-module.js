@@ -75,6 +75,14 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
 
     includeSystemConfig: { type: Boolean },
 
+    // Orphaned extra-path-<id> restic repositories: present on disk /
+    // in B2 but with no matching entry in extra-from-paths. Listed in
+    // the Configure tab so the operator can decide whether to keep
+    // their snapshots or purge the storage.
+    orphanRepos: { type: Array },
+    orphanReposLoading: { type: Boolean },
+    purgingOrphan: { type: String, state: true },
+
     // The single active backend job, polled live. The job state and
     // its render helpers come from BackupJobControllerMixin; these
     // declarations keep them reactive on this subclass.
@@ -170,6 +178,107 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       font-size: 12.5px;
       color: var(--hf-text-muted);
       margin-bottom: 8px;
+    }
+
+    /* Orphan-repo list: one row per (label, source) pair. The right-
+       aligned Purge button mirrors the table-editor's per-row action
+       column so the two adjacent sections feel like one surface. */
+    .orphan-repos-list {
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .orphan-repos-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border);
+      border-radius: 8px;
+    }
+    .orphan-repos-main {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .orphan-repos-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--hf-text);
+      min-width: 0;
+    }
+    .orphan-repos-paths {
+      margin: 0;
+      padding: 0 0 0 18px;
+      list-style: disc;
+      font-size: 12.5px;
+      color: var(--hf-text-muted);
+      font-family: var(--hf-font-mono, monospace);
+      word-break: break-all;
+    }
+    .orphan-repos-paths.placeholder,
+    .orphan-repos-paths.error {
+      list-style: none;
+      padding-left: 0;
+      font-family: inherit;
+    }
+    .orphan-repos-paths.error {
+      color: var(--hf-err);
+    }
+
+    /* Skeleton shimmer for the orphan section: same shimmer the
+       hardware/dashboard modules use so the placeholder shape lines
+       up with the rest of the admin UI. Painted while the orphan
+       list itself is loading, and while the batched path warm is
+       still resolving an individual orphan's snapshot. */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        var(--hf-surface-3) 25%,
+        var(--hf-border-2) 37%,
+        var(--hf-surface-3) 63%);
+      background-size: 400% 100%;
+      animation: shimmer 1.4s ease infinite;
+      vertical-align: middle;
+    }
+    .skeleton-title       { width: 160px; height: 14px; }
+    .skeleton-purge-btn   { width: 70px; height: 28px; border-radius: 6px;
+                            flex: 0 0 auto; }
+    .orphan-repos-paths.skeleton-paths {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-left: 0;
+      list-style: none;
+    }
+    .skeleton-path-row    { width: 260px; height: 12px; }
+    .skeleton-path-row.short { width: 180px; }
+    @keyframes shimmer {
+      from { background-position: 100% 0; }
+      to   { background-position: 0 0; }
+    }
+    .orphan-repos-label strong {
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .orphan-repos-source {
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--hf-text-muted);
+      padding: 2px 8px;
+      border: 1px solid var(--hf-border);
+      border-radius: 999px;
     }
 
     /* ---- visually distinct sub-card inside a config-section ---- */
@@ -693,6 +802,10 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
 
     this.includeSystemConfig = false;
 
+    this.orphanRepos = [];
+    this.orphanReposLoading = false;
+    this.purgingOrphan = '';
+
     this.currentJob = null;
     this.jobLog = '';
     this.jobOverlayOpen = false;
@@ -730,6 +843,7 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       this.loadBackupConfigStatus(),
       this.loadCanaryStatus(),
       this.loadBackupHealth(),
+      this.loadOrphanRepos(),
       this.refreshCurrentJob()
     ]);
     // If a job is already running, attach the live poller.
@@ -759,6 +873,12 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
   updated(changed) {
     if (changed.has('subRoute')) {
       this._applySubRoute(this.subRoute);
+    }
+    // After a successful Apply, appliedConfig is updated by admin-app.
+    // Re-check the orphan list so any extra-from-paths entry just
+    // deleted (and therefore now orphaned) surfaces immediately.
+    if (changed.has('appliedConfig')) {
+      this.loadOrphanRepos();
     }
   }
 
@@ -851,6 +971,132 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       if (res.ok) this.backupHealth = await res.json();
     } catch (e) {
       console.error('Error loading backup health:', e);
+    }
+  }
+
+  /**
+   * Load the list of extra-path-<id> restic repos that exist but are
+   * no longer referenced by backups.extra-from-paths. Cheap on the
+   * backend (one config read + one directory scan per source) so we
+   * can refresh it after every Apply and on every Configure-tab open.
+   */
+  async loadOrphanRepos() {
+    this.orphanReposLoading = true;
+    try {
+      const res = await fetch('/api/backups/orphan-repos');
+      if (res.ok) {
+        const data = await res.json();
+        this.orphanRepos = data.orphans || [];
+      } else {
+        this.orphanRepos = [];
+      }
+    } catch (e) {
+      console.error('Error loading orphan repos:', e);
+      this.orphanRepos = [];
+    } finally {
+      this.orphanReposLoading = false;
+    }
+    // To show what each orphan was backing up we need its latest
+    // snapshot's `paths`. We deliberately do NOT fire one /paths
+    // request per orphan in parallel: each one shells out to a
+    // blocking `restic snapshots` from inside an async handler, which
+    // stalls the event loop and starves /health (the admin-api
+    // watchdog then declares the unit unhealthy and restarts it).
+    // Instead we lean on the existing batched warm
+    // (/api/backups/paths) the Restore tab already uses. It returns
+    // paths for every repo on the source, configured AND orphan, with
+    // streaming progress and server-side caching. The render then
+    // reads from this.repositoryPaths and shows a skeleton until each
+    // orphan's entry arrives. Only kick off the warm when there is
+    // at least one orphan to display, so a clean install does no work.
+    if (this.orphanRepos.length && !this._pathsWarmStarted) {
+      this._pathsWarmStarted = true;
+      this.loadAllPaths(false);
+    }
+  }
+
+  /**
+   * Strong-confirm prompt before purging an orphan repository. The
+   * action is irreversible: it deletes the underlying storage (a
+   * local directory or a B2 prefix) and any restic snapshots it
+   * held. The backend re-validates label + source and re-checks
+   * orphan status, so a concurrent Apply that puts a path back
+   * cannot lose its history through this surface.
+   */
+  handlePurgeOrphan(orphan) {
+    const where = orphan.source === 'backblaze'
+      ? 'Backblaze B2' : 'local storage';
+    this.confirmModal().show(
+      'Purge backup history?',
+      `Delete the ${orphan.label} restic repository from ${where}? ` +
+      `Every snapshot it holds will be removed permanently.`,
+      'confirm',
+      {
+        confirmText: 'Purge',
+        cancelText: 'Cancel',
+        confirmVariant: 'danger',
+        details: [
+          { message: 'This is irreversible — the snapshots cannot be '
+              + 'recovered after purge', type: 'warning' },
+          { message: orphan.source === 'backblaze'
+              ? 'Only the Backblaze B2 copy is removed. Run Purge '
+                + 'again on the local copy if it also needs to go.'
+              : 'Only the local copy is removed. Run Purge again on '
+                + 'the Backblaze copy if it also needs to go.',
+            type: 'warning' },
+        ],
+        confirmCallback: () => this.performPurgeOrphan(orphan),
+      });
+  }
+
+  async performPurgeOrphan(orphan) {
+    const key = `${orphan.source}:${orphan.label}`;
+    this.purgingOrphan = key;
+    try {
+      const res = await fetch('/api/backups/orphan-repos/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: orphan.label, source: orphan.source,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        this.showNotification(
+          `Purged ${orphan.label} from ${orphan.source}.`, 'success');
+        // Optimistically drop the row from local state. We do NOT
+        // re-fetch /orphan-repos here: B2's list API is eventually
+        // consistent, so a list call seconds after a successful
+        // `rclone purge` may still report the prefix. Refetching
+        // would put the just-purged row back on screen until the
+        // bucket listing settles — exactly the bug the operator hit.
+        // The natural refreshes (Configure-tab re-open via the
+        // updated() hook on appliedConfig change, or a page reload)
+        // confirm against the settled state.
+        this.orphanRepos = this.orphanRepos.filter(o =>
+          !(o.source === orphan.source && o.label === orphan.label));
+        // Drop the purged label from the shared repositoryPaths
+        // cache (used for both this section's paths display and the
+        // Restore tab's per-repo paths).
+        if (this.repositoryPaths && key in this.repositoryPaths) {
+          const remaining = { ...this.repositoryPaths };
+          delete remaining[key];
+          this.repositoryPaths = remaining;
+        }
+        // The Restore tab's repo list also needs the purged label
+        // gone. The backend cleared its services cache as part of
+        // purge, so this force-refresh sees the real state.
+        this.loadServices(true);
+      } else {
+        const msg = data.error || data.detail
+          || `Purge failed (status ${res.status})`;
+        this.showNotification(`Purge failed: ${msg}`, 'error');
+      }
+    } catch (e) {
+      console.error('Error purging orphan repo:', e);
+      this.showNotification(`Purge failed: ${e.message}`, 'error');
+    } finally {
+      this.purgingOrphan = '';
     }
   }
 
@@ -1332,49 +1578,205 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
   /**
    * Render the Extra Backup Paths table via the shared <table-editor>.
    *
-   * Each row is { path, enabled }. The list index is the restic repo
-   * label (extra-path-N), so disabling (Enabled = ✗) keeps the slot in
-   * place. Deleting a row shifts later indices and orphans their
-   * existing restic repos — accepted risk (the table-editor's Delete
-   * confirm dialog warns generically; the index/label tradeoff is
-   * documented in services/backup/default.nix).
+   * Each row is { id, path, enabled }. `id` is the entry's stable
+   * identifier and owns the restic repository label (extra-path-<id>)
+   * — see services/backup/default.nix. Because labels are bound to id
+   * (NOT array position), reordering or deleting rows can never
+   * rewire an existing repo to a different source path. Newly-added
+   * rows get an id allocated below in the @data-change wrapper;
+   * existing entries' ids are preserved through normalize → render →
+   * round-trip. Deletion leaves the previous restic repo orphaned in
+   * place — purge it via the orphan-repo section to free storage.
    *
-   * Tolerates legacy string entries written before the schema
-   * promotion: we normalize at the boundary so the table-editor sees
-   * uniform objects, and `module.nix` independently coerces strings
-   * to {path, enabled:true} on the Nix side.
+   * Tolerates legacy entries (bare string, or object without id) that
+   * have not yet been migrated to the new shape: id is filled in from
+   * the array index, matching the loader / activation-script
+   * fallback so labels remain consistent across the upgrade.
    */
   renderExtraPaths(entries) {
-    const toRow = (entry) => (
-      typeof entry === 'string'
-        ? { path: entry, enabled: true }
-        : { path: entry.path || '', enabled: entry.enabled !== false }
-    );
+    const toRow = (entry, index) => {
+      if (typeof entry === 'string') {
+        return { id: String(index), path: entry, enabled: true };
+      }
+      const rawId = entry && typeof entry.id === 'string' ? entry.id : '';
+      return {
+        id: rawId !== '' ? rawId : String(index),
+        path: entry.path || '',
+        enabled: entry.enabled !== false,
+      };
+    };
     const rows = (entries || []).map(toRow);
-    const appliedRows = (this.appliedConfig?.backups?.['extra-from-paths'] || []).map(toRow);
+    const appliedRows = (this.appliedConfig?.backups?.['extra-from-paths']
+      || []).map(toRow);
     const columns = [
       { key: 'path', label: 'Path', type: 'text',
         placeholder: '/mnt/ellis/Documents' },
       { key: 'enabled', label: 'Enabled', type: 'boolean', default: true },
     ];
+    // Allocate ids for any newly-added rows BEFORE the change reaches
+    // the parent config. The table-editor builds new rows from the
+    // visible `columns` (which deliberately exclude id, since id is
+    // not user-edited), so a fresh row lands here without one. We
+    // assign max(int(existing ids)) + 1, treating non-integer ids as
+    // -1 so new ids stay in a simple integer sequence.
+    const handleChange = (e) => {
+      const data = (e.detail.data || []).slice();
+      let maxId = -1;
+      for (const row of data) {
+        const n = Number.parseInt(row && row.id, 10);
+        if (Number.isFinite(n) && n > maxId) maxId = n;
+      }
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        if (!row || typeof row.id !== 'string' || row.id === '') {
+          maxId += 1;
+          data[i] = { ...row, id: String(maxId) };
+        }
+      }
+      this.handleFieldChange('backups.extra-from-paths', data);
+    };
     return html`
       <div class="extra-paths-help">
         HomeFree service data is already backed up automatically; use
-        this for user files (Documents, Photos, etc.). Disabling an
-        entry stops scheduled backups for that path but keeps its
-        existing restic repository intact, so re-enabling later
-        resumes against the same snapshot history.
+        this for user files (Documents, Photos, etc.). Each entry has
+        a stable identifier, so deleting or reordering rows never
+        affects another entry's backup history. Disabling stops
+        scheduled backups for an entry while keeping its restic
+        repository intact; deleting leaves the repository orphaned in
+        place — use the Purge section below to remove an orphan's
+        snapshots once you are sure you do not need them.
       </div>
       <table-editor
         .columns=${columns}
         .data=${rows}
         .appliedData=${appliedRows}
-        .rowKey=${'path'}
+        .rowKey=${'id'}
         .neutralBooleans=${true}
         addLabel="Add Entry"
-        @data-change=${(e) => this.handleFieldChange(
-          'backups.extra-from-paths', e.detail.data)}
+        @data-change=${handleChange}
       ></table-editor>
+    `;
+  }
+
+  /**
+   * Render the source paths an orphan's latest restic snapshot was
+   * backing up. Data comes from this.repositoryPaths (populated by
+   * the shared batched warm, /api/backups/paths) — we deliberately
+   * do NOT make a separate /paths request per orphan, since each
+   * one would block the admin-api event loop on a restic subprocess.
+   *
+   * Shows a shimmer skeleton until the warm reaches this orphan, an
+   * error message if the warm failed, or the path list once ready.
+   */
+  renderOrphanPaths(orphan) {
+    const key = `${orphan.source}:${orphan.label}`;
+    const paths = this.repositoryPaths?.[key];
+    if (Array.isArray(paths)) {
+      if (!paths.length) {
+        return html`<div class="orphan-repos-paths placeholder">
+          No paths recorded in the latest snapshot.
+        </div>`;
+      }
+      return html`
+        <ul class="orphan-repos-paths">
+          ${paths.map(p => html`<li>${p}</li>`)}
+        </ul>
+      `;
+    }
+    if (this.pathsProgress?.state === 'error') {
+      return html`<div class="orphan-repos-paths error">
+        Snapshot scan failed. Open the Restore tab and click Retry to
+        try again.
+      </div>`;
+    }
+    return html`
+      <div class="orphan-repos-paths skeleton-paths">
+        <span class="skeleton skeleton-path-row"></span>
+        <span class="skeleton skeleton-path-row short"></span>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the orphaned restic repositories section. An orphan is a
+   * repository that physically exists (a directory under to-path, or
+   * a prefix in the B2 bucket) but whose extra-from-paths entry has
+   * been deleted from the config. Each row shows the label, source,
+   * and a strongly-confirmed Purge button that removes the storage.
+   *
+   * Hidden when no orphans exist so the Configure tab stays clean
+   * for the common case.
+   */
+  renderOrphanRepos() {
+    // Initial fetch in flight — paint a section shell with a single
+    // skeleton row so the operator gets layout feedback without
+    // waiting on the result. We always render the section while
+    // loading so the page-load latency does not hide it; once the
+    // result arrives we either show real rows or unmount cleanly
+    // (no orphans = section disappears).
+    if (this.orphanReposLoading && !this.orphanRepos.length) {
+      return html`
+        <config-section
+          title="Orphaned Backup Repositories"
+          description="Checking for restic repositories that no longer
+            match an Extra Backup Paths entry…"
+        >
+          <div class="orphan-repos-list">
+            <div class="orphan-repos-row">
+              <div class="orphan-repos-main">
+                <div class="orphan-repos-label">
+                  <span class="skeleton skeleton-title"></span>
+                </div>
+                <div class="orphan-repos-paths skeleton-paths">
+                  <span class="skeleton skeleton-path-row"></span>
+                </div>
+              </div>
+              <span class="skeleton skeleton-purge-btn"></span>
+            </div>
+          </div>
+        </config-section>
+      `;
+    }
+    const orphans = this.orphanRepos || [];
+    if (!orphans.length) return '';
+    return html`
+      <config-section
+        title="Orphaned Backup Repositories"
+        description="Restic repositories whose entry was removed from
+          Extra Backup Paths. Their snapshots are preserved until you
+          purge them; the storage is otherwise unreferenced."
+      >
+        <div class="extra-paths-help">
+          Each row below is a restic repository that exists on disk or
+          in Backblaze B2 but no longer has a matching Extra Backup
+          Paths entry. Purge removes the repository's storage and all
+          snapshots it holds — irreversible. Local and Backblaze
+          copies are listed separately so you can keep one and purge
+          the other.
+        </div>
+        <div class="orphan-repos-list">
+          ${orphans.map(o => {
+            const key = `${o.source}:${o.label}`;
+            const busy = this.purgingOrphan === key;
+            return html`
+              <div class="orphan-repos-row">
+                <div class="orphan-repos-main">
+                  <div class="orphan-repos-label">
+                    <strong>${o.label}</strong>
+                    <span class="orphan-repos-source">${o.source}</span>
+                  </div>
+                  ${this.renderOrphanPaths(o)}
+                </div>
+                <button
+                  class="btn btn-danger btn-sm"
+                  ?disabled=${busy || this.purgingOrphan !== ''}
+                  @click=${() => this.handlePurgeOrphan(o)}
+                >${busy ? 'Purging…' : 'Purge'}</button>
+              </div>
+            `;
+          })}
+        </div>
+      </config-section>
     `;
   }
 
@@ -1988,6 +2390,8 @@ class BackupsModule extends BackupJobControllerMixin(LitElement) {
       >
         ${this.renderExtraPaths(backups['extra-from-paths'] || [])}
       </config-section>
+
+      ${this.renderOrphanRepos()}
     `;
   }
 

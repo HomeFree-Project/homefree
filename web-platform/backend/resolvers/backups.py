@@ -125,6 +125,38 @@ class JobResponse(BaseModel):
     error: Optional[str] = None
 
 
+class OrphanRepo(BaseModel):
+    """A restic repository whose extra-from-paths entry no longer exists."""
+    label: str          # e.g. "extra-path-3" or "extra-paths" (legacy)
+    source: str         # "local" | "backblaze"
+    id: str = ""        # entry id this repo was bound to ("" for legacy)
+
+
+class OrphanReposResponse(BaseModel):
+    success: bool
+    orphans: List[OrphanRepo] = []
+    error: Optional[str] = None
+
+
+class PurgeOrphanRequest(BaseModel):
+    """Destructive: purge an orphaned restic repository's storage.
+
+    label MUST match extra-path-* (or the legacy combined extra-paths);
+    source MUST be 'local' or 'backblaze'. Both are re-validated server-
+    side; the admin UI confirms with the operator before posting.
+    """
+    label: str
+    source: str         # 'local' | 'backblaze'
+
+
+class PurgeOrphanResponse(BaseModel):
+    success: bool
+    label: str = ""
+    source: str = ""
+    output: Optional[str] = None
+    error: Optional[str] = None
+
+
 class CanaryStatusResponse(BaseModel):
     """Backup canary self-test status."""
     success: bool
@@ -270,9 +302,11 @@ async def list_services(source: str = "auto", force: bool = False):
             if repo == "system-config":
                 system_config.append(repo)
             elif repo.startswith("extra-path-") or repo == "extra-paths":
-                # extra-path-N are the current per-path repos; "extra-paths"
-                # is a legacy combined repo from an older backup module.
-                # Both belong with extra paths, NOT system configuration.
+                # extra-path-<id> are the current per-path repos
+                # (<id> is the entry's stable identifier — see
+                # services/backup/default.nix). "extra-paths" is a
+                # legacy combined repo from an older backup module.
+                # Both belong with extra paths, NOT system config.
                 extra_paths.append(repo)
             else:
                 services.append(repo)
@@ -305,6 +339,44 @@ async def get_source_paths():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get source paths: {str(e)}")
+
+
+@router.get("/orphan-repos", response_model=OrphanReposResponse)
+async def list_orphan_repos():
+    """List extra-path-<id> restic repositories that exist on disk / in
+    B2 but have no matching entry in homefree-config.json.
+
+    Surfaces "deleted-but-not-purged" repositories so the operator can
+    decide whether to keep the snapshots around or reclaim the storage
+    via /orphan-repos/purge.
+    """
+    try:
+        return OrphanReposResponse(
+            **BackupOperations.list_orphan_extra_path_repos())
+    except Exception as e:
+        logger.error(f"Error listing orphan repos: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list orphan repos: {str(e)}")
+
+
+@router.post("/orphan-repos/purge", response_model=PurgeOrphanResponse)
+async def purge_orphan_repo(request: PurgeOrphanRequest):
+    """Delete an orphaned restic repository's underlying storage.
+
+    Destructive and irreversible. The backend re-validates the label
+    pattern and re-checks orphan status to close any TOCTOU between
+    the UI's last refresh and the operator's click.
+    """
+    try:
+        result = BackupOperations.purge_orphan_repo(
+            label=request.label, source=request.source)
+        return PurgeOrphanResponse(**result)
+    except Exception as e:
+        logger.error(f"Error purging orphan repo: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to purge orphan repo: {str(e)}")
 
 
 @router.get("/services/{service}/snapshots", response_model=SnapshotsResponse)
