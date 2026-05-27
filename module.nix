@@ -355,6 +355,76 @@
               description = "Whether to allow IP access to WAN";
               default = true;
             };
+
+            network = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                ID of the guest network (homefree.network.guest-networks[].id)
+                this reservation belongs to. null = main LAN.
+              '';
+            };
+          };
+        });
+      };
+
+      ## Per-instance VLAN/guest networks (Guest, IoT, Blocked, etc.).
+      ## Each entry creates an 802.1Q sub-interface on lan-interface, its
+      ## own DHCP scope, and per-VLAN nftables forward rules. Reaching
+      ## clients on a VLAN requires an 802.1Q-aware AP/switch downstream;
+      ## HomeFree only handles the router side.
+      guest-networks = lib.mkOption {
+        default = [];
+        description = "Isolated VLAN networks (guest, IoT, blocked, etc.)";
+        type = with lib.types; listOf (submodule {
+          options = {
+            id = lib.mkOption {
+              type = lib.types.str;
+              description = ''
+                Stable slug used as the VLAN sub-interface name and as
+                the foreign key referenced by static-ips[].network.
+                Letters, digits, hyphens; immutable once set.
+              '';
+            };
+            name = lib.mkOption {
+              type = lib.types.str;
+              description = "Display name shown in the admin UI";
+            };
+            vlan-id = lib.mkOption {
+              type = lib.types.int;
+              description = "802.1Q VLAN tag (1-4094)";
+            };
+            subnet = lib.mkOption {
+              type = lib.types.str;
+              description = "Subnet in CIDR notation (e.g. 10.3.0.0/24)";
+            };
+            gateway = lib.mkOption {
+              type = lib.types.str;
+              description = "Router IP on this VLAN (must lie inside subnet)";
+            };
+            dhcp-range-start = lib.mkOption {
+              type = lib.types.str;
+              description = "First DHCP-allocated address on this VLAN";
+            };
+            dhcp-range-end = lib.mkOption {
+              type = lib.types.str;
+              description = "Last DHCP-allocated address on this VLAN";
+            };
+            internet-access = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Allow egress to the WAN interface";
+            };
+            lan-access = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Allow reaching the main LAN subnet";
+            };
+            inter-network-access = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Allow reaching other guest networks";
+            };
           };
         });
       };

@@ -8,6 +8,24 @@ let
   dhcp-range-end = config.homefree.network.dhcp-range-end;
   dhcp-lease-time = config.homefree.network.dhcp-lease-time;
   localDomain = config.homefree.system.localDomain;
+  guest-networks = config.homefree.network.guest-networks;
+
+  ## CIDR prefix length → dotted-decimal netmask. Per-octet lookup;
+  ## the 9-element table covers every prefix from 0..32 by clamping.
+  prefixToNetmask = prefix:
+    let
+      bitsToOctet = n:
+        if n >= 8 then 255
+        else if n <= 0 then 0
+        else builtins.elemAt [ 0 128 192 224 240 248 252 254 ] n;
+      o1 = bitsToOctet prefix;
+      o2 = bitsToOctet (prefix - 8);
+      o3 = bitsToOctet (prefix - 16);
+      o4 = bitsToOctet (prefix - 24);
+    in
+    "${toString o1}.${toString o2}.${toString o3}.${toString o4}";
+  cidrPrefix = subnet:
+    lib.toInt (builtins.elemAt (lib.splitString "/" subnet) 1);
   dhcp-script = pkgs.writeShellScript "dhcp-script" ''
     # $1 = action (add, del, old)
     # $2 = MAC address
@@ -59,19 +77,16 @@ in
       ## DNS servers to pass to clients
       server = [ lan-address ];
 
-      ## Which interfaces to bind to
-      interface = [
-        # "${lan-interface}.${builtins.toString vlan-lan-id}"
-        # "${lan-interface}.${builtins.toString vlan-iot-id}"
-        # "${lan-interface}.${builtins.toString vlan-guest-id}"
-        lan-interface
-      ];
+      ## Which interfaces to bind to — main LAN plus every guest-network
+      ## VLAN sub-interface (created in profiles/router.nix from
+      ## config.homefree.network.guest-networks).
+      interface = [ lan-interface ] ++ (lib.map (gn: gn.id) guest-networks);
 
-      ## IP ranges to hand out
+      ## IP ranges to hand out — one entry per interface. Each guest
+      ## network's dhcp-range is bound to its sub-interface; dnsmasq
+      ## picks the right scope by the interface the request arrived on
+      ## (and by IP-in-subnet match for static reservations).
       dhcp-range = [
-        # "lan,10.0.0.100,10.0.0.254,255.255.255.0,8h"
-        # "iot,10.2.1.100,10.2.1.254,255.255.255.0,8h"
-        # "guest,10.3.1.100,10.3.1.254,255.255.255.0,8h"
         ## "constructor" gets the ipv6 range from the WAN interface since it's dynamic can't be hard coded here.
         ## "ra-names" includes the hostname in router advertisement messages for local name resolution
         ## "slaac" specifies how addresses are allocated. In this case, it tells clients to create
@@ -79,7 +94,9 @@ in
         ## a message to validate that it's not a duplicate with another address.
         "tag:${lan-interface},::1,constructor:${lan-interface},ra-names,slaac,12h"                        # ipv6
         "${lan-interface},${dhcp-range-start},${dhcp-range-end},${lan-netmask},${dhcp-lease-time}"       # ipv4
-      ];
+      ] ++ (lib.map (gn:
+        "${gn.id},${gn.dhcp-range-start},${gn.dhcp-range-end},${prefixToNetmask (cidrPrefix gn.subnet)},${dhcp-lease-time}"
+      ) guest-networks);
 
       ## Disable DNS, since Unbound is handling DNS
       port = 0;

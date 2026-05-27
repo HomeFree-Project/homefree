@@ -6,16 +6,61 @@ let
   lan-interface = config.homefree.network.lan-interface;
   lan-address = config.homefree.network.lan-address;
   lan-subnet = config.homefree.network.lan-subnet;
-  vlan-wan-id = 100;
-  vlan-lan-id = 200;
-  vlan-iot-id = 201;
-  vlan-guest-id = 202;
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
   blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
     iifname ${wan-interface} ip saddr ${entry.ip} drop
     iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
+
+  ## Guest networks (VLANs). Each entry creates a sub-interface on
+  ## lan-interface, an IP on the router, its own DHCP scope (dnsmasq),
+  ## and per-VLAN nftables forward rules below.
+  guest-networks = config.homefree.network.guest-networks;
+  cidr-prefix = subnet:
+    lib.toInt (builtins.elemAt (lib.splitString "/" subnet) 1);
+
+  ## Per-VLAN forward-chain rules. Each block:
+  ##   - allows or drops VLAN→WAN egress (internet-access)
+  ##   - allows or drops VLAN↔LAN (lan-access, both directions)
+  ##   - allows or drops VLAN↔every-other-VLAN (inter-network-access)
+  ## Pattern mirrors the existing podman0/tailscale0/wt0 rules below.
+  guest-network-forward-rules = lib.concatStringsSep "\n" (lib.map (gn:
+    let ifn = gn.id; in
+    ''
+    ## --- ${gn.name} (${ifn}, vlan ${toString gn.vlan-id}) ---
+    ''
+    + (if gn.internet-access then ''
+      iifname { "${ifn}" } oifname { "${wan-interface}" } accept comment "Allow ${ifn} to WAN"
+      iifname { "${wan-interface}" } oifname { "${ifn}" } ct state established, related accept comment "Allow established back to ${ifn}"
+    '' else ''
+      iifname { "${ifn}" } oifname { "${wan-interface}" } counter drop comment "Block ${ifn} from WAN"
+    '')
+    + (if gn.lan-access then ''
+      iifname { "${ifn}" } oifname { "${lan-interface}" } accept comment "Allow ${ifn} to main LAN"
+      iifname { "${lan-interface}" } oifname { "${ifn}" } accept comment "Allow main LAN to ${ifn}"
+    '' else ''
+      iifname { "${ifn}" } oifname { "${lan-interface}" } counter drop comment "Isolate ${ifn} from main LAN"
+      iifname { "${lan-interface}" } oifname { "${ifn}" } counter drop comment "Isolate main LAN from ${ifn}"
+    '')
+    + lib.concatStringsSep "" (lib.map (other:
+      if other.id == gn.id then ""
+      else if gn.inter-network-access then ''
+        iifname { "${ifn}" } oifname { "${other.id}" } accept comment "Allow ${ifn} to ${other.id}"
+      ''
+      else ''
+        iifname { "${ifn}" } oifname { "${other.id}" } counter drop comment "Isolate ${ifn} from ${other.id}"
+      ''
+    ) guest-networks)
+  ) guest-networks);
+
+  ## Input-chain accept list: every VLAN sub-interface is part of "our"
+  ## network and clients legitimately need to reach the router for
+  ## DHCP/DNS/gateway. (lan-interface gets the same blanket accept on
+  ## line ~292 below.)
+  guest-network-input-rules = lib.concatStringsSep "\n" (lib.map (gn:
+    ''iifname { "${gn.id}" } accept comment "Allow ${gn.id} VLAN to access the router"''
+  ) guest-networks);
 
   ## Static abuse blocklist for the abusive_nets4 / abusive_nets6
   ## nftables sets. Fully driven by config.homefree.network.
@@ -141,26 +186,19 @@ in
     useDHCP = false;
     nameservers = [ lan-address ];
 
-    ## Define VLANS
+    ## VLAN sub-interfaces — one per homefree.network.guest-networks
+    ## entry. Each is an 802.1Q-tagged sub-interface on the LAN NIC.
+    ## Reaching client devices on a given VLAN still requires an
+    ## 802.1Q-aware AP/switch downstream that maps clients onto the
+    ## right tagged segment.
     ## https://www.breakds.org/post/vlan-configuration-by-examples/
-    # vlans = {
-    #   wan = {
-    #     id = vlan-wan-id;
-    #     interface = wan-interface;
-    #   };
-    #   lan = {
-    #     id = vlan-lan-id;
-    #     interface = lan-interface;
-    #   };
-    #   iot = {
-    #     id = vlan-iot-id;
-    #     interface = lan-interface;
-    #   };
-    #   guest = {
-    #     id = vlan-guest-id;
-    #     interface = lan-interface;
-    #   };
-    # };
+    vlans = lib.listToAttrs (lib.map (gn: {
+      name = gn.id;
+      value = {
+        id = gn.vlan-id;
+        interface = lan-interface;
+      };
+    }) guest-networks);
 
     interfaces = {
       ${wan-interface} = {
@@ -173,30 +211,16 @@ in
           prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" lan-subnet) 1);
         }];
       };
-
-      # Handle the VLANs
-      # wan = {
-      #   useDHCP = false;
-      # };
-      # lan = {
-      #   ipv4.addresses = [{
-      #     address = "10.0.0.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-      # iot = {
-      #   ipv4.addresses = [{
-      #     address = "10.2.1.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-      # guest = {
-      #   ipv4.addresses = [{
-      #     address = "10.3.1.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-    };
+    } // (lib.listToAttrs (lib.map (gn: {
+      name = gn.id;
+      value = {
+        useDHCP = false;
+        ipv4.addresses = [{
+          address = gn.gateway;
+          prefixLength = cidr-prefix gn.subnet;
+        }];
+      };
+    }) guest-networks));
 
     #-----------------------------------------------------------------------------------------------------
     # Firewall
@@ -293,6 +317,7 @@ in
             iifname { "tailscale0" } accept comment "Allow tailscale network to access the router"
             iifname { "wt0" } accept comment "Allow netbird network to access the router"
             iifname { "podman0" } accept comment "Allow podman network to access the router"
+            ${guest-network-input-rules}
 
             ## Allow for web traffic
             ## http is needed for headscale relaying
@@ -399,6 +424,13 @@ in
             ## Netbird-Podman
             iifname { "wt0" } oifname { "podman0" } accept comment "Allow trusted netbird to podman"
             iifname { "podman0" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Per-guest-network isolation policy (internet-access /
+            ## lan-access / inter-network-access). Generated from
+            ## config.homefree.network.guest-networks. Postrouting NAT
+            ## above (`oifname wan masquerade`) catches outbound from
+            ## any VLAN automatically, so no per-VLAN NAT rules needed.
+            ${guest-network-forward-rules}
           }
         }
 

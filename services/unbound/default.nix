@@ -196,7 +196,8 @@ in
           "::1 allow"
           "${lan-subnet} allow"
           "100.64.0.2/24 allow"
-        ];
+        ] ++ (lib.map (gn: "${gn.subnet} allow")
+          config.homefree.network.guest-networks);
         # outgoing-interface = [
         #   ## @TODO: should be WAN IP - how to get this automatically?
         #   "10.0.2.15"

@@ -12,6 +12,7 @@ import './modules/hardware-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/lan-clients-module.js';
+import './modules/guest-networks-module.js';
 import './modules/dns-module.js';
 import './modules/storage-module.js';
 import './modules/shared-folders-module.js';
@@ -873,6 +874,11 @@ class AdminApp extends LitElement {
       {
         id: 'lan-clients',
         title: 'LAN Clients',
+        section: 'Networking'
+      },
+      {
+        id: 'guest-networks',
+        title: 'Guest Networks',
         section: 'Networking'
       },
       {
@@ -2351,6 +2357,7 @@ class AdminApp extends LitElement {
       case 'network':
         if (seg[1] === 'static-ips') return 'lan-clients';
         if (seg[1] === 'abuseBlockCidrs') return 'abuse-blocking';
+        if (seg[1] === 'guest-networks') return 'guest-networks';
         return 'network';
       case 'services':
         return seg[1] === 'backup-canary' ? 'backups' : 'apps';
@@ -2749,6 +2756,16 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></lan-clients-module>
+        `;
+
+      case 'guest-networks':
+        return html`
+          <guest-networks-module
+            .serverConfig=${this.serverConfig}
+            .pendingConfig=${this.pendingConfig}
+            .appliedConfig=${this.appliedConfig}
+            @config-change=${this.handleConfigChange}
+          ></guest-networks-module>
         `;
 
       case 'system':

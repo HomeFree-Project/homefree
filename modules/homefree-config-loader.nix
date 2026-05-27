@@ -88,13 +88,34 @@ in
       wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
       wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
 
-      # Static IPs conversion
+      # Static IPs conversion. `network` is the optional guest-network
+      # ID a reservation belongs to; null/missing = main LAN, so older
+      # homefree-config.json files predating guest networks evaluate
+      # unchanged (rule 11, backwards-compatible — no migration).
       static-ips = map (ip: {
         mac-address = ip.mac-address;
         hostname = ip.hostname;
         ip = ip.ip;
         wan-access = ip.wan-access or true;
+        network = ip.network or null;
       }) jsonData.network.static-ips;
+
+      ## Guest networks (VLANs). Each entry is one isolated network
+      ## segment with its own subnet, DHCP scope, and isolation policy.
+      ## `or []` so an older homefree-config.json without the key still
+      ## evaluates cleanly; per-field `or` defaults match module.nix.
+      guest-networks = map (gn: {
+        id = gn.id;
+        name = gn.name;
+        vlan-id = gn.vlan-id;
+        subnet = gn.subnet;
+        gateway = gn.gateway;
+        dhcp-range-start = gn.dhcp-range-start;
+        dhcp-range-end = gn.dhcp-range-end;
+        internet-access = gn.internet-access or true;
+        lan-access = gn.lan-access or false;
+        inter-network-access = gn.inter-network-access or false;
+      }) (jsonData.network.guest-networks or []);
 
       ## Abuse-block CIDR list — each entry { cidr, enabled, comment }.
       ## `cidr` may be IPv4 or IPv6. `or []` so a JSON file predating
