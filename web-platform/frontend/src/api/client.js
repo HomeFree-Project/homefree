@@ -471,6 +471,13 @@ export const getDashboardOverview = () => get('/api/dashboard/overview');
 export const getDashboardHistory = () => get('/api/dashboard/history');
 export const getLanClients = () => get('/api/dashboard/lan-clients');
 
+// Speed Test — on-demand WAN measurement against Cloudflare's edge
+// (download / upload / latency / jitter / bufferbloat). Single-slot:
+// startSpeedTest cancels any prior run.
+export const startSpeedTest     = () => post('/api/speed-test/start', {});
+export const getSpeedTestStatus = () => get('/api/speed-test/status');
+export const cancelSpeedTest    = () => post('/api/speed-test/cancel', {});
+
 // Hardware — per-drive SMART + sensor snapshot, plus drive-temperature
 // history. Backs the Hardware admin page.
 export const getHardwareOverview = () => get('/api/hardware/overview');

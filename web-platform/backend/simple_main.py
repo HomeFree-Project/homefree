@@ -35,6 +35,7 @@ from resolvers.abuse_blocking import AbuseBlockingResolver
 from resolvers.dashboard import DashboardResolver
 from resolvers.hardware import HardwareResolver
 from resolvers.firmware import FirmwareResolver
+from resolvers.speed_test import SpeedTestResolver
 from services.fwupd_job import FwupdJob
 
 # Import API routers
@@ -1036,6 +1037,39 @@ async def get_dashboard_lan_clients():
         return JSONResponse(content=await asyncio.to_thread(DashboardResolver.get_lan_clients))
     except Exception as e:
         logger.error(f"dashboard lan-clients: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/speed-test/start")
+async def start_speed_test():
+    """Kick off an on-demand WAN speed test against Cloudflare's public
+    endpoints. Returns immediately with a test_id; poll /status for
+    progress. A second start cancels the previous run."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.start))
+    except Exception as e:
+        logger.error(f"speed-test start: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/speed-test/status")
+async def get_speed_test_status():
+    """Current state of the speed test: phase, progress, partial results
+    (filled in as phases complete), final results once phase=='done'."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.status))
+    except Exception as e:
+        logger.error(f"speed-test status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/speed-test/cancel")
+async def cancel_speed_test():
+    """Signal the running test to abort at the next phase boundary."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.cancel))
+    except Exception as e:
+        logger.error(f"speed-test cancel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -24,6 +24,7 @@ import './modules/users-module.js';
 import './modules/status-module.js';
 import './modules/updates-module.js';
 import './modules/abuse-blocking-module.js';
+import './modules/speed-test-module.js';
 import './modules/developers-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
@@ -887,6 +888,11 @@ class AdminApp extends LitElement {
       {
         id: 'proxied-domains',
         title: 'Proxied Domains',
+        section: 'Networking'
+      },
+      {
+        id: 'speed-test',
+        title: 'Speed Test',
         section: 'Networking'
       },
       {
@@ -2919,6 +2925,11 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></abuse-blocking-module>
+        `;
+
+      case 'speed-test':
+        return html`
+          <speed-test-module></speed-test-module>
         `;
 
       default:
