@@ -320,7 +320,10 @@ in
       # policy.path = policy;
       dns = {
         magic_dns = true;
-        # override_local_dns = true;
+        ## false = Tailscale only intercepts split zones (.lan); all other DNS
+        ## (including *.cypy.at) falls through to carrier/system DNS so public
+        ## domains work from any network without needing 10.0.0.1 reachable.
+        override_local_dns = false;
         ## Must be different from server domain
         base_domain = "homefree.vpn";
         # search_domains = search-domains;
