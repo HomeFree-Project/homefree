@@ -555,7 +555,7 @@ class ServicesModule extends LitElement {
       gap: 8px;
       flex-shrink: 0;
       /* Every toggle carries the pill's padding + a transparent border,
-         even when off, so the public-on amber state only changes COLOUR
+         even when off, so the public-on tint only changes COLOUR
          and never the box size. Otherwise toggling Exposed widened the
          chip and knocked the header controls out of alignment with the
          neighbouring cards. */
@@ -564,19 +564,24 @@ class ServicesModule extends LitElement {
       border-radius: 999px;
     }
     /* When the service is exposed to the internet the chip gets a
-       warn-tinted background so the security-relevant state is obvious
-       at a glance, matching the amber used by status-badge.degraded
-       and sso-pill.warn. Same box size as the off state (see above). */
+       danger-tinted (red) background so the security-relevant state is
+       obvious at a glance, matching status-badge.failed.
+       Why not amber: amber is reserved throughout the admin UI for
+       pending unbuilt changes (--hf-warn-soft on undeployed rows /
+       instance groups), so an amber Exposed chip read as "this toggle
+       has unsaved changes" instead of "this service is publicly
+       exposed". Red carries no such overload. Same box size as the off
+       state (see above). */
     .toggle-container.public-on {
-      background: rgba(245,158,11,0.13);
-      color: var(--hf-warn);
+      background: rgba(239,68,68,0.13);
+      color: var(--hf-err);
     }
     .toggle-container.public-on .toggle-label {
-      /* Colour alone signals the exposed state (plus the amber pill bg).
+      /* Colour alone signals the exposed state (plus the red pill bg).
          No font-weight change: a bolder label is physically wider than
          the normal-weight OFF label, which made ON toggles wider than OFF
          and broke header alignment across cards. */
-      color: var(--hf-warn);
+      color: var(--hf-err);
     }
 
     /* Invisible stand-in for the absent Exposed toggle on a DISABLED app,
@@ -681,7 +686,7 @@ class ServicesModule extends LitElement {
         display: none;
       }
       /* The exposed-to-internet pill would otherwise stretch full-width
-         with a lot of dead amber to the right; shrink it back to hug its
+         with a lot of dead tint to the right; shrink it back to hug its
          contents while still starting its own line via the wrap above. */
       .toggle-container.public-on {
         flex-basis: auto;
