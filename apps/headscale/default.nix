@@ -327,19 +327,11 @@ in
         ## Must be different from server domain
         base_domain = "homefree.vpn";
         # search_domains = search-domains;
-        ## Add
-        ## Order matters in headscale 0.26+: the first reachable resolver is
-        ## preferred, so put the LAN resolver first to get split-horizon and
-        ## ad-blocking; the public resolvers are fallbacks for when the LAN
-        ## resolver is unreachable.
-        nameservers.global = [
-          ## Internal DNS — has local domain names + ad-blocking via unbound
-          lan-address
-          ## Backup if LAN resolver is unreachable (e.g. before tunnel is up)
-          "9.9.9.10"
-          ## Secondary backup
-          "1.1.1.1"
-        ];
+        ## No global nameservers — with override_local_dns=false, global
+        ## nameservers would still intercept all DNS and cause 10.0.0.1
+        ## timeouts on mobile. Omitting them lets carrier/system DNS handle
+        ## everything except the .lan split zone below.
+        nameservers.global = [];
         ## Split DNS only covers internal TLDs (.lan, .homefree.lan).
         ## The public domain (cypy.at) is NOT in split zones — it resolves
         ## via public DNS so *.cypy.at is accessible from any network
