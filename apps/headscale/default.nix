@@ -333,12 +333,17 @@ in
           ## Secondary backup
           "1.1.1.1"
         ];
-        ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access)
+        ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access).
+        ## Fallback public resolvers are included so that if the LAN resolver (10.0.0.1) is
+        ## unreachable (e.g. VPN reconnecting after switching from WiFi to mobile data), DNS
+        ## for *.cypy.at falls through to public DNS instead of timing out entirely.
         nameservers.split = lib.listToAttrs (lib.map (domain:
           {
             name = domain;
             value = [
               lan-address
+              "9.9.9.10"
+              "1.1.1.1"
             ];
           }
         ) all-split-domains);
