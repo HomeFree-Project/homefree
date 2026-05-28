@@ -328,11 +328,11 @@ in
         ## Must be different from server domain
         base_domain = "homefree.vpn";
         # search_domains = search-domains;
-        ## Public-only global nameservers. magic_dns routes ALL phone DNS
-        ## through Tailscale's engine even with override_local_dns=false,
-        ## so the engine must have an upstream. 10.0.0.1 is intentionally
-        ## excluded — it times out on mobile data and blocks page loads.
-        nameservers.global = ["9.9.9.10" "1.1.1.1"];
+        ## Public-only global nameservers. Only use resolvers confirmed
+        ## reachable from this server — 9.9.9.10 (Quad9 unfiltered) times
+        ## out from eno1 and stalls every DNS query when Tailscale routes
+        ## through the VPN. 10.0.0.1 intentionally excluded (LAN-only).
+        nameservers.global = ["1.1.1.1" "8.8.8.8"];
         ## Split DNS only covers internal TLDs (.lan, .homefree.lan).
         ## The public domain (cypy.at) is NOT in split zones — it resolves
         ## via public DNS so *.cypy.at is accessible from any network
