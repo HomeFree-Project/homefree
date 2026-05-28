@@ -761,8 +761,13 @@ class AdminApp extends LitElement {
     }
     .alerts-bell-btn.has-alerts { color: var(--hf-warn); }
     .alerts-bell-btn svg {
-      width: 22px;
-      height: 22px;
+      width: 16px;
+      height: 16px;
+      /* Optical-center nudge: the bell-ring glyph's mass sits in the
+         upper half of its 24x24 viewBox (bell body at y=8-17, thin
+         clapper to y=21), so geometric centering reads as too high
+         next to the uniformly-filled home/manual icons. */
+      transform: translateY(1px);
     }
     .alerts-bell-badge {
       position: absolute;

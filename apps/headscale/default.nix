@@ -127,11 +127,84 @@ let
   ## `policy.path: null`, `dns.extra_records: null`). The headscale
   ## daemon happily accepts these as "unset", but headplane treats
   ## the field as ill-typed. Strip nulls recursively before serialising.
+  ##
+  ## Additionally, strip the tailscale-IP placeholders (192.0.2.1 /
+  ## 2001:db8::1) from the headplane view. They're meaningful only to
+  ## the runtime substitution oneshot; admins viewing the DNS config
+  ## in Headplane shouldn't see TEST-NET-1 / docs-range addresses.
+  ## Real tailscale IPs are not in nix-eval scope.
+  resolverPlaceholderIpv4 = "192.0.2.1";
+  resolverPlaceholderIpv6 = "2001:db8::1";
+  isResolverPlaceholder = ip:
+    ip == resolverPlaceholderIpv4 || ip == resolverPlaceholderIpv6;
   headscaleSettingsForHeadplane =
-    lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings;
+    let
+      filtered = lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings;
+    in
+      lib.recursiveUpdate filtered {
+        dns.nameservers.global =
+          lib.filter (ip: !(isResolverPlaceholder ip))
+            (filtered.dns.nameservers.global or []);
+      };
   headscaleFullConfigFile =
     (pkgs.formats.yaml {}).generate "headscale-full.yaml"
       headscaleSettingsForHeadplane;
+
+  ## Runtime config used by headscale.service: a writable copy of the
+  ## nix-rendered yaml with the resolver placeholders substituted for
+  ## the box's current tailscale IPs. See the substitution script and
+  ## the headscale-substitute-resolver.service oneshot below for the
+  ## "why" — Tailscale Android shows "DNS Unavailable" if the
+  ## configured resolver isn't a tailnet-native address.
+  headscaleRuntimeConfigPath = "/var/lib/headscale/runtime-config.yaml";
+  headscaleResolverStatePath = "/var/lib/headscale/.cached-tailnet-resolver-ip";
+
+  ## Substitute resolver placeholders in $1 → write to $2.
+  ## Falls back to STRIPPING the placeholder lines when tailscale isn't
+  ## up yet (first boot, before tailscaled-autoconnect has registered)
+  ## so clients receive a clean resolver list rather than the documentation
+  ## IPs. Output file is installed mode 0640 root:headscale so the
+  ## headscale daemon (running as that group) can read it.
+  substituteResolverPlaceholders = pkgs.writeShellScript "headscale-substitute-resolver" ''
+    set -euo pipefail
+    SRC="$1"
+    DST="$2"
+
+    TS_IPV4=$(${pkgs.tailscale}/bin/tailscale ip -4 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+    TS_IPV6=$(${pkgs.tailscale}/bin/tailscale ip -6 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+
+    TMP=$(${pkgs.coreutils}/bin/mktemp)
+    ${pkgs.coreutils}/bin/cp "$SRC" "$TMP"
+
+    if [ -n "$TS_IPV4" ]; then
+      ${pkgs.gnused}/bin/sed -i "s|- ${resolverPlaceholderIpv4}$|- $TS_IPV4|" "$TMP"
+    else
+      ${pkgs.gnused}/bin/sed -i "/- ${resolverPlaceholderIpv4}$/d" "$TMP"
+    fi
+
+    if [ -n "$TS_IPV6" ]; then
+      ${pkgs.gnused}/bin/sed -i "s|- ${resolverPlaceholderIpv6}$|- $TS_IPV6|" "$TMP"
+    else
+      ${pkgs.gnused}/bin/sed -i "/- ${resolverPlaceholderIpv6}$/d" "$TMP"
+    fi
+
+    ${pkgs.coreutils}/bin/install -m 0640 \
+      -o root -g ${config.services.headscale.group or "headscale"} \
+      "$TMP" "$DST"
+    ${pkgs.coreutils}/bin/rm -f "$TMP"
+
+    ## Also record the IPs we just baked in, so headscale-substitute-
+    ## resolver can detect "no change since last apply" and skip a
+    ## redundant headscale restart on rebuild. Without this, the
+    ## ExecStartPre would substitute correctly on the rebuild's
+    ## headscale restart, and then the oneshot would observe a missing
+    ## cache file and try-restart again — back-to-back restarts.
+    ${pkgs.coreutils}/bin/install -m 0640 \
+      -o root -g ${config.services.headscale.group or "headscale"} \
+      /dev/null ${headscaleResolverStatePath} 2>/dev/null || true
+    printf 'ipv4=%s ipv6=%s' "$TS_IPV4" "$TS_IPV6" \
+      > ${headscaleResolverStatePath}
+  '';
 
   headplaneSettings = {
     server = {
@@ -325,7 +398,22 @@ in
         ## preferred, so put the LAN resolver first to get split-horizon and
         ## ad-blocking; the public resolvers are fallbacks for when the LAN
         ## resolver is unreachable.
+        ##
+        ## The two leading entries are PLACEHOLDERS (TEST-NET-1 192.0.2.1 and
+        ## docs-range 2001:db8::1) — at headscale startup, the substitution
+        ## script rewrites them to the box's current tailscale IPv4/IPv6, or
+        ## strips them if tailscaled hasn't registered yet. They sit FIRST so
+        ## tailscale clients probing the configured resolvers find a
+        ## tailnet-native address and don't show "DNS Unavailable" (Tailscale
+        ## Android's probe rejects subnet-routed LAN IPs like 10.0.0.1 even
+        ## though queries via the subnet route succeed). The tailscale-side
+        ## listener is the tailscale-dns-bridge dnsmasq forwarder, which
+        ## forwards to AdGuard so filtering stays consistent.
         nameservers.global = [
+          ## Placeholder — substituted to the box's tailscale IPv4 at runtime.
+          resolverPlaceholderIpv4
+          ## Placeholder — substituted to the box's tailscale IPv6 at runtime.
+          resolverPlaceholderIpv6
           ## Internal DNS — has local domain names + ad-blocking via unbound
           lan-address
           ## Backup if LAN resolver is unreachable (e.g. before tunnel is up)
@@ -399,9 +487,40 @@ in
   systemd.services.headscale = lib.mkIf headscaleEnabled {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-render the writable runtime config on every (re)start so the
+    ## tailscale-IP substitution stays current. On first boot, before
+    ## tailscaled-autoconnect has run, the substitution script strips
+    ## the placeholders and headscale starts with just the LAN + public
+    ## resolvers (identical to pre-fix behaviour). Once tailscaled is up
+    ## and the substitute-resolver oneshot fires, headscale is
+    ## try-restarted and this ExecStartPre runs again with the real IP.
     serviceConfig = {
       RestartSec = lib.mkForce "15s";
+      ExecStartPre = [
+        ## Upstream sets StateDirectory=headscale which gives us
+        ## /var/lib/headscale 0750 root:headscale, but only after
+        ## ExecStartPre runs. With `+` prefix this snippet runs as
+        ## root regardless of User=, so we can pre-create the dir
+        ## ourselves to ensure substituteResolverPlaceholders has
+        ## somewhere to write.
+        "+${pkgs.writeShellScript "headscale-prepare-runtime-config" ''
+          set -euo pipefail
+          ${pkgs.coreutils}/bin/mkdir -p /var/lib/headscale
+          ${pkgs.coreutils}/bin/chown root:${config.services.headscale.group} \
+            /var/lib/headscale
+          ${substituteResolverPlaceholders} \
+            ${headscaleFullConfigFile} \
+            ${headscaleRuntimeConfigPath}
+        ''}"
+      ];
     };
+    ## Override the upstream `script` to point --config at the runtime
+    ## (substituted) file rather than the immutable nix-store yaml.
+    ## We don't use postgres so the upstream's password-file branch is
+    ## irrelevant; just exec directly.
+    script = lib.mkForce ''
+      exec ${pkgs.headscale}/bin/headscale serve --config ${headscaleRuntimeConfigPath}
+    '';
     ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives in
     ## systemd, not [Service]. Putting them under serviceConfig renders them
     ## into the wrong section and systemd silently ignores them
@@ -411,6 +530,63 @@ in
       StartLimitBurst = lib.mkForce 10;
       StartLimitIntervalSec = lib.mkForce 300;
     };
+  };
+
+  ## After tailscaled-autoconnect has registered with headscale and the
+  ## local interface has a tailnet address, re-substitute the placeholders
+  ## in the runtime config and bump headscale so the new netmap (with the
+  ## real tailscale IP as the leading resolver) gets pushed to clients.
+  ##
+  ## Idempotent: a small state file caches the last-substituted IPs and we
+  ## skip the headscale restart when nothing has changed. Without this
+  ## check, every boot would unnecessarily disconnect every tailscale
+  ## client for ~5s.
+  systemd.services.headscale-substitute-resolver = lib.mkIf headscaleEnabled {
+    description = "Substitute box's tailscale IP into headscale resolver list and reload headscale";
+    after = [ "tailscaled-autoconnect.service" "headscale.service" ];
+    wants = [ "tailscaled-autoconnect.service" ];
+    requires = [ "headscale.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = false;
+    };
+    script = ''
+      set -euo pipefail
+
+      TS_IPV4=$(${pkgs.tailscale}/bin/tailscale ip -4 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+      TS_IPV6=$(${pkgs.tailscale}/bin/tailscale ip -6 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+
+      if [ -z "$TS_IPV4" ] && [ -z "$TS_IPV6" ]; then
+        echo "headscale-substitute-resolver: tailscaled has no IP yet, nothing to substitute"
+        exit 0
+      fi
+
+      CACHE=${headscaleResolverStatePath}
+      DESIRED="ipv4=$TS_IPV4 ipv6=$TS_IPV6"
+      CURRENT=""
+      if [ -r "$CACHE" ]; then
+        CURRENT=$(${pkgs.coreutils}/bin/cat "$CACHE")
+      fi
+
+      if [ "$DESIRED" = "$CURRENT" ]; then
+        echo "headscale-substitute-resolver: tailscale IPs unchanged ($DESIRED), no restart"
+        exit 0
+      fi
+
+      echo "headscale-substitute-resolver: substituting $DESIRED into runtime config"
+      ${substituteResolverPlaceholders} \
+        ${headscaleFullConfigFile} \
+        ${headscaleRuntimeConfigPath}
+      printf '%s' "$DESIRED" > "$CACHE"
+      ${pkgs.coreutils}/bin/chmod 0640 "$CACHE"
+
+      ## try-restart so we don't accidentally START headscale if it was
+      ## intentionally stopped. After this, the headscale-prepare-
+      ## runtime-config ExecStartPre will re-substitute on the new
+      ## start, picking up the same IPs.
+      ${pkgs.systemd}/bin/systemctl try-restart headscale.service
+    '';
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
@@ -602,6 +778,18 @@ in
       ProtectKernelModules = true;
       ProtectControlGroups = true;
       RestrictRealtime = true;
+      ## After the bridge comes up (tailscale0 has an address), nudge
+      ## the substitute-resolver oneshot so headscale's runtime config
+      ## reflects the current tailscale IP. The oneshot's cache check
+      ## makes this a no-op when the IP hasn't changed, so this is
+      ## cheap on routine restarts. Catches the rare case of a
+      ## tailnet reset that re-assigns the box a new IP.
+      ##
+      ## `+` prefix runs as root regardless of User=nobody. `--no-block`
+      ## so a slow oneshot can't stall the bridge start.
+      ExecStartPost = [
+        "+${pkgs.systemd}/bin/systemctl restart --no-block headscale-substitute-resolver.service"
+      ];
       ## tailscale0 may not exist yet on first startup if tailscaled
       ## is still establishing. dnsmasq exits on missing interface,
       ## but Restart=always brings it back; once tailscaled raises
