@@ -30,6 +30,12 @@ class AlertsModule extends LitElement {
     config: { type: Object },
     appliedConfig: { attribute: false },
     undeployedPaths: { attribute: false },
+    // URL sub-route from admin-app (e.g. '/alerts/configuration').
+    // Mirrors backups-module's pattern so a refresh on the Configuration
+    // tab restores the right tab; admin-app updates this when the URL
+    // changes and we sync it INTO activeTab via updated().
+    subRoute: { type: String },
+    activeTab: { state: true },
     _sources: { state: true },
     _history: { state: true },
     _loading: { state: true },
@@ -37,6 +43,11 @@ class AlertsModule extends LitElement {
     _testing: { state: true },
     _testResult: { state: true },
   };
+
+  // Sub-route names the Configuration tab uses. The Active tab uses
+  // the bare module URL with no sub-route so a fresh visit lands
+  // there by default.
+  static SUB_ROUTE_CONFIGURATION = 'configuration';
 
   static styles = css`
     :host { display: block; }
@@ -55,12 +66,25 @@ class AlertsModule extends LitElement {
       font-size: 12px;
       font-weight: 600;
       letter-spacing: 0.02em;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
-    .state-badge.firing {
+    /* Three severity styles. The .firing class is now the err-level
+       red (kept for legacy markup); .warn is the new yellow-amber
+       middle tier; .clear is green. The class assignment in the
+       template maps from state.severity. (Avoid backticks here — Lit
+       gotcha; closing the css template breaks the whole file.) */
+    .state-badge.firing,
+    .state-badge.err {
       background: var(--hf-err-soft, #fde7e7);
       color: var(--hf-err, #c62828);
     }
-    .state-badge.clear {
+    .state-badge.warn {
+      background: var(--hf-warn-soft, #fff7e0);
+      color: var(--hf-warn, #b35900);
+    }
+    .state-badge.clear,
+    .state-badge.ok {
       background: var(--hf-ok-soft, #e6f5e6);
       color: var(--hf-ok, #2e7d32);
     }
@@ -72,12 +96,150 @@ class AlertsModule extends LitElement {
       margin-bottom: 14px;
       background: var(--hf-surface, transparent);
     }
+    /* Collapsible Status-tab cards. The <details>/<summary> primitive
+       handles open-state and accessibility for free (Space/Enter
+       toggles, focus-visible outline). We restyle the summary as a
+       full-width header strip and replace the default disclosure
+       triangle with our own chevron so it sits beside the badge
+       cleanly. Cards are open-by-default only when firing (set by
+       the host on the <details> element); rule 10 still applies —
+       a closed card is not a hidden bug, the summary always shows
+       the badge so OK/FIRING is visible without expanding. */
+    details.source-row > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    details.source-row > summary::-webkit-details-marker { display: none; }
+    details.source-row > summary > .source-header {
+      margin-bottom: 0;
+    }
+    details.source-row > summary .summary-chevron {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      transition: transform 0.15s;
+      color: var(--hf-text-muted);
+    }
+    details.source-row[open] > summary .summary-chevron {
+      transform: rotate(90deg);
+    }
+    details.source-row > .source-body {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hf-border-2);
+    }
+
+    /* Range-bar visualization for scalar sources. Shows the source's
+       peak value as a fill from left, with a vertical threshold mark
+       at the threshold position. Fill turns red when firing, green
+       otherwise. tls-cert reverses the direction (lower = worse).
+       Sources without a clean scalar threshold (binary sources;
+       per-class temperature sources) skip the meter. */
+    .meter-row {
+      margin-top: 10px;
+    }
+    .meter-track {
+      position: relative;
+      width: 100%;
+      height: 10px;
+      background: var(--hf-surface-2);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      transition: width 0.2s;
+    }
+    .meter-fill.clear,
+    .meter-fill.ok { background: var(--hf-ok); }
+    .meter-fill.warn { background: var(--hf-warn); }
+    .meter-fill.err,
+    .meter-fill.firing { background: var(--hf-err); }
+    /* Two markers per bar — warn (yellow) and err (red) — mirroring
+       the Hardware page's two-tier visual. .meter-threshold without
+       a variant class is the legacy single-marker style (kept for
+       sources we haven't tiered yet). */
+    .meter-threshold {
+      position: absolute;
+      top: -2px;
+      bottom: -2px;
+      width: 2px;
+      background: var(--hf-text-muted);
+      border-radius: 1px;
+    }
+    .meter-threshold.warn { background: var(--hf-warn); }
+    .meter-threshold.err  { background: var(--hf-err); }
+
+    /* Per-item bar row: stacked label-track-no-numbers shape so the
+       Status-tab card can list several drives / mounts / sensors
+       compactly. */
+    .item-bars {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 12px;
+      row-gap: 4px;
+      align-items: center;
+    }
+    .item-bar-name {
+      font-size: 12px;
+      color: var(--hf-text);
+      font-family: var(--hf-font-mono, monospace);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .item-bar-name .class-chip {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 6px;
+      border-radius: 4px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text-muted);
+      font-size: 11px;
+      font-family: inherit;
+    }
+    .item-bar-value {
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: var(--hf-text);
+    }
+    .item-bar-value.warn { color: var(--hf-warn); font-weight: 600; }
+    .item-bar-value.err  { color: var(--hf-err);  font-weight: 700; }
+    .item-bar .meter-track {
+      grid-column: 1 / -1;
+    }
+    .meter-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--hf-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .meter-labels strong {
+      color: var(--hf-text);
+      font-weight: 600;
+    }
+    .meter-no-reading {
+      font-style: italic;
+    }
     .source-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       gap: 12px;
       margin-bottom: 14px;
+      /* On narrow widths the badge drops to its own row below the
+         title rather than fighting the title for space. With the
+         badge pinned to flex-shrink:0 (above), no-wrap would have
+         pushed it past the row edge and clipped. */
+      flex-wrap: wrap;
     }
     .source-title {
       font-size: 15px;
@@ -311,6 +473,127 @@ class AlertsModule extends LitElement {
     @media (max-width: 600px) {
       .disabled-banner { flex-direction: column; align-items: stretch; }
     }
+
+    /* All-clear banner shown on the Status tab when the engine is
+       enabled but nothing is firing. Same left-border treatment as
+       the other notice boxes (network-module / backups-module
+       canonical pattern), but accent color = --hf-ok. */
+    .ok-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+      padding: 14px 18px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-ok);
+      border-radius: 8px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .ok-banner-icon {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      color: var(--hf-ok);
+    }
+    .ok-banner-text {
+      flex: 1;
+    }
+    .ok-banner-text strong {
+      display: block;
+      color: var(--hf-text);
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+    /* Firing summary on the Status tab — symmetric to .ok-banner but
+       in --hf-err. Shown when engine is on and at least one source
+       is firing; the per-source cards below carry the detail. */
+    .firing-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+      padding: 14px 18px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-err);
+      border-radius: 8px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .firing-banner-icon {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      color: var(--hf-err);
+    }
+    .firing-banner-text { flex: 1; }
+    .firing-banner-text strong {
+      display: block;
+      color: var(--hf-text);
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+
+    /* Tabs. Sticky-bar variant copied from backups-module so the
+       Alerts page reads consistently with Backups (the other multi-
+       tab page in the admin shell). See backups-module.js for the
+       rationale behind the negative-top + matching-padding offset:
+       admin-app's .content-area gutter pushes the tab strip down
+       and the sticky bar must reach back to the scrollport edge. */
+    .tabs {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      gap: 8px;
+      margin-top: -24px;
+      padding-top: 24px;
+      margin-bottom: 24px;
+      background: var(--hf-bg);
+      border-bottom: 2px solid var(--hf-border);
+    }
+    .tab {
+      padding: 12px 24px;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--hf-text-muted);
+      transition: color 0.2s, border-color 0.2s;
+      margin-bottom: -2px;
+      font-family: inherit;
+    }
+    .tab:hover { color: var(--hf-text); }
+    .tab.active {
+      color: var(--hf-accent);
+      border-bottom-color: var(--hf-accent);
+    }
+    /* Fixed circle, no horizontal padding — matches the top-bar
+       alerts-bell-badge shape so the two count chips read as the
+       same element. min-width + padding gave a pill stretch on
+       two-digit / "9+" values; this stays round. */
+    .tab-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      margin-left: 8px;
+      border-radius: 50%;
+      background: var(--hf-err, #c62828);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      box-sizing: content-box;
+    }
+    @media (max-width: 600px) {
+      .tab { padding: 10px 14px; font-size: 14px; }
+    }
   `;
 
   constructor() {
@@ -318,12 +601,45 @@ class AlertsModule extends LitElement {
     this.config = {};
     this.appliedConfig = null;
     this.undeployedPaths = new Set();
+    this.subRoute = '';
+    this.activeTab = 'status';
     this._sources = [];
     this._history = [];
     this._loading = true;
     this._ntfyInfo = null;
     this._testing = false;
     this._testResult = null; // { ok: bool, message: str }
+  }
+
+  updated(changedProps) {
+    // Sync admin-app's URL sub-route INTO our activeTab. Initial mount
+    // and back/forward navigation both flow through this. Bare URL
+    // (subRoute === '') maps to the Active tab; everything else maps
+    // by name. Backups uses the same pattern.
+    if (changedProps.has('subRoute')) {
+      const target = this.subRoute === AlertsModule.SUB_ROUTE_CONFIGURATION
+        ? 'configuration'
+        : 'status';
+      if (target !== this.activeTab) {
+        this._setTab(target, { silent: true });
+      }
+    }
+  }
+
+  _setTab(tab, { silent = false } = {}) {
+    this.activeTab = tab;
+    if (!silent) {
+      // Emit so admin-app updates window.location.hash. `silent` is
+      // the URL→state direction (avoid the feedback round-trip).
+      const subRoute = tab === 'configuration'
+        ? AlertsModule.SUB_ROUTE_CONFIGURATION
+        : '';
+      this.dispatchEvent(new CustomEvent('sub-route-change', {
+        detail: { subRoute },
+        bubbles: true,
+        composed: true,
+      }));
+    }
   }
 
   async _sendTestPush() {
@@ -479,32 +795,236 @@ class AlertsModule extends LitElement {
     return new Date(ts * 1000).toLocaleString();
   }
 
-  _renderSourceRow(src) {
-    const cfg = (this.config?.alerts?.sources && this.config.alerts.sources[src.id]) || {};
+  // Status-tab card — title + live state badge always visible
+  // (summary), with details (message + per-item bars) collapsed by
+  // default unless the source is firing. Click summary to toggle.
+  // tuning lives on the Configuration tab.
+  _renderSourceStateRow(src) {
     const state = src.state || {};
-    const firing = state.firing === true;
+    const severity = state.severity || (state.firing ? 'warn' : 'clear');
+    const firing = severity !== 'clear';
+    const cfg = (this.config?.alerts?.sources && this.config.alerts.sources[src.id]) || {};
+    const peakSuffix = this._peakSuffix(src);
+    const readings = state.readings || null;
+    const meter = readings ? null : this._meterForSource(src, cfg);
+    const badgeLabel = severity === 'err' ? 'ERR'
+                     : severity === 'warn' ? 'WARN'
+                     : 'OK';
+    return html`
+      <details class="source-row" ?open=${firing}>
+        <summary>
+          <div class="source-header">
+            <svg class="summary-chevron" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" stroke-linejoin="round"
+                 aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            <div style="flex:1; min-width:0">
+              <div class="source-title">${src.label}</div>
+            </div>
+            <span class="state-badge ${severity}">
+              ${badgeLabel}${peakSuffix}
+            </span>
+          </div>
+        </summary>
+        <div class="source-body">
+          ${state.message
+            ? html`<div class="source-message">${state.message}</div>`
+            : html`<div class="hint">Waiting for the first engine tick — the source's status will appear here on the next poll.</div>`}
+          ${readings && readings.length
+            ? this._renderReadingsBars(readings, src)
+            : this._renderMeter(meter)}
+        </div>
+      </details>
+    `;
+  }
+
+  // Per-item bars from the source's `state.readings` list. Each
+  // reading has `name`, `value`, `warn`, `err`, `severity`, and
+  // optional `class` (for the per-class temperature sources). The
+  // track shows BOTH warn and err markers. Sources whose readings
+  // carry only a single threshold key still work — the missing
+  // marker just isn't drawn.
+  _renderReadingsBars(readings, src) {
+    const unit = this._unitForSource(src);
+    const maxAcross = readings.reduce((m, r) => {
+      const cand = Math.max(r.err || 0, r.warn || 0, r.value || 0);
+      return Math.max(m, cand);
+    }, 0);
+    // Round up to a nice round number for axis stability.
+    const max = Math.max(1, Math.ceil(maxAcross * 1.1));
+    return html`
+      <div class="item-bars">
+        ${readings.map((r) => {
+          const value = (r.value == null) ? null : Number(r.value);
+          const warn = r.warn;
+          const err = r.err;
+          const sev = r.severity || 'clear';
+          const fillPct = value == null ? 0 : Math.max(0, Math.min(100, (value / max) * 100));
+          const warnPct = warn == null ? null : Math.max(0, Math.min(100, (warn / max) * 100));
+          const errPct = err == null ? null : Math.max(0, Math.min(100, (err / max) * 100));
+          return html`
+            <div class="item-bar">
+              <div class="item-bar-name">
+                ${r.name}
+                ${r.class ? html`<span class="class-chip">${r.class}</span>` : ''}
+              </div>
+              <div class="item-bar-value ${sev}">
+                ${value == null ? '—' : Math.round(value) + unit}
+              </div>
+              <div class="meter-track">
+                ${value != null ? html`
+                  <div class="meter-fill ${sev}" style="width: ${fillPct}%"></div>
+                ` : ''}
+                ${warnPct != null ? html`
+                  <div class="meter-threshold warn"
+                       style="left: ${warnPct}%"
+                       title="warn ${warn}${unit}"></div>
+                ` : ''}
+                ${errPct != null ? html`
+                  <div class="meter-threshold err"
+                       style="left: ${errPct}%"
+                       title="err ${err}${unit}"></div>
+                ` : ''}
+              </div>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  _unitForSource(src) {
+    switch (src.id) {
+      case 'disk-temperature':
+      case 'sensor-temperature':
+        return '°C';
+      case 'disk-space':
+        return '%';
+      case 'tls-cert':
+        return 'd';
+      default:
+        return '';
+    }
+  }
+
+  // Human-readable suffix appended to the FIRING/OK pill, e.g.
+  // " — peak 46°C" for temperature sources. Returns empty string
+  // for sources where the bare badge is more informative.
+  _peakSuffix(src) {
+    const state = src.state || {};
+    if (state.peak_value == null) return '';
+    const v = state.peak_value;
+    switch (src.id) {
+      case 'disk-temperature':
+      case 'sensor-temperature':
+        return ' — peak ' + Math.round(v) + '°C';
+      case 'disk-space':
+        return ' — peak ' + Math.round(v) + '%';
+      case 'attacks':
+        return ' — ' + Math.round(v) + ' banned';
+      case 'tls-cert':
+        // value here is days-until-earliest-expiry (can be negative
+        // for expired). Bare days reads cleaner than "peak N".
+        if (v < 0) return ' — expired ' + Math.round(-v) + 'd ago';
+        return ' — ' + Math.round(v) + 'd left';
+      default:
+        return '';
+    }
+  }
+
+  // Compute a meter spec for sources where a scalar threshold visual
+  // is meaningful. Returns null to skip the meter for that source.
+  // - Per-class temperature sources (disk-temp / sensor-temp) skip the
+  //   meter because the threshold depends on which class hit the peak,
+  //   and exposing that requires structured per-class state the engine
+  //   doesn't write today. The message line carries the same info.
+  // - Binary sources (smart, services-down, backup-failures, wan-,
+  //   headscale-) skip the meter — they have no scalar threshold.
+  //
+  // The `current` field is null when the engine has not yet observed
+  // a value (typical on a fresh box for the first tick or two). The
+  // bar still renders so the user can see where the threshold sits;
+  // the labels swap to a "no reading yet" notice.
+  _meterForSource(src, cfg) {
+    const state = src.state || {};
+    const raw = state.peak_value;
+    const current = (raw == null || raw === '') ? null : raw;
+    switch (src.id) {
+      case 'disk-space': {
+        const thr = (cfg['threshold-percent'] !== undefined) ? cfg['threshold-percent'] : 90;
+        return { current, threshold: thr, max: 100, unit: '%', reverse: false };
+      }
+      case 'attacks': {
+        const thr = (cfg['threshold-bans'] !== undefined) ? cfg['threshold-bans'] : 5;
+        return { current, threshold: thr, max: Math.max(thr * 2, 10), unit: '', reverse: false };
+      }
+      case 'tls-cert': {
+        const warn = (cfg['warn-days'] !== undefined) ? cfg['warn-days'] : 14;
+        // Reverse direction: fire when remaining days < warn. Negative
+        // current values (expired) clamp to 0 for the fill width.
+        return {
+          current: current == null ? null : Math.max(0, current),
+          threshold: warn,
+          max: Math.max(warn * 3, 90),
+          unit: 'd',
+          reverse: true,
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+  _renderMeter(meter) {
+    if (!meter) return '';
+    const max = Math.max(meter.max, 1);
+    const thresholdPct = Math.max(0, Math.min(100, (meter.threshold / max) * 100));
+    const hasReading = meter.current != null;
+    const fillPct = hasReading
+      ? Math.max(0, Math.min(100, (meter.current / max) * 100))
+      : 0;
+    const firing = hasReading
+      ? (meter.reverse
+          ? meter.current < meter.threshold
+          : meter.current >= meter.threshold)
+      : false;
+    return html`
+      <div class="meter-row">
+        <div class="meter-track">
+          ${hasReading ? html`
+            <div class="meter-fill ${firing ? 'firing' : 'ok'}"
+                 style="width: ${fillPct}%"></div>
+          ` : ''}
+          <div class="meter-threshold"
+               style="left: ${thresholdPct}%"
+               title="threshold"></div>
+        </div>
+        <div class="meter-labels">
+          ${hasReading
+            ? html`<span><strong>${Math.round(meter.current)}${meter.unit}</strong> now</span>`
+            : html`<span class="meter-no-reading">no reading yet</span>`}
+          <span>threshold ${meter.threshold}${meter.unit}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Configuration-tab card — enable toggle + source-specific fields.
+  // No live state badge; live state lives on the Active tab.
+  _renderSourceConfigRow(src) {
+    const cfg = (this.config?.alerts?.sources && this.config.alerts.sources[src.id]) || {};
     // Precompute the dotted paths used inside the template so we
     // never construct a backtick string literal there (Lit gotcha).
     const cfgPathPrefix = 'sources.' + src.id + '.';
     const tagPathPrefix = 'alerts.sources.' + src.id + '.';
-
     const enableVal = cfg.enable !== false; // defaults to true for known sources
     const cfgHysteresis = (cfg['hysteresis-c'] !== undefined) ? cfg['hysteresis-c'] : 4;
-
-    const peakSuffix = (firing && state.peak_value != null)
-      ? ' — peak ' + Math.round(state.peak_value) + '°C'
-      : '';
-
     return html`
       <div class="source-row">
         <div class="source-header">
-          <div>
-            <div class="source-title">${src.label}</div>
-            ${state.message ? html`<div class="source-message">${state.message}</div>` : ''}
-          </div>
-          <span class="state-badge ${firing ? 'firing' : 'clear'}">
-            ${firing ? 'FIRING' : 'OK'}${peakSuffix}
-          </span>
+          <div class="source-title">${src.label}</div>
         </div>
 
         <form-field
@@ -523,7 +1043,8 @@ class AlertsModule extends LitElement {
 
   // Per-source-id dispatcher for the source-specific config fields.
   // Sources with no config beyond enable+channels (smart, services-
-  // down) return null and just render the enable toggle above.
+  // down, backup-failures) return null and just render the enable
+  // toggle above.
   _renderSourceFields(src, cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis) {
     switch (src.id) {
       case 'disk-temperature':
@@ -532,13 +1053,125 @@ class AlertsModule extends LitElement {
         return this._renderDiskSpaceFields(cfg, cfgPathPrefix, tagPathPrefix);
       case 'sensor-temperature':
         return this._renderSensorTempFields(cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis);
+      case 'attacks':
+        return this._renderAttacksFields(cfg, cfgPathPrefix, tagPathPrefix);
+      case 'tls-cert':
+        return this._renderTlsCertFields(cfg, cfgPathPrefix, tagPathPrefix);
+      case 'wan-accessibility':
+        return this._renderWanAccessibilityFields(cfg, cfgPathPrefix, tagPathPrefix);
       case 'smart':
       case 'services-down':
+      case 'backup-failures':
+      case 'headscale-accessibility':
         // No further config for v1 — just enable + (implicit) channels.
         return '';
       default:
         return '';
     }
+  }
+
+  _renderWanAccessibilityFields(cfg, cfgPathPrefix, tagPathPrefix) {
+    const defaultIp = 'https://ipinfo.io/ip';
+    const defaultDoh = 'https://cloudflare-dns.com/dns-query';
+    const ip = (cfg['public-ip-url'] !== undefined)
+      ? cfg['public-ip-url'] : defaultIp;
+    const doh = (cfg['doh-url'] !== undefined)
+      ? cfg['doh-url'] : defaultDoh;
+    const pIp = cfgPathPrefix + 'public-ip-url';
+    const pDoh = cfgPathPrefix + 'doh-url';
+    const tIp = tagPathPrefix + 'public-ip-url';
+    const tDoh = tagPathPrefix + 'doh-url';
+    return html`
+      <div class="hint" style="margin: 0 0 10px 0">
+        Cross-checks your box's egress IP (from ipinfo) against the
+        public DNS A record for your domain (via DoH, bypassing
+        local unbound). Fires on a mismatch — the DDNS-misroute
+        case. Auto-skips when nothing is WAN-public. Doesn't catch
+        firewall / ISP blocks (those produce other symptoms
+        services-down picks up).
+      </div>
+      <div class="field-grid">
+        <form-field
+          label="Public IP endpoint"
+          type="text"
+          .value=${ip}
+          help="Returns the box's egress IP as plain text. Default: ipinfo.io."
+          ?undeployed=${this._undeployed(tIp)}
+          @field-change=${(e) => this._setField(pIp, e.detail.value || defaultIp)}
+        ></form-field>
+        <form-field
+          label="DoH endpoint"
+          type="text"
+          .value=${doh}
+          help="DNS-over-HTTPS JSON endpoint. Default: cloudflare-dns.com."
+          ?undeployed=${this._undeployed(tDoh)}
+          @field-change=${(e) => this._setField(pDoh, e.detail.value || defaultDoh)}
+        ></form-field>
+      </div>
+    `;
+  }
+
+  _renderAttacksFields(cfg, cfgPathPrefix, tagPathPrefix) {
+    const threshold = (cfg['threshold-bans'] !== undefined)
+      ? cfg['threshold-bans'] : 5;
+    const hysteresis = (cfg['hysteresis-bans'] !== undefined)
+      ? cfg['hysteresis-bans'] : 2;
+    const pThr = cfgPathPrefix + 'threshold-bans';
+    const pHys = cfgPathPrefix + 'hysteresis-bans';
+    const tThr = tagPathPrefix + 'threshold-bans';
+    const tHys = tagPathPrefix + 'hysteresis-bans';
+    return html`
+      <div class="hint" style="margin: 0 0 10px 0">
+        Reads fail2ban currently-banned counts across all jails (same
+        data shown on the Abuse Blocking page). Fires when the total
+        crosses the threshold — filtering out the constant background
+        of single-IP scanner bans every internet-facing host sees.
+      </div>
+      <div class="field-grid">
+        <form-field
+          label="Threshold (banned IPs)"
+          type="number"
+          .value=${threshold}
+          help="Fire when this many IPs are currently banned across all jails."
+          ?undeployed=${this._undeployed(tThr)}
+          @field-change=${(e) => this._setField(pThr, parseInt(e.detail.value, 10) || 5)}
+        ></form-field>
+        <form-field
+          label="Hysteresis (bans)"
+          type="number"
+          .value=${hysteresis}
+          help="Number of bans below threshold before clearing — prevents flap."
+          ?undeployed=${this._undeployed(tHys)}
+          @field-change=${(e) => this._setField(pHys, parseInt(e.detail.value, 10) || 2)}
+        ></form-field>
+      </div>
+    `;
+  }
+
+  _renderTlsCertFields(cfg, cfgPathPrefix, tagPathPrefix) {
+    const warnDays = (cfg['warn-days'] !== undefined)
+      ? cfg['warn-days'] : 14;
+    const pWarn = cfgPathPrefix + 'warn-days';
+    const tWarn = tagPathPrefix + 'warn-days';
+    return html`
+      <div class="hint" style="margin: 0 0 10px 0">
+        Walks Caddy's certificate storage and reads each cert's
+        expiry. Fires when any cert is expiring within the warn
+        window, or already expired. Lets-Encrypt issues 90-day
+        certs and Caddy renews at 30 days remaining; 14 leaves 16
+        days of background retries to recover before alerting.
+      </div>
+      <div class="field-grid">
+        <form-field
+          label="Warn days before expiry"
+          type="number"
+          .value=${warnDays}
+          help="Alert when any cert is closer to expiry than this many days."
+          ?undeployed=${this._undeployed(tWarn)}
+          @field-change=${(e) => this._setField(pWarn, parseInt(e.detail.value, 10) || 14)}
+        ></form-field>
+      </div>
+    `;
   }
 
   _renderDiskSpaceFields(cfg, cfgPathPrefix, tagPathPrefix) {
@@ -798,108 +1431,221 @@ class AlertsModule extends LitElement {
     `;
   }
 
-  render() {
+  _renderStatusTab() {
+    const alerts = this.config?.alerts || {};
+    const masterOff = alerts.enable !== true;
+    const sources = this._sources || [];
+    let warnCount = 0;
+    let errCount = 0;
+    for (const s of sources) {
+      const sev = s.state && s.state.severity;
+      if (sev === 'err') errCount++;
+      else if (sev === 'warn') warnCount++;
+    }
+    const firingCount = warnCount + errCount;
+    const sourcesLoaded = sources.length > 0;
+    // Three top-banner states: engine-off, all-clear, firing.
+    // engine-off takes priority — the rest of the page is irrelevant
+    // until the engine is on.
+    const showAllClear =
+      !masterOff && sourcesLoaded && firingCount === 0;
+    const showFiring =
+      !masterOff && firingCount > 0;
+    return html`
+      ${masterOff ? html`
+        <div class="disabled-banner" role="status">
+          <svg class="disabled-banner-icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div class="disabled-banner-text">
+            <strong>Alerts engine is off.</strong>
+            Nothing fires until the engine is enabled — no sources are
+            evaluated and no notifications are sent. Configure thresholds
+            on the Configuration tab.
+          </div>
+          <button class="btn btn-action btn-sm"
+                  @click=${() => this._setField('enable', true)}>
+            Enable now
+          </button>
+        </div>
+      ` : ''}
+
+      ${showAllClear ? html`
+        <div class="ok-banner" role="status">
+          <svg class="ok-banner-icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+          <div class="ok-banner-text">
+            <strong>All clear.</strong>
+            ${sources.length} source${sources.length === 1 ? '' : 's'}
+            reporting OK.
+          </div>
+        </div>
+      ` : ''}
+
+      ${showFiring ? html`
+        <div class="firing-banner" role="alert">
+          <svg class="firing-banner-icon" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div class="firing-banner-text">
+            <strong>
+              ${firingCount} source${firingCount === 1 ? '' : 's'} firing
+              ${errCount > 0 && warnCount > 0
+                ? html` (${errCount} err, ${warnCount} warn).`
+                : errCount > 0
+                  ? html` at ERR.`
+                  : html` at WARN.`}
+            </strong>
+            Detail in the source cards below; full history at the
+            bottom of the page.
+          </div>
+        </div>
+      ` : ''}
+
+      <config-section title="Sources"
+        description="Current state of each source. FIRING means an alert is currently open; OK means under threshold.">
+        ${this._sources.length === 0
+          ? html`<div class="empty">No sources loaded yet.</div>`
+          : this._sources.map((s) => this._renderSourceStateRow(s))}
+      </config-section>
+
+      <config-section title="History"
+        description="Past alert events, newest first. Empty until the engine has fired.">
+        ${this._history.length === 0
+          ? html`<div class="empty">No alerts in history.</div>`
+          : html`
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Severity</th>
+                  <th>Opened</th>
+                  <th>Closed</th>
+                  <th>Peak</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${this._history.map((ev) => {
+                  const sev = ev.severity || 'warn';
+                  const sevLabel = sev === 'err' ? 'ERR'
+                                  : sev === 'warn' ? 'WARN'
+                                  : sev.toUpperCase();
+                  return html`
+                  <tr>
+                    <td>${this._friendlySourceId(ev.source_id)}</td>
+                    <td><span class="state-badge ${sev}">${sevLabel}</span></td>
+                    <td>${this._fmtTime(ev.started_ts)}</td>
+                    <td>${ev.ended_ts
+                      ? this._fmtTime(ev.ended_ts)
+                      : html`<span class="state-badge ${sev}">open</span>`}</td>
+                    <td>${ev.peak_value != null ? Math.round(ev.peak_value) : '—'}</td>
+                    <td class="history-msg">${ev.close_message || ev.open_message || ''}</td>
+                  </tr>
+                  `;
+                })}
+              </tbody>
+            </table>
+          `}
+      </config-section>
+    `;
+  }
+
+  _renderConfigTab() {
     const alerts = this.config?.alerts || {};
     const ntfy = (alerts.channels && alerts.channels.ntfy) || {};
-    const masterOff = alerts.enable !== true;
+    return html`
+      <config-section title="Alerts"
+        description="Get notified when disk temperatures or other system conditions cross a threshold.">
+
+        <form-field
+          label="Enable alerts engine"
+          type="boolean"
+          .value=${alerts.enable === true}
+          help="Master toggle. When off, no sources are evaluated and no notifications are sent."
+          ?undeployed=${this._undeployed('alerts.enable')}
+          @field-change=${(e) => this._setField('enable', e.detail.value)}
+        ></form-field>
+
+        <form-field
+          label="Poll interval"
+          type="text"
+          .value=${alerts.interval || '1min'}
+          placeholder="1min"
+          help="systemd OnUnitInactiveSec syntax. Examples: 30s, 1min, 5min, 1h."
+          ?undeployed=${this._undeployed('alerts.interval')}
+          @field-change=${(e) => this._setField('interval', e.detail.value)}
+        ></form-field>
+      </config-section>
+
+      <config-section title="Channels"
+        description="Where alerts get sent. ntfy pushes to a paired phone running the ntfy app.">
+        <form-field
+          label="ntfy push"
+          type="boolean"
+          .value=${ntfy.enable === true}
+          help="Enables the self-hosted ntfy server and dispatches alert events to it."
+          ?undeployed=${this._undeployed('alerts.channels.ntfy.enable')}
+          @field-change=${(e) => this._setField('channels.ntfy.enable', e.detail.value)}
+        ></form-field>
+        ${ntfy.enable === true ? this._renderNtfyPairing() : ''}
+      </config-section>
+
+      <config-section title="Sources"
+        description="Each source is independently configurable. Disabled sources are skipped on every tick.">
+        ${this._sources.length === 0
+          ? html`<div class="empty">No sources loaded yet.</div>`
+          : this._sources.map((s) => this._renderSourceConfigRow(s))}
+      </config-section>
+    `;
+  }
+
+  render() {
+    // Count of currently-non-clear sources by severity. The Status
+    // tab's chip shows the total; the firing-banner breaks it down.
+    let warnCount = 0;
+    let errCount = 0;
+    for (const s of (this._sources || [])) {
+      const sev = s.state && s.state.severity;
+      if (sev === 'err') errCount++;
+      else if (sev === 'warn') warnCount++;
+    }
+    const firingCount = warnCount + errCount;
     return html`
       <div class="module-container">
-        ${masterOff ? html`
-          <div class="disabled-banner" role="status">
-            <svg class="disabled-banner-icon" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-            <div class="disabled-banner-text">
-              <strong>Alerts engine is off.</strong>
-              Changes on this page are saved, but nothing fires until the
-              engine is enabled — no sources are evaluated and no
-              notifications are sent.
-            </div>
-            <button class="btn btn-action btn-sm"
-                    @click=${() => this._setField('enable', true)}>
-              Enable now
-            </button>
-          </div>
-        ` : ''}
+        <div class="tabs" role="tablist">
+          <button
+            class="tab ${this.activeTab === 'status' ? 'active' : ''}"
+            role="tab"
+            aria-selected=${this.activeTab === 'status' ? 'true' : 'false'}
+            @click=${() => this._setTab('status')}
+          >
+            Status
+            ${firingCount > 0 ? html`<span class="tab-count">${firingCount > 9 ? '9+' : firingCount}</span>` : ''}
+          </button>
+          <button
+            class="tab ${this.activeTab === 'configuration' ? 'active' : ''}"
+            role="tab"
+            aria-selected=${this.activeTab === 'configuration' ? 'true' : 'false'}
+            @click=${() => this._setTab('configuration')}
+          >Configuration</button>
+        </div>
 
-        <config-section title="Alerts"
-          description="Get notified when disk temperatures or other system conditions cross a threshold.">
-
-          <form-field
-            label="Enable alerts engine"
-            type="boolean"
-            .value=${alerts.enable === true}
-            help="Master toggle. When off, no sources are evaluated and no notifications are sent."
-            ?undeployed=${this._undeployed('alerts.enable')}
-            @field-change=${(e) => this._setField('enable', e.detail.value)}
-          ></form-field>
-
-          <form-field
-            label="Poll interval"
-            type="text"
-            .value=${alerts.interval || '1min'}
-            placeholder="1min"
-            help="systemd OnUnitInactiveSec syntax. Examples: 30s, 1min, 5min, 1h."
-            ?undeployed=${this._undeployed('alerts.interval')}
-            @field-change=${(e) => this._setField('interval', e.detail.value)}
-          ></form-field>
-        </config-section>
-
-        <config-section title="Channels"
-          description="Where alerts get sent. ntfy pushes to a paired phone running the ntfy app.">
-          <form-field
-            label="ntfy push"
-            type="boolean"
-            .value=${ntfy.enable === true}
-            help="Enables the self-hosted ntfy server and dispatches alert events to it."
-            ?undeployed=${this._undeployed('alerts.channels.ntfy.enable')}
-            @field-change=${(e) => this._setField('channels.ntfy.enable', e.detail.value)}
-          ></form-field>
-          ${ntfy.enable === true ? this._renderNtfyPairing() : ''}
-        </config-section>
-
-        <config-section title="Sources"
-          description="Each source is independently configurable. Disabled sources are skipped on every tick.">
-          ${this._sources.length === 0
-            ? html`<div class="empty">No sources loaded yet.</div>`
-            : this._sources.map((s) => this._renderSourceRow(s))}
-        </config-section>
-
-        <config-section title="History"
-          description="Past alert events, newest first. Empty until the engine has fired.">
-          ${this._history.length === 0
-            ? html`<div class="empty">No alerts in history.</div>`
-            : html`
-              <table class="history-table">
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Opened</th>
-                    <th>Closed</th>
-                    <th>Peak</th>
-                    <th>Message</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${this._history.map((ev) => html`
-                    <tr>
-                      <td>${this._friendlySourceId(ev.source_id)}</td>
-                      <td>${this._fmtTime(ev.started_ts)}</td>
-                      <td>${ev.ended_ts
-                        ? this._fmtTime(ev.ended_ts)
-                        : html`<span class="state-badge firing">open</span>`}</td>
-                      <td>${ev.peak_value != null ? Math.round(ev.peak_value) : '—'}</td>
-                      <td class="history-msg">${ev.close_message || ev.open_message || ''}</td>
-                    </tr>
-                  `)}
-                </tbody>
-              </table>
-            `}
-        </config-section>
+        ${this.activeTab === 'configuration'
+          ? this._renderConfigTab()
+          : this._renderStatusTab()}
       </div>
     `;
   }

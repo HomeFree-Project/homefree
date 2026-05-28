@@ -25,6 +25,7 @@ state. Same split-role pattern the dashboard / drive-temp stores
 already use.
 """
 
+import json
 import logging
 import sqlite3
 import time
@@ -34,6 +35,14 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/var/lib/homefree-alerts/state.db"
+
+# Severity ladder used by the engine. Stored in alert_state.severity
+# and alert_events.severity (TEXT columns). The integer ordering is
+# also exposed so transition logic can compare severities directly.
+SEVERITY_CLEAR = "clear"
+SEVERITY_WARN = "warn"
+SEVERITY_ERR = "err"
+SEVERITY_RANK = {SEVERITY_CLEAR: 0, SEVERITY_WARN: 1, SEVERITY_ERR: 2}
 
 
 class AlertStateStore:
@@ -85,6 +94,38 @@ class AlertStateStore:
                 "CREATE INDEX IF NOT EXISTS idx_alert_events_started "
                 "ON alert_events(started_ts DESC)"
             )
+            # ── Additive columns for the severity-tier + per-item-readings
+            # extension (rule 11: no destructive migrations). On a fresh
+            # DB the CREATE TABLE above won't include them yet; on an
+            # existing DB they're added via ALTER TABLE. Both paths
+            # converge on the same final shape.
+            self._add_column_if_missing(
+                conn, "alert_state", "severity",
+                "TEXT NOT NULL DEFAULT 'clear'",
+            )
+            # readings is a JSON-encoded list of per-item dicts the
+            # source observed this tick. Schema-less because the
+            # shape varies per source (drives carry drive_class,
+            # filesystems carry mountpoint, sensors carry kind).
+            self._add_column_if_missing(
+                conn, "alert_state", "readings", "TEXT",
+            )
+            self._add_column_if_missing(
+                conn, "alert_events", "severity",
+                "TEXT NOT NULL DEFAULT 'warn'",
+            )
+
+    @staticmethod
+    def _add_column_if_missing(
+        conn: sqlite3.Connection, table: str, column: str, decl: str,
+    ) -> None:
+        existing = {
+            row[1] for row in conn.execute(
+                f"PRAGMA table_info({table})"
+            ).fetchall()
+        }
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # --- state side (per-source current status) -------------------------
 
@@ -94,7 +135,8 @@ class AlertStateStore:
         try:
             with self._connect() as conn:
                 row = conn.execute(
-                    "SELECT firing, started_ts, peak_value, message, updated_ts "
+                    "SELECT firing, started_ts, peak_value, message, "
+                    "updated_ts, severity, readings "
                     "FROM alert_state WHERE source_id = ?",
                     (source_id,),
                 ).fetchone()
@@ -103,13 +145,7 @@ class AlertStateStore:
             return None
         if not row:
             return None
-        return {
-            "firing": bool(row[0]),
-            "started_ts": row[1],
-            "peak_value": row[2],
-            "message": row[3],
-            "updated_ts": row[4],
-        }
+        return _state_row_to_dict(row)
 
     def all_states(self) -> Dict[str, Dict[str, Any]]:
         if not Path(self.db_path).exists():
@@ -118,20 +154,16 @@ class AlertStateStore:
             with self._connect() as conn:
                 rows = conn.execute(
                     "SELECT source_id, firing, started_ts, peak_value, "
-                    "message, updated_ts FROM alert_state"
+                    "message, updated_ts, severity, readings "
+                    "FROM alert_state"
                 ).fetchall()
         except sqlite3.Error as e:
             logger.warning("alert_state all_states read failed: %s", e)
             return {}
         out: Dict[str, Dict[str, Any]] = {}
-        for source_id, firing, started_ts, peak_value, message, updated_ts in rows:
-            out[source_id] = {
-                "firing": bool(firing),
-                "started_ts": started_ts,
-                "peak_value": peak_value,
-                "message": message,
-                "updated_ts": updated_ts,
-            }
+        for row in rows:
+            source_id = row[0]
+            out[source_id] = _state_row_to_dict(row[1:])
         return out
 
     def set_state(
@@ -141,30 +173,63 @@ class AlertStateStore:
         started_ts: Optional[int],
         peak_value: Optional[float],
         message: str,
+        severity: str = SEVERITY_CLEAR,
+        readings: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
+        """Write the per-source state row. `severity` and `readings`
+        are the new (post-tier-split) shape; `firing` is mirrored from
+        severity for compatibility but should be considered derived."""
         now = int(time.time())
+        readings_json = json.dumps(readings) if readings is not None else None
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO alert_state "
-                "(source_id, firing, started_ts, peak_value, message, updated_ts) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (source_id, 1 if firing else 0, started_ts, peak_value, message, now),
+                "(source_id, firing, started_ts, peak_value, message, "
+                "updated_ts, severity, readings) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    source_id, 1 if firing else 0, started_ts, peak_value,
+                    message, now, severity, readings_json,
+                ),
             )
 
     # --- event log (open/close, append/amend) ---------------------------
 
     def open_event(
-        self, source_id: str, started_ts: int, value: float, message: str
+        self,
+        source_id: str,
+        started_ts: int,
+        value: float,
+        message: str,
+        severity: str = SEVERITY_WARN,
     ) -> int:
-        """Append a new open event; return its id."""
+        """Append a new open event; return its id. `severity` captures
+        the level at which the alarm OPENED — a later escalation from
+        warn → err is reflected by `update_severity` rather than by
+        appending a second event row."""
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO alert_events "
-                "(source_id, started_ts, ended_ts, peak_value, open_message) "
-                "VALUES (?, ?, NULL, ?, ?)",
-                (source_id, started_ts, value, message),
+                "(source_id, started_ts, ended_ts, peak_value, open_message, severity) "
+                "VALUES (?, ?, NULL, ?, ?, ?)",
+                (source_id, started_ts, value, message, severity),
             )
             return int(cur.lastrowid)
+
+    def update_severity(self, source_id: str, severity: str) -> None:
+        """Bump the open event's severity column. Used on warn → err
+        escalation so the history row's worst-observed severity stays
+        in sync with the engine's high-water mark."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE alert_events SET severity = ? "
+                "WHERE source_id = ? AND ended_ts IS NULL "
+                "  AND CASE severity "
+                "        WHEN 'err' THEN 2 WHEN 'warn' THEN 1 ELSE 0 END "
+                "    < CASE ? "
+                "        WHEN 'err' THEN 2 WHEN 'warn' THEN 1 ELSE 0 END",
+                (severity, source_id, severity),
+            )
 
     def update_peak(self, source_id: str, value: float) -> None:
         """Bump the peak_value on the open (ended_ts IS NULL) event for
@@ -204,7 +269,7 @@ class AlertStateStore:
             with self._connect() as conn:
                 rows = conn.execute(
                     "SELECT id, source_id, started_ts, ended_ts, peak_value, "
-                    "open_message, close_message FROM alert_events "
+                    "open_message, close_message, severity FROM alert_events "
                     "ORDER BY started_ts DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 ).fetchall()
@@ -221,5 +286,27 @@ class AlertStateStore:
                 "peak_value": row[4],
                 "open_message": row[5],
                 "close_message": row[6],
+                "severity": row[7] or "warn",
             })
         return out
+
+
+def _state_row_to_dict(row: tuple) -> Dict[str, Any]:
+    """Convert a (firing, started_ts, peak_value, message, updated_ts,
+    severity, readings) row tuple to the API-shaped dict. Centralises
+    the readings JSON-decode + severity defaulting for both
+    `get_state` and `all_states`."""
+    firing, started_ts, peak_value, message, updated_ts, severity, readings_json = row
+    try:
+        readings = json.loads(readings_json) if readings_json else None
+    except Exception:
+        readings = None
+    return {
+        "firing": bool(firing),
+        "started_ts": started_ts,
+        "peak_value": peak_value,
+        "message": message,
+        "updated_ts": updated_ts,
+        "severity": severity or SEVERITY_CLEAR,
+        "readings": readings,
+    }

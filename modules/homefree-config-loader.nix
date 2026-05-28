@@ -350,26 +350,49 @@ in
           hysteresis-c  = diskTemp.hysteresis-c or 4;
           channels      = diskTemp.channels or [ "ntfy" ];
           thresholds = {
-            hdd-c  = dtThr.hdd-c  or 45;
-            ssd-c  = dtThr.ssd-c  or 60;
-            nvme-c = dtThr.nvme-c or 70;
+            ## Backwards compat (rule 11): a JSON pre-dating the
+            ## warn/err split still has `hdd-c` / `ssd-c` / `nvme-c`
+            ## single-tier keys. Treat them as warn values; err
+            ## defaults to warn + 5 in that case so an upgrading box
+            ## doesn't suddenly fire err alerts at the old warn
+            ## level. New keys win when present.
+            hdd-warn-c  = dtThr.hdd-warn-c  or dtThr.hdd-c  or 45;
+            hdd-err-c   = dtThr.hdd-err-c   or
+                          (if dtThr ? hdd-c then (dtThr.hdd-c + 5) else 50);
+            ssd-warn-c  = dtThr.ssd-warn-c  or dtThr.ssd-c  or 60;
+            ssd-err-c   = dtThr.ssd-err-c   or
+                          (if dtThr ? ssd-c then (dtThr.ssd-c + 10) else 70);
+            nvme-warn-c = dtThr.nvme-warn-c or dtThr.nvme-c or 70;
+            nvme-err-c  = dtThr.nvme-err-c  or
+                          (if dtThr ? nvme-c then (dtThr.nvme-c + 10) else 80);
           };
         };
         sources.disk-space = {
-          enable              = diskSpace.enable or true;
-          threshold-percent   = diskSpace.threshold-percent or 90;
-          hysteresis-percent  = diskSpace.hysteresis-percent or 3;
-          fs-types            = diskSpace.fs-types or [
+          enable                 = diskSpace.enable or true;
+          ## Same backwards-compat treatment as disk-temperature:
+          ## old `threshold-percent` becomes warn; err defaults to
+          ## warn + 5.
+          threshold-warn-percent =
+            diskSpace.threshold-warn-percent or
+            diskSpace.threshold-percent or
+            90;
+          threshold-err-percent =
+            diskSpace.threshold-err-percent or
+            (if diskSpace ? threshold-percent
+              then (diskSpace.threshold-percent + 5)
+              else 95);
+          hysteresis-percent     = diskSpace.hysteresis-percent or 3;
+          fs-types               = diskSpace.fs-types or [
             "ext2" "ext3" "ext4" "xfs" "btrfs" "zfs" "f2fs" "jfs"
             "reiserfs" "ntfs" "ntfs3" "vfat" "exfat"
             "nfs" "nfs4" "cifs"
           ];
-          skip-mount-prefixes = diskSpace.skip-mount-prefixes or [
+          skip-mount-prefixes    = diskSpace.skip-mount-prefixes or [
             "/proc" "/sys" "/dev" "/run"
             "/var/lib/docker" "/var/lib/containers"
             "/boot"
           ];
-          channels            = diskSpace.channels or [ "ntfy" ];
+          channels               = diskSpace.channels or [ "ntfy" ];
         };
         sources.smart = {
           enable   = smart.enable or true;
@@ -380,15 +403,55 @@ in
           hysteresis-c = sensorTemp.hysteresis-c or 4;
           channels     = sensorTemp.channels or [ "ntfy" ];
           thresholds = {
-            cpu-c  = stThr.cpu-c  or 80;
-            nvme-c = stThr.nvme-c or 70;
-            gpu-c  = stThr.gpu-c  or 80;
+            ## Same backwards-compat shape as disk-temperature:
+            ## an old `cpu-c` / `nvme-c` / `gpu-c` key becomes warn;
+            ## err defaults to warn + 5/10.
+            cpu-warn-c  = stThr.cpu-warn-c  or stThr.cpu-c  or 75;
+            cpu-err-c   = stThr.cpu-err-c   or
+                          (if stThr ? cpu-c then (stThr.cpu-c + 5) else 85);
+            nvme-warn-c = stThr.nvme-warn-c or stThr.nvme-c or 70;
+            nvme-err-c  = stThr.nvme-err-c  or
+                          (if stThr ? nvme-c then (stThr.nvme-c + 10) else 80);
+            gpu-warn-c  = stThr.gpu-warn-c  or stThr.gpu-c  or 80;
+            gpu-err-c   = stThr.gpu-err-c   or
+                          (if stThr ? gpu-c then (stThr.gpu-c + 10) else 90);
           };
         };
         sources.services-down = {
           enable   = servicesDown.enable or true;
           channels = servicesDown.channels or [ "ntfy" ];
         };
+        sources.backup-failures =
+          let bf = src.backup-failures or {}; in {
+            enable   = bf.enable or true;
+            channels = bf.channels or [ "ntfy" ];
+          };
+        sources.attacks =
+          let at = src.attacks or {}; in {
+            enable          = at.enable or true;
+            threshold-bans  = at.threshold-bans or 5;
+            hysteresis-bans = at.hysteresis-bans or 2;
+            channels        = at.channels or [ "ntfy" ];
+          };
+        sources.tls-cert =
+          let tc = src.tls-cert or {}; in {
+            enable    = tc.enable or true;
+            warn-days = tc.warn-days or 14;
+            channels  = tc.channels or [ "ntfy" ];
+          };
+        sources.wan-accessibility =
+          let wa = src.wan-accessibility or {}; in {
+            enable        = wa.enable or true;
+            public-ip-url = wa.public-ip-url or "https://ipinfo.io/ip";
+            doh-url       = wa.doh-url or "https://cloudflare-dns.com/dns-query";
+            channels      = wa.channels or [ "ntfy" ];
+          };
+        sources.headscale-accessibility =
+          let ha = src.headscale-accessibility or {}; in {
+            enable         = ha.enable or true;
+            journal-window = ha.journal-window or "5 min ago";
+            channels       = ha.channels or [ "ntfy" ];
+          };
       };
 
     backups = {

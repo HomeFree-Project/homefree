@@ -46,18 +46,22 @@ let
         hysteresis-c = cfg.sources.disk-temperature.hysteresis-c;
         channels     = cfg.sources.disk-temperature.channels;
         thresholds = {
-          hdd-c  = cfg.sources.disk-temperature.thresholds.hdd-c;
-          ssd-c  = cfg.sources.disk-temperature.thresholds.ssd-c;
-          nvme-c = cfg.sources.disk-temperature.thresholds.nvme-c;
+          hdd-warn-c  = cfg.sources.disk-temperature.thresholds.hdd-warn-c;
+          hdd-err-c   = cfg.sources.disk-temperature.thresholds.hdd-err-c;
+          ssd-warn-c  = cfg.sources.disk-temperature.thresholds.ssd-warn-c;
+          ssd-err-c   = cfg.sources.disk-temperature.thresholds.ssd-err-c;
+          nvme-warn-c = cfg.sources.disk-temperature.thresholds.nvme-warn-c;
+          nvme-err-c  = cfg.sources.disk-temperature.thresholds.nvme-err-c;
         };
       };
       disk-space = {
-        enable              = cfg.sources.disk-space.enable;
-        threshold-percent   = cfg.sources.disk-space.threshold-percent;
-        hysteresis-percent  = cfg.sources.disk-space.hysteresis-percent;
-        fs-types            = cfg.sources.disk-space.fs-types;
-        skip-mount-prefixes = cfg.sources.disk-space.skip-mount-prefixes;
-        channels            = cfg.sources.disk-space.channels;
+        enable                 = cfg.sources.disk-space.enable;
+        threshold-warn-percent = cfg.sources.disk-space.threshold-warn-percent;
+        threshold-err-percent  = cfg.sources.disk-space.threshold-err-percent;
+        hysteresis-percent     = cfg.sources.disk-space.hysteresis-percent;
+        fs-types               = cfg.sources.disk-space.fs-types;
+        skip-mount-prefixes    = cfg.sources.disk-space.skip-mount-prefixes;
+        channels               = cfg.sources.disk-space.channels;
       };
       smart = {
         enable   = cfg.sources.smart.enable;
@@ -68,15 +72,54 @@ let
         hysteresis-c = cfg.sources.sensor-temperature.hysteresis-c;
         channels     = cfg.sources.sensor-temperature.channels;
         thresholds = {
-          cpu-c  = cfg.sources.sensor-temperature.thresholds.cpu-c;
-          nvme-c = cfg.sources.sensor-temperature.thresholds.nvme-c;
-          gpu-c  = cfg.sources.sensor-temperature.thresholds.gpu-c;
+          cpu-warn-c  = cfg.sources.sensor-temperature.thresholds.cpu-warn-c;
+          cpu-err-c   = cfg.sources.sensor-temperature.thresholds.cpu-err-c;
+          nvme-warn-c = cfg.sources.sensor-temperature.thresholds.nvme-warn-c;
+          nvme-err-c  = cfg.sources.sensor-temperature.thresholds.nvme-err-c;
+          gpu-warn-c  = cfg.sources.sensor-temperature.thresholds.gpu-warn-c;
+          gpu-err-c   = cfg.sources.sensor-temperature.thresholds.gpu-err-c;
         };
       };
       services-down = {
         enable   = cfg.sources.services-down.enable;
         channels = cfg.sources.services-down.channels;
       };
+      backup-failures = {
+        enable   = cfg.sources.backup-failures.enable;
+        channels = cfg.sources.backup-failures.channels;
+      };
+      attacks = {
+        enable          = cfg.sources.attacks.enable;
+        threshold-bans  = cfg.sources.attacks.threshold-bans;
+        hysteresis-bans = cfg.sources.attacks.hysteresis-bans;
+        channels        = cfg.sources.attacks.channels;
+      };
+      tls-cert = {
+        enable    = cfg.sources.tls-cert.enable;
+        warn-days = cfg.sources.tls-cert.warn-days;
+        channels  = cfg.sources.tls-cert.channels;
+      };
+      wan-accessibility = {
+        enable        = cfg.sources.wan-accessibility.enable;
+        public-ip-url = cfg.sources.wan-accessibility.public-ip-url;
+        doh-url       = cfg.sources.wan-accessibility.doh-url;
+        channels      = cfg.sources.wan-accessibility.channels;
+      };
+      headscale-accessibility = {
+        enable         = cfg.sources.headscale-accessibility.enable;
+        journal-window = cfg.sources.headscale-accessibility.journal-window;
+        channels       = cfg.sources.headscale-accessibility.channels;
+      };
+    };
+
+    ## System-level facts the engine needs but can't derive from sysfs
+    ## or /etc/homefree alone. Currently just `domain` — the
+    ## wan-accessibility and headscale-accessibility sources build
+    ## the external-probe URL from it. Reading from this rendered
+    ## blob keeps the engine from having to parse the per-instance
+    ## homefree-config.json a second time.
+    system = {
+      domain = config.homefree.system.domain;
     };
   };
 

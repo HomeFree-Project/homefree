@@ -55,7 +55,13 @@ if str(backend_dir) not in sys.path:
 from services.alerts_channels import NtfyChannel
 from services.alerts_config import get_ntfy_publish_url, load_alerts_config
 from services.alerts_sources import REGISTRY, SourceResult
-from services.alerts_state_store import AlertStateStore
+from services.alerts_state_store import (
+    AlertStateStore,
+    SEVERITY_CLEAR,
+    SEVERITY_ERR,
+    SEVERITY_RANK,
+    SEVERITY_WARN,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,10 +129,12 @@ def run_source(
 
     source = SourceClass()
     prev = store.get_state(source_id)
-    was_firing = bool(prev and prev.get("firing"))
+    prev_severity = (prev or {}).get("severity") or SEVERITY_CLEAR
 
     try:
-        result: SourceResult = source.evaluate(source_cfg, was_firing=was_firing)
+        result: SourceResult = source.evaluate(
+            source_cfg, was_severity=prev_severity,
+        )
     except Exception as e:
         # An evaluator crash MUST NOT crash the engine — other sources
         # are still due to run, and the systemd unit shouldn't be
@@ -135,59 +143,132 @@ def run_source(
         return
 
     channel_names = list(source_cfg.get("channels") or [])
+    prev_peak = (prev or {}).get("peak_value")
+    prev_started_ts = (prev or {}).get("started_ts")
+    new_severity = result.severity
+    prev_rank = SEVERITY_RANK.get(prev_severity, 0)
+    new_rank = SEVERITY_RANK.get(new_severity, 0)
 
-    # ── Transition handling. Four cases: open / steady / close / idle.
-    if result.firing and not was_firing:
-        # Newly firing. Record state and event; dispatch a high-priority
-        # notification.
+    # State semantics:
+    #   * `severity` mirrors the source's verdict for THIS tick.
+    #   * `started_ts` is non-None while severity != clear; set on
+    #     clear→firing open, kept across warn↔err escalations,
+    #     cleared on close.
+    #   * `peak_value` is the worst observation during the current
+    #     alarm WHILE firing, and the LAST observation while idle —
+    #     so the Status-tab meter has something to render between
+    #     alarms instead of showing "no reading yet" forever.
+    #   * `message` always carries the source's most recent message,
+    #     firing or not, so the Status-tab body has fresh text.
+    #   * `readings` is the source's optional per-item detail list.
+    #
+    # We always write state on every tick (cheap SQLite upsert).
+    # Transitions gate dispatch + history mutations.
+    if new_rank > 0 and prev_rank > 0:
+        # Still firing (warn or err). Peak only goes UP during an
+        # alarm so the history row reflects the worst observed
+        # value. The current tick's reading might be lower; we keep
+        # the high-water mark.
+        if (result.value is not None
+                and (prev_peak is None or result.value > prev_peak)):
+            state_peak = result.value
+        else:
+            state_peak = prev_peak
+        started_ts = prev_started_ts or now
+    elif new_rank > 0:
+        # Newly firing (clear → warn or clear → err).
+        state_peak = result.value if result.value is not None else 0.0
         started_ts = now
-        peak = result.value if result.value is not None else 0.0
-        store.set_state(source_id, True, started_ts, peak, result.message)
-        store.open_event(source_id, started_ts, peak, result.message)
-        title = f"[{source.label}] alert"
-        dispatch(
-            channels,
-            channel_names,
-            title=title,
-            body=result.message,
-            priority="high",
-            tags=["warning"],
+    else:
+        # Clear this tick: peak is just the current reading for the
+        # meter's "last seen" purpose. None when source has no data.
+        state_peak = result.value
+        started_ts = None
+
+    store.set_state(
+        source_id,
+        firing=(new_rank > 0),
+        started_ts=started_ts,
+        peak_value=state_peak,
+        message=result.message,
+        severity=new_severity,
+        readings=result.readings,
+    )
+
+    # ── Transitions: dispatch + history mutations.
+    if new_rank > 0 and prev_rank == 0:
+        # OPEN (clear → warn|err).
+        store.open_event(
+            source_id, started_ts, state_peak or 0.0, result.message,
+            severity=new_severity,
         )
-        logger.info("alert OPEN: %s — %s", source_id, result.message)
-
-    elif result.firing and was_firing:
-        # Still firing. Bump the peak in both state and the open event
-        # if this tick observed a new high.
-        prev_peak = (prev or {}).get("peak_value")
-        new_peak = result.value
-        if new_peak is not None and (prev_peak is None or new_peak > prev_peak):
-            store.set_state(
-                source_id,
-                True,
-                (prev or {}).get("started_ts") or now,
-                new_peak,
-                result.message,
-            )
-            store.update_peak(source_id, new_peak)
-
-    elif not result.firing and was_firing:
-        # Resolved.
-        store.set_state(source_id, False, None, None, "")
-        store.close_event(source_id, now, result.message)
-        title = f"[{source.label}] resolved"
+        priority = "max" if new_severity == SEVERITY_ERR else "high"
+        title = (
+            f"[{source.label}] {'ERR' if new_severity == SEVERITY_ERR else 'WARN'}"
+        )
         dispatch(
-            channels,
-            channel_names,
-            title=title,
+            channels, channel_names,
+            title=title, body=result.message,
+            priority=priority,
+            tags=["warning" if new_severity == SEVERITY_WARN else "rotating_light"],
+        )
+        logger.info(
+            "alert OPEN (%s): %s — %s",
+            new_severity, source_id, result.message,
+        )
+
+    elif new_rank > prev_rank > 0:
+        # ESCALATE (warn → err). Same open event, bumped severity.
+        store.update_severity(source_id, new_severity)
+        if state_peak is not None and state_peak != prev_peak:
+            store.update_peak(source_id, state_peak)
+        dispatch(
+            channels, channel_names,
+            title=f"[{source.label}] ESCALATED to ERR",
+            body=result.message,
+            priority="max",
+            tags=["rotating_light"],
+        )
+        logger.info(
+            "alert ESCALATE: %s warn→err — %s",
+            source_id, result.message,
+        )
+
+    elif prev_rank > new_rank > 0:
+        # DE-ESCALATE (err → warn). Open event stays at peak severity;
+        # we don't downgrade the history row.
+        dispatch(
+            channels, channel_names,
+            title=f"[{source.label}] de-escalated to WARN",
+            body=result.message,
+            priority="default",
+            tags=["arrow_down"],
+        )
+        logger.info(
+            "alert DE-ESCALATE: %s err→warn — %s",
+            source_id, result.message,
+        )
+
+    elif new_rank > 0 and new_rank == prev_rank:
+        # Still firing at the same level: keep history event peak in
+        # sync with state's high-water mark. No notification (already
+        # got the push when it crossed the threshold).
+        if state_peak is not None and state_peak != prev_peak:
+            store.update_peak(source_id, state_peak)
+
+    elif new_rank == 0 and prev_rank > 0:
+        # RESOLVED (warn|err → clear).
+        store.close_event(source_id, now, result.message)
+        dispatch(
+            channels, channel_names,
+            title=f"[{source.label}] resolved",
             body=result.message,
             priority="default",
             tags=["white_check_mark"],
         )
         logger.info("alert CLOSE: %s — %s", source_id, result.message)
-
-    else:
-        # Idle (not firing, wasn't firing). Nothing to do.
-        pass
+    # Idle (clear, was clear): no dispatch, no history,
+    # state already refreshed above.
 
 
 def tick() -> int:

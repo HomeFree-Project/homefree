@@ -55,12 +55,21 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 class SourceState(BaseModel):
     """Engine-reported runtime state for one source. Every field is
     optional because a fresh box that just enabled alerts has no state
-    DB yet — the UI's empty state should be "OK, not firing"."""
+    DB yet — the UI's empty state should be "OK, not firing".
+
+    `severity` is the post-tier-split successor to the binary `firing`
+    field. `firing` is still surfaced (derived from severity != clear)
+    so old UI / API consumers don't break.
+
+    `readings` is the source's optional per-item detail list — the UI
+    Status-tab card renders one bar per entry."""
     firing: bool = False
+    severity: str = "clear"
     started_ts: Optional[int] = None
     peak_value: Optional[float] = None
     message: Optional[str] = None
     updated_ts: Optional[int] = None
+    readings: Optional[List[Dict[str, Any]]] = None
 
 
 class SourceEntry(BaseModel):
@@ -92,6 +101,10 @@ class HistoryEntry(BaseModel):
     peak_value: Optional[float] = None
     open_message: Optional[str] = None
     close_message: Optional[str] = None
+    # Worst-observed severity for this event. Single-tier sources
+    # always show 'warn'. Pre-severity history rows default to 'warn'
+    # too via the state store's ALTER TABLE default.
+    severity: str = "warn"
 
 
 class HistoryResponse(BaseModel):

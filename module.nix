@@ -1208,38 +1208,60 @@
           };
 
           thresholds = {
-            hdd-c = lib.mkOption {
+            ## Per-class warn / err pairs mirror the Hardware page's
+            ## two-tier colour scheme (warn = yellow, err = red), so
+            ## an Alerts page reader doesn't have to learn a new
+            ## mental model. Warn fires "high" priority pushes;
+            ## err fires "max" priority and escalates the open
+            ## history row's severity.
+            hdd-warn-c = lib.mkOption {
               type = lib.types.int;
               default = 45;
               description = ''
-                Temperature in °C at which a SPINNING (HDD / platter)
-                drive is considered hot enough to alert on. Default
-                45°C matches the Hardware page's warn colour and the
-                consensus rule-of-thumb for 7200-RPM NAS drives whose
-                MTBF curve climbs above this temperature.
+                Warn-level temperature (°C) for SPINNING (HDD)
+                drives. 45°C is the consensus rule-of-thumb where
+                MTBF starts climbing — early enough to notice, late
+                enough to filter normal scrub-induced heat.
+              '';
+            };
+            hdd-err-c = lib.mkOption {
+              type = lib.types.int;
+              default = 50;
+              description = ''
+                Err-level temperature (°C) for HDDs. 50°C is the
+                Hardware page's red threshold and the upper edge
+                of the "operationally safe" range for 7200-RPM
+                NAS drives.
               '';
             };
 
-            ssd-c = lib.mkOption {
+            ssd-warn-c = lib.mkOption {
               type = lib.types.int;
               default = 60;
-              description = ''
-                Temperature in °C at which a SATA SSD is considered
-                hot enough to alert on. Default 60°C matches the
-                Hardware page's warn colour — typical SSDs are spec'd
-                to 70°C, so warn 10°C earlier to leave headroom.
-              '';
+              description = "Warn-level temperature (°C) for SATA SSDs.";
             };
-
-            nvme-c = lib.mkOption {
+            ssd-err-c = lib.mkOption {
               type = lib.types.int;
               default = 70;
               description = ''
-                Temperature in °C at which an NVMe drive is considered
-                hot enough to alert on. Default 70°C matches the
-                Hardware page's warn colour. NVMe controllers begin
-                thermal throttling around 80°C; warning 10°C earlier
-                catches a cooling problem before performance suffers.
+                Err-level temperature (°C) for SATA SSDs. Typical
+                spec is 70°C; at this temperature the controller
+                may start throttling.
+              '';
+            };
+
+            nvme-warn-c = lib.mkOption {
+              type = lib.types.int;
+              default = 70;
+              description = "Warn-level temperature (°C) for NVMe drives.";
+            };
+            nvme-err-c = lib.mkOption {
+              type = lib.types.int;
+              default = 80;
+              description = ''
+                Err-level temperature (°C) for NVMe drives. 80°C is
+                where most consumer NVMe controllers begin thermal
+                throttling.
               '';
             };
           };
@@ -1283,15 +1305,26 @@
             '';
           };
 
-          threshold-percent = lib.mkOption {
+          threshold-warn-percent = lib.mkOption {
             type = lib.types.int;
             default = 90;
             description = ''
-              Percent-full at which a filesystem alerts. 90 is the
-              consensus warn level for general-purpose filesystems —
-              writes start slowing well before 100 (extent / metadata
-              allocators get fragmentation-bound) and 10% headroom is
-              enough to fit a few hours of typical NAS ingest.
+              Warn-level percent-full at which a filesystem alerts.
+              90% is the consensus warn level for general-purpose
+              filesystems — writes start slowing well before 100
+              (extent / metadata allocators get fragmentation-bound)
+              and 10% headroom is enough to fit a few hours of
+              typical NAS ingest.
+            '';
+          };
+
+          threshold-err-percent = lib.mkOption {
+            type = lib.types.int;
+            default = 95;
+            description = ''
+              Err-level percent-full. 95% is close enough to full
+              that imminent failure of writes is a real risk — the
+              source escalates the alarm and pushes at max priority.
             '';
           };
 
@@ -1395,41 +1428,66 @@
           };
 
           thresholds = {
-            cpu-c = lib.mkOption {
+            ## Two-tier per-class warn / err (matching disk-
+            ## temperature's shape). CPU/NVMe-controller/GPU only —
+            ## memory and "other" hwmon kinds stay unmonitored,
+            ## same as the prior single-tier behaviour.
+            cpu-warn-c = lib.mkOption {
               type = lib.types.int;
-              default = 80;
+              default = 75;
               description = ''
-                Temperature in °C at which a CPU sensor alerts. Modern
-                CPUs throttle around 95-100°C; 80 leaves comfortable
-                headroom for sustained workloads without spamming on
-                normal burst loads (an idle box jumps to 70+ briefly
-                during compaction / scrubs without a real cooling
-                problem).
+                Warn-level CPU sensor temperature (°C). 75 catches
+                sustained load that's pushing the cooling solution
+                without spamming on normal bursts (most CPUs
+                idle 30-50°C, peak 70+ under brief load).
+              '';
+            };
+            cpu-err-c = lib.mkOption {
+              type = lib.types.int;
+              default = 85;
+              description = ''
+                Err-level CPU sensor temperature. Modern CPUs
+                throttle around 95-100°C; 85 leaves comfortable
+                headroom but signals "cooling is failing."
               '';
             };
 
-            nvme-c = lib.mkOption {
+            nvme-warn-c = lib.mkOption {
               type = lib.types.int;
               default = 70;
               description = ''
-                Temperature in °C at which an NVMe controller sensor
-                alerts. Mirrors disk-temperature.thresholds.nvme-c —
-                controllers begin thermal throttling around 80, this
-                gives a 10°C heads-up. The drive's media temperature
-                (separate sensor) is covered by the disk-temperature
+                Warn-level NVMe controller temperature. Mirrors
+                disk-temperature.thresholds.nvme-warn-c — the
+                controller sensor is distinct from the media
+                temperature monitored by the disk-temperature
                 source.
               '';
             };
-
-            gpu-c = lib.mkOption {
+            nvme-err-c = lib.mkOption {
               type = lib.types.int;
               default = 80;
               description = ''
-                Temperature in °C at which a GPU sensor alerts. GPUs
-                routinely hit 70+ under load; 80 is the typical
-                "fan-curve aggressive" inflection. Lower this for
-                fanless / passive cooling, raise for gaming-tier cards
-                that are designed to sit at 75-85 under load.
+                Err-level NVMe controller temperature. Typical
+                throttle threshold for consumer NVMe drives.
+              '';
+            };
+
+            gpu-warn-c = lib.mkOption {
+              type = lib.types.int;
+              default = 80;
+              description = ''
+                Warn-level GPU temperature. GPUs routinely hit 70+
+                under load; 80 is the typical fan-curve-aggressive
+                inflection where sustained heat starts being a
+                concern.
+              '';
+            };
+            gpu-err-c = lib.mkOption {
+              type = lib.types.int;
+              default = 90;
+              description = ''
+                Err-level GPU temperature. At 90°C most GPUs are
+                close to their throttling point.
               '';
             };
           };
@@ -1467,6 +1525,244 @@
               `activating` / `deactivating` are transient. A unit that
               SHOULD be running but is stopped via `systemctl stop`
               will not alert; that's a deliberate admin action.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        backup-failures = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire when any scheduled backup unit's last run failed,
+              or when the backup canary's last self-test failed.
+
+              Pulls from BackupOperations.get_backup_health()
+              (local + Backblaze) and get_canary_status() — the same
+              data the Backups page health card shows. No threshold
+              tuning: backup outcomes are binary, and a single failure
+              is worth a push. The canary catches the case where every
+              backup *unit* exits 0 but the backup is unrestorable
+              (silent corruption / wrong key / bad target).
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        attacks = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire when the total of currently-banned IPs across all
+              fail2ban jails crosses `threshold-bans`. Same data
+              source as the Abuse Blocking page (fail2ban-client
+              status).
+
+              "Currently banned" — not a delta from last tick — keeps
+              the alert stateless across engine restarts. The
+              hysteresis below converts a sustained ban list into a
+              single open + close pair rather than re-firing every
+              poll while the ban list slowly drains.
+            '';
+          };
+
+          threshold-bans = lib.mkOption {
+            type = lib.types.int;
+            default = 5;
+            description = ''
+              Total currently-banned-IP count across all jails that
+              constitutes an "attack" event worth pushing. 5 is enough
+              to filter out the constant background of single-IP
+              scanner blocks any internet-facing host sees, while
+              still catching a real botnet sweep that adds dozens of
+              IPs in minutes.
+            '';
+          };
+
+          hysteresis-bans = lib.mkOption {
+            type = lib.types.int;
+            default = 2;
+            description = ''
+              The current-ban total must drop to
+              (threshold-bans - hysteresis-bans) before the alert
+              clears. Prevents a single unban/reban flipping the
+              alert state every tick when the ban list sits right
+              at the threshold.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        tls-cert = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire when any cert under Caddy's storage is expiring
+              within `warn-days`, or already expired. Walks
+              /var/lib/caddy/.local/share/caddy/certificates/*/*/
+              and parses NotAfter from each .crt via openssl.
+
+              Catches the failure mode where ACME renewal silently
+              stops working (DNS-01 token revoked, rate-limit hit,
+              CA changed terms) — Caddy keeps trying in the
+              background but doesn't otherwise tell anyone, and the
+              first user-visible symptom is a browser cert error
+              well into the renewal window.
+            '';
+          };
+
+          warn-days = lib.mkOption {
+            type = lib.types.int;
+            default = 14;
+            description = ''
+              Days-before-NotAfter at which a cert starts alerting.
+              Let's Encrypt issues 90-day certs and Caddy renews when
+              30 days remain — a 14-day warning gives 16 days of
+              renewal attempts to recover before the alert fires,
+              which is comfortable headroom over Caddy's default
+              retry cadence.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        wan-accessibility = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Verify the box is reachable from the public internet by
+              cross-checking its public IP against the public DNS
+              answer for `homefree.system.domain`. Specifically:
+                * Fetch the box's egress IP via ipinfo.io/ip.
+                * Resolve the domain via Cloudflare DoH
+                  (cloudflare-dns.com/dns-query) so the lookup
+                  bypasses local unbound's overrides and reflects
+                  what the world actually sees.
+                * Fire when the box's IP is NOT among the A records.
+
+              This is a DNS-consistency check, not a reverse-ping.
+              It DETERMINISTICALLY catches the most common WAN-broken
+              scenario — DDNS expired / mis-updated / pointing at a
+              stale IP — using two endpoints whose answers are
+              independently verifiable.
+
+              It does NOT detect "ISP blocked inbound 443" or
+              "DDNS is fine but Caddy isn't binding the WAN" — for
+              those, the `services-down` source on caddy is the
+              primary signal, and the `tls-cert` source catches
+              externally-broken certs at the renewal-window edge.
+
+              An earlier draft of this source used a third-party
+              reverse-ping service (isitup.org, then allorigins.win)
+              but both proved either dead or too flaky for an alert
+              source (rate-limited / inconsistent error shapes).
+              The DNS-consistency design pivots to two endpoints
+              that aren't claiming to know whether the box is up —
+              just facts we can correlate.
+
+              Auto-skips when no service in `homefree.service-config`
+              is WAN-public.
+            '';
+          };
+
+          public-ip-url = lib.mkOption {
+            type = lib.types.str;
+            default = "https://ipinfo.io/ip";
+            description = ''
+              Endpoint to fetch the box's own public (egress) IP.
+              Default is ipinfo.io — the same service ddclient uses
+              for IPv4 detection, so any consistency issues already
+              affect DDNS itself. Body MUST be a plain IP address.
+            '';
+          };
+
+          doh-url = lib.mkOption {
+            type = lib.types.str;
+            default = "https://cloudflare-dns.com/dns-query";
+            description = ''
+              DNS-over-HTTPS endpoint for the external public-DNS
+              lookup of the domain. Default is Cloudflare's. The
+              request adds `?name=<domain>&type=A` and an
+              `Accept: application/dns-json` header — any RFC-8484-ish
+              DoH JSON endpoint should work.
+
+              Using DoH (vs the system resolver) is deliberate: a
+              HomeFree box typically runs unbound with local overrides
+              that resolve the box's own domain to its LAN address.
+              The system resolver would tell us "yes, your domain
+              resolves" without ever leaving the LAN — useless for
+              detecting a public-DNS regression.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
+        headscale-accessibility = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              End-to-end health check for the self-hosted Headscale
+              VPN control plane. Auto-skips when Headscale is not
+              enabled.
+
+              Four checks per tick:
+                - headscale and headplane systemd units are not in
+                  the `failed` state (same convention as the
+                  `services-down` source — we treat `inactive` as
+                  ambiguous and don't alert on it).
+                - `headscale users list -o json` exits 0 — the
+                  established readiness pattern from apps/headscale;
+                  catches the case where the unit is up but the API
+                  socket isn't binding.
+                - `journalctl -u headscale -p err --since <window>`
+                  is empty — catches transient errors that don't
+                  take the unit down.
+                - When `homefree.services.headscale.public = true`,
+                  external probe of `headscale.<system.domain>`
+                  via the same probe service `wan-accessibility`
+                  uses.
+
+              Does NOT verify a real Tailscale client can connect —
+              that requires a second host. This source's job is
+              "everything Headscale exposes from this box looks
+              healthy."
+            '';
+          };
+
+          journal-window = lib.mkOption {
+            type = lib.types.str;
+            default = "5 min ago";
+            description = ''
+              How far back to scan the headscale journal for error-
+              level entries. `journalctl --since` syntax. 5 minutes
+              tracks the default 1-minute tick: an error that
+              clears quickly still gets at most a couple of pushes
+              before the window slides past it.
             '';
           };
 
