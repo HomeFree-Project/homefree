@@ -385,6 +385,57 @@ class DashboardModule extends LitElement {
   // --- SVG line/area chart ----------------------------------------------
 
   /**
+   * Pick a small set of wall-clock-hour ticks inside the chart's time
+   * span. Step size shrinks as the span shrinks so a 24h chart gets
+   * 4-hour ticks while a 2h chart gets 30-minute ticks. Endpoints are
+   * filtered out so ticks don't collide with the 'last Xh' / 'now'
+   * labels the chart already renders at each edge.
+   */
+  _pickTimeTicks(nowTs, spanSec) {
+    if (spanSec < 60) return [];
+    const HOUR = 3600, MIN = 60;
+    const step =
+      spanSec >= 18 * HOUR ? 4 * HOUR :
+      spanSec >=  9 * HOUR ? 2 * HOUR :
+      spanSec >=  4 * HOUR ?     HOUR :
+      spanSec >=  2 * HOUR ? 30 * MIN :
+      spanSec >=      HOUR ? 15 * MIN :
+      spanSec >= 30 * MIN  ?  5 * MIN :
+                              MIN;
+    // Snap to a step boundary in local wall-clock time so ticks land on
+    // round hours rather than '17 minutes ago'. Date.setHours respects
+    // DST automatically.
+    const d = new Date(nowTs * 1000);
+    d.setSeconds(0, 0);
+    if (step >= HOUR) {
+      d.setMinutes(0);
+      d.setHours(Math.floor(d.getHours() / (step / HOUR)) * (step / HOUR));
+    } else {
+      d.setMinutes(Math.floor(d.getMinutes() / (step / MIN)) * (step / MIN));
+    }
+    const leftTs = nowTs - spanSec;
+    const minMarginFrac = 0.06;
+    const ticks = [];
+    let t = Math.floor(d.getTime() / 1000);
+    while (t > leftTs) {
+      const frac = (t - leftTs) / spanSec;
+      if (frac > minMarginFrac && frac < 1 - minMarginFrac) {
+        ticks.push({ ts: t, label: this._fmtHourLabel(t, step) });
+      }
+      t -= step;
+    }
+    return ticks;
+  }
+
+  _fmtHourLabel(ts, step) {
+    const d = new Date(ts * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    if (step >= 3600) return `${hh}:00`;
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  /**
    * Render a multi-series line/area chart with labelled axes.
    *
    * series:  [{ values: number[], color: string, fill?: boolean }]
@@ -429,6 +480,11 @@ class DashboardModule extends LitElement {
         ? `last ${Math.round(spanSec / 60)} min`
         : 'live';
 
+    const nowTs = Math.floor(Date.now() / 1000);
+    const timeTicks = this._pickTimeTicks(nowTs, spanSec);
+    const xForTs = (ts) =>
+      ML + plotW * (1 - (nowTs - ts) / Math.max(spanSec, 1));
+
     return html`
       <svg class="chart-svg" viewBox="0 0 ${W} ${H}">
         ${ticks.map(t => svg`
@@ -453,6 +509,13 @@ class DashboardModule extends LitElement {
                       stroke-width="1.5" stroke-linejoin="round" />
           `;
         })}
+        ${timeTicks.map(tt => svg`
+          <line x1="${xForTs(tt.ts)}" y1="${MT + plotH}"
+                x2="${xForTs(tt.ts)}" y2="${MT + plotH + 3}"
+                stroke="var(--hf-border)" stroke-width="1" />
+          <text x="${xForTs(tt.ts)}" y="${H - 6}" text-anchor="middle"
+                class="axis-label">${tt.label}</text>
+        `)}
         <text x="${ML}" y="${H - 6}" text-anchor="start"
               class="axis-label">${spanLabel} ←</text>
         <text x="${W - MR}" y="${H - 6}" text-anchor="end"
@@ -484,6 +547,10 @@ class DashboardModule extends LitElement {
         ? `last ${Math.round(spanSec / 60)} min`
         : 'live';
 
+    const nowTs = Math.floor(Date.now() / 1000);
+    const timeTicks = this._pickTimeTicks(nowTs, spanSec);
+    const xForTs = (ts) => W * (1 - (nowTs - ts) / Math.max(spanSec, 1));
+
     return html`
       <svg class="uptime-svg" viewBox="0 0 ${W} ${H + 16}">
         ${samples.map((s, i) => svg`
@@ -493,6 +560,13 @@ class DashboardModule extends LitElement {
               s.connected ? 'online' : 'offline'}${
               s.latency_ms != null ? ` (${s.latency_ms} ms)` : ''}</title>
           </rect>
+        `)}
+        ${timeTicks.map(tt => svg`
+          <line x1="${xForTs(tt.ts)}" y1="${H}"
+                x2="${xForTs(tt.ts)}" y2="${H + 3}"
+                stroke="var(--hf-border)" stroke-width="1" />
+          <text x="${xForTs(tt.ts)}" y="${H + 12}" text-anchor="middle"
+                class="axis-label">${tt.label}</text>
         `)}
         <text x="0" y="${H + 12}" text-anchor="start"
               class="axis-label">${spanLabel} ←</text>

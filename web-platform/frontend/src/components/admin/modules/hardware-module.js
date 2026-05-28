@@ -984,6 +984,53 @@ class HardwareModule extends LitElement {
   }
 
   /**
+   * Pick a small set of wall-clock-hour ticks inside the chart's time
+   * span. Same logic as dashboard-module's helper of the same name —
+   * duplicated here rather than abstracted to avoid a new util file
+   * for one ~25-line function.
+   */
+  _pickTimeTicks(nowTs, spanSec) {
+    if (spanSec < 60) return [];
+    const HOUR = 3600, MIN = 60;
+    const step =
+      spanSec >= 18 * HOUR ? 4 * HOUR :
+      spanSec >=  9 * HOUR ? 2 * HOUR :
+      spanSec >=  4 * HOUR ?     HOUR :
+      spanSec >=  2 * HOUR ? 30 * MIN :
+      spanSec >=      HOUR ? 15 * MIN :
+      spanSec >= 30 * MIN  ?  5 * MIN :
+                              MIN;
+    const d = new Date(nowTs * 1000);
+    d.setSeconds(0, 0);
+    if (step >= HOUR) {
+      d.setMinutes(0);
+      d.setHours(Math.floor(d.getHours() / (step / HOUR)) * (step / HOUR));
+    } else {
+      d.setMinutes(Math.floor(d.getMinutes() / (step / MIN)) * (step / MIN));
+    }
+    const leftTs = nowTs - spanSec;
+    const minMarginFrac = 0.06;
+    const ticks = [];
+    let t = Math.floor(d.getTime() / 1000);
+    while (t > leftTs) {
+      const frac = (t - leftTs) / spanSec;
+      if (frac > minMarginFrac && frac < 1 - minMarginFrac) {
+        ticks.push({ ts: t, label: this._fmtHourLabel(t, step) });
+      }
+      t -= step;
+    }
+    return ticks;
+  }
+
+  _fmtHourLabel(ts, step) {
+    const d = new Date(ts * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    if (step >= 3600) return `${hh}:00`;
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  /**
    * One mini-chart for a single time-series of temperatures. Used for
    * both drives and sensors — the inputs (title, thresholds, samples)
    * are the only thing that differs between the two cases.
@@ -1024,6 +1071,8 @@ class HardwareModule extends LitElement {
       ticks.push(t);
     }
 
+    const timeTicks = this._pickTimeTicks(nowTs, spanSec);
+
     const chartBody = validSamples.length < 2
       ? html`<div class="chart-empty">Collecting data…</div>`
       : svg`
@@ -1047,6 +1096,13 @@ class HardwareModule extends LitElement {
             <polyline points="${validSamples.map(s => `${x(s.ts)},${y(s.temp_c)}`).join(' ')}"
                       fill="none" stroke="var(--hf-accent)"
                       stroke-width="1.5" stroke-linejoin="round" />
+            ${timeTicks.map(tt => svg`
+              <line x1="${x(tt.ts)}" y1="${MT + plotH}"
+                    x2="${x(tt.ts)}" y2="${MT + plotH + 3}"
+                    stroke="var(--hf-border)" stroke-width="1" />
+              <text x="${x(tt.ts)}" y="${H - 6}" text-anchor="middle"
+                    class="axis-label">${tt.label}</text>
+            `)}
             <text x="${ML}" y="${H - 6}" text-anchor="start"
                   class="axis-label">${spanLabel} ←</text>
             <text x="${W - MR}" y="${H - 6}" text-anchor="end"
