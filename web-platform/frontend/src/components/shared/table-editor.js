@@ -507,7 +507,19 @@ class TableEditor extends LitElement {
     }));
   }
 
-  handleFieldChange(key, value) {
+  handleFieldChange(key, value, inputType) {
+    // For numeric columns, coerce the DOM string back to an integer or null so
+    // the JSON we save is clean (`null` for empty, an integer for a value),
+    // not a string that the Nix `nullOr int` option will reject.
+    if (inputType === 'number') {
+      if (value === '' || value == null) {
+        this.editingRow[key] = null;
+      } else {
+        const n = parseInt(value, 10);
+        this.editingRow[key] = Number.isNaN(n) ? null : n;
+      }
+      return;
+    }
     this.editingRow[key] = value;
   }
 
@@ -570,12 +582,24 @@ class TableEditor extends LitElement {
                     placeholder=${col.placeholder || ''}
                     @change=${(e) => this.handleFieldChange(col.key, e.detail.value)}
                   ></tag-input>
+                ` : col.type === 'select' ? html`
+                  <label>${col.label}</label>
+                  <select
+                    .value=${this.editingRow[col.key] ?? ''}
+                    @change=${(e) => this.handleFieldChange(col.key, e.target.value)}
+                  >
+                    ${(col.options || []).map(opt => {
+                      const value = typeof opt === 'object' ? opt.value : opt;
+                      const label = typeof opt === 'object' ? opt.label : opt;
+                      return html`<option value=${value} ?selected=${this.editingRow[col.key] === value}>${label}</option>`;
+                    })}
+                  </select>
                 ` : html`
                   <label>${col.label}</label>
                   <input
                     type="${col.type || 'text'}"
-                    .value=${this.editingRow[col.key]}
-                    @input=${(e) => this.handleFieldChange(col.key, e.target.value)}
+                    .value=${this.editingRow[col.key] ?? ''}
+                    @input=${(e) => this.handleFieldChange(col.key, e.target.value, col.type)}
                     placeholder="${col.placeholder || ''}"
                   />
                 `}

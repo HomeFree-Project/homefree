@@ -219,6 +219,9 @@ in
         path      = s.path;
         allowed   = s.allowed or "";
         read-only = s.read-only or false;
+        squash    = s.squash or "root";
+        anon-uid  = s.anon-uid or null;
+        anon-gid  = s.anon-gid or null;
       }) (jsonData.storage.shares or []);
     };
 

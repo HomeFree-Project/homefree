@@ -86,6 +86,17 @@ class SharedFoldersModule extends LitElement {
       { key: 'allowed', label: 'Allowed clients', type: 'tags',
         default: defAllowed, placeholder: 'e.g. 10.0.0.0/24, 10.0.0.42' },
       { key: 'read-only', label: 'Read-only', type: 'boolean', default: false },
+      { key: 'squash', label: 'Squash', type: 'select',
+        options: [
+          { value: 'root', label: 'root (default)' },
+          { value: 'none', label: 'none (trust client root)' },
+          { value: 'all',  label: 'all (map every UID)' },
+        ],
+        default: 'root' },
+      { key: 'anon-uid', label: 'Anon UID', type: 'number',
+        default: null, placeholder: 'e.g. 1000' },
+      { key: 'anon-gid', label: 'Anon GID', type: 'number',
+        default: null, placeholder: 'e.g. 100' },
     ];
     return html`
       <div class="module-container">

@@ -1003,6 +1003,36 @@
               default = false;
               description = "Export read-only (ro) instead of read-write (rw).";
             };
+            squash = lib.mkOption {
+              type = enum [ "root" "none" "all" ];
+              default = "root";
+              description = ''
+                NFS UID/GID squashing mode:
+                - "root" (default): map client root to the anonymous user (root_squash).
+                - "none":  pass client root through unchanged (no_root_squash). Trusts
+                          the client; use only on hosts you fully control.
+                - "all":   map every client UID/GID to the anonymous user (all_squash).
+                          Pair with anon-uid / anon-gid so squashed clients write as
+                          a specific account instead of nfsnobody.
+              '';
+            };
+            anon-uid = lib.mkOption {
+              type = nullOr int;
+              default = null;
+              description = ''
+                UID that squashed clients are mapped to (anonuid). null leaves the
+                NFS server default (typically nfsnobody / 65534). Set when squash
+                = "all" to direct all writes to a specific owner's UID.
+              '';
+            };
+            anon-gid = lib.mkOption {
+              type = nullOr int;
+              default = null;
+              description = ''
+                GID that squashed clients are mapped to (anongid). null leaves the
+                NFS server default. Pairs with anon-uid.
+              '';
+            };
           };
         });
       };
