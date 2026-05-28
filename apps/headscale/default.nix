@@ -17,8 +17,12 @@ let
       lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
   ) (lib.flatten (lib.map (dm: dm.domains) proxiedDomains)));
 
-  # All domains that need split DNS: system domains + proxied domains
-  all-split-domains = search-domains ++ proxiedBaseDomains;
+  # Split DNS: only LAN-only internal TLDs (.lan, .homefree.lan).
+  # The public domain (cypy.at) is intentionally excluded so that *.cypy.at
+  # resolves via public DNS on any network — no VPN or LAN access required.
+  # Private services (photos, music, etc.) are accessible via .lan names over VPN,
+  # or directly on home WiFi where 10.0.0.1 is reachable.
+  all-split-domains = lib.filter (d: d != cfg.system.domain) (lib.unique ([ cfg.system.localDomain ] ++ cfg.system.additionalDomains));
   ## See: https://headscale.net/stable/ref/acls/
   ## @TODO: Doesn't seem to work, may even block all traffic not explicitly approved.
   policy = pkgs.writeText "headscale-policy.json" ''
@@ -333,17 +337,16 @@ in
           ## Secondary backup
           "1.1.1.1"
         ];
-        ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access).
-        ## Fallback public resolvers are included so that if the LAN resolver (10.0.0.1) is
-        ## unreachable (e.g. VPN reconnecting after switching from WiFi to mobile data), DNS
-        ## for *.cypy.at falls through to public DNS instead of timing out entirely.
+        ## Split DNS only covers internal TLDs (.lan, .homefree.lan).
+        ## The public domain (cypy.at) is NOT in split zones — it resolves
+        ## via public DNS so *.cypy.at is accessible from any network
+        ## without VPN. .lan zones route through the LAN resolver for
+        ## internal service discovery when connected to home network or VPN.
         nameservers.split = lib.listToAttrs (lib.map (domain:
           {
             name = domain;
             value = [
               lan-address
-              "9.9.9.10"
-              "1.1.1.1"
             ];
           }
         ) all-split-domains);
