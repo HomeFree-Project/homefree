@@ -756,11 +756,21 @@ class HardwareModule extends LitElement {
         return html`<span class="card-sub" style="margin:0">—</span>`;
       }
       const pct = Math.min(100, Math.round((d.temp_c / d.temp_err_c) * 100));
+      const src = d.temp_threshold_source;
+      const srcLabel = src === 'drive'
+        ? 'drive-reported'
+        : src === 'drive-warn'
+          ? 'warn drive-reported, err default'
+          : src === 'drive-err'
+            ? 'warn default, err drive-reported'
+            : 'class default';
       return html`
         <div>
           ${d.temp_c}°C
-          <span class="card-sub" style="margin-left:6px">
+          <span class="card-sub" style="margin-left:6px"
+                title=${srcLabel}>
             warn ${d.temp_warn_c}° / err ${d.temp_err_c}°
+            <span style="opacity:0.7">(${srcLabel})</span>
           </span>
         </div>
         <div class="meter">
@@ -854,11 +864,12 @@ class HardwareModule extends LitElement {
 
   /**
    * Render one mini-chart per drive. Each chart draws this drive's own
-   * warn/err threshold lines (HDD 45/50, SSD 60/70, NVMe 70/80 — the
-   * resolver returns the right pair as temp_warn_c/temp_err_c per drive)
-   * so the chart's red/yellow lines are always relevant to what you're
-   * looking at. Mixing classes on one chart made the threshold lines
-   * ambiguous and the Y range was dominated by the hottest class.
+   * warn/err threshold lines, which the resolver reads from the drive
+   * itself (SCT temperature log for ATA, controller identify for NVMe)
+   * and exposes as temp_warn_c/temp_err_c per drive. A class default
+   * is used when a drive doesn't report. Mixing classes on one chart
+   * made the threshold lines ambiguous and the Y range was dominated
+   * by the hottest class.
    */
   _renderTempHistory() {
     // Drive charts come from the dedicated drive-temp DB; sensor charts
@@ -905,13 +916,17 @@ class HardwareModule extends LitElement {
       const className = meta
         ? (meta.drive_class === 'nvme' ? 'NVMe' : meta.drive_class === 'ssd' ? 'SSD' : 'HDD')
         : '';
+      // Resolver populates temp_warn_c / temp_err_c on every row
+      // (drive-reported or class default). The numeric fallbacks here
+      // only fire when meta is missing entirely — a drive in the
+      // history DB but not in the current overview snapshot.
       return this._renderTempChart({
         title: device,
         hint: className,
         subtitle: meta ? meta.model : '',
         samples: byDevice[device],
-        warnC: meta ? meta.temp_warn_c : 45,
-        errC:  meta ? meta.temp_err_c  : 50,
+        warnC: meta ? meta.temp_warn_c : 50,
+        errC:  meta ? meta.temp_err_c  : 60,
         spanSec, spanLabel,
       });
     });

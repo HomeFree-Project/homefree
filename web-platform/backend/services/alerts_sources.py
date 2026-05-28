@@ -104,23 +104,16 @@ _CLASS_LABELS = {"hdd": "HDD", "ssd": "SSD", "nvme": "NVMe"}
 
 
 class DiskTemperatureSource:
-    """Reads per-drive temperature + drive class via
-    `PhysicalDrivesResolver.get_all()` and compares each drive against
-    the threshold for its CLASS (HDD / SSD / NVMe), with hysteresis on
-    the per-class threshold so a disk hovering right at its threshold
-    doesn't flap open/close every poll.
+    """Reads per-drive temperature and per-drive warn/critical thresholds
+    via `PhysicalDrivesResolver.get_all()`. Thresholds come from the
+    drive itself (SCT temperature log for ATA, controller identify for
+    NVMe), with class-default fallback when a drive doesn't report — so
+    a Seagate IronWolf 12TB alerts at its own 60°C/70°C, a 24/28TB drive
+    at its tighter 55°C/60°C, etc.
 
-    Why PhysicalDrivesResolver and not the drive_temp history DB: the
-    history sampler only records (device, temp_c) — no drive class — so
-    we'd need a second source for the class anyway. The resolver already
-    pulls both in a 60s-cached call (shared with the Hardware page),
-    making it the single source of truth for "what drives are present
-    right now and how hot is each."
-
-    Two-tier severity (warn / err) per the Hardware page's colour
-    scheme. Source severity = max of per-drive severities. Hysteresis
-    applies at the source level: stuck at the current severity until
-    every drive is below the lower-tier threshold minus hysteresis.
+    Hysteresis applies at the source level: stuck at the current
+    severity until every drive is below the lower-tier threshold minus
+    hysteresis. Avoids flap when one drive hovers at its limit.
 
     `readings` carries one entry per drive so the Status-tab UI can
     render a bar per drive with its own warn/err markers.
@@ -134,21 +127,6 @@ class DiskTemperatureSource:
         config: Dict[str, Any],
         was_severity: str,
     ) -> SourceResult:
-        thresholds_cfg = config.get("thresholds") or {}
-        per_class = {
-            "hdd": (
-                int(thresholds_cfg.get("hdd-warn-c", 45)),
-                int(thresholds_cfg.get("hdd-err-c", 50)),
-            ),
-            "ssd": (
-                int(thresholds_cfg.get("ssd-warn-c", 60)),
-                int(thresholds_cfg.get("ssd-err-c", 70)),
-            ),
-            "nvme": (
-                int(thresholds_cfg.get("nvme-warn-c", 70)),
-                int(thresholds_cfg.get("nvme-err-c", 80)),
-            ),
-        }
         hysteresis = int(config.get("hysteresis-c", 4))
 
         try:
@@ -166,7 +144,12 @@ class DiskTemperatureSource:
             if t is None:
                 continue
             cls = d.get("drive_class") or "hdd"
-            warn, err = per_class.get(cls, per_class["hdd"])
+            warn = int(d.get("temp_warn_c") or 0)
+            err = int(d.get("temp_err_c") or 0)
+            if warn <= 0 or err <= 0:
+                # Resolver should always populate these (drive-reported
+                # or class default); skip defensively if not.
+                continue
             t_f = float(t)
             if peak_t is None or t_f > peak_t:
                 peak_t = t_f

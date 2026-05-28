@@ -692,10 +692,26 @@ class AlertsModule extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._loadState();
+    // Live-refresh source state, recent history, ntfy info while the
+    // page is mounted. Same 30s cadence as the top-bar bell badge —
+    // the alerts engine ticks at 60s by default so polling faster
+    // would not give fresher data. Quiet=true skips the loading
+    // spinner so the page doesn't flash on every tick.
+    this._pollInterval = setInterval(
+      () => this._loadState({ quiet: true }), 30000,
+    );
   }
 
-  async _loadState() {
-    this._loading = true;
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._pollInterval) {
+      clearInterval(this._pollInterval);
+      this._pollInterval = null;
+    }
+  }
+
+  async _loadState({ quiet = false } = {}) {
+    if (!quiet) this._loading = true;
     try {
       const [s, h, n] = await Promise.all([
         fetch('/api/alerts/sources').then((r) => r.ok ? r.json() : { sources: [] }),
@@ -708,7 +724,7 @@ class AlertsModule extends LitElement {
     } catch (e) {
       console.warn('alerts: load failed', e);
     } finally {
-      this._loading = false;
+      if (!quiet) this._loading = false;
     }
   }
 
@@ -1269,55 +1285,24 @@ class AlertsModule extends LitElement {
   }
 
   _renderDiskTempFields(cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis) {
-    const t = cfg.thresholds || {};
-    const hdd  = (t['hdd-c']  !== undefined) ? t['hdd-c']  : 45;
-    const ssd  = (t['ssd-c']  !== undefined) ? t['ssd-c']  : 60;
-    const nvme = (t['nvme-c'] !== undefined) ? t['nvme-c'] : 70;
-    // Path strings precomputed — see Lit gotcha note at the top.
-    const pHdd  = cfgPathPrefix + 'thresholds.hdd-c';
-    const pSsd  = cfgPathPrefix + 'thresholds.ssd-c';
-    const pNvme = cfgPathPrefix + 'thresholds.nvme-c';
-    const tHdd  = tagPathPrefix + 'thresholds.hdd-c';
-    const tSsd  = tagPathPrefix + 'thresholds.ssd-c';
-    const tNvme = tagPathPrefix + 'thresholds.nvme-c';
     const pHys  = cfgPathPrefix + 'hysteresis-c';
     const tHys  = tagPathPrefix + 'hysteresis-c';
     return html`
       <div class="hint" style="margin: 0 0 10px 0">
-        Per-class thresholds: spinning platters fail earlier than flash,
-        so each drive class has its own warn level. Defaults match the
-        Hardware page's warn colour.
+        Thresholds are read from each drive's own SMART data — the SCT
+        Temperature Status log for SATA drives, controller identify for
+        NVMe. A Seagate IronWolf 12TB reports about 60°C / 70°C; a
+        24/28TB helium drive reports tighter, around 55°C / 60°C. See
+        the Hardware page for per-drive numbers. A class default
+        (HDD 50/60, SSD 60/70, NVMe 70/80) covers drives that don't
+        report — typically older USB-bridged units.
       </div>
       <div class="field-grid">
-        <form-field
-          label="HDD threshold (°C)"
-          type="number"
-          .value=${hdd}
-          help="Fire when any platter drive reaches this temperature."
-          ?undeployed=${this._undeployed(tHdd)}
-          @field-change=${(e) => this._setField(pHdd, parseInt(e.detail.value, 10) || 45)}
-        ></form-field>
-        <form-field
-          label="SSD threshold (°C)"
-          type="number"
-          .value=${ssd}
-          help="Fire when any SATA SSD reaches this temperature."
-          ?undeployed=${this._undeployed(tSsd)}
-          @field-change=${(e) => this._setField(pSsd, parseInt(e.detail.value, 10) || 60)}
-        ></form-field>
-        <form-field
-          label="NVMe threshold (°C)"
-          type="number"
-          .value=${nvme}
-          help="Fire when any NVMe drive reaches this temperature."
-          ?undeployed=${this._undeployed(tNvme)}
-          @field-change=${(e) => this._setField(pNvme, parseInt(e.detail.value, 10) || 70)}
-        ></form-field>
         <form-field
           label="Hysteresis (°C)"
           type="number"
           .value=${cfgHysteresis}
-          help="Degrees below threshold before clearing — prevents flap. Applies to every class."
+          help="Degrees below threshold before clearing — prevents flap. Applies to every drive."
           ?undeployed=${this._undeployed(tHys)}
           @field-change=${(e) => this._setField(pHys, parseInt(e.detail.value, 10) || 4)}
         ></form-field>
