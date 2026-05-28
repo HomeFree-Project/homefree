@@ -564,24 +564,30 @@ class ServicesModule extends LitElement {
       border-radius: 999px;
     }
     /* When the service is exposed to the internet the chip gets a
-       danger-tinted (red) background so the security-relevant state is
-       obvious at a glance, matching status-badge.failed.
+       blue 'external' tint so the security-relevant state is obvious
+       at a glance, reusing the same hue as status-badge.external
+       (which already means 'reachable from outside' in this module).
        Why not amber: amber is reserved throughout the admin UI for
        pending unbuilt changes (--hf-warn-soft on undeployed rows /
        instance groups), so an amber Exposed chip read as "this toggle
        has unsaved changes" instead of "this service is publicly
-       exposed". Red carries no such overload. Same box size as the off
-       state (see above). */
+       exposed". Why not red: red is the failed/error state and made
+       the exposed chip read as a fault condition. Blue is semantically
+       'external' and carries neither overload. Opacity/border slightly
+       lifted vs. the 0.13 status-badge fills so the chip is legible
+       against the card header. Same box size as the off state
+       (see above). */
     .toggle-container.public-on {
-      background: rgba(239,68,68,0.13);
-      color: var(--hf-err);
+      background: rgba(96,165,250,0.18);
+      border-color: rgba(96,165,250,0.5);
+      color: #60a5fa;
     }
     .toggle-container.public-on .toggle-label {
-      /* Colour alone signals the exposed state (plus the red pill bg).
+      /* Colour alone signals the exposed state (plus the blue pill bg).
          No font-weight change: a bolder label is physically wider than
          the normal-weight OFF label, which made ON toggles wider than OFF
          and broke header alignment across cards. */
-      color: var(--hf-err);
+      color: #60a5fa;
     }
 
     /* Invisible stand-in for the absent Exposed toggle on a DISABLED app,
