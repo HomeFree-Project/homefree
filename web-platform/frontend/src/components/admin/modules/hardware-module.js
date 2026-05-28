@@ -639,13 +639,14 @@ class HardwareModule extends LitElement {
       gpu: 'GPU',
       other: 'Other',
     };
-    // Threshold heuristics per sensor kind. Same spirit as the
-    // per-drive-class table thresholds but for solid-state silicon.
-    const sensorClass = (kind, t) => {
-      if (kind === 'cpu')    return t >= 90 ? 'err' : t >= 80 ? 'warn' : '';
-      if (kind === 'memory') return t >= 80 ? 'err' : t >= 70 ? 'warn' : '';
-      if (kind === 'nvme')   return t >= 80 ? 'err' : t >= 70 ? 'warn' : '';
-      if (kind === 'gpu')    return t >= 90 ? 'err' : t >= 80 ? 'warn' : '';
+    // Per-sensor severity from the backend's resolved warn_c/err_c
+    // (driver _crit / CPUID-family bucket / user override — same
+    // cascade the alerts engine uses). Sensors without resolved
+    // thresholds (memory) get no severity coloring.
+    const sensorSev = (s) => {
+      if (!s || s.warn_c == null || s.err_c == null) return '';
+      if (s.temp_c >= s.err_c)  return 'err';
+      if (s.temp_c >= s.warn_c) return 'warn';
       return '';
     };
 
@@ -657,12 +658,21 @@ class HardwareModule extends LitElement {
       <div class="cards">
         ${orderedKinds.map(kind => {
           const list = byKind[kind];
-          const max = list.reduce((m, s) => Math.max(m, s.temp_c), 0);
-          const cls = sensorClass(kind, max);
+          // Worst-case severity across the class — a single hot sensor
+          // colors the card, mirroring the alert source's per-class
+          // tentative-then-hysteresis logic.
+          const order = { '': 0, warn: 1, err: 2 };
+          let worst = '';
+          let max = 0;
+          for (const s of list) {
+            if (s.temp_c > max) max = s.temp_c;
+            const sv = sensorSev(s);
+            if (order[sv] > order[worst]) worst = sv;
+          }
           return html`
             <div class="card">
               <div class="card-label">${cardLabels[kind]}</div>
-              <div class="card-value ${cls}">${max.toFixed(1)}°C</div>
+              <div class="card-value ${worst}">${max.toFixed(1)}°C</div>
               <div class="card-sub">
                 ${list.length === 1
                   ? list[0].label || list[0].name
@@ -685,17 +695,19 @@ class HardwareModule extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${sensors.map(s => html`
-              <tr>
-                <td>${s.name}</td>
-                <td>${s.label || '—'}</td>
-                <td>${kindLabels[s.kind] || s.kind}</td>
-                <td class="num ${
-                  sensorClass(s.kind, s.temp_c) === 'err' ? 'card-value err'
-                  : sensorClass(s.kind, s.temp_c) === 'warn' ? 'card-value warn'
-                  : ''}" style="font-weight:400">${s.temp_c.toFixed(1)}°C</td>
-              </tr>
-            `)}
+            ${sensors.map(s => {
+              const sv = sensorSev(s);
+              return html`
+                <tr>
+                  <td>${s.name}</td>
+                  <td>${s.label || '—'}</td>
+                  <td>${kindLabels[s.kind] || s.kind}</td>
+                  <td class="num ${sv === 'err' ? 'card-value err'
+                                : sv === 'warn' ? 'card-value warn'
+                                : ''}" style="font-weight:400">${s.temp_c.toFixed(1)}°C</td>
+                </tr>
+              `;
+            })}
           </tbody>
         </table>
       </div>
@@ -921,6 +933,7 @@ class HardwareModule extends LitElement {
       // only fire when meta is missing entirely — a drive in the
       // history DB but not in the current overview snapshot.
       return this._renderTempChart({
+        chartId: device,
         title: device,
         hint: className,
         subtitle: meta ? meta.model : '',
@@ -932,24 +945,19 @@ class HardwareModule extends LitElement {
     });
 
     // --- per-sensor charts --------------------------------------------
-    // Thresholds match the sensor-card heuristics in _renderSensors:
-    // CPU 80/90, memory 70/80, NVMe 70/80, GPU 80/90, other 70/80.
-    const sensorThresholds = (kind) => {
-      switch (kind) {
-        case 'cpu':    return { warnC: 80, errC: 90 };
-        case 'memory': return { warnC: 70, errC: 80 };
-        case 'nvme':   return { warnC: 70, errC: 80 };
-        case 'gpu':    return { warnC: 80, errC: 90 };
-        default:       return { warnC: 70, errC: 80 };
-      }
-    };
+    // Thresholds come from each live sensor's resolved warn_c/err_c
+    // (backend cascade: driver _crit -> CPUID-family bucket -> user
+    // override). A sensor that's in history but no longer in the live
+    // overview (driver renamed, device removed, etc.) gets no
+    // threshold lines drawn — better blank than wrong.
     const sensorKindLabel = (kind) => ({
       cpu: 'CPU', memory: 'Memory', nvme: 'NVMe controller', gpu: 'GPU',
     })[kind] || 'Sensor';
 
     // Live sensor lookup keyed by the same persisted key the sampler
     // uses — `hwmon.scan()` returns it on every reading. Lets us pull
-    // the friendly display name for the chart title.
+    // the friendly display name AND the resolved thresholds for the
+    // chart title and threshold lines.
     const liveByKey = {};
     for (const s of liveSensors) {
       if (s.key) liveByKey[s.key] = s;
@@ -957,14 +965,16 @@ class HardwareModule extends LitElement {
 
     const sensorCharts = sensorList.map(key => {
       const kind = sensorKinds[key] || 'other';
-      const { warnC, errC } = sensorThresholds(kind);
       const live = liveByKey[key];
+      const warnC = live && live.warn_c != null ? live.warn_c : null;
+      const errC  = live && live.err_c  != null ? live.err_c  : null;
       // Persisted key shape: "<driverWithMaybeInstance>:<labelOrSlot>".
       const [driverWithInst, ...rest] = key.split(':');
       const labelOrSlot = rest.join(':');
       const title = live && live.label ? live.label : labelOrSlot || driverWithInst;
       const subtitle = live ? live.name : driverWithInst;
       return this._renderTempChart({
+        chartId: key,
         title,
         hint: sensorKindLabel(kind),
         subtitle: subtitle !== title ? subtitle : '',
@@ -989,7 +999,7 @@ class HardwareModule extends LitElement {
    * duplicated here rather than abstracted to avoid a new util file
    * for one ~25-line function.
    */
-  _pickTimeTicks(nowTs, spanSec) {
+  _pickTimeTicks(nowTs, spanSec, leftFrac = 0.06, rightFrac = 0.06) {
     if (spanSec < 60) return [];
     const HOUR = 3600, MIN = 60;
     const step =
@@ -1009,12 +1019,11 @@ class HardwareModule extends LitElement {
       d.setMinutes(Math.floor(d.getMinutes() / (step / MIN)) * (step / MIN));
     }
     const leftTs = nowTs - spanSec;
-    const minMarginFrac = 0.06;
     const ticks = [];
     let t = Math.floor(d.getTime() / 1000);
     while (t > leftTs) {
       const frac = (t - leftTs) / spanSec;
-      if (frac > minMarginFrac && frac < 1 - minMarginFrac) {
+      if (frac > leftFrac && frac < 1 - rightFrac) {
         ticks.push({ ts: t, label: this._fmtHourLabel(t, step) });
       }
       t -= step;
@@ -1038,7 +1047,7 @@ class HardwareModule extends LitElement {
    * Geometry follows the dashboard module's chart coordinate space so
    * the visual language stays consistent across pages.
    */
-  _renderTempChart({ title, hint, subtitle, samples, warnC, errC, spanSec, spanLabel }) {
+  _renderTempChart({ chartId, title, hint, subtitle, samples, warnC, errC, spanSec, spanLabel }) {
     const validSamples = (samples || []).filter(s => s.temp_c != null);
 
     const W = 600;
@@ -1050,8 +1059,10 @@ class HardwareModule extends LitElement {
     // Anchor Y range on thresholds + observed extremes. Floor at 20°C
     // (room temp); ceiling at max(err_threshold + 5°, observed_max + 5°)
     // — guarantees both threshold lines and the data are visible.
+    // When the sensor has no resolved threshold (no live row, kind we
+    // don't alert on), fall back to data-driven extents only.
     let minTemp = 20;
-    let maxTemp = errC + 5;
+    let maxTemp = errC != null ? errC + 5 : 60;
     for (const s of validSamples) {
       if (s.temp_c < minTemp) minTemp = s.temp_c;
       if (s.temp_c + 5 > maxTemp) maxTemp = s.temp_c + 5;
@@ -1071,30 +1082,70 @@ class HardwareModule extends LitElement {
       ticks.push(t);
     }
 
-    const timeTicks = this._pickTimeTicks(nowTs, spanSec);
+    // Left margin bumped so the leftmost hour tick clears the
+    // "last 24 h ←" span label anchored at x=ML. ~6-7px per char at
+    // the axis-label size means ~80px of label, which on the default
+    // 600px chart is ~15% of the plot width.
+    const timeTicks = this._pickTimeTicks(nowTs, spanSec, 0.20, 0.06);
+
+    // Per-chart vertical gradient for the trace stroke: green below
+    // warn, yellow between warn and err, red above err — same severity
+    // palette the alerts engine uses. Hard step (two stops at the
+    // same offset) so the colour transitions sit exactly on the
+    // threshold lines. Falls back to a single accent colour when
+    // neither threshold is known. Each chart gets a unique gradient
+    // id derived from the caller's chartId — SVG IDs are
+    // document-scoped, so a duplicate would silently let one chart
+    // adopt another's stops.
+    const gid = 'tg-' + String(chartId || title || 'chart')
+                          .replace(/[^a-zA-Z0-9_-]/g, '_');
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    // Offset 0 sits at the BOTTOM of the gradient (cool end), 1 at
+    // the TOP (hot end). The gradient y1/y2 below is wired to match.
+    const warnOff = (warnC != null) ? clamp01((warnC - minTemp) / (maxTemp - minTemp)) : null;
+    const errOff  = (errC  != null) ? clamp01((errC  - minTemp) / (maxTemp - minTemp)) : null;
+    const useGradient = warnOff != null && errOff != null;
+    const traceStroke = useGradient ? `url(#${gid})` : 'var(--hf-accent)';
 
     const chartBody = validSamples.length < 2
       ? html`<div class="chart-empty">Collecting data…</div>`
       : svg`
           <svg class="chart-svg" viewBox="0 0 ${W} ${H}">
+            ${useGradient ? svg`
+              <defs>
+                <linearGradient id="${gid}" gradientUnits="userSpaceOnUse"
+                                x1="0" y1="${y(minTemp)}" x2="0" y2="${y(maxTemp)}">
+                  <stop offset="0" stop-color="var(--hf-ok)" />
+                  <stop offset="${warnOff}" stop-color="var(--hf-ok)" />
+                  <stop offset="${warnOff}" stop-color="var(--hf-warn)" />
+                  <stop offset="${errOff}" stop-color="var(--hf-warn)" />
+                  <stop offset="${errOff}" stop-color="var(--hf-err)" />
+                  <stop offset="1" stop-color="var(--hf-err)" />
+                </linearGradient>
+              </defs>
+            ` : ''}
             ${ticks.map(t => svg`
               <line x1="${ML}" y1="${y(t)}" x2="${W - MR}" y2="${y(t)}"
                     stroke="var(--hf-border)" stroke-width="1" />
               <text x="${ML - 6}" y="${y(t) + 3}" text-anchor="end"
                     class="axis-label">${t}°</text>
             `)}
-            <line x1="${ML}" y1="${y(warnC)}" x2="${W - MR}" y2="${y(warnC)}"
-                  stroke="var(--hf-warn)" stroke-width="1"
-                  stroke-dasharray="4 3" opacity="0.85" />
-            <text x="${W - MR - 2}" y="${y(warnC) - 3}" text-anchor="end"
-                  class="axis-label" style="fill:var(--hf-warn)">warn ${warnC}°</text>
-            <line x1="${ML}" y1="${y(errC)}" x2="${W - MR}" y2="${y(errC)}"
-                  stroke="var(--hf-err)" stroke-width="1"
-                  stroke-dasharray="4 3" opacity="0.85" />
-            <text x="${W - MR - 2}" y="${y(errC) - 3}" text-anchor="end"
-                  class="axis-label" style="fill:var(--hf-err)">err ${errC}°</text>
+            ${warnC != null ? svg`
+              <line x1="${ML}" y1="${y(warnC)}" x2="${W - MR}" y2="${y(warnC)}"
+                    stroke="var(--hf-warn)" stroke-width="1"
+                    stroke-dasharray="4 3" opacity="0.85" />
+              <text x="${W - MR - 2}" y="${y(warnC) - 3}" text-anchor="end"
+                    class="axis-label" style="fill:var(--hf-warn)">warn ${warnC}°</text>
+            ` : ''}
+            ${errC != null ? svg`
+              <line x1="${ML}" y1="${y(errC)}" x2="${W - MR}" y2="${y(errC)}"
+                    stroke="var(--hf-err)" stroke-width="1"
+                    stroke-dasharray="4 3" opacity="0.85" />
+              <text x="${W - MR - 2}" y="${y(errC) - 3}" text-anchor="end"
+                    class="axis-label" style="fill:var(--hf-err)">err ${errC}°</text>
+            ` : ''}
             <polyline points="${validSamples.map(s => `${x(s.ts)},${y(s.temp_c)}`).join(' ')}"
-                      fill="none" stroke="var(--hf-accent)"
+                      fill="none" stroke="${traceStroke}"
                       stroke-width="1.5" stroke-linejoin="round" />
             ${timeTicks.map(tt => svg`
               <line x1="${x(tt.ts)}" y1="${MT + plotH}"

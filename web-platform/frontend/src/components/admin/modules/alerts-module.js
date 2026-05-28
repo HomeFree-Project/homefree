@@ -169,6 +169,31 @@ class AlertsModule extends LitElement {
     }
     .meter-threshold.warn { background: var(--hf-warn); }
     .meter-threshold.err  { background: var(--hf-err); }
+    /* Tick labels for the threshold lines on per-item bars. Sit
+       directly below the track; clamped near the edges via
+       text-anchor-style transforms so they don't fall off the
+       container at left=0% or left=100%. */
+    .meter-axis {
+      position: relative;
+      height: 14px;
+      margin-top: 2px;
+      pointer-events: none;
+    }
+    .meter-threshold-label {
+      position: absolute;
+      top: 0;
+      transform: translateX(-50%);
+      font-size: 10px;
+      line-height: 14px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .meter-threshold-label.warn { color: var(--hf-warn); }
+    .meter-threshold-label.err  { color: var(--hf-err);  }
+    /* Edge anchoring: labels within ~10% of the bar edges shift to
+       the inside so the digits stay on-screen. */
+    .meter-threshold-label.at-left  { transform: translateX(0); }
+    .meter-threshold-label.at-right { transform: translateX(-100%); }
 
     /* Per-item bar row: stacked label-track-no-numbers shape so the
        Status-tab card can list several drives / mounts / sensors
@@ -212,6 +237,9 @@ class AlertsModule extends LitElement {
     .item-bar-value.warn { color: var(--hf-warn); font-weight: 600; }
     .item-bar-value.err  { color: var(--hf-err);  font-weight: 700; }
     .item-bar .meter-track {
+      grid-column: 1 / -1;
+    }
+    .item-bar .meter-axis {
       grid-column: 1 / -1;
     }
     .meter-labels {
@@ -880,6 +908,10 @@ class AlertsModule extends LitElement {
           const fillPct = value == null ? 0 : Math.max(0, Math.min(100, (value / max) * 100));
           const warnPct = warn == null ? null : Math.max(0, Math.min(100, (warn / max) * 100));
           const errPct = err == null ? null : Math.max(0, Math.min(100, (err / max) * 100));
+          // Edge-anchor class so the leftmost/rightmost label sits
+          // inside the bar instead of overflowing the container.
+          const edgeCls = (pct) =>
+            pct == null ? '' : pct <= 6 ? 'at-left' : pct >= 94 ? 'at-right' : '';
           return html`
             <div class="item-bar">
               <div class="item-bar-name">
@@ -904,6 +936,18 @@ class AlertsModule extends LitElement {
                        title="err ${err}${unit}"></div>
                 ` : ''}
               </div>
+              ${(warnPct != null || errPct != null) ? html`
+                <div class="meter-axis">
+                  ${warnPct != null ? html`
+                    <span class="meter-threshold-label warn ${edgeCls(warnPct)}"
+                          style="left: ${warnPct}%">${warn}${unit}</span>
+                  ` : ''}
+                  ${errPct != null ? html`
+                    <span class="meter-threshold-label err ${edgeCls(errPct)}"
+                          style="left: ${errPct}%">${err}${unit}</span>
+                  ` : ''}
+                </div>
+              ` : ''}
             </div>
           `;
         })}
@@ -1068,7 +1112,7 @@ class AlertsModule extends LitElement {
       case 'disk-space':
         return this._renderDiskSpaceFields(cfg, cfgPathPrefix, tagPathPrefix);
       case 'sensor-temperature':
-        return this._renderSensorTempFields(cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis);
+        return this._renderSensorTempFields(src, cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis);
       case 'attacks':
         return this._renderAttacksFields(cfg, cfgPathPrefix, tagPathPrefix);
       case 'tls-cert':
@@ -1227,50 +1271,129 @@ class AlertsModule extends LitElement {
     `;
   }
 
-  _renderSensorTempFields(cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis) {
+  _renderSensorTempFields(src, cfg, cfgPathPrefix, tagPathPrefix, cfgHysteresis) {
     const t = cfg.thresholds || {};
-    const cpu  = (t['cpu-c']  !== undefined) ? t['cpu-c']  : 80;
-    const nvme = (t['nvme-c'] !== undefined) ? t['nvme-c'] : 70;
-    const gpu  = (t['gpu-c']  !== undefined) ? t['gpu-c']  : 80;
-    const pCpu  = cfgPathPrefix + 'thresholds.cpu-c';
-    const pNvme = cfgPathPrefix + 'thresholds.nvme-c';
-    const pGpu  = cfgPathPrefix + 'thresholds.gpu-c';
-    const tCpu  = tagPathPrefix + 'thresholds.cpu-c';
-    const tNvme = tagPathPrefix + 'thresholds.nvme-c';
-    const tGpu  = tagPathPrefix + 'thresholds.gpu-c';
+    // Per-class warn / err overrides. Each may be null / undefined,
+    // which signals 'let the backend infer'. The form-field renders
+    // empty + placeholder in that case; clearing a field emits null
+    // from form-field's number handler, which flows back through to
+    // the JSON as null and re-enables inference on the next apply.
+    const cpuWarn  = t['cpu-warn-c'];
+    const cpuErr   = t['cpu-err-c'];
+    const nvmeWarn = t['nvme-warn-c'];
+    const nvmeErr  = t['nvme-err-c'];
+    const gpuWarn  = t['gpu-warn-c'];
+    const gpuErr   = t['gpu-err-c'];
+    // Live readings (when present) carry the resolved warn / err the
+    // backend used on the last tick. When no user override is set
+    // they ARE the inferred values, so we can surface them as the
+    // placeholder. We take the max across readings of the same class
+    // — a class with two NVMe drives wants to show the strictest
+    // inferred threshold so the user sees the line that would fire.
+    const readings = (src && src.state && src.state.readings) || [];
+    const inferFor = (klass, key) => {
+      let best = null;
+      for (const r of readings) {
+        if (r && r.class === klass && typeof r[key] === 'number') {
+          if (best === null || r[key] > best) best = r[key];
+        }
+      }
+      return best === null ? 'inferred' : String(best);
+    };
+    const phCpuW  = inferFor('cpu',  'warn');
+    const phCpuE  = inferFor('cpu',  'err');
+    const phNvmeW = inferFor('nvme', 'warn');
+    const phNvmeE = inferFor('nvme', 'err');
+    const phGpuW  = inferFor('gpu',  'warn');
+    const phGpuE  = inferFor('gpu',  'err');
+    const pCpuW   = cfgPathPrefix + 'thresholds.cpu-warn-c';
+    const pCpuE   = cfgPathPrefix + 'thresholds.cpu-err-c';
+    const pNvmeW  = cfgPathPrefix + 'thresholds.nvme-warn-c';
+    const pNvmeE  = cfgPathPrefix + 'thresholds.nvme-err-c';
+    const pGpuW   = cfgPathPrefix + 'thresholds.gpu-warn-c';
+    const pGpuE   = cfgPathPrefix + 'thresholds.gpu-err-c';
+    const tCpuW   = tagPathPrefix + 'thresholds.cpu-warn-c';
+    const tCpuE   = tagPathPrefix + 'thresholds.cpu-err-c';
+    const tNvmeW  = tagPathPrefix + 'thresholds.nvme-warn-c';
+    const tNvmeE  = tagPathPrefix + 'thresholds.nvme-err-c';
+    const tGpuW   = tagPathPrefix + 'thresholds.gpu-warn-c';
+    const tGpuE   = tagPathPrefix + 'thresholds.gpu-err-c';
     const pHys = cfgPathPrefix + 'hysteresis-c';
     const tHys = tagPathPrefix + 'hysteresis-c';
+    // form-field number handler: empty string -> null, non-empty ->
+    // parseInt. We accept null and integers verbatim, drop NaN.
+    const writeNum = (path) => (e) => {
+      const v = e.detail.value;
+      const out = (typeof v === 'number' && !isNaN(v)) ? v : null;
+      this._setField(path, out);
+    };
     return html`
       <div class="hint" style="margin: 0 0 10px 0">
-        Per-silicon-class thresholds for CPU / NVMe controller / GPU
-        sensors from hwmon (same sensors shown on the Hardware page).
-        The NVMe controller temperature is distinct from the NVMe
-        media temperature monitored under Disk temperature.
+        Per-silicon-class warn / err thresholds for CPU / NVMe
+        controller / GPU sensors from hwmon (same sensors shown on
+        the Hardware page). Leave a field blank to infer from your
+        hardware — the backend reads each driver's reported limit
+        when available (Intel coretemp, NVMe controllers, discrete
+        GPUs), and falls back to a CPUID-family or PCI-vendor bucket
+        for AMD CPUs and integrated GPUs that don't expose Tjmax.
+        Set an explicit number to override. The NVMe controller
+        sensor is distinct from the NVMe media temperature monitored
+        under Disk temperature.
       </div>
       <div class="field-grid">
         <form-field
-          label="CPU threshold (°C)"
+          label="CPU warn (°C)"
           type="number"
-          .value=${cpu}
-          help="Fire when any CPU sensor reaches this temperature."
-          ?undeployed=${this._undeployed(tCpu)}
-          @field-change=${(e) => this._setField(pCpu, parseInt(e.detail.value, 10) || 80)}
+          placeholder=${phCpuW}
+          .value=${cpuWarn ?? ''}
+          help="Fire WARN when any CPU sensor reaches this. Blank = inferred from hardware."
+          ?undeployed=${this._undeployed(tCpuW)}
+          @field-change=${writeNum(pCpuW)}
         ></form-field>
         <form-field
-          label="NVMe controller threshold (°C)"
+          label="CPU err (°C)"
           type="number"
-          .value=${nvme}
-          help="Fire when any NVMe controller sensor reaches this temperature."
-          ?undeployed=${this._undeployed(tNvme)}
-          @field-change=${(e) => this._setField(pNvme, parseInt(e.detail.value, 10) || 70)}
+          placeholder=${phCpuE}
+          .value=${cpuErr ?? ''}
+          help="Fire ERR when any CPU sensor reaches this. Blank = inferred."
+          ?undeployed=${this._undeployed(tCpuE)}
+          @field-change=${writeNum(pCpuE)}
         ></form-field>
         <form-field
-          label="GPU threshold (°C)"
+          label="NVMe ctlr warn (°C)"
           type="number"
-          .value=${gpu}
-          help="Fire when any GPU sensor reaches this temperature."
-          ?undeployed=${this._undeployed(tGpu)}
-          @field-change=${(e) => this._setField(pGpu, parseInt(e.detail.value, 10) || 80)}
+          placeholder=${phNvmeW}
+          .value=${nvmeWarn ?? ''}
+          help="Fire WARN on NVMe controller temp. Blank = inferred from the controller's reported limits."
+          ?undeployed=${this._undeployed(tNvmeW)}
+          @field-change=${writeNum(pNvmeW)}
+        ></form-field>
+        <form-field
+          label="NVMe ctlr err (°C)"
+          type="number"
+          placeholder=${phNvmeE}
+          .value=${nvmeErr ?? ''}
+          help="Fire ERR on NVMe controller temp. Blank = inferred."
+          ?undeployed=${this._undeployed(tNvmeE)}
+          @field-change=${writeNum(pNvmeE)}
+        ></form-field>
+        <form-field
+          label="GPU warn (°C)"
+          type="number"
+          placeholder=${phGpuW}
+          .value=${gpuWarn ?? ''}
+          help="Fire WARN on GPU temp. Blank = inferred (discrete cards read driver limits, integrated GPUs use a class default)."
+          ?undeployed=${this._undeployed(tGpuW)}
+          @field-change=${writeNum(pGpuW)}
+        ></form-field>
+        <form-field
+          label="GPU err (°C)"
+          type="number"
+          placeholder=${phGpuE}
+          .value=${gpuErr ?? ''}
+          help="Fire ERR on GPU temp. Blank = inferred."
+          ?undeployed=${this._undeployed(tGpuE)}
+          @field-change=${writeNum(pGpuE)}
         ></form-field>
         <form-field
           label="Hysteresis (°C)"

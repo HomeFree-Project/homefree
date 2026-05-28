@@ -1462,62 +1462,70 @@
             ## temperature's shape). CPU/NVMe-controller/GPU only —
             ## memory and "other" hwmon kinds stay unmonitored,
             ## same as the prior single-tier behaviour.
+            ##
+            ## All six are `nullOr int` defaulting to null so the
+            ## backend can run its inference cascade per reading:
+            ## prefer the driver-reported `_crit`/`_max` from sysfs
+            ## (works for Intel coretemp, NVMe, discrete GPUs); fall
+            ## back to a class bucket keyed off CPUID family / PCI
+            ## vendor (covers AMD k10temp/zenpower and integrated
+            ## GPUs that hide Tjmax). A non-null value here is a
+            ## user override — the cascade respects it verbatim.
             cpu-warn-c = lib.mkOption {
-              type = lib.types.int;
-              default = 75;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Warn-level CPU sensor temperature (°C). 75 catches
-                sustained load that's pushing the cooling solution
-                without spamming on normal bursts (most CPUs
-                idle 30-50°C, peak 70+ under brief load).
+                Warn-level CPU sensor temperature (°C). Leave null to
+                let the backend infer from the chip — `coretemp _crit`
+                on Intel; CPUID family bucket on AMD (k10temp doesn't
+                expose Tjmax, so we bucket Zen 3+/Zen 1-2/older).
               '';
             };
             cpu-err-c = lib.mkOption {
-              type = lib.types.int;
-              default = 85;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Err-level CPU sensor temperature. Modern CPUs
-                throttle around 95-100°C; 85 leaves comfortable
-                headroom but signals "cooling is failing."
+                Err-level CPU sensor temperature. Leave null for
+                inference (typically Tjmax - 5).
               '';
             };
 
             nvme-warn-c = lib.mkOption {
-              type = lib.types.int;
-              default = 70;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Warn-level NVMe controller temperature. Mirrors
+                Warn-level NVMe controller temperature. Leave null
+                to derive from the controller's own `temp1_max`
+                (operating max per identify) or `temp1_crit`. Mirrors
                 disk-temperature.thresholds.nvme-warn-c — the
                 controller sensor is distinct from the media
-                temperature monitored by the disk-temperature
-                source.
+                temperature monitored by the disk-temperature source.
               '';
             };
             nvme-err-c = lib.mkOption {
-              type = lib.types.int;
-              default = 80;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Err-level NVMe controller temperature. Typical
-                throttle threshold for consumer NVMe drives.
+                Err-level NVMe controller temperature. Leave null
+                for inference.
               '';
             };
 
             gpu-warn-c = lib.mkOption {
-              type = lib.types.int;
-              default = 80;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Warn-level GPU temperature. GPUs routinely hit 70+
-                under load; 80 is the typical fan-curve-aggressive
-                inflection where sustained heat starts being a
-                concern.
+                Warn-level GPU temperature. Leave null to derive
+                from amdgpu/nouveau/i915 `temp1_crit` when the
+                driver exposes one (discrete cards do; integrated
+                GPUs typically don't and fall to a class default).
               '';
             };
             gpu-err-c = lib.mkOption {
-              type = lib.types.int;
-              default = 90;
+              type = lib.types.nullOr lib.types.int;
+              default = null;
               description = ''
-                Err-level GPU temperature. At 90°C most GPUs are
-                close to their throttling point.
+                Err-level GPU temperature. Leave null for inference.
               '';
             };
           };

@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from resolvers.physical_drives import PhysicalDrivesResolver
-from services import hwmon
+from services import hw_buckets, hwmon
 from services.alerts_config import load_alerts_config
 
 logger = logging.getLogger(__name__)
@@ -529,12 +529,6 @@ _SENSOR_KIND_TO_THRESHOLD_KEYS = {
     "gpu":  ("gpu-warn-c",  "gpu-err-c"),
 }
 
-_SENSOR_KIND_DEFAULTS = {
-    "cpu":  (75, 85),
-    "nvme": (70, 80),
-    "gpu":  (80, 90),
-}
-
 _SENSOR_KIND_LABEL = {
     "cpu":  "CPU",
     "nvme": "NVMe ctlr",
@@ -542,17 +536,45 @@ _SENSOR_KIND_LABEL = {
 }
 
 
+def _coerce_int(v: Any) -> Optional[int]:
+    """Config values flow through JSON; admin-UI edits can land as
+    strings, and the Nix loader emits `null` when the key isn't set
+    so the cascade can infer. Anything we can't read as an int is
+    treated as absent."""
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class SensorTemperatureSource:
     """CPU / NVMe controller / GPU temperatures from hwmon — the same
-    sensors the Hardware page Sensors panel shows. Per-class thresholds
-    because silicon classes have very different safe operating ranges.
+    sensors the Hardware page Sensors panel shows.
 
-    Distinct from `disk-temperature`: that source reads SMART (which
-    knows about platter / NAND temperatures, the *media* not the
-    controller); this one reads hwmon (kernel sysfs, knows about the
-    *silicon controller temperature* exposed by the kernel driver).
-    Both can fire for an NVMe drive simultaneously if the media AND
-    the controller are hot — they measure different things."""
+    Threshold cascade per reading (highest precedence first):
+
+      1. User override from `alerts-config.json` — the class-keyed
+         `cpu-warn-c` / `cpu-err-c` / `nvme-*` / `gpu-*` pair. An
+         explicit number always wins; the user knows their box best.
+
+      2. Driver-reported limit from sysfs (`temp{N}_crit`, fall back
+         to `temp{N}_max` for NVMe). Works for Intel `coretemp`,
+         NVMe controllers, and discrete GPUs.
+
+      3. Class bucket from `services.hw_buckets.resolve_thresholds()`
+         — used when the driver hides the limit. AMD `k10temp` /
+         `zenpower` (no Tjmax exposed) and integrated GPUs land here.
+         Each bucket is class-level, not SKU-level — the table lives
+         in `hw_buckets` and is shared across every HomeFree box.
+
+    Distinct from `disk-temperature`: that source reads SMART (knows
+    about platter / NAND temperatures, the *media* not the controller);
+    this one reads hwmon (kernel sysfs, knows about the *silicon
+    controller temperature* exposed by the kernel driver). Both can
+    fire for an NVMe drive simultaneously if media AND controller are
+    hot — they measure different things."""
 
     id = "sensor-temperature"
     label = "Sensor temperatures"
@@ -563,12 +585,13 @@ class SensorTemperatureSource:
         was_severity: str,
     ) -> SourceResult:
         thresholds_cfg = config.get("thresholds") or {}
-        per_class: Dict[str, Tuple[int, int]] = {}
+        # Per-class user overrides; None means "no override, let the
+        # cascade decide per reading."
+        user_overrides: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
         for kind, (warn_key, err_key) in _SENSOR_KIND_TO_THRESHOLD_KEYS.items():
-            warn_d, err_d = _SENSOR_KIND_DEFAULTS[kind]
-            per_class[kind] = (
-                int(thresholds_cfg.get(warn_key, warn_d)),
-                int(thresholds_cfg.get(err_key, err_d)),
+            user_overrides[kind] = (
+                _coerce_int(thresholds_cfg.get(warn_key)),
+                _coerce_int(thresholds_cfg.get(err_key)),
             )
         hysteresis = int(config.get("hysteresis-c", 4))
 
@@ -585,15 +608,23 @@ class SensorTemperatureSource:
         peak_t: Optional[float] = None
         for s in sensors:
             kind = s.get("kind") or "other"
-            thresholds = per_class.get(kind)
-            if thresholds is None:
+            if kind not in _SENSOR_KIND_TO_THRESHOLD_KEYS:
                 # No threshold for this kind (memory / other); skip.
                 continue
-            warn, err = thresholds
             t = s.get("temp_c")
             if t is None:
                 continue
             t_f = float(t)
+            # Cascade: bucket / driver-derived defaults first, then
+            # user override per tier. The override is per-tier (warn
+            # and err independent) so a user can pin the warn line
+            # while letting err remain inferred, or vice versa. Same
+            # helper is used by resolvers/hardware.py so the Hardware
+            # page's threshold lines match what fires the alert.
+            user_warn, user_err = user_overrides[kind]
+            warn, err = hw_buckets.resolve_thresholds_with_overrides(
+                kind, s.get("crit_c"), s.get("max_c"), user_warn, user_err,
+            )
             display_name = s.get("name") or "?"
             sublabel = s.get("label")
             if sublabel:

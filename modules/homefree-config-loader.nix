@@ -406,18 +406,29 @@ in
           hysteresis-c = sensorTemp.hysteresis-c or 4;
           channels     = sensorTemp.channels or [ "ntfy" ];
           thresholds = {
-            ## Same backwards-compat shape as disk-temperature:
-            ## an old `cpu-c` / `nvme-c` / `gpu-c` key becomes warn;
-            ## err defaults to warn + 5/10.
-            cpu-warn-c  = stThr.cpu-warn-c  or stThr.cpu-c  or 75;
+            ## Sensor-temperature thresholds are inferred at runtime
+            ## by the backend (driver `_crit`/`_max` first, then a
+            ## CPUID-family / PCI-vendor bucket), so an unset value
+            ## here flows through as null and the cascade picks the
+            ## right number for whatever silicon the box has. An
+            ## explicit number is a user override and is honored as-is.
+            ##
+            ## Backwards compat (rule 11): an older JSON pre-dating
+            ## the warn/err split has a single `cpu-c` / `nvme-c` /
+            ## `gpu-c` key. Treat it as a user-set warn override;
+            ## err derives via the old +5/+10 rule so upgrading boxes
+            ## see the same firing behaviour they did before. Boxes
+            ## that never set these keys at all flow through to
+            ## inference.
+            cpu-warn-c  = stThr.cpu-warn-c  or stThr.cpu-c  or null;
             cpu-err-c   = stThr.cpu-err-c   or
-                          (if stThr ? cpu-c then (stThr.cpu-c + 5) else 85);
-            nvme-warn-c = stThr.nvme-warn-c or stThr.nvme-c or 70;
+                          (if stThr ? cpu-c then (stThr.cpu-c + 5) else null);
+            nvme-warn-c = stThr.nvme-warn-c or stThr.nvme-c or null;
             nvme-err-c  = stThr.nvme-err-c  or
-                          (if stThr ? nvme-c then (stThr.nvme-c + 10) else 80);
-            gpu-warn-c  = stThr.gpu-warn-c  or stThr.gpu-c  or 80;
+                          (if stThr ? nvme-c then (stThr.nvme-c + 10) else null);
+            gpu-warn-c  = stThr.gpu-warn-c  or stThr.gpu-c  or null;
             gpu-err-c   = stThr.gpu-err-c   or
-                          (if stThr ? gpu-c then (stThr.gpu-c + 10) else 90);
+                          (if stThr ? gpu-c then (stThr.gpu-c + 10) else null);
           };
         };
         sources.services-down = {
