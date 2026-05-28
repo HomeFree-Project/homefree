@@ -180,17 +180,30 @@ run_cycle() {
     local source="$1"
     echo "=== self-test cycle: source=$source ==="
 
-    # 1. Record the baseline marker. If the canary has never been
-    #    written (e.g. a self-test triggered immediately after enabling,
-    #    before the hourly writer fired), initialise it first - an
-    #    uninitialised canary is not a backup failure.
-    local base_file base_db base_rows
+    # 1. Record the baseline marker. Two recovery cases run the writer
+    #    first to establish a usable baseline:
+    #      a) uninitialised — first self-test on a fresh canary, before
+    #         the hourly writer has fired; not a backup failure.
+    #      b) file/DB out of sync — a previous self-test failed mid-cycle
+    #         (e.g. restored the DB but not the file, or vice versa) and
+    #         left the marker pair disagreeing. The writer overwrites
+    #         both with a fresh, consistent value; the marker's identity
+    #         doesn't matter for the test, only that it agrees.
+    #    Either way, if the writer cannot produce a consistent baseline,
+    #    the test fails — that IS a real backup-pipeline issue.
+    local base_file base_db base_rows need_resync=false
     base_file="$(file_marker || true)"
     base_db="$(db_marker || true)"
     if [[ -z "$base_file" || -z "$base_db" ]]; then
         echo "canary not yet initialised - running the writer first ..."
+        need_resync=true
+    elif [[ "$base_file" != "$base_db" ]]; then
+        echo "canary file/DB markers disagree ('$base_file' vs '$base_db') - re-syncing via the writer ..."
+        need_resync=true
+    fi
+    if $need_resync; then
         if ! "$WRITER"; then
-            finish fail "canary has no data and the writer failed to initialise it"
+            finish fail "writer failed to (re-)initialise canary state"
         fi
         base_file="$(file_marker || true)"
         base_db="$(db_marker || true)"
@@ -200,7 +213,7 @@ run_cycle() {
         finish fail "baseline marker still missing after writer ran (file='$base_file' db='$base_db')"
     fi
     if [[ "$base_file" != "$base_db" ]]; then
-        finish fail "baseline file/DB markers disagree ('$base_file' vs '$base_db')"
+        finish fail "baseline file/DB markers still disagree after writer ran ('$base_file' vs '$base_db')"
     fi
     echo "baseline marker: $base_file ($base_rows rows)"
 

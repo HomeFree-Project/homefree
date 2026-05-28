@@ -66,6 +66,20 @@ let
   filtered-backup-from-paths = lib.filter (entry: (lib.length entry.paths) > 0) backup-from-paths-all;
   ## Only populate paths if backups enabled
   backup-from-paths = if config.homefree.backups.enable == true then filtered-backup-from-paths else [];
+
+  ## Deterministic per-unit OnCalendar slot. With 40+ restic units,
+  ## a `RandomizedDelaySec`-only stagger is Poisson-clustering: random
+  ## draws routinely put 5-15 units in the same second. We give each
+  ## unit a unique minute slot (idx → `HH:MM`) so collisions are
+  ## structurally impossible on the daily schedule. A small jitter
+  ## (~30s) on top avoids exact-second alignment without re-introducing
+  ## minute-level collisions. Wraps to the next hour past 60 units.
+  mkSlotOnCalendar = baseHour: idx:
+    let
+      h = baseHour + (idx / 60);
+      m = idx - ((idx / 60) * 60);
+    in
+      "${lib.fixedWidthNumber 2 h}:${lib.fixedWidthNumber 2 m}";
   postgres-databases = lib.flatten (lib.map (entry: entry.backup.postgres-databases) config.homefree.service-config);
   service-to-postgres-databases-map  = lib.listToAttrs (lib.map (entry: {
     name = entry.label;
@@ -189,7 +203,12 @@ in
 
   services.restic.backups = lib.mkMerge ([
     ## --- Local restic repositories (on-disk, primary copy) -------------
-    (lib.listToAttrs (lib.map (entry:
+    ## Per-unit minute slot starting at 02:00 (see mkSlotOnCalendar).
+    ## --retry-lock=15m makes the in-unit `restic backup`/`forget --prune`
+    ## sequence wait for the repo lock instead of failing immediately;
+    ## relevant for catchup-at-boot when Persistent=true queues many
+    ## missed runs simultaneously.
+    (lib.listToAttrs (lib.imap0 (idx: entry:
     {
       name = "local-${entry.label}";
       value = {
@@ -197,15 +216,14 @@ in
         passwordFile = "/var/lib/homefree-secrets/backup/restic-password";
         paths = entry.paths;
         repository = backup-to-path + "/${entry.label}";
-        # Run after 02:00, staggered across a 45-minute window so the ~40
-        # restic jobs don't all contend for disk/CPU at once.
-        # Persistent so a missed run (box off) catches up.
+        extraBackupArgs = [ "--retry-lock=15m" ];
         timerConfig = {
-          OnCalendar = "02:00";
-          RandomizedDelaySec = "45m";
+          OnCalendar = mkSlotOnCalendar 2 idx;
+          RandomizedDelaySec = "30s";
           Persistent = true;
         };
         pruneOpts = [
+          "--retry-lock=15m"
           "--keep-daily 7"
           "--keep-weekly 5"
           "--keep-yearly 10"
@@ -220,8 +238,11 @@ in
   ## and retention - NOT an rsync mirror of the local copy. A corrupt
   ## local snapshot therefore cannot corrupt the offsite copy, and a
   ## corrupt latest snapshot can be rolled back to an earlier one offsite.
+  ## Slot-staggered from 04:00 — well after the local window so offsite
+  ## picks up freshly-written DB dumps and does not contend with local
+  ## backups for disk.
   ++ lib.optionals backblaze-enabled [
-    (lib.listToAttrs (lib.map (entry:
+    (lib.listToAttrs (lib.imap0 (idx: entry:
     {
       name = "backblaze-${entry.label}";
       value = {
@@ -230,15 +251,14 @@ in
         environmentFile = restic-env-file;  # B2_ACCOUNT_ID / B2_ACCOUNT_KEY
         paths = entry.paths;
         repository = "b2:${backblaze-bucket}:${entry.label}";
-        # Run after 04:00 - well after the 02:00-02:45 local window, so the
-        # offsite job picks up the freshly-written local DB dumps and does
-        # not contend with local backups for disk.
+        extraBackupArgs = [ "--retry-lock=15m" ];
         timerConfig = {
-          OnCalendar = "04:00";
-          RandomizedDelaySec = "45m";
+          OnCalendar = mkSlotOnCalendar 4 idx;
+          RandomizedDelaySec = "30s";
           Persistent = true;
         };
         pruneOpts = [
+          "--retry-lock=15m"
           "--keep-daily 7"
           "--keep-weekly 5"
           "--keep-yearly 10"
