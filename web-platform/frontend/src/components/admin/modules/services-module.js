@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import { getServices, getServiceOptionsSchema, postServiceAction } from '../../../api/client.js';
 import '../../shared/config-section.js';
 import '../../shared/app-card.js';
@@ -1508,7 +1509,11 @@ class ServicesModule extends LitElement {
 
         ${childServices.length > 0 ? html`
           <div class="instance-group-children">
-            ${childServices.map(child => this.renderServiceCard(child))}
+            ${repeat(
+              childServices,
+              child => child.label,
+              child => this.renderServiceCard(child)
+            )}
           </div>
         ` : html`
           <div class="instance-group-empty">No instances yet.</div>
@@ -2182,23 +2187,28 @@ class ServicesModule extends LitElement {
         && service.sso_kind !== 'infra'
     );
 
-    // Sort against the LAST-APPLIED server state, not the merged
-    // `this.services` view. Pending enable/exposed toggles flow through
-    // `loadServices` and overwrite the in-memory `enabled` / `public`
-    // fields (services-module.js loadServices) so that the card's
-    // toggle reflects the user's intent immediately — but using those
-    // overwritten fields as the sort key would yank the card to a new
-    // position the instant the user clicks. Reading from
-    // `this.serverConfig.services[label]` keeps positions frozen
-    // until the next poll after "Apply changes" lands a fresh
-    // serverConfig.
-    const serverServices = this.serverConfig?.services || {};
+    // Sort against the LAST-APPLIED (deployed) state, not the merged
+    // `this.services` view and not the live disk `serverConfig`. Pending
+    // toggles flow through `loadServices` and overwrite the in-memory
+    // `enabled` / `public` fields immediately, and the auto-save then
+    // writes to disk within a debounce — so reading either of those as
+    // the sort key would yank the card to a new position seconds after
+    // the click. The user's mental model is: cards stay put while
+    // they're editing; positions only resettle when they Apply (a
+    // rebuild) or do a full page reload. `appliedConfig` is the
+    // snapshot of the last successful Apply (admin-app loads it from
+    // `/api/config/applied` and only refreshes it on initial mount and
+    // after a successful rebuild — never on the 5s disk poll), so it
+    // gives us exactly that freeze window. Fallback to the in-memory
+    // value covers services not yet represented in applied-config (new
+    // external proxies, fresh installs before the first Apply).
+    const appliedServices = this.appliedConfig?.services || {};
     const serverEnabled = (s) => {
-      const cfg = serverServices[s.label];
+      const cfg = appliedServices[s.label];
       return cfg ? !!cfg.enable : !!s.enabled;
     };
     const serverPublic = (s) => {
-      const cfg = serverServices[s.label];
+      const cfg = appliedServices[s.label];
       return cfg ? !!cfg.public : !!s.public;
     };
     const statusPriority = {
@@ -2315,9 +2325,13 @@ class ServicesModule extends LitElement {
         </div>
 
         <div class="service-grid">
-          ${filteredServices.map(service => this.isInstanceParent(service)
-            ? this.renderInstanceGroup(service)
-            : this.renderServiceCard(service))}
+          ${repeat(
+            filteredServices,
+            service => service.label,
+            service => this.isInstanceParent(service)
+              ? this.renderInstanceGroup(service)
+              : this.renderServiceCard(service)
+          )}
         </div>
 
         ${filteredServices.length === 0 ? html`

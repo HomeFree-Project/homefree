@@ -634,6 +634,13 @@ let
           pkgs.nixos-rebuild
           pkgs.nix
           pkgs.git
+          # `acl` provides setfacl/getfacl. DevelopersService._ensure_writable_for_owner
+          # bails with a warning when setfacl is not on PATH, which silently
+          # leaves every local-flake `.git` tree without the protective owner-rwX
+          # ACL — root then writes loose objects into it during the rebuild,
+          # locking the owning user out of subdirs they need to write to on the
+          # next `git commit` / `git gc`. See docs/agent-notes/local-flake-acl.md.
+          pkgs.acl
           pkgs.systemd
           pkgs.sops
           pkgs.ssh-to-age

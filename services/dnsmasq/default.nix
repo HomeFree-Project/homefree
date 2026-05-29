@@ -107,6 +107,16 @@ in
       dhcp-option = [
         "option6:dns-server,[fd01::1]"  # Points to AdGuard on fd01::1 (which forwards to Unbound)
         "option:dns-server,${lan-address}"
+      ] ++ lib.optionals config.homefree.services.unifi.enable [
+        ## UniFi L3 adoption hint. APs broadcast UDP 10001 to find a
+        ## controller, but those broadcasts don't traverse podman's NAT
+        ## to reach the containerised controller. Option 43 sub-option 1
+        ## tells any device sending vendor-class "ubnt" (UniFi APs/
+        ## switches/gateways) the controller's inform URL is at
+        ## lan-address, so adoption works without SSH `set-inform` or
+        ## same-L2-segment discovery. dnsmasq encodes the IP to 4 bytes.
+        ## The `vendor:ubnt` match means non-UniFi clients never see it.
+        "vendor:ubnt,1,${lan-address}"
       ];
 
       dhcp-host = lib.map (ip-config:

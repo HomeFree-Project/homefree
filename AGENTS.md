@@ -199,6 +199,12 @@ Situational knowledge — read the linked note when working in that area:
   a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap
   units and `RemainAfterExit`; podman readiness vs. process readiness.
   → `docs/agent-notes/systemd-unit-patterns.md`
+- **Podman/netavark shutdown hang** — every podman container's pre-stop
+  hook spawns a transient aardvark-dns scope, which systemd refuses
+  once `reboot.target` is queued (destructive transaction). We wrap
+  `reboot`/`poweroff`/`halt` to stop containers FIRST; `systemctl
+  reboot`, `shutdown`, power button, IPMI bypass the wrapper.
+  → `docs/agent-notes/podman-shutdown-hang.md`
 - **Blue/green deployment** — admin-api and oauth2-proxy run as two
   colour units; a flip activation script swaps them with zero downtime.
   Never `exit` in an activation script; snippets must precede flips.

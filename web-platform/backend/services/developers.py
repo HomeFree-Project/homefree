@@ -305,6 +305,20 @@ class DevelopersService:
             "warnings": [],
         }
 
+        # nix flake metadata shells out to git; libgit2 refuses to open a
+        # repo whose path is owned by a different uid unless it's allow-
+        # listed via safe.directory. Register the candidate path before
+        # probing so a developer-owned local flake doesn't fail with
+        # "repository path '…' is not owned by current user". Idempotent
+        # — git's `--add` de-duplicates, and the save-time call in
+        # write_flakes() still runs. The ACL helper is intentionally NOT
+        # applied here: probe must not mutate the developer's .git before
+        # they've committed to registering the flake.
+        if url.startswith("git+file://"):
+            DevelopersService._register_safe_directories(
+                [{"type": "local", "url": url, "enabled": True}]
+            )
+
         try:
             meta = subprocess.run(
                 ["nix", "--extra-experimental-features", "nix-command flakes",
