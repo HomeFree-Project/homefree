@@ -778,9 +778,9 @@ in
           require-admin-role = cfg.sso.per-service.admin.enable or true;
 
           extraCaddyConfig = ''
-            # Disable HTTP/3 (QUIC) — Chrome QUIC state can get stuck and
-            # block the admin UI from loading after a server restart.
-            protocols h1 h2
+            # Strip Alt-Svc so browsers never upgrade to HTTP/3 on this site.
+            # Chrome QUIC state can get stuck and block the admin UI from loading.
+            header -Alt-Svc
 
             # Service state endpoint - always available (served directly by Caddy)
             handle /api/service-state {
