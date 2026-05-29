@@ -778,6 +778,10 @@ in
           require-admin-role = cfg.sso.per-service.admin.enable or true;
 
           extraCaddyConfig = ''
+            # Disable HTTP/3 (QUIC) — Chrome QUIC state can get stuck and
+            # block the admin UI from loading after a server restart.
+            protocols h1 h2
+
             # Service state endpoint - always available (served directly by Caddy)
             handle /api/service-state {
               root * /var/lib/homefree-admin
