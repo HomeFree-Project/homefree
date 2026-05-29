@@ -778,6 +778,13 @@ in
           require-admin-role = cfg.sso.per-service.admin.enable or true;
 
           extraCaddyConfig = ''
+            # Redirect non-LAN requests to the public app. redir fires before
+            # forward_auth in Caddy's ordering, so external browsers never hit
+            # the SSO gate or get a blank page (which happened when the external
+            # IP had no matching vhost and Caddy returned an empty 200).
+            @external not remote_ip 10.0.0.0/8 127.0.0.1/32
+            redir @external https://app.${cfg.system.domain}/ 302
+
             # Strip Alt-Svc so browsers never upgrade to HTTP/3 on this site.
             # Chrome QUIC state can get stuck and block the admin UI from loading.
             header -Alt-Svc
