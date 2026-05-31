@@ -150,6 +150,75 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
             cls._dev_mode_cache = os.environ.get("HOMEFREE_DEVELOPMENT") == "1"
         return cls._dev_mode_cache
 
+    ## Stale-claim recovery cache for _live_admin_lookup().
+    ##
+    ## Maps username → (is_admin: bool, expires_at: monotonic float).
+    ## A short TTL caps Zitadel load when a non-admin (cookie that
+    ## genuinely lacks the role) keeps hitting admin endpoints, while
+    ## still letting a freshly-promoted user's grant land within the
+    ## TTL window.
+    _admin_lookup_cache: dict = {}
+    _ADMIN_LOOKUP_TTL_SECONDS = 30.0
+
+    @classmethod
+    async def _live_admin_lookup(cls, username: str) -> bool:
+        """Ask Zitadel directly whether `username` currently holds the
+        homefree-admin project role on the homefree project.
+
+        Used as a fallback in dispatch() when the cookie's groups
+        claim doesn't include homefree-admin. The cookie's claim is
+        frozen at session-mint time, so a user promoted AFTER they
+        signed in will be denied here forever (well, until the cookie
+        expires) unless we ask the source of truth. This makes
+        admin promotion self-healing: the very next request after
+        the grant lands in Zitadel gets through.
+
+        Cached per-username (positive AND negative results) for
+        _ADMIN_LOOKUP_TTL_SECONDS to bound the cost when a non-admin
+        keeps hitting admin URLs. The cache is in-process; admin-api
+        is a single uvicorn worker so this is sufficient.
+
+        Returns False on any error (Zitadel unreachable, user not
+        found, project not provisioned) — failing closed.
+        """
+        import time
+        now = time.monotonic()
+        cached = cls._admin_lookup_cache.get(username)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+
+        is_admin = False
+        try:
+            import httpx
+            base = _zitadel_base_url()
+            async with httpx.AsyncClient(timeout=5.0, verify=False) as cx:
+                user_id = await _resolve_user_id_by_name(cx, base, username)
+                project_id = await _get_homefree_project_id(cx, base)
+                r = await cx.post(
+                    f"{base}/management/v1/users/grants/_search",
+                    headers=_zitadel_headers(),
+                    json={"queries": [
+                        {"userIdQuery": {"userId": user_id}},
+                        {"projectIdQuery": {"projectId": project_id}},
+                    ]},
+                )
+                if r.status_code < 400:
+                    grants = r.json().get("result") or []
+                    is_admin = any(
+                        cls.ADMIN_ROLE in (g.get("roleKeys") or [])
+                        for g in grants
+                    )
+        except Exception as e:
+            logger.warning(
+                "Live admin lookup for '%s' failed: %s (treating as not-admin)",
+                username, e,
+            )
+
+        cls._admin_lookup_cache[username] = (
+            is_admin, now + cls._ADMIN_LOOKUP_TTL_SECONDS
+        )
+        return is_admin
+
     @staticmethod
     def _parse_groups(raw: str) -> set[str]:
         """Extract a flat set of role/group names from the
@@ -274,6 +343,23 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
                         )
             except Exception as e:
                 logger.warning("Admin username check failed: %s", e)
+
+        ## Stale-cookie fallback. The cookie's groups claim is frozen
+        ## at session-mint time, so a user promoted AFTER they signed
+        ## in keeps an "empty/missing-admin" claim until the cookie
+        ## refreshes (potentially hours/days). Ask Zitadel directly:
+        ## if the grant exists right now, admit. Cached per-username
+        ## (30s) so a non-admin who hammers admin URLs doesn't bombard
+        ## Zitadel. Self-healing: makes "click Promote, user reloads"
+        ## work without the admin telling them to sign out first.
+        if not is_admin:
+            if await self._live_admin_lookup(user):
+                is_admin = True
+                logger.info(
+                    "Admitting '%s' via live Zitadel lookup "
+                    "(cookie groups stale; promotion in flight).",
+                    user,
+                )
 
         if not is_admin:
             expected = None

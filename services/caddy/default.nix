@@ -270,6 +270,59 @@ in
     ];
   };
 
+  ## Retry stuck Caddy ACME after the DNS stack comes back up.
+  ##
+  ## switch-to-configuration runs sequentially: stop units → reload
+  ## units → start units. When a rebuild adds a vhost AND restarts
+  ## the DNS stack (any rebuild that touches a HomeFree service does,
+  ## because unbound's proxied zone is regenerated), the order is:
+  ## stop unbound/dns-ready → reload caddy → start unbound → ...
+  ## start dns-ready. Caddy's reload runs while unbound is DOWN; ACME
+  ## for the new vhost hits "no such host" on
+  ## acme-v02.api.letsencrypt.org and CertMagic queues an exponential
+  ## backoff retry whose state is held IN-MEMORY in the TLS app.
+  ##
+  ## ExecReload itself can't fix this — anything that waits inside
+  ## ExecReload deadlocks the rebuild (the very thing supposed to
+  ## start dns-ready is what's queued AFTER our reload completes).
+  ## Instead: this oneshot is `wantedBy dns-ready.service`, so every
+  ## time dns-ready starts (boot, rebuild re-arm, manual restart) it
+  ## fires a follow-up reload.
+  ##
+  ## CRITICAL: this MUST be `caddy reload --force`, not `systemctl
+  ## reload caddy.service`. Two reasons:
+  ##   1. The latter dispatches our ExecReload override which
+  ##      deliberately drops `--force` (the steady-state reload wants
+  ##      to keep listeners up to avoid a connection-refused gap on
+  ##      every config change).
+  ##   2. After a rebuild adds one vhost, the *next* reload sees an
+  ##      IDENTICAL config and short-circuits — no TLS-app reload, no
+  ##      retry attempt. CertMagic keeps the in-memory "next attempt
+  ##      at +60s" timer from the failed attempt; observed in practice:
+  ##      attempt 1 logs "retrying_in: 60" and then no attempt 2 EVER
+  ##      fires (the backoff queue gets lost across reload cycles).
+  ## `--force` bypasses the identical-body short-circuit, re-runs
+  ## Provision on every app, and gives the TLS app a fresh CertMagic
+  ## instance with no backoff state — so the queued cert gets
+  ## acquired immediately. The brief listener bounce is acceptable
+  ## here: this only fires on DNS-stack transitions (every meaningful
+  ## rebuild), where the box is already in a transient state.
+  ##
+  ## `after = [ caddy.service dns-ready.service ]` so we don't try to
+  ## reload Caddy before it's up on first boot. We deliberately do
+  ## NOT use `bindsTo`/`partOf`: a one-shot retry that crashes
+  ## shouldn't cascade-tear anything down.
+  systemd.services.caddy-acme-retry = {
+    description = "Reload Caddy (--force) after DNS is ready (retry stuck ACME)";
+    after = [ "dns-ready.service" "caddy.service" ];
+    wants = [ "dns-ready.service" ];
+    wantedBy = [ "dns-ready.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile --force";
+    };
+  };
+
   ## Restart Unbound DNS with caddy changes
   ## NOTE: Commented out partOf - creates circular dependency with caddy's partOf above.
   ## This causes 90-second delays when restarting unbound (caddy times out on SIGTERM).

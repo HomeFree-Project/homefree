@@ -124,11 +124,17 @@ in
     "net.ipv6.ip_nonlocal_bind" = 1;
   };
 
-  # Required so netavark's IPv6 DNAT rules for podman containers actually load.
-  # Without this, inbound IPv6 to forwarded ports (e.g. forgejo ssh on 3022) is
-  # silently dropped, causing dual-stack clients to wait the full TCP SYN timeout
-  # before falling back to IPv4.
-  boot.kernelModules = [ "ip6table_nat" ];
+  # ip6table_nat: required so netavark's IPv6 DNAT rules for podman containers
+  # actually load. Without this, inbound IPv6 to forwarded ports (e.g. forgejo
+  # ssh on 3022) is silently dropped, causing dual-stack clients to wait the
+  # full TCP SYN timeout before falling back to IPv4.
+  # 8021q: networking.vlans below generates Kind=vlan netdev units, but the
+  # systemd-networkd path doesn't auto-modprobe and nothing else pulls 8021q in,
+  # so VLAN interfaces silently never come up. Only needed when guest networks
+  # are configured.
+  boot.kernelModules =
+    [ "ip6table_nat" ]
+    ++ lib.optional (config.homefree.network.guest-networks != []) "8021q";
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
   systemd.network = lib.optionalAttrs config.homefree.network.router.enable {
@@ -150,6 +156,13 @@ in
     networks = {
       "01-${lan-interface}" = {
         name = lan-interface;
+        # VLAN= entries attach guest-network sub-interfaces to this trunk.
+        # The auto-generated 40-${lan-interface}.network (from
+        # networking.interfaces + networking.vlans below) ALSO declares
+        # these, but networkd picks the lowest-priority matching file and
+        # ignores the rest, so without this line the VLAN bindings are
+        # silently dropped and 8021q sub-interfaces never come up.
+        vlan = map (gn: gn.id) guest-networks;
         networkConfig = {
           Description = "LAN link";
           Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
