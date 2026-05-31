@@ -173,9 +173,23 @@ let
         this node when public = true. Format: host:port.
       '';
     };
+
+    forgejo-mirror = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Mirror all non-empty public Forgejo repos on this box to Radicle
+        every 5 minutes. One-way: Forgejo is the source of truth, Radicle
+        is the P2P republish layer. Requires services.forgejo.enable.
+        Pushes are signed by THIS box's Radicle NID; per-commit author
+        attribution is preserved in the git commit objects.
+      '';
+    };
   };
 in
 {
+  imports = [ ./forgejo-mirror.nix ];
+
   options.homefree.services.radicle = userOptions;
 
   options.homefree.service-options.radicle = userOptions // {
@@ -397,9 +411,15 @@ in
         }
         {
           path = "external-addresses";
-          type = "list-string";
+          type = "listOf str";
           default = [];
           description = "Externally reachable peer addresses to announce (host:8776)";
+        }
+        {
+          path = "forgejo-mirror";
+          type = "bool";
+          default = false;
+          description = "Mirror Forgejo public non-empty repos to Radicle every 5 minutes (one-way)";
         }
       ];
     }];
