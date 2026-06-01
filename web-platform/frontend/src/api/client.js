@@ -421,6 +421,16 @@ export const deleteDeveloperFlake = (id) =>
   fetchAPI(`/api/developers/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const validateDeveloperFlake = (probe) =>
   post('/api/developers/flakes/validate', probe);
+// Probe a registered remote flake's upstream and compare to the rev pinned
+// in flake.lock. Read-only; nothing is written. Local flakes auto-refresh
+// on every Apply, so the UI hides these for them.
+export const checkDeveloperFlakeUpdate = (id) =>
+  get(`/api/developers/flakes/${encodeURIComponent(id)}/check-update`);
+// Re-lock a single remote flake input. Stages a change — the operator
+// applies via the sidebar Apply pill, which sees the new "build inputs
+// changed" reason.
+export const updateDeveloperFlake = (id) =>
+  post(`/api/developers/flakes/${encodeURIComponent(id)}/update`, {});
 
 // Alternate HomeFree base repo — build this system from a fork or a local
 // working copy instead of the official homefree-base. Saving rewrites

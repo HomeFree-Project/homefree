@@ -4,6 +4,8 @@ import {
   saveDeveloperFlake,
   deleteDeveloperFlake,
   validateDeveloperFlake,
+  checkDeveloperFlakeUpdate,
+  updateDeveloperFlake,
   getHomefreeBase,
   saveHomefreeBase,
   validateHomefreeBase,
@@ -167,6 +169,21 @@ class DevelopersModule extends LitElement {
     }
     .badge.local  { background: rgba(96,165,250,0.15); color: #60a5fa; }
     .badge.remote { background: rgba(167,139,250,0.15); color: #a78bfa; }
+    /* Per-row update-state badges. Amber matches the app-wide undeployed
+       treatment so an available update reads as the same kind of pending
+       work as any other staged change. */
+    .badge.update-available {
+      background: var(--hf-warn-soft);
+      color: var(--hf-warn);
+    }
+    .badge.update-ok {
+      background: rgba(34,197,94,0.15);
+      color: #4ade80;
+    }
+    .badge.update-err {
+      background: rgba(239,68,68,0.15);
+      color: var(--hf-err);
+    }
 
     label.field { display: block; margin-bottom: 14px; }
     label.field .lbl {
@@ -316,6 +333,11 @@ class DevelopersModule extends LitElement {
     this.baseErrors = [];
     this.baseWarnings = [];
     this.baseBrowserOpen = false;
+    // Transient per-row update state for remote flakes, keyed by flake id.
+    // Shape: { state, latestRev, oldRev, newRev, error, message }. Not a
+    // Lit reactive property — the Map identity never changes and Lit can't
+    // diff its contents, so mutations are paired with requestUpdate().
+    this._updateState = new Map();
     this._resetForm();
   }
 
@@ -521,6 +543,81 @@ class DevelopersModule extends LitElement {
     this.dispatchEvent(new CustomEvent('updates-applied', {
       bubbles: true, composed: true,
     }));
+  }
+
+  // ---- remote-flake update check / re-lock ------------------------
+  //
+  // Remote inputs stay pinned at their flake.lock rev across rebuilds
+  // (only LOCAL working-tree inputs and the homefree-* base are auto-
+  // re-locked in build.sh / _refresh_local_inputs). These two handlers
+  // surface that pinning to the operator: one probes upstream, the
+  // other re-locks just that input. The re-lock surfaces through the
+  // standard "build inputs changed" Apply reason, so the operator
+  // deploys it via the sidebar Apply pill like any other staged edit.
+
+  _getUpdateState(id) {
+    return this._updateState.get(id) || { state: 'idle' };
+  }
+
+  _bumpUpdateState(id, patch) {
+    const prior = this._updateState.get(id) || { state: 'idle' };
+    this._updateState.set(id, { ...prior, ...patch });
+    this.requestUpdate();
+  }
+
+  async _checkUpdate(flake) {
+    this._bumpUpdateState(flake.id, { state: 'checking', error: '' });
+    try {
+      const result = await checkDeveloperFlakeUpdate(flake.id);
+      if (result.updateAvailable) {
+        this._bumpUpdateState(flake.id, {
+          state: 'available',
+          latestRev: result.latestRev,
+        });
+      } else {
+        this._bumpUpdateState(flake.id, { state: 'up-to-date' });
+        // Drop the transient up-to-date badge after a few seconds so the
+        // row doesn't carry a stale 'fresh check' indicator forever.
+        setTimeout(() => {
+          const cur = this._updateState.get(flake.id);
+          if (cur && cur.state === 'up-to-date') {
+            this._bumpUpdateState(flake.id, { state: 'idle' });
+          }
+        }, 4000);
+      }
+    } catch (e) {
+      const msg = (e.body && e.body.message)
+        || (e.body && e.body.detail)
+        || e.message
+        || 'Could not check for updates.';
+      this._bumpUpdateState(flake.id, { state: 'error', error: msg });
+    }
+  }
+
+  async _applyUpdate(flake) {
+    this._bumpUpdateState(flake.id, { state: 'updating', error: '' });
+    emitSaveStatus(this, 'saving');
+    try {
+      const result = await updateDeveloperFlake(flake.id);
+      this._bumpUpdateState(flake.id, {
+        state: 'updated',
+        oldRev: result.oldRev,
+        newRev: result.newRev,
+        message: result.message || 'Updated — click Apply to deploy.',
+      });
+      // The flake.lock drift the backend just introduced is detected by
+      // build_inputs_dirty() and surfaces as 'build inputs changed' in
+      // the sidebar Apply note. Nudge the shell to re-check now.
+      this._notifyDirty();
+      emitSaveStatus(this, 'saved');
+    } catch (e) {
+      const msg = (e.body && e.body.message)
+        || (e.body && e.body.detail)
+        || e.message
+        || 'Failed to update flake.';
+      this._bumpUpdateState(flake.id, { state: 'error', error: msg });
+      emitSaveStatus(this, 'error', msg);
+    }
   }
 
   // ---- alternate HomeFree base repo panel -------------------------
@@ -905,12 +1002,26 @@ class DevelopersModule extends LitElement {
       return html`<p class="muted">No custom flakes registered yet.</p>`;
     }
     return html`
-      ${this.flakes.map((f) => html`
+      ${this.flakes.map((f) => {
+        const upd = this._getUpdateState(f.id);
+        return html`
         <div class="flake-row ${this._flakeChanged(f) ? 'changed' : ''}">
           <div class="meta">
             <div class="name">
               ${f.name}
               <span class="badge ${f.type}">${f.type}</span>
+              ${upd.state === 'available' ? html`
+                <span class="badge update-available">update available</span>
+              ` : ''}
+              ${upd.state === 'up-to-date' ? html`
+                <span class="badge update-ok">up to date</span>
+              ` : ''}
+              ${upd.state === 'updated' ? html`
+                <span class="badge update-available">updated — apply to deploy</span>
+              ` : ''}
+              ${upd.state === 'error' ? html`
+                <span class="badge update-err" title=${upd.error || ''}>check failed</span>
+              ` : ''}
               ${f.enabled ? '' : html`<span class="sub">— disabled</span>`}
             </div>
             <div class="url">${f.url}</div>
@@ -924,10 +1035,49 @@ class DevelopersModule extends LitElement {
             />
             <span class="sub">Enabled</span>
           </label>
+          ${this._renderUpdateControl(f, upd)}
           <button class="btn" @click=${() => this._editFlake(f)}>Edit</button>
           <button class="btn danger" @click=${() => this._delete(f)}>Remove</button>
         </div>
-      `)}
+      `;
+      })}
+    `;
+  }
+
+  // Per-row update control. Remote flakes get a real button that cycles
+  // through check / update states. Local flakes are auto-re-locked on
+  // every Apply, so they get a passive hint instead of a button.
+  _renderUpdateControl(f, upd) {
+    if (f.type === 'local') {
+      return html`<span class="sub" title="Local working-tree inputs are re-locked on every Apply.">Auto-refreshes on Apply</span>`;
+    }
+    if (upd.state === 'available') {
+      return html`
+        <button class="btn primary" @click=${() => this._applyUpdate(f)}>
+          Update
+        </button>
+      `;
+    }
+    if (upd.state === 'checking') {
+      return html`<button class="btn" disabled>Checking…</button>`;
+    }
+    if (upd.state === 'updating') {
+      return html`<button class="btn" disabled>Updating…</button>`;
+    }
+    if (upd.state === 'updated') {
+      return html`<button class="btn" disabled>Updated</button>`;
+    }
+    if (upd.state === 'error') {
+      return html`
+        <button class="btn" title=${upd.error || ''} @click=${() => this._checkUpdate(f)}>
+          Retry check
+        </button>
+      `;
+    }
+    return html`
+      <button class="btn" @click=${() => this._checkUpdate(f)}>
+        Check for updates
+      </button>
     `;
   }
 

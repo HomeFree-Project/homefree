@@ -3548,6 +3548,66 @@ async def delete_developer_flake(flake_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/developers/flakes/{flake_id}/check-update")
+async def check_developer_flake_update(flake_id: str):
+    """
+    Probe a registered remote flake's upstream and compare its current
+    revision to the rev pinned in flake.lock. Stage-only — does not write
+    anything; the caller decides whether to invoke /update next.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.check_flake_update(flake_id)
+        if result.get("success"):
+            status = 200
+        elif "No flake with id" in (result.get("message") or ""):
+            status = 404
+        else:
+            status = 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking developer flake update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/flakes/{flake_id}/update")
+async def update_developer_flake(flake_id: str):
+    """
+    Re-lock a single remote flake input via `nix flake update <inputName>`.
+    Does NOT rebuild — the resulting flake.lock drift surfaces through the
+    standard "build inputs changed" Apply reason.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.update_flake(flake_id)
+        if result.get("success"):
+            status = 200
+        elif "No flake with id" in (result.get("message") or ""):
+            status = 404
+        else:
+            status = 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/developers/flakes/validate")
 async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
     """

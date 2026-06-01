@@ -83,6 +83,22 @@ function formatBytes(n) {
   return v.toFixed(i === 0 || v >= 100 ? 0 : 1) + ' ' + units[i];
 }
 
+function formatDuration(s) {
+  if (s == null || s < 0) return '—';
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  if (h >= 1) return h + 'h ' + (m % 60) + 'm';
+  return m + 'm';
+}
+
+function formatShortDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 // Order-independent value key (mirrors table-editor._stableKey) so a record
 // compares equal regardless of JSON key order.
 function stableKey(v) {
@@ -2467,6 +2483,8 @@ class StorageModule extends LitElement {
             Array: ${rt.md.state}${rt.md.resync_pct != null ? ' · resync ' + rt.md.resync_pct + '%' : ''}${rt.md.degraded ? ' · DEGRADED' : ''}
           </div>` : ''}
 
+        ${this._renderScrub(rt.btrfs_scrub)}
+
         <label class="snap-row">
           <input type="checkbox"
                  .checked=${this._poolSnapshotsEnabled(p.name)}
@@ -2475,6 +2493,53 @@ class StorageModule extends LitElement {
         </label>
       </div>
     `;
+  }
+
+  // Renders the runtime.btrfs_scrub block on a pool card. Three visible
+  // shapes (running / finished-clean / finished-with-errors), plus silent
+  // hide for never/cancelled/aborted/interrupted — those states don't
+  // earn a line on the card. Mirrors the rt.md row's tone and width.
+  _renderScrub(scrub) {
+    if (!scrub) return '';
+    if (scrub.state === 'running') {
+      const pct = scrub.percent != null ? scrub.percent : null;
+      const rate = scrub.rate_bytes_per_sec
+        ? ' · ' + formatBytes(scrub.rate_bytes_per_sec) + '/s'
+        : '';
+      const eta = scrub.eta_seconds != null
+        ? ' · ETA ' + formatDuration(scrub.eta_seconds)
+        : '';
+      return html`
+        ${pct != null ? html`
+          <div class="usage-bar"><div class="usage-fill" style="width:${pct}%"></div></div>` : ''}
+        <div class="pool-meta">
+          Scrub: ${pct != null ? Math.round(pct) + '%' : 'running'}${rate}${eta}
+        </div>
+      `;
+    }
+    if (scrub.state === 'finished') {
+      const errs = scrub.errors || {};
+      const uncor = errs.uncorrectable || 0;
+      const corr = errs.corrected || 0;
+      const date = formatShortDate(scrub.finished_iso || scrub.started_iso);
+      let summary;
+      let color = '';
+      if (uncor > 0) {
+        summary = uncor + (uncor === 1 ? ' unrecoverable error' : ' unrecoverable errors');
+        color = 'color: var(--hf-err);';
+      } else if (corr > 0) {
+        summary = corr + (corr === 1 ? ' error corrected' : ' errors corrected');
+        color = 'color: var(--hf-warn);';
+      } else {
+        summary = 'no errors';
+      }
+      return html`
+        <div class="pool-meta" style="${color}">
+          Last scrub: ${date} — ${summary}
+        </div>
+      `;
+    }
+    return '';
   }
 
   _reclaimGroupTitle(rec) {

@@ -1121,3 +1121,202 @@ class DevelopersService:
             "success": True,
             "message": "Flake removed. Click Apply to rebuild.",
         }
+
+    # ---- remote-flake update detection & re-lock --------------------
+
+    @staticmethod
+    def _read_locked_input(input_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Return the `locked` dict for `input_name` from /etc/nixos/flake.lock,
+        or None if the lock file or the input's node is absent.
+
+        flake.lock shape: {"nodes": {<key>: {"locked": {...}, "original": ...,
+        "inputs": ...}}, "root": "root"}. The root node's `inputs` map keys
+        are input names; the value is either a node key (str) or a path
+        (list). Either way it resolves to a node whose `locked` carries the
+        pinned rev / lastModified for that input.
+        """
+        lock_path = DevelopersService.FLAKE_DIR / "flake.lock"
+        if not lock_path.is_file():
+            return None
+        try:
+            lock = json.loads(lock_path.read_text())
+        except Exception:
+            return None
+        nodes = lock.get("nodes") or {}
+        root_key = lock.get("root") or "root"
+        root = nodes.get(root_key) or {}
+        root_inputs = root.get("inputs") or {}
+        ref = root_inputs.get(input_name)
+        if isinstance(ref, str):
+            node = nodes.get(ref)
+        elif isinstance(ref, list) and ref:
+            # Path-style refs aren't expected for our registered inputs
+            # (they apply to follows/overrides), but bail gracefully.
+            node = None
+        else:
+            # No reference under that name. Some Nix versions key the node
+            # directly by input name; fall back to that.
+            node = nodes.get(input_name)
+        if not isinstance(node, dict):
+            return None
+        locked = node.get("locked")
+        return locked if isinstance(locked, dict) else None
+
+    @staticmethod
+    def check_flake_update(flake_id: str) -> Dict[str, Any]:
+        """
+        Probe a registered remote flake's upstream and compare its current
+        revision to the rev pinned in flake.lock. Local flakes are re-locked
+        on every Apply (see _refresh_local_inputs), so this method refuses
+        them — they have no concept of a "pending update" separate from the
+        next rebuild.
+
+        Returns:
+          {success: True, inputName, lockedRev, latestRev,
+           lockedLastModified, latestLastModified, updateAvailable}
+        or
+          {success: False, message: <error>}.
+        """
+        flakes = DevelopersService.list_flakes()
+        entry = next((f for f in flakes if f.get("id") == flake_id), None)
+        if not entry:
+            return {"success": False, "message": f"No flake with id {flake_id}."}
+        if entry.get("type") != "remote":
+            return {
+                "success": False,
+                "message": (
+                    "Update check is only meaningful for remote flakes — "
+                    "local flakes auto-refresh on every Apply."
+                ),
+            }
+        input_name = (entry.get("inputName") or "").strip()
+        url = (entry.get("url") or "").strip()
+        if not input_name or not url:
+            return {
+                "success": False,
+                "message": "Flake entry is missing an inputName or url.",
+            }
+
+        locked = DevelopersService._read_locked_input(input_name) or {}
+        locked_rev = locked.get("rev")
+        locked_last_modified = locked.get("lastModified")
+
+        try:
+            meta = subprocess.run(
+                ["nix", "--extra-experimental-features", "nix-command flakes",
+                 "flake", "metadata", url, "--json", "--refresh",
+                 "--no-write-lock-file"],
+                capture_output=True, text=True, timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "message": "Timed out reaching the flake — could not check for updates.",
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Could not run flake probe: {e}"}
+
+        if meta.returncode != 0:
+            err = (meta.stderr or meta.stdout or "unknown error").strip()
+            return {
+                "success": False,
+                "message": err.splitlines()[-1] if err else "unknown error",
+            }
+
+        try:
+            data = json.loads(meta.stdout or "{}")
+        except Exception as e:
+            return {"success": False, "message": f"Could not parse flake metadata: {e}"}
+
+        upstream = data.get("locked") or {}
+        latest_rev = upstream.get("rev")
+        latest_last_modified = upstream.get("lastModified")
+
+        # Prefer rev comparison; fall back to lastModified when rev is
+        # absent (e.g. tarball inputs that lack a commit hash).
+        if locked_rev and latest_rev:
+            update_available = locked_rev != latest_rev
+        elif locked_last_modified is not None and latest_last_modified is not None:
+            update_available = latest_last_modified > locked_last_modified
+        else:
+            update_available = False
+
+        return {
+            "success": True,
+            "inputName": input_name,
+            "lockedRev": locked_rev,
+            "latestRev": latest_rev,
+            "lockedLastModified": locked_last_modified,
+            "latestLastModified": latest_last_modified,
+            "updateAvailable": update_available,
+        }
+
+    @staticmethod
+    def update_flake(flake_id: str) -> Dict[str, Any]:
+        """
+        Re-lock a single registered remote flake's input via
+        `nix flake update <inputName>`. Does NOT rebuild — the resulting
+        flake.lock drift surfaces through build_inputs_dirty() as the
+        standard "build inputs changed" Apply reason, and the operator
+        deploys via the sidebar Apply pill.
+        """
+        flakes = DevelopersService.list_flakes()
+        entry = next((f for f in flakes if f.get("id") == flake_id), None)
+        if not entry:
+            return {"success": False, "message": f"No flake with id {flake_id}."}
+        if entry.get("type") != "remote":
+            return {
+                "success": False,
+                "message": (
+                    "Update is only available for remote flakes — local "
+                    "flakes auto-refresh on every Apply."
+                ),
+            }
+        input_name = (entry.get("inputName") or "").strip()
+        if not input_name:
+            return {"success": False, "message": "Flake entry is missing an inputName."}
+
+        old_locked = DevelopersService._read_locked_input(input_name) or {}
+        old_rev = old_locked.get("rev")
+
+        try:
+            result = subprocess.run(
+                ["nix", "--extra-experimental-features", "nix-command flakes",
+                 "flake", "update", input_name,
+                 "--flake", str(DevelopersService.FLAKE_DIR),
+                 "--allow-dirty", "--allow-dirty-locks"],
+                capture_output=True, text=True, timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "message": "Timed out re-locking the flake input.",
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Could not run flake update: {e}"}
+
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "unknown error").strip()
+            return {
+                "success": False,
+                "message": err.splitlines()[-1] if err else "unknown error",
+            }
+
+        new_locked = DevelopersService._read_locked_input(input_name) or {}
+        new_rev = new_locked.get("rev")
+
+        if old_rev and new_rev and old_rev == new_rev:
+            return {
+                "success": True,
+                "oldRev": old_rev,
+                "newRev": new_rev,
+                "message": "Already at the latest revision.",
+            }
+
+        return {
+            "success": True,
+            "oldRev": old_rev,
+            "newRev": new_rev,
+            "message": "Updated — click Apply to deploy.",
+        }

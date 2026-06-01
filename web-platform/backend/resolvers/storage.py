@@ -731,6 +731,168 @@ def _md_status(md_kname: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
+# ----------------------------------------------------- btrfs scrub status ---
+
+# `btrfs scrub status` prints sizes in human form ("20.17TiB", "241.65MiB/s");
+# map a unit suffix to a byte multiplier. Both IEC (KiB) and SI (KB) forms.
+_BTRFS_SIZE_UNITS: Dict[str, int] = {
+    "B":   1,
+    "KB":  1000,    "MB":  1000**2, "GB":  1000**3, "TB":  1000**4, "PB":  1000**5,
+    "KIB": 1024,    "MIB": 1024**2, "GIB": 1024**3, "TIB": 1024**4, "PIB": 1024**5,
+}
+
+_BTRFS_SCRUB_STATES = {"running", "finished", "cancelled", "aborted", "interrupted"}
+
+
+def _btrfs_parse_size(s: str) -> Optional[int]:
+    """`12.34MiB` / `5.92GiB/s` → bytes (rate suffix /s is stripped first so the
+    same routine handles bytes and bytes/sec). None on any parse failure."""
+    if not s:
+        return None
+    s = s.strip()
+    if s.endswith("/s"):
+        s = s[:-2]
+    m = re.match(r"^([\d.]+)\s*([A-Za-z]+)$", s)
+    if not m:
+        return None
+    try:
+        n = float(m.group(1))
+    except ValueError:
+        return None
+    mult = _BTRFS_SIZE_UNITS.get(m.group(2).upper())
+    return int(n * mult) if mult is not None else None
+
+
+def _btrfs_parse_duration(s: str) -> Optional[int]:
+    """`HH:MM:SS` (or `H:MM:SS`) → seconds. None on failure."""
+    if not s:
+        return None
+    parts = s.strip().split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        h, m, sec = (int(p) for p in parts)
+    except ValueError:
+        return None
+    return h * 3600 + m * 60 + sec
+
+
+def _btrfs_parse_timestamp(s: str) -> Optional[str]:
+    """`Mon Jun  1 00:00:01 2026` (local time, no TZ — btrfs-progs format) →
+    ISO-8601 string with the local TZ attached. None on failure."""
+    import datetime as _dt
+    s = " ".join((s or "").strip().split())  # collapse btrfs's double space
+    try:
+        naive = _dt.datetime.strptime(s, "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        return None
+    return naive.astimezone().isoformat()
+
+
+def _btrfs_scrub_status(mount: str) -> Optional[Dict[str, Any]]:
+    """Per-filesystem btrfs scrub state for the Storage page pool card.
+
+    `btrfs scrub status` reads kernel state via ioctl — microseconds, no disk
+    I/O — so no cache. Two invocations: the plain form gives
+    Status/Duration/Time-left/ETA/Rate/Total/Bytes-scrubbed-with-percent; `-R`
+    adds tab-indented raw counters (error counts + scrubbed bytes). Returns
+    None on parse failure so the runtime field is simply omitted (the
+    frontend treats absent === hidden)."""
+    if not mount:
+        return None
+    try:
+        plain = _run([_BTRFS, "scrub", "status", mount])
+        raw   = _run([_BTRFS, "scrub", "status", "-R", mount])
+    except Exception as e:  # noqa: BLE001
+        # _run already swallows TimeoutExpired/OSError; this is belt + braces
+        # for the rare parse path that could raise (e.g. unexpected encoding).
+        logger.warning("storage: btrfs scrub status(%s): %s", mount, e)
+        return None
+    if not (plain or raw):
+        return None
+
+    # Top-level "Key: value" header lines. Skip the tab-indented counter
+    # block from -R (handled separately below).
+    fields: Dict[str, str] = {}
+    for line in plain.splitlines():
+        if line.startswith(("\t", " ")) or ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        fields[k.strip().lower()] = v.strip()
+
+    state = (fields.get("status") or "").lower()
+    if state not in _BTRFS_SCRUB_STATES:
+        return {"state": "never"}
+
+    out: Dict[str, Any] = {"state": state}
+
+    started_iso = _btrfs_parse_timestamp(fields.get("scrub started", ""))
+    duration_s = _btrfs_parse_duration(fields.get("duration", ""))
+    if started_iso:
+        out["started_iso"] = started_iso
+
+    # btrfs-progs doesn't print a finished timestamp once a scrub completes —
+    # it just stops updating Duration. Approximate finished = started +
+    # duration so the UI can render "Last scrub: <date>".
+    if state == "finished" and started_iso and duration_s is not None:
+        import datetime as _dt
+        try:
+            start = _dt.datetime.fromisoformat(started_iso)
+            out["finished_iso"] = (start + _dt.timedelta(seconds=duration_s)).isoformat()
+        except ValueError:
+            pass
+
+    total = _btrfs_parse_size(fields.get("total to scrub", ""))
+    if total:
+        out["bytes_total"] = total
+    rate = _btrfs_parse_size(fields.get("rate", ""))
+    if rate:
+        out["rate_bytes_per_sec"] = rate
+    if state == "running":
+        eta_s = _btrfs_parse_duration(fields.get("time left", ""))
+        if eta_s is not None:
+            out["eta_seconds"] = eta_s
+        # btrfs already computed the percent — reuse its value verbatim so
+        # the UI matches the CLI to the same rounding.
+        pm = re.search(r"\(([\d.]+)\s*%\)", fields.get("bytes scrubbed", ""))
+        if pm:
+            try:
+                out["percent"] = float(pm.group(1))
+            except ValueError:
+                pass
+
+    # Tab-indented "\tname: N" counter block from -R: error counts + raw
+    # scrubbed bytes (kernel counters, more precise than the human plain form).
+    counters: Dict[str, int] = {}
+    for line in raw.splitlines():
+        cm = re.match(r"\s+([a-z_]+):\s*(\d+)$", line)
+        if cm:
+            try:
+                counters[cm.group(1)] = int(cm.group(2))
+            except ValueError:
+                pass
+
+    if "data_bytes_scrubbed" in counters:
+        out["bytes_scrubbed"] = (counters.get("data_bytes_scrubbed", 0)
+                                 + counters.get("tree_bytes_scrubbed", 0))
+
+    if state == "finished" and "percent" not in out:
+        out["percent"] = 100.0
+
+    if counters:
+        out["errors"] = {
+            "read":          counters.get("read_errors", 0),
+            "csum":          counters.get("csum_errors", 0),
+            "verify":        counters.get("verify_errors", 0),
+            "super":         counters.get("super_errors", 0),
+            "corrected":     counters.get("corrected_errors", 0),
+            "uncorrectable": counters.get("uncorrectable_errors", 0),
+            "unverified":    counters.get("unverified_errors", 0),
+        }
+
+    return out
+
+
 # ----------------------------------------------------------------- resolver
 
 class StorageResolver:
@@ -1020,6 +1182,14 @@ class StorageResolver:
                 md = _md_status(base if base.startswith("md") else None)
                 if md is not None:
                     runtime["md"] = md
+            # Every pool in storage.pools is btrfs (six profiles, all btrfs —
+            # raid5/raid6 are btrfs-on-mdadm). Only worth asking the kernel
+            # if the pool is actually mounted; an unmounted fs has no scrub
+            # state to query.
+            if mounted and mp:
+                scrub = _btrfs_scrub_status(mp)
+                if scrub:
+                    runtime["btrfs_scrub"] = scrub
             row["runtime"] = runtime
             out.append(row)
         return out
