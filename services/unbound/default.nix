@@ -131,26 +131,54 @@ in
           ${pkgs.coreutils}/bin/sleep 1
         done
         # Wait for EXTERNAL recursion. Container apps pull images from
-        # public registries, so the gate should prove the recursive path
-        # is up — resolving only the local zone can succeed while upstream
-        # recursion is still coming back from a restart.
+        # public registries AND, in HA's case, pip-install from PyPI at
+        # startup with no in-session retry. The gate must therefore prove
+        # the recursive path is reliably serving fresh queries, not just
+        # that ONE cached name happens to resolve.
         #
-        # BOUNDED (~45s), then fall through regardless: if WAN is genuinely
-        # down, a rebuild must still succeed and container apps must still
-        # start (podman's own pull-retry handles a still-down WAN). This
-        # check closes the common restart-window race without making an
-        # offline rebuild fail. A well-known, highly-available name is the
-        # probe target; an A-record answer (not just exit 0) is required.
-        for i in $(${pkgs.coreutils}/bin/seq 1 22); do
-          if [ -n "$(${pkgs.dnsutils}/bin/dig +short +time=2 +tries=1 cloudflare.com 2>/dev/null)" ]; then
-            break
-          fi
-          if [ "$i" = 22 ]; then
-            echo "wait-for-dns: external DNS still unresolved after ~45s;" \
-                 "proceeding anyway (WAN may be down)." >&2
+        # A single dig cloudflare.com cleared in the past while unbound's
+        # DoT upstream (1.1.1.1@853 / 1.0.0.1@853) was still warming up,
+        # because either the answer came from a previous-boot cache or one
+        # lucky query won the race. Downstream containers then hit
+        # SERVFAIL/EAGAIN on fresh names a minute later (HA pyscript
+        # croniter regression, 2026-05-30). Tightened to:
+        #   - Three distinct names across three different authoritative
+        #     providers (Cloudflare, Google, Debian) — a single stale
+        #     cache entry can't satisfy all three.
+        #   - Two consecutive sweeps required — defeats a single transient
+        #     answer flapping through a still-warming upstream.
+        #
+        # BOUNDED (~55s worst case), then fall through regardless: if WAN
+        # is genuinely down, a rebuild must still succeed and container
+        # apps must still start (podman's own pull-retry handles a
+        # still-down WAN). Best case ~4s once external recursion is solid.
+        probes="cloudflare.com www.google.com debian.org"
+        need=2
+        have=0
+        gate_cleared=0
+        for i in $(${pkgs.coreutils}/bin/seq 1 11); do
+          ok=1
+          for n in $probes; do
+            if [ -z "$(${pkgs.dnsutils}/bin/dig +short +time=1 +tries=1 $n 2>/dev/null)" ]; then
+              ok=0
+              break
+            fi
+          done
+          if [ "$ok" = 1 ]; then
+            have=$(( have + 1 ))
+            if [ "$have" -ge "$need" ]; then
+              gate_cleared=1
+              break
+            fi
+          else
+            have=0
           fi
           ${pkgs.coreutils}/bin/sleep 2
         done
+        if [ "$gate_cleared" = 0 ]; then
+          echo "wait-for-dns: external recursion still unstable after ~55s;" \
+               "proceeding anyway (WAN may be down)." >&2
+        fi
       ''}";
       RemainAfterExit = true;
       TimeoutStartSec = 120;
