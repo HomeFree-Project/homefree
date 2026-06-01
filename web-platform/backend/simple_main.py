@@ -1491,6 +1491,100 @@ async def get_languages():
         logger.error(f"Error getting languages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/system/privacy-defaults")
+async def privacy_defaults():
+    """Returns every external-service URL the box is currently
+    *configured* to use (per `homefree.privacy.externalServices.*`).
+    The frontend consumes this to pre-fill defaults for forms that
+    accept per-alert / per-feature overrides (e.g. the alerts
+    module's "public IP URL" and "DoH endpoint" fields), so an
+    operator who changes the system-wide default sees it reflected
+    in every form that hasn't been overridden.
+
+    Empty string means the feature is disabled (no upstream
+    configured). The future Privacy admin page will be the
+    canonical consumer of this endpoint.
+    """
+    return JSONResponse(content={
+        "publicIpUrl": os.environ.get(
+            "HOMEFREE_PRIVACY_PUBLIC_IP_URL", ""
+        ),
+        "dohUrl": os.environ.get("HOMEFREE_PRIVACY_DOH_URL", ""),
+        "elevationUrl": os.environ.get(
+            "HOMEFREE_ELEVATION_API_URL", ""
+        ),
+    })
+
+
+@app.get("/api/network/elevation")
+async def lookup_elevation(lat: float, lon: float):
+    """Server-side proxy for elevation lookup. Replaces a direct
+    browser fetch to api.open-meteo.com / api.open-elevation.com,
+    which leaked the user's IP to a third party on every "Look up
+    from coords" click in the location picker.
+
+    The upstream URL is operator-configurable via
+    `homefree.privacy.externalServices.elevation.url` (passed in as
+    `HOMEFREE_ELEVATION_API_URL`). When unset, the feature is
+    disabled — we return 503 so the UI shows a clear "not
+    configured" message rather than silently failing.
+
+    The default upstream when an operator enables this is Open-
+    Meteo, whose response shape is `{"elevation": [<meters>]}`.
+    Other providers must match that shape or the parsing below
+    needs to grow.
+    """
+    url_template = os.environ.get("HOMEFREE_ELEVATION_API_URL", "")
+    if not url_template:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Elevation lookup is not configured. Set "
+                "homefree.privacy.externalServices.elevation.url to "
+                "enable (default disabled — see option docstring)."
+            ),
+        )
+    try:
+        import httpx
+        url = url_template.replace("{lat}", str(lat)).replace(
+            "{lon}", str(lon)
+        )
+        async with httpx.AsyncClient(timeout=10.0) as cx:
+            r = await cx.get(
+                url,
+                headers={
+                    "User-Agent": (
+                        "HomeFree-Admin/1.0 (+https://homefree.host)"
+                    )
+                },
+            )
+            r.raise_for_status()
+            d = r.json()
+        if (
+            isinstance(d, dict)
+            and isinstance(d.get("elevation"), list)
+            and len(d["elevation"]) > 0
+            and isinstance(d["elevation"][0], (int, float))
+        ):
+            return JSONResponse(content={"elevation": round(d["elevation"][0])})
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Elevation upstream returned an unexpected shape; the "
+                "endpoint expects Open-Meteo's `{\"elevation\": [meters]}`."
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error looking up elevation for ({lat}, {lon}): {e}"
+        )
+        raise HTTPException(
+            status_code=502, detail=f"Elevation lookup failed: {e}"
+        )
+
+
 @app.get("/api/geocode")
 async def geocode_address(q: str):
     """Forward `q` to OpenStreetMap Nominatim. We proxy server-side so

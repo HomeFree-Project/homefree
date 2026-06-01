@@ -28,6 +28,7 @@ import './modules/alerts-module.js';
 import './modules/abuse-blocking-module.js';
 import './modules/speed-test-module.js';
 import './modules/developers-module.js';
+import './modules/privacy-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
 import './finish-setup-wizard.js';
@@ -990,6 +991,14 @@ class AdminApp extends LitElement {
       {
         id: 'alerts',
         title: 'Alerts',
+        section: 'System'
+      },
+      {
+        // Box-wide knobs controlling whether (and where) the box
+        // reaches third parties. Surfaces homefree.privacy.* and
+        // homefree.services.landing-page.edge.* in one page.
+        id: 'privacy',
+        title: 'Privacy',
         section: 'System'
       },
       {
@@ -2114,6 +2123,16 @@ class AdminApp extends LitElement {
       merged.alerts = { ...(this.serverConfig.alerts || {}), ...this.pendingConfig.alerts };
     }
 
+    // Privacy: every third-party endpoint the box may contact for a
+    // feature (homefree.privacy.externalServices.{publicIp,doh,
+    // elevation}). The Privacy module emits the whole `privacy`
+    // subtree on every edit (it's tiny), so shallow per-key replace
+    // is enough — same pattern as alerts above. Without this clause,
+    // edits would vanish on Save.
+    if (this.pendingConfig.privacy !== undefined) {
+      merged.privacy = { ...(this.serverConfig.privacy || {}), ...this.pendingConfig.privacy };
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
@@ -3007,7 +3026,18 @@ class AdminApp extends LitElement {
             .config=${this.config}
             .undeployedPaths=${this.undeployedPaths}
             @config-change=${this.handleConfigChange}
+            @service-public-toggle=${this.handleServicePublicToggle}
           ></sso-module>
+        `;
+
+      case 'privacy':
+        return html`
+          <privacy-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            .undeployedPaths=${this.undeployedPaths}
+            @config-change=${this.handleConfigChange}
+          ></privacy-module>
         `;
 
       case 'users':

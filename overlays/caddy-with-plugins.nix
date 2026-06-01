@@ -112,10 +112,23 @@ rec {
     plugins = p: with p; [
       caddy-security
       caddy-l4
+      ## Proactive per-IP HTTP rate limiting (mholt/caddy-ratelimit).
+      ## Used by the landing page's `rate_limit` directive to cap
+      ## request-rate during a HN/Reddit surge — complements the
+      ## per-IP nftables connection cap (which only sees sockets,
+      ## not HTTP/2-multiplexed requests on a single socket) and
+      ## fires faster than fail2ban (proactive vs log-scraping).
+      caddy-ratelimit
       geolocation
       hetzner
     ];
-    vendorHash = "sha256-DrZKQfu5Pnj6pdm5EedRG7ZpHZUqoNvpQfDzQ675S90=";
+    ## Adding/removing a plugin changes go.mod and so the vendor
+    ## hash. When that happens, `nixos-rebuild` fails with a
+    ## `hash mismatch in fixed-output derivation [...] got:
+    ## sha256-XXXXX=` line — paste the printed `got:` value here
+    ## and rebuild again. This is the standard Nix workflow for
+    ## bumping a Go dependency set.
+    vendorHash = "sha256-3eoMxVo0E4YSiai/UAO14rMaPkiub6mwk9bQ/1/ffWM=";
   };
 }
 

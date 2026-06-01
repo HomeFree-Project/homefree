@@ -359,14 +359,34 @@ in
 
         extraCaddyConfig = ''
           ## radicle-explorer talks to the JSON API at /api/*;
-          ## reverse-proxy those to radicle-httpd. Everything
-          ## else falls through to the file_server emitted by
-          ## the static-path block above (which serves the SPA's
-          ## index.html for SPA-routed paths).
+          ## reverse-proxy those to radicle-httpd.
           @rad_api path /api/*
           handle @rad_api {
             reverse_proxy http://${lan-address}:${toString httpd-port}
           }
+
+          ## SPA fallback. radicle-explorer is a client-side-routed
+          ## SPA: URLs like /seeds/<host>/<rid> and /<rid>/tree/...
+          ## have no corresponding file in the static build — the
+          ## SPA's JS router resolves them after /index.html boots.
+          ## Without this rewrite, a browser reload on any deep
+          ## link 404s from Caddy's file_server.
+          ##
+          ## Matchers:
+          ##   not path /api/*  — leave API calls untouched. Caddy's
+          ##     directive ordering runs `rewrite` BEFORE `handle`,
+          ##     so without this guard /api/v1/foo would be rewritten
+          ##     to /index.html before the API handler ever saw it.
+          ##   not file         — only fire when no static file exists
+          ##     at the request path. /assets/<hash>.js, /favicon.ico,
+          ##     /index.html itself etc. are real files and continue
+          ##     to flow through to file_server normally. `file` uses
+          ##     the `root` set in the parent static-path block.
+          @rad_spa {
+            not path /api/*
+            not file
+          }
+          rewrite @rad_spa /index.html
         '';
       };
 

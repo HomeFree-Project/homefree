@@ -661,6 +661,27 @@ let
         # Dashboard history DB — admin-api reads it; the standalone
         # homefree-dashboard-sampler service writes it.
         "HOMEFREE_DASHBOARD_DB=${dashboardDbPath}"
+        # Optional external elevation-lookup URL template. Empty
+        # string when `homefree.privacy.externalServices.elevation.url`
+        # is null — admin-api treats empty as "feature disabled" and
+        # returns 503 from /api/network/elevation so the UI can show
+        # a clear "not configured" message.
+        "HOMEFREE_ELEVATION_API_URL=${
+          if config.homefree.privacy.externalServices.elevation.url == null
+          then ""
+          else config.homefree.privacy.externalServices.elevation.url
+        }"
+        # Box-wide defaults for the alerts module (and future Privacy
+        # admin page) — every third-party endpoint the box may call
+        # for a feature is surfaced here. The frontend reads these
+        # via /api/system/privacy-defaults and uses them as the
+        # default for fresh alerts; per-alert overrides remain.
+        "HOMEFREE_PRIVACY_PUBLIC_IP_URL=${
+          config.homefree.privacy.externalServices.publicIp.url
+        }"
+        "HOMEFREE_PRIVACY_DOH_URL=${
+          config.homefree.privacy.externalServices.doh.url
+        }"
       ];
     };
   };

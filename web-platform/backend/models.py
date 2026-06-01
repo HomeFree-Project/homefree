@@ -238,3 +238,9 @@ class ServiceStatus:
     # the service-config entry itself — NOT services.<label> — so the admin UI
     # routes their toggles there instead of writing a dead services.<label>.
     external: bool = False
+    # Mirrors the Nix-side service-config `admin.show` flag (default true).
+    # The App Configuration page hides infra services (sso_kind == "infra")
+    # by default, but a service can opt back in by declaring admin.show = true
+    # — Zitadel does this because its enable/public are user-managed, while
+    # oauth2proxy sets admin.show = false to stay hidden.
+    admin_show: bool = True

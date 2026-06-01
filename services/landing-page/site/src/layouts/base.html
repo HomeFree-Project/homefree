@@ -10,9 +10,16 @@
     <meta name="author" content="{{ data.author }}">
     <meta name="keywords" content="{{ data.keywords.en }}">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="preload" href="{{ '/fonts/InterVariable.woff2' | assetVersion }}" as="font" type="font/woff2" crossorigin>
+    <style>
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('{{ "/fonts/InterVariable.woff2" | assetVersion }}') format('woff2-variations');
+      }
+    </style>
 
     <link rel="stylesheet" href="{{ '/css/main.css' | assetVersion }}">
     <noscript><link rel="stylesheet" href="{{ '/css/noscript.css' | assetVersion }}" /></noscript>

@@ -637,6 +637,18 @@ class AlertsModule extends LitElement {
     this._ntfyInfo = null;
     this._testing = false;
     this._testResult = null; // { ok: bool, message: str }
+    // Box-wide privacy defaults — every third-party endpoint the
+    // box may contact for a feature, sourced from
+    // homefree.privacy.externalServices.* via /api/system/privacy-
+    // defaults. Loaded on mount, used as the default value for fresh
+    // alerts that haven't been customized. Empty strings until the
+    // fetch returns. Future Privacy admin page will be the canonical
+    // editor for these.
+    this._privacyDefaults = {
+      publicIpUrl: '',
+      dohUrl: '',
+      elevationUrl: '',
+    };
   }
 
   updated(changedProps) {
@@ -720,6 +732,7 @@ class AlertsModule extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._loadState();
+    this._loadPrivacyDefaults();
     // Live-refresh source state, recent history, ntfy info while the
     // page is mounted. Same 30s cadence as the top-bar bell badge —
     // the alerts engine ticks at 60s by default so polling faster
@@ -728,6 +741,24 @@ class AlertsModule extends LitElement {
     this._pollInterval = setInterval(
       () => this._loadState({ quiet: true }), 30000,
     );
+  }
+
+  async _loadPrivacyDefaults() {
+    try {
+      const r = await fetch('/api/system/privacy-defaults');
+      if (r.ok) {
+        const d = await r.json();
+        this._privacyDefaults = {
+          publicIpUrl: d.publicIpUrl || '',
+          dohUrl: d.dohUrl || '',
+          elevationUrl: d.elevationUrl || '',
+        };
+        this.requestUpdate();
+      }
+    } catch (_) {
+      // Quiet — falls back to empty strings; the field placeholders
+      // make it visible that the system default isn't loaded.
+    }
   }
 
   disconnectedCallback() {
@@ -1131,8 +1162,15 @@ class AlertsModule extends LitElement {
   }
 
   _renderWanAccessibilityFields(cfg, cfgPathPrefix, tagPathPrefix) {
-    const defaultIp = 'https://ipinfo.io/ip';
-    const defaultDoh = 'https://cloudflare-dns.com/dns-query';
+    // System-wide defaults come from
+    // homefree.privacy.externalServices.{publicIp,doh}.url via
+    // /api/system/privacy-defaults — fetched in connectedCallback.
+    // Per-alert overrides still win when set; this just centralizes
+    // the box-wide default so an operator can change every alert's
+    // upstream in one place (and a future Privacy admin page can
+    // surface the same source of truth).
+    const defaultIp = this._privacyDefaults.publicIpUrl || 'https://ipinfo.io/ip';
+    const defaultDoh = this._privacyDefaults.dohUrl || 'https://cloudflare-dns.com/dns-query';
     const ip = (cfg['public-ip-url'] !== undefined)
       ? cfg['public-ip-url'] : defaultIp;
     const doh = (cfg['doh-url'] !== undefined)

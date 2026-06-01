@@ -491,6 +491,36 @@
         });
       };
 
+      perIpConnectionLimit = lib.mkOption {
+        type = lib.types.ints.between 0 65535;
+        default = 64;
+        description = ''
+          Maximum concurrent inbound TCP connections to ports 80/443
+          allowed from a single WAN source — per /32 for IPv4, per /64
+          for IPv6 (matches the typical residential ISP assignment
+          granularity, so a household isn't capped by a single client
+          using SLAAC privacy addresses across its /64).
+
+          A bound at the firewall layer that limits the blast radius
+          of any single misbehaving client: scrapers, broken bots,
+          slowloris, opportunistic DoS. Caps damage at the
+          connection layer, before fail2ban (which is reactive — it
+          only acts after logs are scraped) and before Caddy's
+          rate-limit plugin (which sees requests, not connections).
+
+          A legitimate browser opens ~6 concurrent connections per
+          origin (HTTP/2 multiplexes far fewer), so 64 leaves
+          generous headroom for a real visitor — even a multi-tab
+          power user — while catching anything pathological.
+          Operators behind a large corporate NAT or cellular CGN
+          (where many users share one egress IP) may want to raise
+          this; setting `0` disables the cap entirely.
+
+          Applies only to traffic ingressing on the WAN interface;
+          LAN/VLAN/tailscale/podman traffic is unrestricted.
+        '';
+      };
+
       geoip = {
         enable = lib.mkOption {
           type = lib.types.bool;
@@ -515,6 +545,104 @@
           type = lib.types.bool;
           default = false;
           description = "enable router functionality";
+        };
+      };
+    };
+
+    ## ─── Privacy / external-services ────────────────────────────────
+    ## Single source of truth for every third-party host the box
+    ## may contact AS PART OF A FEATURE (geocoding, elevation
+    ## lookup, public-IP probing for alerts, DoH for DNS-leak
+    ## detection, etc.). Asset loads on web pages are governed
+    ## separately by AGENTS.md rule 8 (vendoring), which is
+    ## absolute — those have no opt-in.
+    ##
+    ## Defaults follow the operator's stated stance: features that
+    ## are nice-to-have (elevation) are disabled by default;
+    ## features that the operator explicitly relies on (alerts,
+    ## DoH leak detection) keep their existing defaults but are
+    ## now system-wide configurable so a future Privacy admin
+    ## page can surface them all in one place.
+    privacy = {
+      externalServices = {
+        elevation = {
+          url = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "https://api.open-meteo.com/v1/elevation?latitude={lat}&longitude={lon}";
+            description = ''
+              URL template for elevation lookups in the lat/lng
+              picker (installer Location step, admin System page).
+              `{lat}` and `{lon}` placeholders are substituted by
+              the admin-api proxy.
+
+              Default: `null` (disabled — the "Look up from coords"
+              button returns "elevation lookup not configured").
+              The previous behaviour was to call api.open-meteo.com
+              (with api.open-elevation.com fallback) DIRECTLY from
+              the user's browser — that leaked the visitor's IP to
+              a third party on every click. The new path proxies
+              through admin-api when configured, so only the box's
+              egress IP touches the upstream.
+
+              Operators who want the feature back: set this to the
+              Open-Meteo URL in `example` above. The Open-Meteo
+              response shape (`{"elevation": [<meters>]}`) is what
+              the admin-api endpoint expects; alternative providers
+              are not currently supported on the parsing side.
+            '';
+          };
+        };
+
+        publicIp = {
+          url = lib.mkOption {
+            type = lib.types.str;
+            default = "https://ipinfo.io/ip";
+            description = ''
+              Default URL for "what's our public egress IP?" checks
+              (used by the alerts module's WAN-reachability watcher
+              and any other feature that needs to know the box's
+              own egress address). Plain-text endpoint — caller
+              expects the body to be just the IP string.
+
+              An intentional third-party dependency: alerts must
+              know the box's outside-view address, and a self-
+              referential answer wouldn't catch the case where the
+              box can't reach the outside at all (which is what the
+              alert exists to detect). Keep the default unless the
+              operator has a specific replacement in mind.
+
+              Per-alert overrides remain available in the alerts
+              UI; this option is the box-wide default that fresh
+              alerts inherit. The intent is to give a future
+              Privacy admin page one place to surface and change
+              every third-party endpoint at once.
+            '';
+          };
+        };
+
+        doh = {
+          url = lib.mkOption {
+            type = lib.types.str;
+            default = "https://cloudflare-dns.com/dns-query";
+            description = ''
+              Default DNS-over-HTTPS endpoint for DNS-leak detection
+              in the alerts module (compares what the box resolves
+              against what the DoH endpoint returns for the same
+              query). Cloudflare is the default because it's the
+              best-known DoH endpoint with a stable JSON API
+              (`Accept: application/dns-json`).
+
+              An intentional third-party dependency: the leak check
+              needs an external authoritative answer to compare
+              against. Other DoH endpoints (Quad9, NextDNS, the
+              operator's own resolver if it speaks DoH) work too.
+
+              Per-alert overrides remain available in the alerts
+              UI; this option is the box-wide default that fresh
+              alerts inherit.
+            '';
+          };
         };
       };
     };
@@ -1853,6 +1981,174 @@
           default = "${pkgs.homefree-site}/lib/node_modules/homefree-site/public";
           description = "Path to landing page";
         };
+
+        rateLimit = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Apply a proactive per-IP request-rate cap on the apex
+              landing site's HTML routes. Uses the
+              mholt/caddy-ratelimit plugin (built in via
+              overlays/caddy-with-plugins.nix).
+
+              Complements the per-IP nftables connection cap
+              (`homefree.network.perIpConnectionLimit`): nftables
+              sees sockets, this sees individual HTTP requests, so
+              an HTTP/2 client multiplexing 50 requests on one
+              socket is still rate-limited here. Fires immediately
+              on the request (vs fail2ban, which is reactive). 429
+              responses are excluded from the fail2ban 404-storm /
+              error-flood jails so a legitimate HN/Reddit surge
+              doesn't trigger bans.
+
+              Scoped narrowly: applies only to HTML routes on the
+              apex landing site (`?v=*` hashed assets, `/downloads/*`,
+              `/.well-known/*`, and the `/manual` redirect are
+              exempt — they have their own profiles or are cheap to
+              serve).
+
+              Disable on a box where the landing page sees enough
+              legitimate burst traffic that 429s would harm UX, or
+              where Layer 3 (nftables) is judged sufficient on its
+              own.
+            '';
+          };
+
+          events = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 30;
+            description = ''
+              Maximum events (requests) allowed per source IP per
+              `window`. Defaults to 30 requests / 10s = a sustained
+              3 req/s per visitor, plenty of headroom for legitimate
+              navigation (a real user clicking links). Lower on
+              under-resourced boxes; raise if the page has lots of
+              cheap sub-requests.
+            '';
+          };
+
+          window = lib.mkOption {
+            type = lib.types.str;
+            default = "10s";
+            description = ''
+              Sliding window over which `events` is counted. Caddy
+              duration syntax (`10s`, `1m`, etc.).
+            '';
+          };
+        };
+
+        edge = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              Opt-in: place a third-party CDN / edge in front of the
+              public landing page. Layer 7 of the surge-resilience
+              stack — the only real defence on residential
+              asymmetric uplinks (25-50 Mbps up cable / DSL),
+              where no amount of origin tuning will keep a Hacker
+              News front-page hit from saturating the pipe.
+
+              Cost: an external dependency for the marketing
+              surface. The HomeFree project view (taken with the
+              maintainer) is that the marketing site for the
+              project itself is a different concern from each
+              operator's own personal HomeFree box, so a CDN here
+              is an acceptable trade-off for operators who need
+              it. Personal HomeFree boxes running in personal-
+              mode have no marketing site to defend, so this
+              option doesn't apply.
+
+              When enabled this option does NOT itself contact the
+              CDN — it just configures the apex Caddy site to:
+                (a) trust the configured proxy IPs so logs and
+                    fail2ban see real client IPs, not the CDN edge;
+                (b) reject requests that didn't come through the
+                    CDN (header-token check), so an attacker can't
+                    bypass the edge by hitting the origin IP
+                    directly;
+                (c) emit `Vary: Cookie` so the edge doesn't
+                    accidentally serve a logged-in user's cached
+                    response to an anonymous visitor.
+
+              Operator-side setup (DNS, origin-pull config, page
+              rule that caches HTML for ~60s) is the operator's
+              responsibility — see
+              docs/agent-notes/landing-page-edge-fronting.md.
+            '';
+          };
+
+          provider = lib.mkOption {
+            type = lib.types.enum [ "cloudflare" "bunny" "custom" ];
+            default = "cloudflare";
+            description = ''
+              Which CDN provider is fronting the site. Determines
+              the default `trustedProxies` CIDRs (Cloudflare's and
+              bunny.net's are pre-populated below). `custom` means
+              the operator MUST supply `trustedProxies` explicitly.
+            '';
+          };
+
+          trustedProxies = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+            description = ''
+              Additional CIDRs to add to Caddy's `trusted_proxies`.
+              Concatenated with the provider's built-in list when
+              `provider` is `cloudflare` or `bunny`; required and
+              the sole source of trusted proxies when `provider`
+              is `custom`.
+
+              Trusted proxies tell Caddy which front-end IPs are
+              allowed to set `X-Forwarded-For` (and equivalents) —
+              every other source is treated as the actual client
+              and its raw remote IP is what `{remote_host}` resolves
+              to. Misconfiguring this either ignores the real
+              client IP (fail2ban then bans the CDN edge — useless)
+              or trusts an attacker's IP-spoofing claim — get it
+              right.
+
+              CIDRs only. Keep this list in sync with the CDN's
+              published edge ranges; Cloudflare and bunny.net both
+              publish a canonical URL the operator should
+              periodically diff.
+            '';
+          };
+
+          originSharedSecretEnv = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "EDGE_ORIGIN_SECRET";
+            description = ''
+              Name of an environment variable (loaded into Caddy
+              via EnvironmentFile) that holds a shared secret the
+              CDN must send on every origin-pull request — Caddy
+              rejects requests that don't carry it. Closes the
+              origin-bypass hole: without it, an attacker who knows
+              the box's IP can simply skip the CDN and hammer the
+              origin directly, defeating the whole point of edge
+              fronting.
+
+              Operator workflow:
+                1. Generate a high-entropy secret
+                   (`openssl rand -hex 32`).
+                2. Write it into the env file Caddy already loads,
+                   under whatever variable name this option is set
+                   to.
+                3. Configure the CDN to add it as a custom
+                   request header on every origin pull — for
+                   Cloudflare this is a Transform Rule or a Worker;
+                   for bunny.net a custom origin header.
+                4. The header name Caddy expects is fixed at
+                   `X-Edge-Origin-Auth`.
+
+              Leaving this `null` disables the origin-bypass check
+              — strongly discouraged; without it the CDN gives no
+              real protection.
+            '';
+          };
+        };
       };
 
       oauth2-proxy = {
@@ -1868,6 +2164,72 @@
               OAUTH_PROXY_COOKIE_SECRET=<cookie secret>
 
               Should not be a file included in your source repo.
+            '';
+          };
+        };
+      };
+
+      caddy = {
+        resources = {
+          memoryHigh = lib.mkOption {
+            type = lib.types.str;
+            default = "512M";
+            description = ''
+              systemd `MemoryHigh=` for caddy.service — the soft
+              throttling threshold. Above this the kernel reclaims
+              caddy's memory aggressively while letting it keep
+              running, slowing the runaway without OOM-killing.
+              Combined with `memoryMax` (hard cap) this bounds
+              caddy's memory blast radius during a traffic surge so
+              the rest of the system (sshd, admin-api, monitoring)
+              stays responsive even when caddy is overloaded.
+
+              Default is conservative for a 4 GB / 4-core minimum
+              target. Raise on larger boxes where you'd rather
+              caddy use the headroom.
+            '';
+          };
+
+          memoryMax = lib.mkOption {
+            type = lib.types.str;
+            default = "1G";
+            description = ''
+              systemd `MemoryMax=` for caddy.service — the hard
+              memory cap. If exceeded the kernel OOM-kills caddy
+              (it then auto-restarts via the catalog Restart=always
+              policy in modules/service-restart-policy.nix). The
+              floor below which caddy cannot grow further; tune up
+              if you legitimately need more (huge proxied response
+              bodies, lots of TLS sessions).
+            '';
+          };
+
+          cpuWeight = lib.mkOption {
+            type = lib.types.ints.between 1 10000;
+            default = 200;
+            description = ''
+              systemd `CPUWeight=` for caddy.service. Default
+              weight is 100; raising to 200 gives caddy a 2x share
+              of CPU under contention vs an unweighted service.
+              This is a *relative* share, not a cap — under no
+              contention caddy uses whatever it needs. Under
+              contention (a load spike), caddy gets priority over
+              background batch jobs but yields to anything else
+              weighted equally.
+            '';
+          };
+
+          tasksMax = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 4096;
+            description = ''
+              systemd `TasksMax=` for caddy.service — the cap on
+              the number of pids/tasks caddy's cgroup may spawn.
+              Bounds runaway-goroutine / connection blowups. 4 096
+              is far above caddy's steady-state needs (which sit in
+              the hundreds even under load), but low enough that a
+              pathological growth halts before the kernel-wide
+              pids.max is exhausted.
             '';
           };
         };
@@ -2227,6 +2589,40 @@
                 otherwise be locked out. Such clients authenticate to
                 the upstream with its own native credentials, while
                 browser traffic to the web UI stays gated.
+              '';
+            };
+
+            staticCachePolicy = lib.mkOption {
+              type = lib.types.enum [ "no-store" "vendor-hashed" ];
+              default = "no-store";
+              description = ''
+                Cache-Control policy for `static-path`-served sites
+                (no effect on reverse-proxied upstreams).
+
+                `"no-store"` (default): every response gets
+                `Cache-Control: no-store`, ETag/Last-Modified
+                stripped, and inbound If-Modified-Since/If-None-Match
+                stripped. This is the correct policy for application
+                surfaces (`web-platform/frontend`, homefree-cli's
+                static dir, anything that's live JS/HTML code served
+                out of /nix/store) — it prevents the
+                epoch-mtime 304 trap that would otherwise serve stale
+                JS after a rebuild.
+
+                `"vendor-hashed"`: HTML and unhashed assets still get
+                the no-store treatment above (so newly-deployed pages
+                are always seen immediately and the epoch-mtime 304
+                trap stays defused), but URLs carrying a `?v=<hash>`
+                query string — the Eleventy `assetVersion` filter's
+                output — additionally get
+                `Cache-Control: public, max-age=31536000, immutable`.
+                Because the URL itself changes whenever the file
+                changes, a stale cached asset can never be served.
+                Intended for the static marketing landing page +
+                manual, where aggressive browser/edge caching of
+                hashed assets is the key resilience lever under a
+                traffic surge (Hacker News, Reddit) without risking
+                content drift on a rebuild.
               '';
             };
 

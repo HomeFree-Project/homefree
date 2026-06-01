@@ -266,6 +266,22 @@ in
           ""
           "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile"
         ];
+
+        ## Cgroup resource limits — bound caddy's blast radius under
+        ## a traffic surge (HN/Reddit front-page hug, runaway upstream,
+        ## OOM-bait response). Defined via
+        ## `homefree.services.caddy.resources.*` so per-instance
+        ## hardware can tune without editing shared code. The point is
+        ## NOT to make caddy fast; it's to keep caddy from starving
+        ## the rest of the system — sshd / admin-api / monitoring —
+        ## when caddy gets overloaded. Layered with the upstream
+        ## Layers 1-4 input-side defences (vendored assets, hashed-
+        ## asset cache, nftables per-IP conn cap, caddy-ratelimit):
+        ## those reduce input pressure; these cap impact.
+        MemoryHigh = config.homefree.services.caddy.resources.memoryHigh;
+        MemoryMax = config.homefree.services.caddy.resources.memoryMax;
+        CPUWeight = toString config.homefree.services.caddy.resources.cpuWeight;
+        TasksMax = toString config.homefree.services.caddy.resources.tasksMax;
       }
     ];
   };
@@ -361,7 +377,64 @@ in
       ## a long-poll that the client will simply re-establish.
       ''
         grace_period 5s
+
+        ## caddy-ratelimit (mholt/caddy-ratelimit) — order before
+        ## file_server / reverse_proxy so a rate-limited request is
+        ## rejected with 429 before any handler does work. Plugin is
+        ## always built in (see overlays/caddy-with-plugins.nix);
+        ## individual sites enable the directive when they want it.
+        order rate_limit before basicauth
       ''
+    + (let
+        ## Layer 7 (CDN/edge fronting) trusted-proxies CIDR list.
+        ## Caddy only allows `trusted_proxies` at the per-listener
+        ## level (inside `servers { }`), so it has to live in the
+        ## global config — not in the landing-page site block.
+        ## Emitted only when an operator has explicitly opted in
+        ## via `homefree.services.landing-page.edge.enable`.
+        ##
+        ## SIDE EFFECT to be aware of: trusted_proxies applies to
+        ## the whole listener, so admin.<domain> and every other
+        ## vhost on this Caddy will ALSO trust X-Forwarded-For
+        ## from these CIDRs. In practice this is benign — admin
+        ## isn't routed through the CDN, and the SSO gate prevents
+        ## unauthenticated reach — but if you ever proxy admin
+        ## through the same CDN, audit the X-Forwarded-For trust
+        ## chain across the auth flow first.
+        ##
+        ## Cloudflare published edge ranges:
+        ##   https://www.cloudflare.com/ips-v4
+        ##   https://www.cloudflare.com/ips-v6
+        ## bunny.net published edge ranges:
+        ##   https://api.bunny.net/system/edgeserverlist
+        edgeCfg = config.homefree.services.landing-page.edge;
+        cloudflareTrustedProxies = [
+          "173.245.48.0/20" "103.21.244.0/22" "103.22.200.0/22"
+          "103.31.4.0/22" "141.101.64.0/18" "108.162.192.0/18"
+          "190.93.240.0/20" "188.114.96.0/20" "197.234.240.0/22"
+          "198.41.128.0/17" "162.158.0.0/15" "104.16.0.0/13"
+          "104.24.0.0/14" "172.64.0.0/13" "131.0.72.0/22"
+          "2400:cb00::/32" "2606:4700::/32" "2803:f800::/32"
+          "2405:b500::/32" "2405:8100::/32" "2a06:98c0::/29"
+          "2c0f:f248::/32"
+        ];
+        bunnyTrustedProxies = [
+          "23.83.128.0/18" "169.150.0.0/16" "185.93.0.0/16"
+          "188.114.96.0/20" "208.115.0.0/16"
+          "2a02:e1c1::/32"
+        ];
+        providerBuiltins =
+          if edgeCfg.provider == "cloudflare" then cloudflareTrustedProxies
+          else if edgeCfg.provider == "bunny" then bunnyTrustedProxies
+          else [];
+        allTrustedProxies = providerBuiltins ++ edgeCfg.trustedProxies;
+      in lib.optionalString
+        (edgeCfg.enable && allTrustedProxies != [])
+        ''
+          servers {
+            trusted_proxies static ${lib.concatStringsSep " " allTrustedProxies}
+          }
+        '')
     + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
       cert_issuer acme {
         dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {$DNS_API_TOKEN}
@@ -667,6 +740,38 @@ in
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
             }
+            ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''
+              ## Hashed-asset cache override (vendor-hashed policy).
+              ##
+              ## Sites built with content-hash query-string cache busting
+              ## (Eleventy `assetVersion` filter — landing page, manual)
+              ## emit asset references like
+              ## `/css/main.css?v=abc123`. When the file content changes,
+              ## the hash changes, the URL changes, and the browser
+              ## fetches a brand-new cache entry — so any cached body for
+              ## the OLD URL is permanently safe to keep. That's the
+              ## "immutable" guarantee.
+              ##
+              ## Why this is safe even though the apex no-store header
+              ## above runs first: Caddy's `header` middleware composes
+              ## directives in source order, and a later directive for
+              ## the same header key overrides an earlier one when the
+              ## matcher fires. So for `?v=*` URLs Cache-Control becomes
+              ## `public, max-age=31536000, immutable`; for every other
+              ## URL the no-store from above stands.
+              ##
+              ## ETag / Last-Modified are RE-emitted here so 304s can
+              ## work for the hashed asset (`-ETag` from the apex block
+              ## still stripped them — we want them back for these
+              ## URLs). For epoch-mtime safety: hashed URLs never
+              ## conflict across rebuilds because the URL itself changes
+              ## on every content change, so a 304 reply can only happen
+              ## when the asset's bytes really are identical.
+              @hashed_assets {
+                query v=*
+              }
+              header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+            '' else ""}
           '' else (
           (if reverse-proxy-config.oauth2 == true then ''
             ## SSO gate (reverse-proxy site). Request-time `file`

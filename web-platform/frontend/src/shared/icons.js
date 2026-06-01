@@ -45,6 +45,11 @@ const PATHS = {
   // unambiguously as notifications/alerts at the small nav size; sits
   // between Shared Folders and Updates in the System section.
   alerts: svg`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/><path d="M22 8c0-2.3-.8-4.3-2-6"/>`,
+  // Lucide `shield-check` — shield silhouette with an inset check.
+  // Reads as privacy/protection guarantees, matching the page's
+  // "audit-and-adjust the third-party exceptions" framing. Sits
+  // adjacent to alerts in the System section.
+  privacy: svg`<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>`,
   // --- admin: Applications section -----------------------------------
   // (the admin "Apps" nav item shares the `apps` icon defined below)
   backups: svg`<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>`,

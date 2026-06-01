@@ -271,17 +271,43 @@ in
     ## only sets `public`), and the type system rejects unknown keys, so
     ## the per-service whitelist is no longer needed.
     ##
-    ## Orphaned-key filtering: a custom-flake app (registered via
-    ## Developers → Custom Flakes) declares its own
-    ## `homefree.services.<name>` option. When such a flake is removed,
-    ## its `services.<name>` block can linger in homefree-config.json
-    ## after the module that declared the option is gone — an
-    ## "orphaned" key. Passing it straight through would abort the whole
-    ## build with `error: The option 'homefree.services.<name>' does not
-    ## exist`. So we filter `jsonData.services` to keys that are
-    ## actually declared options under `homefree.services`; orphaned
-    ## keys are silently dropped (their settings stay inert in the JSON,
-    ## so re-adding the flake restores them).
+    ## Two layers of tolerance keep custom-flake apps from breaking the
+    ## build when their schemas drift from what the admin UI writes:
+    ##
+    ##   1. Orphaned-service filter — a custom-flake app (registered via
+    ##      Developers → Custom Flakes) declares its own
+    ##      `homefree.services.<name>` option. When such a flake is
+    ##      removed, its `services.<name>` block can linger in
+    ##      homefree-config.json after the module that declared the
+    ##      option is gone — an "orphaned" key. Passing it straight
+    ##      through would abort the whole build with `error: The option
+    ##      'homefree.services.<name>' does not exist`. So we filter
+    ##      `jsonData.services` to keys that are actually declared
+    ##      options under `homefree.services`; orphaned keys are
+    ##      silently dropped (their settings stay inert in the JSON, so
+    ##      re-adding the flake restores them).
+    ##
+    ##   2. Unknown-field filter — within each surviving service, the
+    ##      admin UI's `handleServiceToggle` seeds new entries as
+    ##      `{ enable: false, public: false }` (see
+    ##      web-platform/frontend/.../admin-app.js), so every service
+    ##      in homefree-config.json ends up with `public` regardless of
+    ##      whether the app's schema declares it. The in-tree apps all
+    ##      declare `public`, but a custom flake might not (the
+    ##      external homefree-mosaic flake declares only `enable` and
+    ##      `subdomain`, for example). Mirror the orphan-service filter
+    ##      at the field level: keep only keys that exist on the
+    ##      service's declared option attrset, drop the rest. Same
+    ##      silent-drop semantics — the JSON keeps the value, the
+    ##      loader just ignores it until the app's schema declares it.
+    ##
+    ## Both layers assume the in-tree shape
+    ## `options.homefree.services.<name> = userOptions;` where
+    ## userOptions is an attrset of mkOption results, so
+    ## `lib.attrNames` over the option set yields field names. A
+    ## custom flake using `mkOption { type = submodule { ... }; }`
+    ## instead would not benefit from the field filter, but no current
+    ## consumer uses that shape.
     ##
     ## Only mediawiki's instances need a real transform: `logo-path` is
     ## a *string* in JSON (filesystem path like
@@ -302,18 +328,26 @@ in
     ## user's logos are outside it, so pure eval would reject the import.)
     services =
       let
-        ## Only keys with a declared `homefree.services.<name>` option
-        ## survive — drops orphaned keys left by a removed custom flake
-        ## so the build doesn't abort. See the comment block above.
+        ## Stage 1: drop services whose option isn't declared by any
+        ## current app/flake (orphaned-service filter).
         declared = lib.filterAttrs
           (name: _: options.homefree.services ? ${name})
           (jsonData.services or {});
+
+        ## Stage 2: within each surviving service, drop JSON keys that
+        ## aren't declared sub-options on that service's submodule
+        ## (unknown-field filter). See comment block above for rationale.
+        pruned = lib.mapAttrs (name: svc:
+          lib.filterAttrs
+            (k: _: options.homefree.services.${name} ? ${k})
+            svc
+        ) declared;
       in
       ## mediawiki's instances need the logo-path string→path transform
       ## (see comment above). Only rewrite mediawiki when it is actually
       ## present in the config.
-      declared // (lib.optionalAttrs (declared ? mediawiki) {
-        mediawiki = declared.mediawiki // {
+      pruned // (lib.optionalAttrs (pruned ? mediawiki) {
+        mediawiki = pruned.mediawiki // {
           instances = map (instance: instance // {
             logo-path =
               let raw = instance.logo-path or null; in
@@ -325,7 +359,7 @@ in
                     then lib.strings.removePrefix "/etc/nixos/" raw
                     else raw;
                 in (homefreeInstanceDir + ("/" + stripped));
-          }) (declared.mediawiki.instances or []);
+          }) (pruned.mediawiki.instances or []);
         };
       });
 
@@ -554,5 +588,28 @@ in
       };
       public = e.public or false;
     }) (jsonData.proxied-domains or []);
+
+    ## Privacy / external-services config. The single source of truth
+    ## for every third-party host the box may contact AS PART OF A
+    ## FEATURE (alerts WAN-check, DoH leak detection, elevation
+    ## lookup, etc.). Asset loads on web pages are governed
+    ## separately by AGENTS.md rule 8 (vendoring) and have no
+    ## opt-in. `or`-defaults preserve backwards compat with older
+    ## homefree-config.json files that predate this section (rule
+    ## 11) and mirror the option defaults in module.nix.
+    privacy =
+      let
+        p = jsonData.privacy or {};
+        ext = p.externalServices or {};
+        elev = ext.elevation or {};
+        pip = ext.publicIp or {};
+        dohx = ext.doh or {};
+      in {
+        externalServices = {
+          elevation.url = elev.url or null;
+          publicIp.url = pip.url or "https://ipinfo.io/ip";
+          doh.url = dohx.url or "https://cloudflare-dns.com/dns-query";
+        };
+      };
   };
 }

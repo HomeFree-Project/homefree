@@ -78,6 +78,29 @@ let
   abuse-cidrs4-str = lib.concatStringsSep ", " enabled-abuse-cidrs4;
   abuse-cidrs6-str = lib.concatStringsSep ", " enabled-abuse-cidrs6;
 
+  ## Per-IP concurrent-connection cap (homefree.network.perIpConnection-
+  ## Limit). `0` disables the cap. Emitted into the input chain BEFORE
+  ## the http/https accept rule so excess connections are dropped before
+  ## conntrack accepts them. Applies only on the WAN interface; LAN
+  ## clients are unrestricted.
+  ##
+  ## Uses nftables `meter` (anonymous dynamic set) — the canonical form
+  ## documented on the nftables wiki for per-source `ct count` limits.
+  ## A previous attempt with a named-set `add @set { ip saddr ct count
+  ## over N }` was rejected by the kernel ("Operation not supported");
+  ## `meter` creates the backing set implicitly and avoids whatever
+  ## combo of set-flag / `add`-statement bits the kernel doesn't accept
+  ## with `ct count`. IPv6 keys by the source's /64 prefix (the rule
+  ## ANDs `ip6 saddr` before counting) so SLAAC privacy addresses on
+  ## one client's /64 don't artificially fill the cap.
+  perIpConnLimit = config.homefree.network.perIpConnectionLimit;
+  perIpConnRules =
+    if perIpConnLimit == 0 then ""
+    else ''
+      iifname "${wan-interface}" tcp dport { http, https } meta nfproto ipv4 ct state new meter conn_count_v4 size 65535 { ip saddr ct count over ${toString perIpConnLimit} } counter drop comment "Per-IP conn cap v4 (>${toString perIpConnLimit})"
+      iifname "${wan-interface}" tcp dport { http, https } meta nfproto ipv6 ct state new meter conn_count_v6 size 65535 { ip6 saddr and ffff:ffff:ffff:ffff:: ct count over ${toString perIpConnLimit} } counter drop comment "Per-IP conn cap v6 (>${toString perIpConnLimit}, /64)"
+    '';
+
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
   service-input-rules = lib.concatStringsSep "\n" (lib.map (service-config:
@@ -133,7 +156,16 @@ in
   # so VLAN interfaces silently never come up. Only needed when guest networks
   # are configured.
   boot.kernelModules =
-    [ "ip6table_nat" ]
+    [
+      "ip6table_nat"
+      ## Connection-counter for `ct count over N` in the per-IP
+      ## connection-cap meter rules above (perIpConnRules). NixOS
+      ## usually auto-modprobes nft modules referenced by rules, but
+      ## we list it explicitly so a kernel that has it as a separate
+      ## module loads it deterministically at boot rather than racing
+      ## the first nftables ruleset apply.
+      "nf_conncount"
+    ]
     ++ lib.optional (config.homefree.network.guest-networks != []) "8021q";
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
@@ -298,6 +330,14 @@ in
             flags timeout
           }
 
+          ## Per-source-IP conntrack count: the backing dynamic set is
+          ## created INLINE by the `meter conn_count_v{4,6} { ip[6]
+          ## saddr ct count over N } drop` rules in the input chain
+          ## (see profiles/router.nix near `perIpConnRules`). No
+          ## named-set declaration is needed — and an earlier attempt
+          ## with named sets + `add @set { ... ct count over N }` was
+          ## rejected by the kernel as "Operation not supported."
+
           ## allow all packets sent by the firewall machine itself
           chain output {
             type filter hook output priority 100; policy accept;
@@ -331,6 +371,16 @@ in
             iifname { "wt0" } accept comment "Allow netbird network to access the router"
             iifname { "podman0" } accept comment "Allow podman network to access the router"
             ${guest-network-input-rules}
+
+            ## Per-IP concurrent-connection cap on web ports.
+            ## Drops connections from a single WAN source once it
+            ## holds more than `homefree.network.perIpConnectionLimit`
+            ## concurrent connections to http/https — protection
+            ## against scrapers, slowloris, and opportunistic floods
+            ## that fail2ban can't catch in time (fail2ban is
+            ## reactive; this is structural). Empty when the limit
+            ## is 0.
+            ${perIpConnRules}
 
             ## Allow for web traffic
             ## http is needed for headscale relaying

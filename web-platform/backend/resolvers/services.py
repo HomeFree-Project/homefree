@@ -213,6 +213,8 @@ class ServicesResolver:
                 service_config, global_sso_provisioned
             )
 
+            admin_show = service_config.get("admin", {}).get("show", True)
+
             service_status = ServiceStatus(
                 label=service_label,
                 name=name,
@@ -229,6 +231,7 @@ class ServicesResolver:
                 sso_notes=sso_notes,
                 sso_provisioned=sso_provisioned,
                 sso_applicable=sso_applicable,
+                admin_show=admin_show,
             )
 
             services_status.append(service_status)
@@ -294,6 +297,8 @@ class ServicesResolver:
                 service_config, global_sso_provisioned
             )
 
+            admin_show = service_config.get("admin", {}).get("show", True)
+
             service_status = ServiceStatus(
                 label=service_label,
                 name=name,
@@ -311,6 +316,7 @@ class ServicesResolver:
                 sso_provisioned=sso_provisioned,
                 sso_applicable=sso_applicable,
                 external=is_external,
+                admin_show=admin_show,
             )
 
             services_status.append(service_status)

@@ -928,6 +928,32 @@ class ServicesModule extends LitElement {
       word-break: break-word;
     }
 
+    /* External sign-in reachability warning. Rendered in the card body
+       when an SSO-gated public app would be unreachable to off-LAN
+       users (Zitadel public is false), and again on the Zitadel card
+       itself summarising how many public apps are affected. Amber
+       (warn-soft) so it reads as a misconfiguration to fix, not a
+       hard error. */
+    .sso-reach-warn {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: var(--hf-warn-soft);
+      border-left: 3px solid var(--hf-warn);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--hf-text);
+    }
+    .sso-reach-warn-icon {
+      color: var(--hf-warn);
+      font-size: 14px;
+      line-height: 1.2;
+      flex-shrink: 0;
+    }
+
     /* The card grid is responsive on its own (auto-fill minmax) — it
        collapses to one column on narrow screens with no extra rules. */
   `;
@@ -1560,6 +1586,30 @@ class ServicesModule extends LitElement {
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
 
+    // External-sign-in reachability gate. Any service that gates through
+    // Zitadel + oauth2-proxy (native_oidc, caddy_gated, basic_auth) needs
+    // sso.<domain> AND auth.<domain> reachable from the public internet
+    // for an off-LAN user to complete a login. Both endpoints are bound
+    // by a SINGLE toggle: services.zitadel.public (apps/zitadel/default.nix
+    // line 779: "Two endpoints, one toggle"). When that is false, every
+    // SSO-gated app that is itself public is reachable from the WAN at
+    // the TCP level but stalls at the SSO redirect. Surface that
+    // mismatch on both viewpoints:
+    //   - per-app row: "external users can't sign in"
+    //   - Zitadel's row: "N public apps are broken until SSO is exposed"
+    // Read from this.services (which is updated immediately on toggle by
+    // handlePublicToggle), so the warning appears/disappears within the
+    // same render pass — no Apply needed for feedback.
+    const SSO_GATED_KINDS = new Set(['native_oidc', 'caddy_gated', 'basic_auth']);
+    const zitadelEntry = this.services.find(s => s.label === 'zitadel');
+    const ssoIsPublic = !!(zitadelEntry && zitadelEntry.public);
+    const externalSigninBroken = SSO_GATED_KINDS.has(service.sso_kind)
+      && !!service.public
+      && !ssoIsPublic;
+    const ssoBlockedApps = (service.label === 'zitadel' && !ssoIsPublic)
+      ? this.services.filter(s => SSO_GATED_KINDS.has(s.sso_kind) && s.public)
+      : [];
+
     // Check if service has configuration options (secrets, options)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
     const serviceOptions = this.optionsSchema[service.label] || {};
@@ -1742,6 +1792,28 @@ class ServicesModule extends LitElement {
         ` : ''}
 
         ${actionErr ? html`<div class="action-error">${actionErr}</div>` : ''}
+
+        ${externalSigninBroken ? html`
+          <div class="sso-reach-warn">
+            <span class="sso-reach-warn-icon" aria-hidden="true">⚠</span>
+            <span>External users can't sign in &mdash; SSO is not exposed to
+            the internet. Expose Single Sign-on (sso.* and auth.*) to make
+            external sign-in work.</span>
+          </div>
+        ` : ''}
+
+        ${ssoBlockedApps.length > 0 ? html`
+          <div class="sso-reach-warn">
+            <span class="sso-reach-warn-icon" aria-hidden="true">⚠</span>
+            <span>
+              ${ssoBlockedApps.length}
+              public ${ssoBlockedApps.length === 1 ? 'app' : 'apps'}
+              cannot accept external sign-ins until SSO is exposed to the
+              internet:
+              ${ssoBlockedApps.map(s => s.name || s.label).join(', ')}.
+            </span>
+          </div>
+        ` : ''}
       </app-card>
 
       <!-- The modal is a sibling of <app-card>, not slotted into it: a
@@ -2172,19 +2244,28 @@ class ServicesModule extends LitElement {
     // inside their parent's group box. Also hide the HomeFree Admin
     // itself: it is the surface you are looking at, not a manageable app.
     const HIDDEN_LABELS = new Set(['admin', 'admin-api']);
-    // Infrastructure services (Zitadel, oauth2-proxy, ntfy, etc. —
-    // anything tagged sso.kind="infra" in module.nix) are system
-    // wiring, not user-managed apps. Same posture the SSO admin page
-    // already uses for these (services-module.js line 1566). Without
-    // this filter they appear on App Configuration with a checkbox
-    // wired to homefree.services.<label>.enable, and the act of
-    // rendering the row + saving can pollute homefree-config.json
-    // with an inadvertent `enable: false` that then beats the
-    // alerts-module's auto-enable on the next rebuild.
+    // Infrastructure services (oauth2-proxy, ntfy, etc. — anything
+    // tagged sso.kind="infra" in module.nix) are system wiring, not
+    // user-managed apps. Same posture the SSO admin page already
+    // uses for these (services-module.js line 1566). Without this
+    // filter they appear on App Configuration with a checkbox wired
+    // to homefree.services.<label>.enable, and the act of rendering
+    // the row + saving can pollute homefree-config.json with an
+    // inadvertent `enable: false` that then beats the alerts-module's
+    // auto-enable on the next rebuild.
+    //
+    // Opt-in exception: an infra service that legitimately exposes
+    // user-managed enable/public toggles (Zitadel — see
+    // apps/zitadel/default.nix options-metadata) sets admin.show=true
+    // on its service-config entry. The backend resolver propagates
+    // that to admin_show on each ServiceStatus, and we honor it
+    // here. Zitadel needs a home for the Exposed-to-internet toggle
+    // that drives sso.* and auth.*; oauth2-proxy keeps
+    // admin.show=false so it stays hidden.
     const parentServices = this.services.filter(
       service => !service.parent
         && !HIDDEN_LABELS.has(service.label)
-        && service.sso_kind !== 'infra'
+        && (service.sso_kind !== 'infra' || service.admin_show === true)
     );
 
     // Sort against the LAST-APPLIED (deployed) state, not the merged

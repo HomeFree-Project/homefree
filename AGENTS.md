@@ -73,14 +73,35 @@ separate deployments. It is *not* one machine's config.
    messages. Write the commit message as plain content with no
    tool-attribution footer.
 
-8. **All web assets must be vendored locally.** Every font, JS/CSS
-   library, icon set, and other asset used by any web page
-   (`web-platform/`, `services/landing-page/`, etc.) must be served
-   from this repo — never loaded from a CDN, Google Fonts, or any
-   third-party URL. HomeFree boxes must render fully offline and leak
-   no requests to outside hosts. The repo already vendors Lit
+8. **All web assets must be vendored locally — ZERO external requests
+   from any HomeFree-served page, ever.** Every font, JS/CSS library,
+   icon set, image, analytics/telemetry beacon, and other asset used by
+   any web page (`web-platform/`, `services/landing-page/`,
+   `services/landing-page/site/src/manual/`, any new service that ships
+   HTML, etc.) must be served from this repo. NEVER from a CDN, Google
+   Fonts, jsdelivr/unpkg/cdnjs, Gravatar, a favicon service, an
+   analytics pixel, a Sentry/error beacon, OR any other third-party
+   URL — not even at runtime as a "convenience," not even behind a
+   `<script async>`, not even if it's "industry standard." HomeFree
+   boxes must render fully offline and leak no requests to outside
+   hosts. The repo already vendors Lit
    (`web-platform/frontend/src/vendor/`) and the Inter font
-   (`src/assets/fonts/`); follow that pattern for anything new.
+   (`web-platform/frontend/src/assets/fonts/` + landing's
+   `services/landing-page/site/src/fonts/`); follow that pattern for
+   anything new.
+
+   **Before** declaring any new web surface "done" — and **whenever**
+   editing an HTML template — grep the templates and CSS for these
+   patterns and confirm zero hits: `https?://`, `fonts.googleapis`,
+   `fonts.gstatic`, `cdn.`, `jsdelivr`, `unpkg`, `cdnjs`, `gravatar`,
+   `googletagmanager`, `google-analytics`, `sentry.io`. Then load the
+   page in a real browser with the network panel filtered to
+   "3rd-party" and confirm zero off-domain requests. A single
+   third-party `<link>` slipped into a layout breaks the whole
+   privacy + resilience promise — a single Google Fonts line in
+   `services/landing-page/site/src/layouts/base.html` and a single
+   jsdelivr Mermaid `<script>` in `manual.html` were in production
+   for months before the audit caught them.
 
 9. **Fix root causes, not symptoms — and ask before working around.**
    When something breaks, find the real cause and fix it there. Do
@@ -285,6 +306,14 @@ Situational knowledge — read the linked note when working in that area:
   parity; reclaim MUST `cryptsetup close` before `mdadm --stop`; create has
   rollback (close+erase) on any raised exception — don't add `return _error()`
   in the encrypted path. → `docs/agent-notes/storage-encryption.md`
+- **Landing-page edge fronting (Layer 7, opt-in)** — `trusted_proxies`
+  must live in Caddy's global `servers { }` block (per-listener, not
+  per-site); shipped CIDRs for `cloudflare`/`bunny` need diffing against
+  the upstream list periodically; without `originSharedSecretEnv` the
+  origin-bypass check is silently skipped (CDN bypassable by IP).
+  Operator-side CDN setup (DNS proxy, Transform Rule for the secret
+  header, page rule) is out-of-band.
+  → `docs/agent-notes/landing-page-edge-fronting.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.
