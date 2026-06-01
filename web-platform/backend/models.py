@@ -244,3 +244,13 @@ class ServiceStatus:
     # — Zitadel does this because its enable/public are user-managed, while
     # oauth2proxy sets admin.show = false to stay hidden.
     admin_show: bool = True
+    # When set, the `enable` toggle for this service is owned by another
+    # module (the resolver has already overridden `enabled` to reflect the
+    # effective state). The UI uses this to render the Enable toggle as
+    # disabled + checked, with a tooltip naming the manager. Example:
+    # ntfy is force-enabled by services/alerts/default.nix whenever
+    # alerts.channels.ntfy.enable=true; in that case the resolver sets
+    # enable_managed_by="alerts" so the UI can explain why the user
+    # cannot toggle it directly. Slug, not free text — the frontend maps
+    # it to a human label.
+    enable_managed_by: Optional[str] = None

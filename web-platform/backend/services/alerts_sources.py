@@ -611,6 +611,22 @@ class SensorTemperatureSource:
             if kind not in _SENSOR_KIND_TO_THRESHOLD_KEYS:
                 # No threshold for this kind (memory / other); skip.
                 continue
+            # NVMe controllers expose multiple sensors per device — a
+            # Composite (mandated by spec to carry WCTEMP/CCTEMP, the
+            # firmware's own warn/crit signal) plus auxiliary thermistors
+            # for the controller die and NAND. Firmware deliberately
+            # leaves _max/_crit unset on the auxiliaries because they're
+            # diagnostic, not canonical: NAND under sustained writes can
+            # reach 90 °C+ without the drive considering itself in danger,
+            # since Composite (which the controller integrates and uses
+            # for throttling) stays well under WCTEMP. Alerting on an
+            # auxiliary that the drive itself never threshold-flagged is
+            # a false-positive; the static NVMe fallback in hw_buckets
+            # was meant for whole-drive "exposes nothing anywhere" cases,
+            # not for picking up per-sensor auxiliaries. Hardware page
+            # still surfaces these via the Sensors panel.
+            if kind == "nvme" and s.get("crit_c") is None and s.get("max_c") is None:
+                continue
             t = s.get("temp_c")
             if t is None:
                 continue

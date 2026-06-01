@@ -183,6 +183,19 @@ class ServicesResolver:
         # shared across every caddy_gated / basic_auth service.
         global_sso_provisioned = os.path.exists(SSO_GLOBAL_SENTINEL)
 
+        # Cross-module overrides on `enable`. services/alerts/default.nix
+        # uses `lib.mkForce` to flip homefree.services.ntfy.enable=true
+        # whenever both alerts.enable AND alerts.channels.ntfy.enable are
+        # true in homefree-config.json — the JSON-derived `enable` value
+        # below would otherwise read False (the user never toggled the
+        # ntfy row, alerts owns it). Surface that to the UI so the row
+        # reports the effective state and can lock the toggle against
+        # accidental writes that would lose to mkForce on rebuild anyway.
+        alerts_cfg = homefree_config.get("alerts") or {}
+        ntfy_forced_by_alerts = bool(alerts_cfg.get("enable")) and bool(
+            (alerts_cfg.get("channels") or {}).get("ntfy", {}).get("enable")
+        )
+
         services_status = []
         processed_labels = set()
 
@@ -191,6 +204,11 @@ class ServicesResolver:
             service_settings = homefree_config.get("services", {}).get(service_label, {})
             enabled = service_settings.get("enable", False)
             public = service_settings.get("public", False)
+
+            enable_managed_by = None
+            if service_label == "ntfy" and ntfy_forced_by_alerts:
+                enabled = True
+                enable_managed_by = "alerts"
 
             # Get service-config data if available
             service_config_data = services_config_map.get(service_label, {})
@@ -232,6 +250,7 @@ class ServicesResolver:
                 sso_provisioned=sso_provisioned,
                 sso_applicable=sso_applicable,
                 admin_show=admin_show,
+                enable_managed_by=enable_managed_by,
             )
 
             services_status.append(service_status)

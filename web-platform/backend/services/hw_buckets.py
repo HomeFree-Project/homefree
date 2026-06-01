@@ -163,16 +163,29 @@ def resolve_thresholds(
     overrides — the inferred-from-hardware view.
 
     Cascade:
-      1. `_crit` from the driver — derive (crit-15, crit-5).
-      2. `_max` from the driver (NVMe only) — derive (max, max+3).
-      3. Class bucket: CPU goes through `cpu_bucket()`; GPU and NVMe
+      1. NVMe with BOTH `_max` (WCTEMP) and `_crit` (CCTEMP) exposed —
+         use them directly as (warn, err). The NVMe spec mandates these
+         on the Composite sensor and defines them AS the firmware's own
+         warn/crit signals; subtracting a CPU-style margin from CCTEMP
+         (cascade step 2) would fire well below the drive's own WCTEMP
+         (e.g. CCTEMP=85 → warn=70, while drive's WCTEMP is 82). CPUs
+         and GPUs use `_crit` as Tjmax, where margin subtraction IS
+         correct — that's still cascade step 2.
+      2. `_crit` from the driver — derive (crit-15, crit-5). Right for
+         CPU/GPU semantics; also handles NVMe with only `_crit` exposed
+         (anomalous; spec requires WCTEMP too).
+      3. `_max` from the driver (NVMe only) — derive (max, max+3).
+         Anomalous NVMe path where WCTEMP is exposed but CCTEMP isn't.
+      4. Class bucket: CPU goes through `cpu_bucket()`; GPU and NVMe
          fall to their static no-device-data rows.
-      4. Truly unknown kind — same conservative fallback as the CPU
+      5. Truly unknown kind — same conservative fallback as the CPU
          "unknown" row.
 
     Returned values are ints (the existing source code compares ints
     everywhere; rounding here keeps the message strings tidy).
     """
+    if kind == "nvme" and crit_c is not None and max_c is not None:
+        return (int(round(max_c)), int(round(crit_c)))
     if crit_c is not None:
         return (
             int(round(crit_c)) - CRIT_WARN_MARGIN_C,

@@ -928,26 +928,29 @@ class ServicesModule extends LitElement {
       word-break: break-word;
     }
 
-    /* External sign-in reachability warning. Rendered in the card body
-       when an SSO-gated public app would be unreachable to off-LAN
-       users (Zitadel public is false), and again on the Zitadel card
-       itself summarising how many public apps are affected. Amber
-       (warn-soft) so it reads as a misconfiguration to fix, not a
-       hard error. */
-    .sso-reach-warn {
+    /* Per-card informational notice. Used for:
+         - external sign-in reachability warnings (SSO not public)
+         - "managed by another module" callouts (ntfy force-enabled
+           by the Alerts framework)
+       Deliberately NOT using --hf-warn-soft — that amber background
+       is the app-wide signal for an undeployed change (see
+       app-card[?undeployed], .status-row.undeployed), and overloading
+       it for static notices made the two look identical. Blue-tinted
+       accent background matches the existing .warning-box idiom. */
+    .card-notice {
       display: flex;
       align-items: flex-start;
       gap: 8px;
       margin-top: 10px;
       padding: 8px 12px;
-      background: var(--hf-warn-soft);
-      border-left: 3px solid var(--hf-warn);
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 3px solid var(--hf-accent);
       border-radius: 6px;
       font-size: 12px;
       line-height: 1.45;
       color: var(--hf-text);
     }
-    .sso-reach-warn-icon {
+    .card-notice-icon {
       color: var(--hf-warn);
       font-size: 14px;
       line-height: 1.2;
@@ -1586,6 +1589,22 @@ class ServicesModule extends LitElement {
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
 
+    // Enable-knob ownership. When another module force-enables a
+    // service (e.g. services/alerts/default.nix uses lib.mkForce to
+    // turn ntfy on whenever alerts.channels.ntfy.enable is true), the
+    // backend resolver sets enable_managed_by to a slug. We map that
+    // to a human label, lock the Enable toggle, and explain why on
+    // hover. The user can still toggle Public (rendered separately
+    // below), which is a legit user knob even on managed services.
+    // Note: tooltip is precomputed as a plain string so the html
+    // template body contains no nested backticked literals.
+    const enableManagedBy = service.enable_managed_by || null;
+    const enableManagedLabel = ({ alerts: 'Alerts' })[enableManagedBy] || enableManagedBy || '';
+    const enableManagedTooltip = enableManagedBy
+      ? 'Managed by ' + enableManagedLabel
+        + ' — turning the Alerts ntfy channel on forces this service on.'
+      : '';
+
     // External-sign-in reachability gate. Any service that gates through
     // Zitadel + oauth2-proxy (native_oidc, caddy_gated, basic_auth) needs
     // sso.<domain> AND auth.<domain> reachable from the public internet
@@ -1703,12 +1722,13 @@ class ServicesModule extends LitElement {
         <div slot="header" class="card-head">
           ${this.renderIconActions(service)}
           ${cannotDisable ? '' : html`
-            <div class="toggle-container">
+            <div class="toggle-container" title=${enableManagedTooltip}>
               <span class="toggle-label">Enabled</span>
               <label class="toggle-switch">
                 <input
                   type="checkbox"
                   .checked=${isEnabled}
+                  ?disabled=${!!enableManagedBy}
                   @change=${(e) => {
                     if (service.external) {
                       this._emitExternalToggle(service.label, 'enable', e.target.checked);
@@ -1793,9 +1813,17 @@ class ServicesModule extends LitElement {
 
         ${actionErr ? html`<div class="action-error">${actionErr}</div>` : ''}
 
+        ${enableManagedBy ? html`
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
+            <span>Required by ${enableManagedLabel} &mdash; toggle the ntfy
+            channel on the Alerts page to control this service.</span>
+          </div>
+        ` : ''}
+
         ${externalSigninBroken ? html`
-          <div class="sso-reach-warn">
-            <span class="sso-reach-warn-icon" aria-hidden="true">⚠</span>
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
             <span>External users can't sign in &mdash; SSO is not exposed to
             the internet. Expose Single Sign-on (sso.* and auth.*) to make
             external sign-in work.</span>
@@ -1803,8 +1831,8 @@ class ServicesModule extends LitElement {
         ` : ''}
 
         ${ssoBlockedApps.length > 0 ? html`
-          <div class="sso-reach-warn">
-            <span class="sso-reach-warn-icon" aria-hidden="true">⚠</span>
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
             <span>
               ${ssoBlockedApps.length}
               public ${ssoBlockedApps.length === 1 ? 'app' : 'apps'}

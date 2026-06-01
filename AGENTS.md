@@ -314,6 +314,13 @@ Situational knowledge — read the linked note when working in that area:
   Operator-side CDN setup (DNS proxy, Transform Rule for the secret
   header, page rule) is out-of-band.
   → `docs/agent-notes/landing-page-edge-fronting.md`
+- **NVMe temperature thresholds** — Composite carries spec-defined
+  WCTEMP (`temp1_max`) and CCTEMP (`temp1_crit`); USE THEM as warn/err
+  directly, don't subtract a CPU-style margin (CCTEMP-15 sits below the
+  drive's own WCTEMP and false-positives). Auxiliary sensors (Sensor 1
+  / Sensor 2) deliberately omit limits — skip them in the alert source,
+  surface on the Hardware page only.
+  → `docs/agent-notes/nvme-threshold-cascade.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.
