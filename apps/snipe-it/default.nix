@@ -94,7 +94,7 @@ let
 
   version = "v8.4.1";
 
-  port = 3017;
+  port = config.homefree.allocPort "snipe-it";
 in
 {
   options.homefree.services.snipe-it = userOptions;
@@ -354,6 +354,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.snipe-it) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.snipe-it.enable;
       sso = {
         kind = "none";

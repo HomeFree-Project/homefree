@@ -1281,6 +1281,22 @@
               If true, domains will be accessible from all interfaces.
             '';
           };
+
+          frontend-tls = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              When true, Caddy terminates TLS at the frontend even when
+              the target is HTTP-only. Lets you serve an HTTP-only
+              backend (target.http set, target.https null) via HTTPS at
+              the public hostname — the standard reverse-proxy pattern.
+              Combined with a wildcard domain, Caddy auto-acquires the
+              wildcard cert via DNS-01.
+
+              Default is false to preserve historical behavior (an
+              HTTP target produces an HTTP-only vhost).
+            '';
+          };
         };
       });
     };
@@ -2236,6 +2252,39 @@
       };
     };
 
+    ## Resolved label → host-port mapping. Populated by
+    ## services/port-allocator/default.nix from the union of all
+    ## `service-config[].port-request` values. Apps read this via
+    ## `config.homefree.ports.<label>` and `config.homefree.allocPort`.
+    ports = lib.mkOption {
+      type = with lib.types; attrsOf int;
+      default = {};
+      internal = true;
+      description = ''
+        Resolved app-label → host-port mapping produced by the port
+        allocator. Read-only from outside the allocator module — set
+        each service's port via `service-config[].port-request`.
+      '';
+    };
+
+    ## Convenience accessor — `config.homefree.allocPort "ollama"`
+    ## returns the resolved port and throws a clear error if no
+    ## service with that label requested one. Just sugar over
+    ## `config.homefree.ports.<label>` with a better failure mode.
+    allocPort = lib.mkOption {
+      type = lib.types.functionTo lib.types.int;
+      internal = true;
+      default = _label: throw
+        "homefree.allocPort: port allocator not loaded; import services/port-allocator";
+      description = ''
+        Returns the host-port the allocator assigned to the named
+        service. Use in app `default.nix` `let` blocks instead of
+        hardcoding integers:
+
+          let port = config.homefree.allocPort "ollama"; in ...
+      '';
+    };
+
     service-config = lib.mkOption {
       description = "Detailed config for services";
       type = with lib.types; listOf (submodule {
@@ -2305,6 +2354,31 @@
             type = lib.types.listOf lib.types.str;
             default = [];
             description = "Associated systemd services";
+          };
+
+          ## Optional pin for the host-side TCP port the service binds.
+          ## `null` (default) means "any port from the auto pool" — the
+          ## port-allocator in services/port-allocator picks one
+          ## deterministically. An integer means "I need this exact
+          ## number, fail the build if it collides with anyone else"
+          ## (Forgejo SSH 3022, Minecraft 25565, AdGuard DNS 53, etc.).
+          ##
+          ## Apps consume the resolved value via
+          ## `config.homefree.ports.<label>` — NEVER by hardcoding the
+          ## same integer in their own `default.nix`, which would
+          ## defeat the deconfliction. See
+          ## docs/agent-notes/port-allocator.md for the migration
+          ## pattern from a `let port = NNNN;` block to the helper.
+          port-request = lib.mkOption {
+            type = lib.types.nullOr lib.types.int;
+            default = null;
+            description = ''
+              Optional pin for this service's host-side port.
+
+              `null` → the allocator picks one from its auto pool.
+              `<int>` → this exact port is reserved; build fails if it
+                collides with another pinned service.
+            '';
           };
 
           admin = {

@@ -70,7 +70,7 @@ let
     done
   '';
 
-  headplane-port = 3009;
+  headplane-port = config.homefree.allocPort "headscale-headplane";
 
   ## Per-secret files for SOPS-managed secrets — same pattern as
   ## services/zitadel-podman.nix. The cookie secret is the one
@@ -146,9 +146,23 @@ let
           lib.filter (ip: !(isResolverPlaceholder ip))
             (filtered.dns.nameservers.global or []);
       };
-  headscaleFullConfigFile =
-    (pkgs.formats.yaml {}).generate "headscale-full.yaml"
+  ## Headplane-facing view — placeholders stripped (admins shouldn't see
+  ## TEST-NET-1 / docs-range), nulls filtered (headplane's validator
+  ## rejects null fields).
+  headscaleConfigForHeadplane =
+    (pkgs.formats.yaml {}).generate "headscale-for-headplane.yaml"
       headscaleSettingsForHeadplane;
+  ## Substitution-source view — keeps the resolver placeholders
+  ## (192.0.2.1 / 2001:db8::1) INTACT so the sed pass inside
+  ## substituteResolverPlaceholders below has lines to match. This is the
+  ## YAML the headscale daemon's runtime config is derived from; clients
+  ## see the substituted result, not this file directly.
+  ## Filter null fields only (headscale tolerates them, but parity with
+  ## the headplane view keeps the two outputs structurally identical
+  ## except for the placeholder lines).
+  headscaleConfigWithPlaceholders =
+    (pkgs.formats.yaml {}).generate "headscale-with-placeholders.yaml"
+      (lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings);
 
   ## Runtime config used by headscale.service: a writable copy of the
   ## nix-rendered yaml with the resolver placeholders substituted for
@@ -372,7 +386,7 @@ in
   ## leaving the nixpkgs-managed /etc/headscale/config.yaml stub alone
   ## (some headscale CLI invocations depend on its minimal shape).
   environment.etc."headscale/headplane-view.yaml" = lib.mkIf deployHeadplane {
-    source = headscaleFullConfigFile;
+    source = headscaleConfigForHeadplane;
     ## Headplane runs as the headscale user (per the upstream module),
     ## so make this readable by that group.
     mode = "0440";
@@ -382,7 +396,7 @@ in
 
   services.headscale = lib.optionalAttrs headscaleEnabled {
     enable = true ;
-    port = 8087;
+    port = config.homefree.allocPort "headscale";
     address = lan-address;
     settings = {
       server_url = "https://headscale.${cfg.system.domain}:443";
@@ -418,8 +432,15 @@ in
           lan-address
           ## Backup if LAN resolver is unreachable (e.g. before tunnel is up)
           "9.9.9.10"
-          ## Secondary backup
-          "1.1.1.1"
+          ## Secondary backup — was 1.1.1.1, switched because the primary
+          ## anycast IPs of both Cloudflare (1.1.1.1) and Google (8.8.8.8)
+          ## drop UDP/53 on at least Verizon LTE (their secondaries 1.0.0.1
+          ## / 8.8.4.4 work, ICMP works — a peering/anycast quirk, not a
+          ## deliberate carrier block). 9.9.9.9 is plain Quad9, distinct
+          ## from the 9.9.9.10 (malware-blocking) entry above so
+          ## Tailscale's parallel forwarder isn't hitting the same node
+          ## twice.
+          "9.9.9.9"
         ];
         ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access)
         nameservers.split = lib.listToAttrs (lib.map (domain:
@@ -437,10 +458,33 @@ in
         v4 = "100.64.0.0/24";
         v6 = "fd7a:115c:a1e0::/48";
       };
-      derp = {
-        ## Frequency to update DERP maps
-        auto_update_enable = true;
-        update_frequency = "5m";
+      derp = let
+        ## The auto-update mechanism is *only* meaningful when we're
+        ## actually fetching a remote DERP list (`urls`). With urls=[]
+        ## there is nothing to fetch; leaving auto_update_enabled=true
+        ## (upstream default) makes headscale still tick the refresh
+        ## timer, churn the local DERP map, and broadcast netmap
+        ## updates to every client every `update_frequency` — which
+        ## destabilises mobile clients' control-plane long-poll
+        ## (observed: phone goes "offline" in headscale view ~10m
+        ## after each cycle, Tailscale Android raises a spurious
+        ## "DNS unavailable" banner). Both keys are set because
+        ## `auto_update_enable` was renamed to `auto_update_enabled`
+        ## upstream and we'd otherwise inherit the renamed key's
+        ## default-true and end up with both values in the YAML.
+        usePublicDerp = cfg.service-options.headscale.enable-public-derp-fallback;
+      in {
+        auto_update_enable = usePublicDerp;
+        auto_update_enabled = usePublicDerp;
+        ## Even *with* the public DERP list enabled, Tailscale's map
+        ## content changes a handful of times a year; refreshing every
+        ## 5 minutes just pushes byte-identical maps to every client
+        ## and causes spurious "derp-region-redefined" cycles. 24h is
+        ## plenty — the worst case is a public-fallback DERP IP change
+        ## going unnoticed until the next refresh or rebuild, which
+        ## doesn't matter when the embedded region 999 is the primary
+        ## path anyway.
+        update_frequency = "24h";
         server = {
           enabled = true;
           region_id = 999;
@@ -449,7 +493,7 @@ in
           stun_listen_addr = "0.0.0.0:${toString cfg.service-options.headscale.stun-port}";
           automatically_add_embedded_derp_region = true;
         };
-        urls = if cfg.service-options.headscale.enable-public-derp-fallback
+        urls = if usePublicDerp
           then [ "https://controlplane.tailscale.com/derpmap/default" ]
           else [];
         paths = [];
@@ -509,7 +553,7 @@ in
           ${pkgs.coreutils}/bin/chown root:${config.services.headscale.group} \
             /var/lib/headscale
           ${substituteResolverPlaceholders} \
-            ${headscaleFullConfigFile} \
+            ${headscaleConfigWithPlaceholders} \
             ${headscaleRuntimeConfigPath}
         ''}"
       ];
@@ -576,7 +620,7 @@ in
 
       echo "headscale-substitute-resolver: substituting $DESIRED into runtime config"
       ${substituteResolverPlaceholders} \
-        ${headscaleFullConfigFile} \
+        ${headscaleConfigWithPlaceholders} \
         ${headscaleRuntimeConfigPath}
       printf '%s' "$DESIRED" > "$CACHE"
       ${pkgs.coreutils}/bin/chmod 0640 "$CACHE"
@@ -1063,7 +1107,7 @@ in
     ## regenerate that file but the unit definition is otherwise
     ## unchanged, NixOS won't restart the unit on rebuild and the new
     ## config goes unread. Tie restarts to the file's store path.
-    restartTriggers = [ headscaleFullConfigFile ];
+    restartTriggers = [ headscaleConfigForHeadplane ];
     ## Don't try to start until BOTH OIDC secrets are on disk. A
     ## fresh install briefly has no headplane until
     ## zitadel-provision.service writes the files and `try-restart`s
@@ -1127,6 +1171,7 @@ in
   homefree.service-config = lib.optionals headscaleEnabled [
     {
       inherit (cfg.service-options.headscale) label name project-name;
+      port-request = 8087;
       systemd-service-names = [ "headscale" ]
         ++ lib.optional deployHeadplane "headplane";
       admin = {
@@ -1313,6 +1358,16 @@ in
           ];
         }
       ];
+    }
+    ## Phantom entry: claims Headplane's host port (3009) under its own
+    ## label so the allocator deconflicts it alongside everything else.
+    {
+      label = "headscale-headplane";
+      enable = config.homefree.service-options.headscale.enable;
+      port-request = null;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }
   ];
   # Cache headscale DNS locally to reduce DNS queries from tailscaled DERP retries

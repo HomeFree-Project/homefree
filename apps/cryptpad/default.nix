@@ -4,7 +4,7 @@ let
   containerDataPath = "/var/lib/cryptpad-podman";
   secretsDir = "/var/lib/homefree-secrets/cryptpad";
 
-  port = 3004;
+  port = config.homefree.allocPort "cryptpad";
   wsPort = 3023;
   dockerUserId = 4001;
   dockerGroupId = 4001;
@@ -283,6 +283,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.cryptpad) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.cryptpad.enable;
       systemd-service-names = [
         "podman-cryptpad"

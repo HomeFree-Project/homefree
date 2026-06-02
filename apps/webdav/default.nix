@@ -16,7 +16,7 @@ let
 
   version = "v5.11.8";
   containerDataPath = "/var/lib/webdav";
-  port = 5334;
+  port = config.homefree.allocPort "webdav";
 
   preStart = ''
     mkdir -p ${containerDataPath}/data
@@ -197,6 +197,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.webdav) label name project-name;
+      port-request = 5334;
       enable = config.homefree.service-options.webdav.enable;
       systemd-service-names = [
         "podman-webdav"

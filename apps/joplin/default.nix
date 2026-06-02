@@ -1,7 +1,7 @@
 { config, lib, ... }:
 let
   version = "3.6.1";
-  port = 8975;
+  port = config.homefree.allocPort "joplin";
   database-name = "joplin";
   database-user = "joplin";
 
@@ -95,6 +95,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.joplin) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.joplin.enable;
       sso = {
         kind = "none";

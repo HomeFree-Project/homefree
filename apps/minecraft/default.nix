@@ -313,7 +313,7 @@ in
           ];
 
           ports = [
-            "0.0.0.0:${toString (initialPort + index)}:25565"
+            "0.0.0.0:${toString (config.homefree.allocPort instance-id)}:25565"
           ];
 
           volumes = [
@@ -445,6 +445,7 @@ in
       label = instance-id;
       name = "Minecraft - ${instance.name}";
       project-name = "Minecraft";
+      port-request = initialPort + index;
       parent = "minecraft";  # Mark this as a child of the parent service
       sso = {
         kind = "none";

@@ -9,7 +9,7 @@ let
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
-  port = 3010;
+  port = config.homefree.allocPort "nextcloud";
   port-redis = 6379; # Different from other Redis instances
   database-name = "nextcloud";
   database-user = "nextcloud";
@@ -620,6 +620,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.nextcloud) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.nextcloud.enable;
       release-tracking = {
         type = "github";

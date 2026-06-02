@@ -161,6 +161,18 @@ class PrivacyModule extends LitElement {
     }));
   }
 
+  _setHeadscaleField(field, value) {
+    const services = { ...(this.config.services || {}) };
+    const current = services.headscale || {};
+    services.headscale = { ...current, [field]: value };
+    this.config = { ...this.config, services };
+    this.dispatchEvent(new CustomEvent('config-change', {
+      detail: { module: 'privacy', config: { services } },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   // --- Section renderers ------------------------------------------
 
   _renderExternalServices() {
@@ -315,6 +327,45 @@ class PrivacyModule extends LitElement {
     `;
   }
 
+  _renderVpnRelay() {
+    const headscale = this.config.services?.headscale || {};
+    const headscaleEnabled = headscale.enable === true;
+    const usePublicDerp = headscale['enable-public-derp-fallback'] === true;
+
+    return html`
+      <config-section
+        title="VPN relay fallback (Tailscale DERP)"
+        description="Whether the headscale VPN may relay through Tailscale's public DERP servers when the box's embedded relay can't be reached."
+      >
+        <div class="section-note">
+          The box always runs its own embedded DERP relay; clients
+          that can reach the box (almost always the case for a
+          phone↔home tunnel) never touch Tailscale's infrastructure.
+          The fallback only matters in the rare double-roaming case
+          where two clients can't reach each other directly AND can't
+          reach the embedded relay. When this is OFF, headscale also
+          stops periodically fetching the public DERP map from
+          <code>controlplane.tailscale.com</code> &mdash; no egress
+          to Tailscale at all, and no periodic control-plane churn
+          that causes mobile clients to drop their long-poll.
+        </div>
+        <div class="field-grid">
+          <form-field
+            label="Allow Tailscale public DERP fallback"
+            type="boolean"
+            .value=${usePublicDerp}
+            ?disabled=${!headscaleEnabled}
+            help=${headscaleEnabled
+              ? 'OFF: complete independence from Tailscale (embedded DERP only). ON: refresh map once every 24h.'
+              : 'Headscale is not enabled on this box. Enable it under Services first to use this option.'}
+            ?undeployed=${this._undeployed('services.headscale.enable-public-derp-fallback')}
+            @field-change=${(e) => this._setHeadscaleField('enable-public-derp-fallback', !!e.detail.value)}
+          ></form-field>
+        </div>
+      </config-section>
+    `;
+  }
+
   render() {
     return html`
       <div class="module-container">
@@ -327,6 +378,7 @@ class PrivacyModule extends LitElement {
         </div>
 
         ${this._renderExternalServices()}
+        ${this._renderVpnRelay()}
         ${this._renderEdgeFronting()}
       </div>
     `;

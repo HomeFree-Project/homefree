@@ -2,8 +2,8 @@
 let
   version = "15.0.1";
   containerDataPath = "/var/lib/forgejo";
-  port = 3201;
-  ssh-port = 3022;
+  port = config.homefree.allocPort "forgejo";
+  ssh-port = config.homefree.allocPort "forgejo-ssh";
 
   forgejoSecretsDir = "/var/lib/homefree-secrets/forgejo";
   domain = config.homefree.system.domain;
@@ -439,6 +439,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.forgejo) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.forgejo.enable;
       systemd-service-names = [
         "podman-forgejo"
@@ -524,7 +525,20 @@ in
           description = "Disable user registration";
         }
       ];
-    }];
+    }
+    ## Phantom service-config entry that only exists so the central
+    ## port allocator can claim Forgejo's SSH port (3022) under its
+    ## own label. SSH clients have it hardcoded in their `.ssh/config`,
+    ## so it MUST stay pinned. Not a vhost — no reverse-proxy entry.
+    {
+      label = "forgejo-ssh";
+      enable = config.homefree.service-options.forgejo.enable;
+      port-request = 3022;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
+    }
+    ];
   };
 }
 

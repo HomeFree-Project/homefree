@@ -3,7 +3,7 @@ let
   version = "v0.107.73";
   image = "adguard/adguardhome:${version}";
   containerDataPath = "/var/lib/adguardhome-podman";
-  port = 3000;
+  port = config.homefree.allocPort "adguard";
 
   settings = {
     http = {
@@ -449,6 +449,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.adguard) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.adguard.enable;
       systemd-service-names = [
         "podman-adguardhome"
@@ -520,6 +521,16 @@ in
           description = "Make service accessible from WAN";
         }
       ];
+    }
+    {
+      label = "adguard-dns";
+      name = "AdGuard DNS";
+      project-name = "AdGuard Home";
+      enable = config.homefree.service-options.adguard.enable;
+      port-request = 53;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }];
   };
 }

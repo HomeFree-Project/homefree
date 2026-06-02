@@ -17,7 +17,7 @@ let
   containerDataPath = "/var/lib/screeenly";
   containerImageName = "hadogenes/screeenly";
   containerHash = "sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f";
-  port = 4201;
+  port = config.homefree.allocPort "screeenly";
   enabled = config.homefree.service-options.screeenly.enable == true || config.homefree.services.nextcloud.enable == true;
   database-type = "mysql";
   database-name = "screeenly";
@@ -127,6 +127,7 @@ in
   homefree.service-config = lib.optionals enabled [
     {
       inherit (config.homefree.service-options.screeenly) label name project-name;
+      port-request = null;
       systemd-service-names = [
         "podman-screeenly"
       ];

@@ -587,6 +587,10 @@ in
         };
       };
       public = e.public or false;
+      ## Opt-in: emit an HTTPS frontend vhost (Caddy terminates TLS,
+      ## talks HTTP to the backend) in addition to the HTTP-only
+      ## vhost. Default false to preserve historical behavior.
+      frontend-tls = e."frontend-tls" or false;
     }) (jsonData.proxied-domains or []);
 
     ## Privacy / external-services config. The single source of truth

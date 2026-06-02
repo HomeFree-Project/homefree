@@ -16,7 +16,7 @@ let
 
   version = "0.95.0";
   containerDataPath = "/var/lib/trilium-podman";
-  port = 8081;
+  port = config.homefree.allocPort "trilium";
   domain = config.homefree.system.domain;
 
   ## Trilium's native OIDC (TRILIUM_OAUTH_*) only activates once the
@@ -111,6 +111,7 @@ in
   homefree.service-config = if config.homefree.services.trilium.enable == true then [
     {
       label = "trilium";
+      port-request = null;
       name = "Trilium Notes";
       project-name = "TriliumNext Notes";
       systemd-service-names = [

@@ -15,26 +15,47 @@ let
   ## brought in by the file-scope `import` of the runtime snippet).
 
   # Process proxied domains for standard reverse proxy (proxy handles TLS)
+  #
+  # Each entry now carries `frontend-tls` (whether Caddy serves the
+  # vhost over HTTPS) and `backend-tls` (whether Caddy talks HTTPS to
+  # the backend) independently — previously a single `ssl` flag
+  # conflated the two. With both false you get HTTP-only; both true is
+  # the historical HTTPS-passthrough (legacy https target); frontend
+  # true + backend false is "Caddy terminates TLS at the edge, talks
+  # plain HTTP to a loopback service" — the pattern every first-party
+  # HomeFree app uses.
   processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
     let
+      httpBase = domain: {
+        inherit domain;
+        inherit (domain-mapping) public;
+        inherit (domain-mapping.target) host;
+        port = domain-mapping.target.http.port;
+        backend-tls = false;
+        ignore-self-signed-cert = false;
+      };
+
+      # When target.http is set, always emit an HTTP-frontend vhost.
+      # If the operator also opted into `frontend-tls`, also emit an
+      # HTTPS-frontend vhost terminating TLS to the same HTTP backend.
       httpEntries = if domain-mapping.target.http != null then
-        lib.map (domain: {
-          inherit domain;
-          inherit (domain-mapping) public;
-          inherit (domain-mapping.target) host;
-          port = domain-mapping.target.http.port;
-          ssl = false;
-          ignore-self-signed-cert = false;
-        }) domain-mapping.domains
+        (lib.map (domain: (httpBase domain) // { frontend-tls = false; }) domain-mapping.domains)
+        ++ (if domain-mapping.frontend-tls or false
+            then lib.map (domain: (httpBase domain) // { frontend-tls = true; }) domain-mapping.domains
+            else [])
       else [];
 
+      # Legacy HTTPS-passthrough target — Caddy terminates TLS and
+      # talks HTTPS to a TLS-serving backend (kept for the original
+      # use case of fronting an external HTTPS server).
       httpsEntries = if domain-mapping.target.https != null then
         lib.map (domain: {
           inherit domain;
           inherit (domain-mapping) public;
           inherit (domain-mapping.target) host;
           port = domain-mapping.target.https.port;
-          ssl = true;
+          frontend-tls = true;
+          backend-tls = true;
           ignore-self-signed-cert = domain-mapping.target.https.ignore-self-signed-cert;
         }) domain-mapping.domains
       else [];
@@ -995,11 +1016,14 @@ in
       # Add reverse proxy for proxied domains (proxy handles TLS certificates)
       (lib.listToAttrs (lib.map (entry:
         let
-          # Create virtualHost with http:// and https:// (Caddy will handle ACME for https)
-          protocol = if entry.ssl then "https" else "http";
+          # Frontend scheme controls Caddy's listener; backend scheme
+          # controls how Caddy talks to the upstream. These are split
+          # so an HTTP-only backend can still be served over HTTPS
+          # (frontend-tls=true, backend-tls=false).
+          protocol = if entry.frontend-tls then "https" else "http";
           host-string = "${protocol}://${entry.domain}";
           log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] "${entry.domain}-${toString entry.port}";
-          backend-protocol = if entry.ssl then "https" else "http";
+          backend-protocol = if entry.backend-tls then "https" else "http";
         in {
           name = host-string;
           value = {
@@ -1009,7 +1033,7 @@ in
             extraConfig = ''
               ${if !entry.public then "bind ${lan-address}" else ""}
 
-              ${if entry.ssl && lib.hasInfix "*" entry.domain then ''
+              ${if entry.frontend-tls && lib.hasInfix "*" entry.domain then ''
               # Use DNS-01 challenge for wildcard domains
               tls {
               ''
@@ -1023,7 +1047,7 @@ in
               +
               ''
               }
-              '' else if entry.ssl && config.homefree.development then ''
+              '' else if entry.frontend-tls && config.homefree.development then ''
               # Development mode: use internal CA for HTTPS
               tls internal
               '' else ""}
@@ -1034,7 +1058,7 @@ in
                 header_up X-Real-IP {remote_host}
                 header_up X-Forwarded-For {remote_host}
                 header_up X-Forwarded-Proto {scheme}
-                ${if entry.ssl then ''
+                ${if entry.backend-tls then ''
                 transport http {
                   tls
                   ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}

@@ -10,7 +10,7 @@ let
     mkdir -p ${containerDataPath}/media
   '';
 
-  port = 8096;
+  port = config.homefree.allocPort "jellyfin";
   version = "10.11.8";
 
   userOptions = {
@@ -139,6 +139,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.jellyfin) label name project-name;
+      port-request = 8096;
       enable = config.homefree.service-options.jellyfin.enable;
       sso = {
         kind = "none";

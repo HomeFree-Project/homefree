@@ -5,13 +5,13 @@ let
   ## `networking.firewall.allowedTCPPorts = [ ... ]`). The
   ## "8776 TCP+UDP" claim that floats around the wider docs
   ## appears to conflate radicle with some other tool.
-  node-port = 8776;
+  node-port = config.homefree.allocPort "radicle";
   ## radicle-httpd's nominal default is 8080, but that collides with
   ## UniFi's Tomcat on this box (`apps/unifi:104` binds 0.0.0.0:8080
   ## → the explorer's /api/v1/stats request gets answered by UniFi's
   ## 400 page). Move to 8777, adjacent to the node port and clear of
   ## the catalog's existing allocations.
-  httpd-port = 8777;
+  httpd-port = config.homefree.allocPort "radicle-httpd";
 
   containerDataPath = "/var/lib/radicle";
   radicleSecretsDir = "/var/lib/homefree-secrets/radicle";
@@ -327,6 +327,7 @@ in
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicle) label name project-name;
       enable = config.homefree.service-options.radicle.enable;
+      port-request = 8776;
 
       systemd-service-names = [
         "podman-radicle-node"
@@ -442,6 +443,16 @@ in
           description = "Mirror Forgejo public non-empty repos to Radicle every 5 minutes (one-way)";
         }
       ];
+    }
+    {
+      label = "radicle-httpd";
+      name = "Radicle HTTPD";
+      project-name = "Radicle";
+      enable = config.homefree.service-options.radicle.enable;
+      port-request = null;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }];
   };
 }
