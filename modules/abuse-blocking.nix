@@ -53,6 +53,16 @@ let
   ## sometimes generate small bursts (broken links, stale
   ## bookmarks). The findtime/maxretry below sets the same
   ## numbers explicitly via fail2ban config.
+  ##
+  ## Why this only matches status:404 (and error-flood only matches
+  ## status:5xx): the apex landing site emits 429 from
+  ## mholt/caddy-ratelimit when the per-IP request-rate cap fires
+  ## (see services/landing-page/default.nix `rateLimit`). A surge of
+  ## legitimate HN/Reddit visitors should trip the 429 layer first
+  ## — that's the *intended* behaviour — and they MUST NOT then be
+  ## banned at the firewall. Narrow status matchers keep 429 out of
+  ## both jails by construction; do not loosen to a class match
+  ## (`status":4[0-9][0-9]`) without also excluding 429 here.
   s404StormFilter = pkgs.writeText "caddy-404-storm.conf" ''
     [INCLUDES]
     before = common.conf

@@ -142,14 +142,11 @@ class LanClientsModule extends LitElement {
        scrolls inside .panel (overflow-x:auto) instead. */
     table {
       width: 100%;
-      /* min-width must cover every column's *content* width PLUS its
-         cell padding, or the one unsized column (Hostname) is starved.
-         Content: 90+150+130+150+110+160+200 = 990px; padding adds
-         7×(2×14) = 196px → 1186px. Anything less (the old 990px forgot
-         the padding) collapses Hostname to 0 on a narrow viewport — its
-         nowrap header then overlaps "IP address" and its cell vanishes.
-         The table scrolls inside .panel when wider than the viewport. */
-      min-width: 1190px;
+      /* min-width covers every column's content width PLUS its cell
+         padding. 8 columns: Status 90, Hostname 150, IP 130, MAC 150,
+         Network 130, Lease 110, Type 160, Actions 200 = 1120px content.
+         Desktop padding 8×28 = 224 → 1344, rounded to 1350. */
+      min-width: 1350px;
       border-collapse: collapse;
       table-layout: fixed;
       font-size: 13px;
@@ -162,10 +159,11 @@ class LanClientsModule extends LitElement {
     }
     /* Phones: tighten the inter-column gap (halve the horizontal cell
        padding) and drop min-width to match so the columns pack snugly
-       rather than stretching to fill the wider desktop min-width. */
+       rather than stretching to fill the wider desktop min-width.
+       1120 content + 8×14 padding = 1232, rounded to 1235. */
     @media (max-width: 600px) {
       th, td { padding: 9px 7px; }
-      table { min-width: 1085px; }
+      table { min-width: 1235px; }
     }
     /* Text cells: clip an over-long value with an ellipsis rather
        than letting it widen the column. NOT applied to the actions
@@ -185,19 +183,20 @@ class LanClientsModule extends LitElement {
       color: var(--hf-text-muted);
       font-weight: 600;
     }
-    /* Explicit column widths — Status, Hostname, IP, MAC, DHCP lease,
-       Type, Actions. Every column is sized (Hostname included) so the
-       fixed layout can never starve one to 0; on a wide desktop the
-       width:100% table distributes the slack across them all. Actions
-       is wide enough for "Edit" + "Remove static" side by side so
-       neither button is ever clipped. */
+    /* Explicit column widths — Status, Hostname, IP, MAC, Network,
+       DHCP lease, Type, Actions. Every column is sized (Hostname
+       included) so the fixed layout can never starve one to 0; on a
+       wide desktop the width:100% table distributes the slack across
+       them all. Actions is wide enough for "Edit" + "Remove static"
+       side by side so neither button is ever clipped. */
     th:nth-child(1) { width: 90px; }
     th:nth-child(2) { width: 150px; }
     th:nth-child(3) { width: 130px; }
     th:nth-child(4) { width: 150px; }
-    th:nth-child(5) { width: 110px; }
-    th:nth-child(6) { width: 160px; }
-    th:nth-child(7) { width: 200px; }
+    th:nth-child(5) { width: 130px; }
+    th:nth-child(6) { width: 110px; }
+    th:nth-child(7) { width: 160px; }
+    th:nth-child(8) { width: 200px; }
     tr:last-child td { border-bottom: none; }
     td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     td.actions { text-align: right; white-space: nowrap; }
@@ -229,6 +228,17 @@ class LanClientsModule extends LitElement {
     .tag.noinet {
       border-color: var(--hf-err);
       color: var(--hf-err);
+    }
+    /* Guest-network chip — same shape as the static/noinet tags so the
+       cell sits on the same baseline. Subtle blue tone so it reads as
+       segmentation, not state. */
+    .tag.network {
+      border-color: color-mix(in srgb, var(--hf-accent) 35%, var(--hf-border-2));
+      color: var(--hf-text);
+    }
+    .tag.network.main {
+      border-color: var(--hf-border-2);
+      color: var(--hf-text-muted);
     }
 
     /* ---- Reservation edit modal — copies the look of
@@ -278,7 +288,8 @@ class LanClientsModule extends LitElement {
     .modal-field.boolean input[type="checkbox"] {
       margin: 0; width: 16px; height: 16px; flex-shrink: 0;
     }
-    .modal-field input {
+    .modal-field input,
+    .modal-field select {
       width: 100%;
       box-sizing: border-box;
       padding: 9px 12px;
@@ -293,7 +304,8 @@ class LanClientsModule extends LitElement {
     .modal-field input.mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .modal-field input:focus {
+    .modal-field input:focus,
+    .modal-field select:focus {
       outline: none;
       border-color: var(--hf-accent);
       box-shadow: 0 0 0 3px var(--hf-focus-ring);
@@ -394,7 +406,27 @@ class LanClientsModule extends LitElement {
       hostname: e.hostname || '',
       ip: e.ip || '',
       'wan-access': e['wan-access'] !== false,
+      // null = main LAN; otherwise the id of a guest network defined
+      // on the Guest Networks page.
+      network: e.network || null,
     }));
+  }
+
+  /**
+   * Effective list of guest networks (pending wins over deployed),
+   * used to populate the Network dropdown in the edit modal and to
+   * render the "Network" column.
+   */
+  _guestNetworks() {
+    const raw = this.pendingConfig?.network?.['guest-networks']
+             ?? this.serverConfig?.network?.['guest-networks'];
+    return Array.isArray(raw) ? raw : [];
+  }
+
+  _networkLabel(id) {
+    if (!id) return 'Main LAN';
+    const gn = this._guestNetworks().find(g => g.id === id);
+    return gn ? gn.name : id;
   }
 
   /** Emit a config-change patch with the new static-ips list. */
@@ -496,6 +528,7 @@ class LanClientsModule extends LitElement {
       hostname: (s ? s.hostname : row.hostname) || '',
       ip: (s ? s.ip : row.ip) || '',
       wanAccess: s ? s['wan-access'] : true,
+      network: s ? (s.network || '') : '',
     };
     this.editError = '';
   }
@@ -536,6 +569,7 @@ class LanClientsModule extends LitElement {
       hostname,
       ip,
       'wan-access': !!this.editForm.wanAccess,
+      network: this.editForm.network || null,
     };
     // Replace any existing entry for this MAC, else append.
     const list = this._staticIps();
@@ -641,6 +675,21 @@ class LanClientsModule extends LitElement {
               <label>MAC address</label>
               <div class="static-value">${this.editMac}</div>
             </div>
+            <div class="modal-field">
+              <label>Network</label>
+              <select .value=${f.network || ''}
+                      @change=${e => {
+                        this.editForm = { ...f, network: e.target.value };
+                      }}>
+                <option value="">Main LAN</option>
+                ${this._guestNetworks().map(gn => html`
+                  <option value=${gn.id}
+                          ?selected=${(f.network || '') === gn.id}>
+                    ${gn.name} (${gn.id})
+                  </option>
+                `)}
+              </select>
+            </div>
             <div class="modal-field boolean">
               <input type="checkbox" id="wan-access-${this.editMac}"
                      .checked=${f.wanAccess}
@@ -678,6 +727,7 @@ class LanClientsModule extends LitElement {
       hostname: e.hostname || '',
       ip: e.ip || '',
       'wan-access': e['wan-access'] !== false,
+      network: e.network || null,
     }));
   }
 
@@ -695,6 +745,9 @@ class LanClientsModule extends LitElement {
     const noInternet = isStatic && row.static['wan-access'] === false;
     const undeployed = this._reservationUndeployed(row);
 
+    const networkId = isStatic ? (row.static.network || null) : null;
+    const networkLabel = this._networkLabel(networkId);
+
     return html`
       <tr style=${undeployed ? 'background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);' : ''}>
         <td>
@@ -704,6 +757,11 @@ class LanClientsModule extends LitElement {
         <td>${row.hostname || html`<span class="tag">unknown</span>`}</td>
         <td class="mono">${row.ip || '—'}</td>
         <td class="mono">${row.mac}</td>
+        <td>
+          <span class="tag network ${networkId ? '' : 'main'}">
+            ${networkLabel}
+          </span>
+        </td>
         <td>${isStatic ? '— reserved —' : this._fmtExpiry(row.leaseExpiry)}</td>
         <td>
           ${isStatic
@@ -807,6 +865,7 @@ class LanClientsModule extends LitElement {
                     <th>Hostname</th>
                     <th>IP address</th>
                     <th>MAC address</th>
+                    <th>Network</th>
                     <th>DHCP lease</th>
                     <th>Type</th>
                     <th></th>

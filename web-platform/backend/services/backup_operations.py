@@ -450,8 +450,9 @@ class BackupOperations:
         * /etc/homefree/service-config.json - per-service `backup.paths`
           (plus the postgres/mysql dump dirs the backup units add).
         * /etc/nixos/homefree-config.json - `backups.extra-from-paths`
-          (-> extra-path-N, index = array position) and the implicit
-          system-config repo (-> /etc/nixos).
+          (-> extra-path-<id>, where id is the entry's stable
+          identifier; falls back to array index for unmigrated reads)
+          and the implicit system-config repo (-> /etc/nixos).
 
         Returns: {success, paths: {label: [path, ...]}, error}
         """
@@ -479,30 +480,41 @@ class BackupOperations:
                     if repo_paths:
                         paths[label] = repo_paths
 
-            # system-config + extra-path-N from homefree-config.json.
+            # system-config + extra-path-<id> from homefree-config.json.
             if BackupOperations.HOMEFREE_CONFIG.exists():
                 hf = json.loads(
                     BackupOperations.HOMEFREE_CONFIG.read_text())
                 backups = hf.get("backups") or {}
                 # System configuration repo is always /etc/nixos.
                 paths["system-config"] = ["/etc/nixos"]
-                # extra-path-N: N is the index into extra-from-paths
-                # (services/backup/default.nix uses lib.imap0). Indices
-                # are stable across enable/disable, so we iterate over
-                # every entry and only emit a mapping for enabled ones.
-                # Tolerate the legacy "string" shape for entries written
-                # before the schema was promoted to {path, enabled}.
+                # The restic repository label is bound to the entry's
+                # stable `id` (extra-path-<id>), NOT to its position in
+                # the array — see services/backup/default.nix. We fall
+                # back to the current array index for transitional
+                # reads (a rebuild that hasn't yet activated the
+                # id-migration script). Legacy entries that lacked an
+                # id will have id = str(original_index) once migrated,
+                # so the fallback and the migrated value agree.
+                # Tolerate the legacy "string" shape for entries
+                # written before the schema was promoted to
+                # {id, path, enabled}.
                 for i, entry in enumerate(
                         backups.get("extra-from-paths") or []):
                     if isinstance(entry, str):
-                        path, enabled = entry, True
+                        path, enabled, entry_id = entry, True, str(i)
                     elif isinstance(entry, dict):
                         path = entry.get("path")
                         enabled = entry.get("enabled", True)
+                        raw_id = entry.get("id")
+                        entry_id = (
+                            raw_id if isinstance(raw_id, str)
+                            and raw_id != ""
+                            else str(i)
+                        )
                     else:
                         continue
                     if path and enabled:
-                        paths[f"extra-path-{i}"] = [path]
+                        paths[f"extra-path-{entry_id}"] = [path]
 
             return {"success": True, "paths": paths}
         except json.JSONDecodeError as e:
@@ -511,6 +523,154 @@ class BackupOperations:
         except Exception as e:
             logger.error(f"Error reading source paths: {e}")
             return {"success": False, "paths": {}, "error": str(e)}
+
+    @staticmethod
+    def _configured_extra_path_ids() -> set:
+        """Return the set of stable ids currently configured under
+        backups.extra-from-paths in /etc/nixos/homefree-config.json.
+
+        Tolerates legacy entry shapes (bare string; dict without id) by
+        falling back to the array index — matching the loader's
+        same-rebuild fallback and the activation migration's persistence,
+        so a not-yet-migrated config still resolves to the same set of
+        labels.
+        """
+        configured: set = set()
+        if not BackupOperations.HOMEFREE_CONFIG.exists():
+            return configured
+        try:
+            hf = json.loads(
+                BackupOperations.HOMEFREE_CONFIG.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(
+                f"_configured_extra_path_ids: cannot read config: {e}")
+            return configured
+        entries = ((hf.get("backups") or {}).get("extra-from-paths") or [])
+        for i, entry in enumerate(entries):
+            if isinstance(entry, str):
+                configured.add(str(i))
+            elif isinstance(entry, dict):
+                raw_id = entry.get("id")
+                entry_id = (raw_id if isinstance(raw_id, str)
+                            and raw_id != "" else str(i))
+                configured.add(entry_id)
+        return configured
+
+    @staticmethod
+    def list_orphan_extra_path_repos() -> Dict[str, Any]:
+        """List extra-path-<id> repositories that exist on disk / in
+        B2 but have no corresponding entry in homefree-config.json.
+
+        Caused by deleting an extra-from-paths entry (the entry's
+        restic repo is intentionally left in place; this surface gives
+        the operator an explicit way to clean it up later), by manual
+        edits to the JSON, or by the legacy combined "extra-paths"
+        repo from an older backup module. Each orphan is returned
+        per-source so a repo that exists locally but not in B2 (or
+        vice versa) is correctly surfaced.
+
+        Returns:
+            {success, orphans: [{label, source, id}], error}
+        """
+        try:
+            configured_ids = BackupOperations._configured_extra_path_ids()
+
+            orphans: List[Dict[str, str]] = []
+            for src in (BackupSource.LOCAL, BackupSource.BACKBLAZE):
+                # Read the cached service list. The purge endpoint
+                # explicitly clears this cache (so a freshly purged
+                # repo drops off the next listing); outside that
+                # path the service set changes only when the operator
+                # adds or removes entries via the UI, both of which
+                # already cause a re-render that will refetch.
+                # Forcing a refresh here used to add a 2-3 second
+                # rclone lsd against B2 to every Configure-tab load.
+                listed = BackupOperations.list_services(source=src)
+                if not listed.get("success"):
+                    continue
+                for repo in listed.get("services") or []:
+                    if repo == "extra-paths":
+                        orphans.append({
+                            "label": repo,
+                            "source": src.value,
+                            "id": "",
+                        })
+                    elif repo.startswith("extra-path-"):
+                        repo_id = repo[len("extra-path-"):]
+                        if repo_id not in configured_ids:
+                            orphans.append({
+                                "label": repo,
+                                "source": src.value,
+                                "id": repo_id,
+                            })
+
+            return {"success": True, "orphans": orphans}
+        except Exception as e:
+            logger.error(f"Error listing orphan repos: {e}")
+            return {"success": False, "orphans": [], "error": str(e)}
+
+    @staticmethod
+    def purge_orphan_repo(label: str, source: str) -> Dict[str, Any]:
+        """Delete an orphaned extra-path-<id> repository's storage.
+
+        Operator-explicit destructive action invoked from the admin
+        UI's orphan-repo section. The shell helper (restore-cli
+        purge) enforces label-pattern safety (only extra-path-*) and
+        requires an explicit source - we re-validate both here so a
+        bad call never reaches it.
+
+        Purge does NOT need the backup-subsystem lock: orphan repos
+        are by definition not wired to any systemd unit, so no
+        scheduled backup or restore touches them. The cache of
+        list-services is invalidated so the UI's next refresh
+        reflects the removal.
+        """
+        if not label or (label != "extra-paths"
+                         and not label.startswith("extra-path-")):
+            return {"success": False,
+                    "error": "Refusing to purge: label must match "
+                             "extra-path-* (or legacy extra-paths)"}
+        if source not in ("local", "backblaze"):
+            return {"success": False,
+                    "error": "source must be 'local' or 'backblaze'"}
+
+        # Re-check that the label is genuinely an orphan right now.
+        # Closes a TOCTOU between the UI's last refresh and the
+        # purge click - if the user (or a concurrent edit) put a
+        # path with this id back in the config, we refuse so an
+        # active repo cannot be nuked from the orphan surface.
+        if label.startswith("extra-path-"):
+            repo_id = label[len("extra-path-"):]
+            configured = BackupOperations._configured_extra_path_ids()
+            if repo_id in configured:
+                return {"success": False,
+                        "error": f"Refusing to purge {label}: id "
+                                 f"{repo_id} is configured in "
+                                 f"backups.extra-from-paths"}
+
+        try:
+            cmd = [str(BackupOperations.RESTORE_SCRIPT), "purge",
+                   "--source", source, label]
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=600)
+            # Invalidate cached service lists so the next /services
+            # call rescans (the purged label must drop off the list).
+            BackupOperations._services_cache.clear()
+            BackupOperations._services_cache_timestamp.clear()
+            if result.returncode == 0:
+                return {"success": True, "label": label, "source": source,
+                        "output": strip_ansi_codes(
+                            result.stdout + result.stderr)}
+            return {"success": False, "label": label, "source": source,
+                    "error": strip_ansi_codes(
+                        result.stderr or result.stdout or "purge failed")}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "label": label, "source": source,
+                    "error": "Purge timed out after 600 seconds"}
+        except Exception as e:
+            logger.error(f"Error purging orphan repo {label}: {e}")
+            return {"success": False, "label": label, "source": source,
+                    "error": str(e)}
 
     @staticmethod
     def list_snapshots(service: str,

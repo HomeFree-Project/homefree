@@ -12,8 +12,10 @@ import './modules/hardware-module.js';
 import './modules/system-module.js';
 import './modules/network-module.js';
 import './modules/lan-clients-module.js';
+import './modules/guest-networks-module.js';
 import './modules/dns-module.js';
 import './modules/storage-module.js';
+import './modules/shared-folders-module.js';
 import './modules/extra-proxies-module.js';
 import './modules/proxied-domains-module.js';
 import './modules/services-module.js';
@@ -22,8 +24,11 @@ import './modules/sso-module.js';
 import './modules/users-module.js';
 import './modules/status-module.js';
 import './modules/updates-module.js';
+import './modules/alerts-module.js';
 import './modules/abuse-blocking-module.js';
+import './modules/speed-test-module.js';
 import './modules/developers-module.js';
+import './modules/privacy-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
 import './finish-setup-wizard.js';
@@ -85,6 +90,10 @@ class AdminApp extends LitElement {
     currentUser: { type: Object },         // {username, is_admin_user, admin_username} from /api/users/me
     userMenuOpen: { type: Boolean, state: true },
     switcherOpen: { type: Boolean, state: true }, // Top-bar surface-switcher popover (narrow widths)
+    // Number of currently-firing alerts (drives the top-bar bell badge).
+    // Polled from /api/alerts/sources — independent of the engine timer
+    // because the engine writes the firing state and we read it.
+    openAlertsCount: { type: Number, state: true },
   };
 
   static styles = [themeVars, userMenuStyles, surfaceSwitcherStyles, shellStyles, css`
@@ -730,6 +739,65 @@ class AdminApp extends LitElement {
         height: calc(100% - 40px);
       }
     }
+
+    /* Top-bar alerts bell — count of currently-firing alerts.
+       Sits in .top-bar-actions between the surface switcher and
+       the user menu. Click navigates to the Alerts page. */
+    .alerts-bell-btn {
+      position: relative;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--hf-text-muted);
+      transition: background 0.15s, color 0.15s;
+    }
+    .alerts-bell-btn:hover {
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+    }
+    .alerts-bell-btn.has-alerts { color: var(--hf-warn); }
+    .alerts-bell-btn svg {
+      width: 16px;
+      height: 16px;
+      /* Optical-center nudge: the bell-ring glyph's mass sits in the
+         upper half of its 24x24 viewBox (bell body at y=8-17, thin
+         clapper to y=21), so geometric centering reads as too high
+         next to the uniformly-filled home/manual icons. */
+      transform: translateY(1px);
+    }
+    .alerts-bell-badge {
+      position: absolute;
+      /* Pushed out into the corner-overhang position so the bell
+         icon itself is clearly visible behind the badge — earlier
+         layout sat the badge centred over the top-right of the
+         icon and obscured it. */
+      top: -6px;
+      right: -8px;
+      /* Fixed-size circle. No min-width / horizontal padding —
+         those caused the pill stretch for two-digit / "9+" values.
+         9+ at this size renders cleanly in font-size 10. */
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--hf-err, #c62828);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      /* Ring in the top-bar bg colour separates the badge from the
+         icon underneath even when the icon tints red on hover. */
+      border: 2px solid var(--hf-bg, #fff);
+      box-sizing: content-box;
+      pointer-events: none;
+    }
   `];
 
   constructor() {
@@ -740,6 +808,8 @@ class AdminApp extends LitElement {
     this.dirtyModules = new Set();
     this.currentModule = 'dashboard';
     this.currentSubRoute = '';
+    this.openAlertsCount = 0;
+    this.alertsPollInterval = null;
     this.loading = true;
     this.error = null;
     /* On mobile (≤768px) the sidebar is an overlay and should start
@@ -874,6 +944,11 @@ class AdminApp extends LitElement {
         section: 'Networking'
       },
       {
+        id: 'guest-networks',
+        title: 'Guest Networks',
+        section: 'Networking'
+      },
+      {
         id: 'dns',
         title: 'DNS',
         section: 'Networking'
@@ -889,6 +964,11 @@ class AdminApp extends LitElement {
         section: 'Networking'
       },
       {
+        id: 'speed-test',
+        title: 'Speed Test',
+        section: 'Networking'
+      },
+      {
         id: 'system',
         title: 'Host',
         section: 'System'
@@ -901,6 +981,24 @@ class AdminApp extends LitElement {
       {
         id: 'storage',
         title: 'Storage',
+        section: 'System'
+      },
+      {
+        id: 'shared-folders',
+        title: 'Shared Folders',
+        section: 'System'
+      },
+      {
+        id: 'alerts',
+        title: 'Alerts',
+        section: 'System'
+      },
+      {
+        // Box-wide knobs controlling whether (and where) the box
+        // reaches third parties. Surfaces homefree.privacy.* and
+        // homefree.services.landing-page.edge.* in one page.
+        id: 'privacy',
+        title: 'Privacy',
         section: 'System'
       },
       {
@@ -1051,6 +1149,13 @@ class AdminApp extends LitElement {
     // tab has loaded — show a Refresh banner.
     this.initClosureTracking();
     this.closureIdPollInterval = setInterval(() => this.checkClosureId(), 5000);
+
+    // Open-alerts count for the top-bar bell badge. Polled at 30s —
+    // the engine itself ticks at 1min (so a tighter cadence wouldn't
+    // give fresher data) and a top-bar number doesn't need sub-minute
+    // freshness. Cheap: one GET per tick, returns a small JSON blob.
+    this.loadOpenAlertsCount();
+    this.alertsPollInterval = setInterval(() => this.loadOpenAlertsCount(), 30000);
   }
 
   disconnectedCallback() {
@@ -1076,6 +1181,9 @@ class AdminApp extends LitElement {
     }
     if (this.dirtyPollInterval) {
       clearInterval(this.dirtyPollInterval);
+    }
+    if (this.alertsPollInterval) {
+      clearInterval(this.alertsPollInterval);
     }
     if (this.closureIdPollInterval) {
       clearInterval(this.closureIdPollInterval);
@@ -2004,6 +2112,27 @@ class AdminApp extends LitElement {
       merged.snapshots = { ...(this.serverConfig.snapshots || {}), ...this.pendingConfig.snapshots };
     }
 
+    // Alerts: same shape as snapshots / network. The Alerts module
+    // emits the WHOLE alerts subtree on every edit (the engine config
+    // is small), so a shallow per-key replace is enough — sibling
+    // edits to other modules' top-level keys are untouched. Without
+    // this merge, edits made on the Alerts page live only in
+    // pendingConfig and vanish on Save (the undeployed-change
+    // indication gotcha doc covers this failure mode).
+    if (this.pendingConfig.alerts !== undefined) {
+      merged.alerts = { ...(this.serverConfig.alerts || {}), ...this.pendingConfig.alerts };
+    }
+
+    // Privacy: every third-party endpoint the box may contact for a
+    // feature (homefree.privacy.externalServices.{publicIp,doh,
+    // elevation}). The Privacy module emits the whole `privacy`
+    // subtree on every edit (it's tiny), so shallow per-key replace
+    // is enough — same pattern as alerts above. Without this clause,
+    // edits would vanish on Save.
+    if (this.pendingConfig.privacy !== undefined) {
+      merged.privacy = { ...(this.serverConfig.privacy || {}), ...this.pendingConfig.privacy };
+    }
+
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
@@ -2179,6 +2308,27 @@ class AdminApp extends LitElement {
     }
   }
 
+  // Refresh the top-bar bell badge count. Cheap GET — only the
+  // `state.firing` flag per source is consulted. A failure (admin-api
+  // restarting, alerts router missing on an older deployment) leaves
+  // the previous value in place rather than zeroing the badge, which
+  // would hide a real ongoing alert during a transient blip.
+  async loadOpenAlertsCount() {
+    try {
+      const res = await fetch('/api/alerts/sources');
+      if (!res.ok) return;
+      const body = await res.json();
+      const sources = body.sources || [];
+      this.openAlertsCount = sources.reduce(
+        (n, s) => n + ((s.state && s.state.firing) ? 1 : 0),
+        0,
+      );
+    } catch (e) {
+      // Swallow — transient admin-api restarts are the common case
+      // and we don't want this poll to spam the console.
+    }
+  }
+
   async checkConfigDirty() {
     try {
       const result = await getConfigDirty();
@@ -2325,16 +2475,22 @@ class AdminApp extends LitElement {
       case 'system': return 'system';
       case 'dns': return 'dns';
       case 'mounts': return 'storage';   // Mounts UI merged into the Storage page
-      case 'storage': return 'storage';
+      case 'storage':
+        // storage.shares lives on its own page (Shared Folders); volumes/pools
+        // and everything else under storage.* stay on Storage.
+        if (seg[1] === 'shares') return 'shared-folders';
+        return 'storage';
       case 'snapshots': return 'storage';
       case 'service-config': return 'extra-proxies';
       case 'proxied-domains': return 'proxied-domains';
       case 'backups': return 'backups';
+      case 'alerts': return 'alerts';
       case 'sso': return 'sso';
       case 'developers': return 'developers';
       case 'network':
         if (seg[1] === 'static-ips') return 'lan-clients';
         if (seg[1] === 'abuseBlockCidrs') return 'abuse-blocking';
+        if (seg[1] === 'guest-networks') return 'guest-networks';
         return 'network';
       case 'services':
         return seg[1] === 'backup-canary' ? 'backups' : 'apps';
@@ -2735,6 +2891,16 @@ class AdminApp extends LitElement {
           ></lan-clients-module>
         `;
 
+      case 'guest-networks':
+        return html`
+          <guest-networks-module
+            .serverConfig=${this.serverConfig}
+            .pendingConfig=${this.pendingConfig}
+            .appliedConfig=${this.appliedConfig}
+            @config-change=${this.handleConfigChange}
+          ></guest-networks-module>
+        `;
+
       case 'system':
         return html`
           <system-module
@@ -2778,6 +2944,27 @@ class AdminApp extends LitElement {
             .appliedConfig=${this.appliedConfig}
             @config-change=${this.handleConfigChange}
           ></storage-module>
+        `;
+
+      case 'shared-folders':
+        return html`
+          <shared-folders-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            @config-change=${this.handleConfigChange}
+          ></shared-folders-module>
+        `;
+
+      case 'alerts':
+        return html`
+          <alerts-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            .undeployedPaths=${this.undeployedPaths}
+            .subRoute=${this.currentSubRoute}
+            @config-change=${this.handleConfigChange}
+            @sub-route-change=${this.handleSubRouteChange}
+          ></alerts-module>
         `;
 
       case 'extra-proxies':
@@ -2839,7 +3026,18 @@ class AdminApp extends LitElement {
             .config=${this.config}
             .undeployedPaths=${this.undeployedPaths}
             @config-change=${this.handleConfigChange}
+            @service-public-toggle=${this.handleServicePublicToggle}
           ></sso-module>
+        `;
+
+      case 'privacy':
+        return html`
+          <privacy-module
+            .config=${this.config}
+            .appliedConfig=${this.appliedConfig}
+            .undeployedPaths=${this.undeployedPaths}
+            @config-change=${this.handleConfigChange}
+          ></privacy-module>
         `;
 
       case 'users':
@@ -2902,6 +3100,11 @@ class AdminApp extends LitElement {
           ></abuse-blocking-module>
         `;
 
+      case 'speed-test':
+        return html`
+          <speed-test-module></speed-test-module>
+        `;
+
       default:
         return html`
           <div class="module-content">
@@ -2925,6 +3128,34 @@ class AdminApp extends LitElement {
       onToggle: () => this.toggleUserMenu(),
       profileUrl: profileUrlForCurrentBox(),
     });
+  }
+
+  // Top-bar bell — count of currently-firing alerts. Always rendered
+  // (so the page is discoverable even when no alerts are firing); the
+  // red count chip only appears when count > 0. Click navigates to
+  // the Alerts page AND kicks an immediate refresh of the count, so
+  // the user resolving an alert sees the badge update without waiting
+  // for the next 30s poll.
+  _renderAlertsBell() {
+    const n = this.openAlertsCount || 0;
+    const title = n > 0
+      ? (n + ' open alert' + (n === 1 ? '' : 's'))
+      : 'No open alerts';
+    const display = n > 9 ? '9+' : String(n);
+    return html`
+      <button
+        class="alerts-bell-btn ${n > 0 ? 'has-alerts' : ''}"
+        title=${title}
+        aria-label=${title}
+        @click=${() => {
+          this.handleModuleClick('alerts');
+          this.loadOpenAlertsCount();
+        }}
+      >
+        ${navIcon('alerts')}
+        ${n > 0 ? html`<span class="alerts-bell-badge">${display}</span>` : ''}
+      </button>
+    `;
   }
 
   render() {
@@ -3092,6 +3323,7 @@ class AdminApp extends LitElement {
             </div>
 
             <div class="top-bar-actions">
+              ${this._renderAlertsBell()}
               ${renderSurfaceSwitcher({
                 currentSurface: 'admin',
                 isAdmin: true,

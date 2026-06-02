@@ -19,7 +19,7 @@ layout: base.html
     </div>
 
     <div class="hero-shot">
-      <img src="/img/admin-dashboard.png" alt="HomeFree admin dashboard showing service overview" loading="eager">
+      <img src="/img/app-config.png" alt="HomeFree admin UI: App Configuration page with apps running, enabled, and selectively exposed to the internet" loading="eager">
     </div>
   </div>
 </section>
@@ -189,24 +189,100 @@ layout: base.html
     <span class="eyebrow">What's inside</span>
     <h2 class="section-title">A curated app catalog. One login. Day one.</h2>
     <p class="section-sub">
-      Every tile below is ready to go on day one. Real apps, real web
-      addresses, all signed in with one password.
+      Real apps with real web addresses, ready to use on day one —
+      all behind a single sign-on.
     </p>
 
-    <div class="apps-grid" data-animate-tiles>
-      {% for app in data.apps %}
-      <div class="app-tile">
-        <div class="app-tile-icon">{{ app.name | truncate(2, true, '') | upper }}</div>
-        <p class="app-tile-name">{{ app.name }}</p>
-        <p class="app-tile-cat">{{ app.category }}</p>
-        <p class="app-tile-blurb">{{ app.blurb }}</p>
-      </div>
-      {% endfor %}
+    <div class="section-shot">
+      <img src="/img/home.png" alt="HomeFree Apps page listing the installed app catalog — Enphase Solar, FreshRSS, Git, Grocy, Home Assistant, Homebox, Joplin, Lidarr, linkwarden, MediaWiki, Minecraft, NZBGet, Odoo ERP, Ollama, and more — each launchable with one click via SSO" loading="lazy">
     </div>
 
-    <div class="sso-badge">
-      <span class="dot"></span>
+    <p class="sso-callout">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       One sign-in across every app. Sign in once, you're in.
+    </p>
+  </div>
+</section>
+
+{# ───────────────────────── Product tour ───────────────────── #}
+<section class="section tour-section" id="tour">
+  <div class="container">
+    <span class="eyebrow">See it in action</span>
+    <h2 class="section-title">A real admin UI, not a configuration file.</h2>
+    <p class="section-sub">
+      Every screen below is a real page in the HomeFree admin. Swipe
+      through to see backups, storage, traffic, hardware, and updates.
+    </p>
+
+    <div class="tour-carousel" role="region" aria-roledescription="carousel" aria-label="Product screenshots" tabindex="0" data-carousel>
+      <div class="tour-stage">
+        <button class="tour-nav tour-nav-prev" type="button" aria-label="Previous slide" data-carousel-prev>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+
+        <div class="tour-slides" data-carousel-slides>
+          <figure class="tour-slide is-active" data-index="0">
+            <img src="/img/dashboard.png" alt="HomeFree Dashboard showing online status, CPU and memory utilization, latency, WAN and LAN throughput graphs, and a count of LAN clients" loading="lazy">
+            <figcaption>
+              <h3>Dashboard</h3>
+              <p>Live connectivity, CPU, memory, and per-interface throughput at a glance.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="tour-slide" data-index="1">
+            <img src="/img/backups.png" alt="HomeFree Backups page" loading="lazy">
+            <figcaption>
+              <h3>Backups</h3>
+              <p>Scheduled, encrypted backups to local disk, NAS, or any S3-compatible target.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="tour-slide" data-index="2">
+            <img src="/img/storage.png" alt="HomeFree Storage page showing pools, drives, and shared folders" loading="lazy">
+            <figcaption>
+              <h3>Storage</h3>
+              <p>Encrypted btrfs pools, RAID, and shared folders managed from the browser.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="tour-slide" data-index="3">
+            <img src="/img/traffic.png" alt="HomeFree Traffic page showing per-client network activity" loading="lazy">
+            <figcaption>
+              <h3>Traffic</h3>
+              <p>See which device is talking to the internet, in real time.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="tour-slide" data-index="4">
+            <img src="/img/hardware.png" alt="HomeFree Hardware page listing detected drives, NICs, and USB devices" loading="lazy">
+            <figcaption>
+              <h3>Hardware</h3>
+              <p>Detected drives, NICs, and USB devices, ready to configure.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="tour-slide" data-index="5">
+            <img src="/img/updates.png" alt="HomeFree Updates page with upgrade and rollback controls" loading="lazy">
+            <figcaption>
+              <h3>Updates</h3>
+              <p>One-click upgrades. One-click rollback if anything regresses.</p>
+            </figcaption>
+          </figure>
+        </div>
+
+        <button class="tour-nav tour-nav-next" type="button" aria-label="Next slide" data-carousel-next>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+
+      <div class="tour-dots" role="tablist" aria-label="Slide selector" data-carousel-dots>
+        <button class="tour-dot is-active" type="button" role="tab" aria-label="Slide 1: Dashboard" aria-selected="true" data-index="0"></button>
+        <button class="tour-dot" type="button" role="tab" aria-label="Slide 2: Backups" aria-selected="false" data-index="1"></button>
+        <button class="tour-dot" type="button" role="tab" aria-label="Slide 3: Storage" aria-selected="false" data-index="2"></button>
+        <button class="tour-dot" type="button" role="tab" aria-label="Slide 4: Traffic" aria-selected="false" data-index="3"></button>
+        <button class="tour-dot" type="button" role="tab" aria-label="Slide 5: Hardware" aria-selected="false" data-index="4"></button>
+        <button class="tour-dot" type="button" role="tab" aria-label="Slide 6: Updates" aria-selected="false" data-index="5"></button>
+      </div>
     </div>
   </div>
 </section>

@@ -3,7 +3,7 @@ let
   version = "v0.107.73";
   image = "adguard/adguardhome:${version}";
   containerDataPath = "/var/lib/adguardhome-podman";
-  port = 3000;
+  port = config.homefree.allocPort "adguard";
 
   settings = {
     http = {
@@ -29,7 +29,13 @@ let
     block_auth_min = 15;
     theme = "auto";
     dns = {
-      ## Must specify interfaces, otherwise it conflicts with podman
+      ## Must specify interfaces, otherwise it conflicts with podman.
+      ## Tailscale-interface DNS reachability is provided by a separate
+      ## dnsmasq forwarder defined in apps/headscale/default.nix that
+      ## listens on tailscale0 with --bind-dynamic and forwards here.
+      ## See that file for rationale (Tailscale-IP isn't known at Nix
+      ## eval time; --bind-dynamic + --interface=tailscale0 binds at
+      ## runtime to whatever IP tailscaled assigns).
       bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "fd01::1" ];
       port = 53;
       anonymize_client_ip = false;
@@ -443,6 +449,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.adguard) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.adguard.enable;
       systemd-service-names = [
         "podman-adguardhome"
@@ -514,6 +521,16 @@ in
           description = "Make service accessible from WAN";
         }
       ];
+    }
+    {
+      label = "adguard-dns";
+      name = "AdGuard DNS";
+      project-name = "AdGuard Home";
+      enable = config.homefree.service-options.adguard.enable;
+      port-request = 53;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }];
   };
 }

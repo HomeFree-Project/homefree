@@ -140,11 +140,22 @@ class ValidationService:
             except ValueError as e:
                 errors.append(f"Invalid DHCP range: {e}")
 
+        # Validate guest networks (VLANs) — must run BEFORE static-ips so
+        # static-ips can cross-reference the validated guest-network list
+        # and pick the right per-network subnet for the in-subnet check.
+        guest_networks = network_config.get('guest-networks', []) or []
+        if guest_networks:
+            errors.extend(ValidationService._validate_guest_networks(
+                guest_networks,
+                network_config.get('lan-subnet')
+            ))
+
         # Validate static IPs
         if 'static-ips' in network_config:
             errors.extend(ValidationService._validate_static_ips(
                 network_config['static-ips'],
-                network_config.get('lan-subnet')
+                network_config.get('lan-subnet'),
+                guest_networks,
             ))
 
         # Validate bitrates
@@ -156,8 +167,115 @@ class ValidationService:
         return errors
 
     @staticmethod
-    def _validate_static_ips(static_ips: List[Dict[str, Any]], lan_subnet: str = None) -> List[str]:
-        """Validate static IP configurations"""
+    def _validate_guest_networks(guest_networks: List[Dict[str, Any]],
+                                 lan_subnet: str = None) -> List[str]:
+        """Validate guest-network (VLAN) configurations."""
+        errors = []
+        seen_ids = set()
+        seen_vlan_ids = set()
+        seen_names = set()
+        parsed_subnets = []
+        lan_net = None
+        if lan_subnet:
+            try:
+                lan_net = ipaddress.ip_network(lan_subnet)
+            except ValueError:
+                pass
+
+        for idx, gn in enumerate(guest_networks):
+            prefix = f"Guest network #{idx + 1}"
+
+            gn_id = gn.get('id', '')
+            if not gn_id:
+                errors.append(f"{prefix}: id required")
+            elif not re.match(r'^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$', gn_id):
+                # Kernel ifname limit is 15 chars; constrain slug accordingly.
+                errors.append(f"{prefix}: invalid id '{gn_id}' "
+                              f"(lowercase letters/digits/hyphens, max 15 chars)")
+            elif gn_id in seen_ids:
+                errors.append(f"{prefix}: duplicate id '{gn_id}'")
+            else:
+                seen_ids.add(gn_id)
+
+            name = gn.get('name', '')
+            if not name:
+                errors.append(f"{prefix}: name required")
+            elif name in seen_names:
+                errors.append(f"{prefix}: duplicate name '{name}'")
+            else:
+                seen_names.add(name)
+
+            vlan_id = gn.get('vlan-id')
+            if not isinstance(vlan_id, int) or vlan_id < 1 or vlan_id > 4094:
+                errors.append(f"{prefix}: vlan-id must be an integer 1-4094")
+            elif vlan_id in seen_vlan_ids:
+                errors.append(f"{prefix}: duplicate vlan-id {vlan_id}")
+            else:
+                seen_vlan_ids.add(vlan_id)
+
+            subnet_str = gn.get('subnet', '')
+            this_net = None
+            try:
+                this_net = ipaddress.ip_network(subnet_str, strict=True)
+            except (ValueError, TypeError):
+                errors.append(f"{prefix}: invalid subnet '{subnet_str}'")
+
+            # Subnet must not overlap main LAN or any earlier guest subnet.
+            if this_net is not None:
+                if lan_net is not None and this_net.overlaps(lan_net):
+                    errors.append(f"{prefix}: subnet {subnet_str} overlaps "
+                                  f"main LAN {lan_subnet}")
+                for other_id, other_net in parsed_subnets:
+                    if this_net.overlaps(other_net):
+                        errors.append(f"{prefix}: subnet {subnet_str} overlaps "
+                                      f"guest network '{other_id}' ({other_net})")
+                parsed_subnets.append((gn_id or f"#{idx + 1}", this_net))
+
+            # Gateway must lie inside the subnet.
+            gateway = gn.get('gateway', '')
+            if this_net is not None and gateway:
+                try:
+                    gw_ip = ipaddress.ip_address(gateway)
+                    if gw_ip not in this_net:
+                        errors.append(f"{prefix}: gateway {gateway} is not in "
+                                      f"subnet {subnet_str}")
+                except ValueError:
+                    errors.append(f"{prefix}: invalid gateway '{gateway}'")
+            elif not gateway:
+                errors.append(f"{prefix}: gateway required")
+
+            # DHCP range must lie inside the subnet, start < end.
+            start = gn.get('dhcp-range-start', '')
+            end = gn.get('dhcp-range-end', '')
+            try:
+                start_ip = ipaddress.ip_address(start) if start else None
+                end_ip = ipaddress.ip_address(end) if end else None
+                if start_ip is None or end_ip is None:
+                    errors.append(f"{prefix}: dhcp-range-start and "
+                                  f"dhcp-range-end required")
+                else:
+                    if start_ip >= end_ip:
+                        errors.append(f"{prefix}: dhcp-range-start must be "
+                                      f"less than dhcp-range-end")
+                    if this_net is not None and (
+                            start_ip not in this_net or end_ip not in this_net):
+                        errors.append(f"{prefix}: DHCP range must be inside "
+                                      f"subnet {subnet_str}")
+            except ValueError as e:
+                errors.append(f"{prefix}: invalid DHCP range: {e}")
+
+        return errors
+
+    @staticmethod
+    def _validate_static_ips(static_ips: List[Dict[str, Any]],
+                             lan_subnet: str = None,
+                             guest_networks: List[Dict[str, Any]] = None) -> List[str]:
+        """Validate static IP configurations.
+
+        Each static-ip may carry a `network` field pointing at a
+        guest-network id; when set, the IP must lie in that network's
+        subnet rather than the main LAN subnet.
+        """
         errors = []
         seen_macs = set()
         seen_ips = set()
@@ -168,6 +286,19 @@ class ValidationService:
             try:
                 subnet = ipaddress.ip_network(lan_subnet)
             except ValueError:
+                pass
+
+        # Index guest-network subnets by id for cross-reference. Skip
+        # entries with no/empty id — _validate_guest_networks already
+        # flags those as errors.
+        gn_subnets: Dict[str, Any] = {}
+        for gn in (guest_networks or []):
+            gn_id = gn.get('id')
+            if not gn_id:
+                continue
+            try:
+                gn_subnets[gn_id] = ipaddress.ip_network(gn.get('subnet', ''))
+            except (ValueError, TypeError):
                 pass
 
         for idx, ip_config in enumerate(static_ips):
@@ -195,6 +326,22 @@ class ValidationService:
             else:
                 seen_hostnames.add(hostname.lower())
 
+            # Resolve target subnet — guest-network if assigned, else main LAN.
+            network_id = ip_config.get('network')
+            if network_id:
+                if network_id not in gn_subnets:
+                    errors.append(f"{prefix}: references unknown guest network "
+                                  f"'{network_id}'")
+                    target_subnet = None
+                    target_subnet_label = None
+                else:
+                    target_subnet = gn_subnets[network_id]
+                    target_subnet_label = f"guest network '{network_id}' " \
+                                          f"({target_subnet})"
+            else:
+                target_subnet = subnet
+                target_subnet_label = f"LAN subnet {lan_subnet}" if subnet else None
+
             # Validate IP address
             ip = ip_config.get('ip', '')
             if not ip:
@@ -209,9 +356,10 @@ class ValidationService:
                     else:
                         seen_ips.add(ip)
 
-                    # Check if in subnet
-                    if subnet and ip_addr not in subnet:
-                        errors.append(f"{prefix}: IP {ip} is not in LAN subnet {lan_subnet}")
+                    # Check if in the right subnet (main LAN or assigned guest)
+                    if target_subnet and ip_addr not in target_subnet:
+                        errors.append(f"{prefix}: IP {ip} is not in "
+                                      f"{target_subnet_label}")
 
                 except ValueError:
                     errors.append(f"{prefix}: Invalid IP address: {ip}")

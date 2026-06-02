@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "8.1.2135";
-  port = 8976;
+  port = config.homefree.allocPort "lidarr";
   containerDataPath = "/var/lib/lidarr";
   configPath = "${containerDataPath}/config";
   mediaPath = if config.homefree.service-options.lidarr.media-path != null
@@ -113,6 +113,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.lidarr) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.lidarr.enable;
       sso = {
         kind = "none";

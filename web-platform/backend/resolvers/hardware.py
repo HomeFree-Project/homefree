@@ -22,7 +22,8 @@ from typing import Any, Dict
 
 from resolvers.firmware import FirmwareResolver
 from resolvers.physical_drives import PhysicalDrivesResolver
-from services import hwmon
+from services import hw_buckets, hwmon
+from services.alerts_config import load_alerts_config
 from services.dashboard_history_store import (
     DashboardHistoryStore,
     DEFAULT_DB_PATH as DASHBOARD_DB_PATH,
@@ -43,12 +44,65 @@ class HardwareResolver:
 
     @staticmethod
     def get_overview() -> Dict[str, Any]:
-        """Snapshot for the Hardware page: drives + sensors + firmware."""
+        """Snapshot for the Hardware page: drives + sensors + firmware.
+
+        Each sensor is augmented with `warn_c` / `err_c` — the resolved
+        threshold for THIS sensor on THIS box (driver-reported `_crit`
+        first, then a CPUID-family / PCI-vendor bucket, with the user's
+        alerts-config override layered on top per-tier). The Hardware
+        page reads these directly so its chart lines and severity
+        coloring always agree with what fires the sensor-temperature
+        alert."""
         return {
             "physical_drives": PhysicalDrivesResolver.get_all(),
-            "sensors": hwmon.scan(),
+            "sensors": HardwareResolver._sensors_with_thresholds(),
             "firmware": FirmwareResolver.get_status(),
         }
+
+    @staticmethod
+    def _sensors_with_thresholds() -> list:
+        """hwmon.scan() + per-sensor warn_c/err_c via the same cascade
+        the alerts engine uses. User overrides come from
+        /etc/homefree/alerts-config.json — absence (e.g. alerts feature
+        off) means inferred-only, which is fine."""
+        # Per-class user overrides — same shape the alert source reads.
+        try:
+            alerts_cfg = load_alerts_config() or {}
+            src_cfg = ((alerts_cfg.get("sources") or {})
+                       .get("sensor-temperature") or {})
+            thr_cfg = src_cfg.get("thresholds") or {}
+        except Exception:
+            thr_cfg = {}
+
+        def _ov(key):
+            v = thr_cfg.get(key)
+            if v is None:
+                return None
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        overrides_by_kind = {
+            "cpu":  (_ov("cpu-warn-c"),  _ov("cpu-err-c")),
+            "nvme": (_ov("nvme-warn-c"), _ov("nvme-err-c")),
+            "gpu":  (_ov("gpu-warn-c"),  _ov("gpu-err-c")),
+        }
+
+        sensors = hwmon.scan()
+        for s in sensors:
+            kind = s.get("kind")
+            if kind not in overrides_by_kind:
+                # memory / other — no threshold concept here, leave
+                # warn_c / err_c absent so the UI knows to skip.
+                continue
+            user_warn, user_err = overrides_by_kind[kind]
+            warn, err = hw_buckets.resolve_thresholds_with_overrides(
+                kind, s.get("crit_c"), s.get("max_c"), user_warn, user_err,
+            )
+            s["warn_c"] = warn
+            s["err_c"] = err
+        return sensors
 
     @staticmethod
     def get_drive_temp_history() -> Dict[str, Any]:

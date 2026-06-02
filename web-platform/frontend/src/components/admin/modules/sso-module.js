@@ -259,6 +259,25 @@ class SsoModule extends LitElement {
     }));
   }
 
+  _isSsoPublic() {
+    return this.config?.services?.zitadel?.public === true;
+  }
+
+  // Mirror services-module's handlePublicToggle: dispatch the
+  // surgical service-public-toggle event so admin-app updates only
+  // services.zitadel.public, instead of round-tripping the whole
+  // services dict through the generic config-change merger. Both this
+  // and the App Configuration row write the same path, so the two
+  // toggles stay in sync without extra state.
+  _toggleSsoPublic() {
+    const next = !this._isSsoPublic();
+    this.dispatchEvent(new CustomEvent('service-public-toggle', {
+      detail: { serviceLabel: 'zitadel', isPublic: next },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   render() {
     if (this.loading && !this.state) {
       return html`<div class="muted">Loading SSO state…</div>`;
@@ -303,6 +322,32 @@ class SsoModule extends LitElement {
               class="toggle ${this._allowRegistration() ? 'on' : ''}"
               @click=${this._toggleAllowRegistration}
               title="Toggle sign-up link visibility"
+            ></div>
+          </div>
+        </config-section>
+
+        <config-section
+          title="Internet access"
+          description="Expose Single Sign-on to the public internet so external users can complete a sign-in to any public app."
+        >
+          <div class="status-row ${this._changed('services.zitadel.public') ? 'undeployed' : ''}" style="justify-content: space-between;">
+            <div>
+              <div style="font-weight: 500; color: var(--hf-text);">
+                Expose SSO to the internet
+              </div>
+              <div class="muted" style="margin-top: 4px; max-width: 560px;">
+                Binds sso.&lt;domain&gt; and auth.&lt;domain&gt; to the
+                WAN interface. Required for any public app whose
+                sign-in flows through Zitadel — without this the SSO
+                redirect cannot complete from off-LAN. The same toggle
+                also lives on the Zitadel row in App Configuration;
+                both stay in sync.
+              </div>
+            </div>
+            <div
+              class="toggle ${this._isSsoPublic() ? 'on' : ''}"
+              @click=${this._toggleSsoPublic}
+              title="Toggle public exposure of sso.* and auth.*"
             ></div>
           </div>
         </config-section>

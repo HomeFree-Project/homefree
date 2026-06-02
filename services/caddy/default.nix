@@ -15,26 +15,47 @@ let
   ## brought in by the file-scope `import` of the runtime snippet).
 
   # Process proxied domains for standard reverse proxy (proxy handles TLS)
+  #
+  # Each entry now carries `frontend-tls` (whether Caddy serves the
+  # vhost over HTTPS) and `backend-tls` (whether Caddy talks HTTPS to
+  # the backend) independently — previously a single `ssl` flag
+  # conflated the two. With both false you get HTTP-only; both true is
+  # the historical HTTPS-passthrough (legacy https target); frontend
+  # true + backend false is "Caddy terminates TLS at the edge, talks
+  # plain HTTP to a loopback service" — the pattern every first-party
+  # HomeFree app uses.
   processedProxiedDomains = lib.flatten (lib.map (domain-mapping:
     let
+      httpBase = domain: {
+        inherit domain;
+        inherit (domain-mapping) public;
+        inherit (domain-mapping.target) host;
+        port = domain-mapping.target.http.port;
+        backend-tls = false;
+        ignore-self-signed-cert = false;
+      };
+
+      # When target.http is set, always emit an HTTP-frontend vhost.
+      # If the operator also opted into `frontend-tls`, also emit an
+      # HTTPS-frontend vhost terminating TLS to the same HTTP backend.
       httpEntries = if domain-mapping.target.http != null then
-        lib.map (domain: {
-          inherit domain;
-          inherit (domain-mapping) public;
-          inherit (domain-mapping.target) host;
-          port = domain-mapping.target.http.port;
-          ssl = false;
-          ignore-self-signed-cert = false;
-        }) domain-mapping.domains
+        (lib.map (domain: (httpBase domain) // { frontend-tls = false; }) domain-mapping.domains)
+        ++ (if domain-mapping.frontend-tls or false
+            then lib.map (domain: (httpBase domain) // { frontend-tls = true; }) domain-mapping.domains
+            else [])
       else [];
 
+      # Legacy HTTPS-passthrough target — Caddy terminates TLS and
+      # talks HTTPS to a TLS-serving backend (kept for the original
+      # use case of fronting an external HTTPS server).
       httpsEntries = if domain-mapping.target.https != null then
         lib.map (domain: {
           inherit domain;
           inherit (domain-mapping) public;
           inherit (domain-mapping.target) host;
           port = domain-mapping.target.https.port;
-          ssl = true;
+          frontend-tls = true;
+          backend-tls = true;
           ignore-self-signed-cert = domain-mapping.target.https.ignore-self-signed-cert;
         }) domain-mapping.domains
       else [];
@@ -266,8 +287,77 @@ in
           ""
           "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile"
         ];
+
+        ## Cgroup resource limits — bound caddy's blast radius under
+        ## a traffic surge (HN/Reddit front-page hug, runaway upstream,
+        ## OOM-bait response). Defined via
+        ## `homefree.services.caddy.resources.*` so per-instance
+        ## hardware can tune without editing shared code. The point is
+        ## NOT to make caddy fast; it's to keep caddy from starving
+        ## the rest of the system — sshd / admin-api / monitoring —
+        ## when caddy gets overloaded. Layered with the upstream
+        ## Layers 1-4 input-side defences (vendored assets, hashed-
+        ## asset cache, nftables per-IP conn cap, caddy-ratelimit):
+        ## those reduce input pressure; these cap impact.
+        MemoryHigh = config.homefree.services.caddy.resources.memoryHigh;
+        MemoryMax = config.homefree.services.caddy.resources.memoryMax;
+        CPUWeight = toString config.homefree.services.caddy.resources.cpuWeight;
+        TasksMax = toString config.homefree.services.caddy.resources.tasksMax;
       }
     ];
+  };
+
+  ## Retry stuck Caddy ACME after the DNS stack comes back up.
+  ##
+  ## switch-to-configuration runs sequentially: stop units → reload
+  ## units → start units. When a rebuild adds a vhost AND restarts
+  ## the DNS stack (any rebuild that touches a HomeFree service does,
+  ## because unbound's proxied zone is regenerated), the order is:
+  ## stop unbound/dns-ready → reload caddy → start unbound → ...
+  ## start dns-ready. Caddy's reload runs while unbound is DOWN; ACME
+  ## for the new vhost hits "no such host" on
+  ## acme-v02.api.letsencrypt.org and CertMagic queues an exponential
+  ## backoff retry whose state is held IN-MEMORY in the TLS app.
+  ##
+  ## ExecReload itself can't fix this — anything that waits inside
+  ## ExecReload deadlocks the rebuild (the very thing supposed to
+  ## start dns-ready is what's queued AFTER our reload completes).
+  ## Instead: this oneshot is `wantedBy dns-ready.service`, so every
+  ## time dns-ready starts (boot, rebuild re-arm, manual restart) it
+  ## fires a follow-up reload.
+  ##
+  ## CRITICAL: this MUST be `caddy reload --force`, not `systemctl
+  ## reload caddy.service`. Two reasons:
+  ##   1. The latter dispatches our ExecReload override which
+  ##      deliberately drops `--force` (the steady-state reload wants
+  ##      to keep listeners up to avoid a connection-refused gap on
+  ##      every config change).
+  ##   2. After a rebuild adds one vhost, the *next* reload sees an
+  ##      IDENTICAL config and short-circuits — no TLS-app reload, no
+  ##      retry attempt. CertMagic keeps the in-memory "next attempt
+  ##      at +60s" timer from the failed attempt; observed in practice:
+  ##      attempt 1 logs "retrying_in: 60" and then no attempt 2 EVER
+  ##      fires (the backoff queue gets lost across reload cycles).
+  ## `--force` bypasses the identical-body short-circuit, re-runs
+  ## Provision on every app, and gives the TLS app a fresh CertMagic
+  ## instance with no backoff state — so the queued cert gets
+  ## acquired immediately. The brief listener bounce is acceptable
+  ## here: this only fires on DNS-stack transitions (every meaningful
+  ## rebuild), where the box is already in a transient state.
+  ##
+  ## `after = [ caddy.service dns-ready.service ]` so we don't try to
+  ## reload Caddy before it's up on first boot. We deliberately do
+  ## NOT use `bindsTo`/`partOf`: a one-shot retry that crashes
+  ## shouldn't cascade-tear anything down.
+  systemd.services.caddy-acme-retry = {
+    description = "Reload Caddy (--force) after DNS is ready (retry stuck ACME)";
+    after = [ "dns-ready.service" "caddy.service" ];
+    wants = [ "dns-ready.service" ];
+    wantedBy = [ "dns-ready.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile --force";
+    };
   };
 
   ## Restart Unbound DNS with caddy changes
@@ -308,7 +398,64 @@ in
       ## a long-poll that the client will simply re-establish.
       ''
         grace_period 5s
+
+        ## caddy-ratelimit (mholt/caddy-ratelimit) — order before
+        ## file_server / reverse_proxy so a rate-limited request is
+        ## rejected with 429 before any handler does work. Plugin is
+        ## always built in (see overlays/caddy-with-plugins.nix);
+        ## individual sites enable the directive when they want it.
+        order rate_limit before basicauth
       ''
+    + (let
+        ## Layer 7 (CDN/edge fronting) trusted-proxies CIDR list.
+        ## Caddy only allows `trusted_proxies` at the per-listener
+        ## level (inside `servers { }`), so it has to live in the
+        ## global config — not in the landing-page site block.
+        ## Emitted only when an operator has explicitly opted in
+        ## via `homefree.services.landing-page.edge.enable`.
+        ##
+        ## SIDE EFFECT to be aware of: trusted_proxies applies to
+        ## the whole listener, so admin.<domain> and every other
+        ## vhost on this Caddy will ALSO trust X-Forwarded-For
+        ## from these CIDRs. In practice this is benign — admin
+        ## isn't routed through the CDN, and the SSO gate prevents
+        ## unauthenticated reach — but if you ever proxy admin
+        ## through the same CDN, audit the X-Forwarded-For trust
+        ## chain across the auth flow first.
+        ##
+        ## Cloudflare published edge ranges:
+        ##   https://www.cloudflare.com/ips-v4
+        ##   https://www.cloudflare.com/ips-v6
+        ## bunny.net published edge ranges:
+        ##   https://api.bunny.net/system/edgeserverlist
+        edgeCfg = config.homefree.services.landing-page.edge;
+        cloudflareTrustedProxies = [
+          "173.245.48.0/20" "103.21.244.0/22" "103.22.200.0/22"
+          "103.31.4.0/22" "141.101.64.0/18" "108.162.192.0/18"
+          "190.93.240.0/20" "188.114.96.0/20" "197.234.240.0/22"
+          "198.41.128.0/17" "162.158.0.0/15" "104.16.0.0/13"
+          "104.24.0.0/14" "172.64.0.0/13" "131.0.72.0/22"
+          "2400:cb00::/32" "2606:4700::/32" "2803:f800::/32"
+          "2405:b500::/32" "2405:8100::/32" "2a06:98c0::/29"
+          "2c0f:f248::/32"
+        ];
+        bunnyTrustedProxies = [
+          "23.83.128.0/18" "169.150.0.0/16" "185.93.0.0/16"
+          "188.114.96.0/20" "208.115.0.0/16"
+          "2a02:e1c1::/32"
+        ];
+        providerBuiltins =
+          if edgeCfg.provider == "cloudflare" then cloudflareTrustedProxies
+          else if edgeCfg.provider == "bunny" then bunnyTrustedProxies
+          else [];
+        allTrustedProxies = providerBuiltins ++ edgeCfg.trustedProxies;
+      in lib.optionalString
+        (edgeCfg.enable && allTrustedProxies != [])
+        ''
+          servers {
+            trusted_proxies static ${lib.concatStringsSep " " allTrustedProxies}
+          }
+        '')
     + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''
       cert_issuer acme {
         dns ${config.homefree.dns.remote.cert-management.dns-01.provider} {$DNS_API_TOKEN}
@@ -614,6 +761,38 @@ in
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
             }
+            ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''
+              ## Hashed-asset cache override (vendor-hashed policy).
+              ##
+              ## Sites built with content-hash query-string cache busting
+              ## (Eleventy `assetVersion` filter — landing page, manual)
+              ## emit asset references like
+              ## `/css/main.css?v=abc123`. When the file content changes,
+              ## the hash changes, the URL changes, and the browser
+              ## fetches a brand-new cache entry — so any cached body for
+              ## the OLD URL is permanently safe to keep. That's the
+              ## "immutable" guarantee.
+              ##
+              ## Why this is safe even though the apex no-store header
+              ## above runs first: Caddy's `header` middleware composes
+              ## directives in source order, and a later directive for
+              ## the same header key overrides an earlier one when the
+              ## matcher fires. So for `?v=*` URLs Cache-Control becomes
+              ## `public, max-age=31536000, immutable`; for every other
+              ## URL the no-store from above stands.
+              ##
+              ## ETag / Last-Modified are RE-emitted here so 304s can
+              ## work for the hashed asset (`-ETag` from the apex block
+              ## still stripped them — we want them back for these
+              ## URLs). For epoch-mtime safety: hashed URLs never
+              ## conflict across rebuilds because the URL itself changes
+              ## on every content change, so a 304 reply can only happen
+              ## when the asset's bytes really are identical.
+              @hashed_assets {
+                query v=*
+              }
+              header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+            '' else ""}
           '' else (
           (if reverse-proxy-config.oauth2 == true then ''
             ## SSO gate (reverse-proxy site). Request-time `file`
@@ -837,11 +1016,14 @@ in
       # Add reverse proxy for proxied domains (proxy handles TLS certificates)
       (lib.listToAttrs (lib.map (entry:
         let
-          # Create virtualHost with http:// and https:// (Caddy will handle ACME for https)
-          protocol = if entry.ssl then "https" else "http";
+          # Frontend scheme controls Caddy's listener; backend scheme
+          # controls how Caddy talks to the upstream. These are split
+          # so an HTTP-only backend can still be served over HTTPS
+          # (frontend-tls=true, backend-tls=false).
+          protocol = if entry.frontend-tls then "https" else "http";
           host-string = "${protocol}://${entry.domain}";
           log-name = lib.replaceStrings ["." "*"] ["_" "wildcard"] "${entry.domain}-${toString entry.port}";
-          backend-protocol = if entry.ssl then "https" else "http";
+          backend-protocol = if entry.backend-tls then "https" else "http";
         in {
           name = host-string;
           value = {
@@ -851,7 +1033,7 @@ in
             extraConfig = ''
               ${if !entry.public then "bind ${lan-address}" else ""}
 
-              ${if entry.ssl && lib.hasInfix "*" entry.domain then ''
+              ${if entry.frontend-tls && lib.hasInfix "*" entry.domain then ''
               # Use DNS-01 challenge for wildcard domains
               tls {
               ''
@@ -865,7 +1047,7 @@ in
               +
               ''
               }
-              '' else if entry.ssl && config.homefree.development then ''
+              '' else if entry.frontend-tls && config.homefree.development then ''
               # Development mode: use internal CA for HTTPS
               tls internal
               '' else ""}
@@ -876,7 +1058,7 @@ in
                 header_up X-Real-IP {remote_host}
                 header_up X-Forwarded-For {remote_host}
                 header_up X-Forwarded-Proto {scheme}
-                ${if entry.ssl then ''
+                ${if entry.backend-tls then ''
                 transport http {
                   tls
                   ${if entry.ignore-self-signed-cert then "tls_insecure_skip_verify" else ""}

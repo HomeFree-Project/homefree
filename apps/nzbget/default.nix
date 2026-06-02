@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "version-v24.8";
-  port = 6799;
+  port = config.homefree.allocPort "nzbget";
   containerDataPath = "/var/lib/nzbget";
   configPath = "${containerDataPath}/config";
   downloadsPath = if config.homefree.service-options.nzbget.downloads-path != null
@@ -104,6 +104,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.nzbget) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.nzbget.enable;
       sso = {
         kind = "none";

@@ -1,4 +1,4 @@
-{ pkgs, system, ...}:
+{ pkgs, lib, config, utils, system, ...}:
 let
   # Disable SCSI block-device runtime PM for a disk so the kernel does not
   # runtime-suspend it and issue a STOP UNIT (idle spindown). Invoked from a
@@ -279,6 +279,36 @@ in
     interval = "monthly";
     fileSystems = [ "/" ];
   };
+
+  # Apply uniform "scrub hygiene" to every btrfs-scrub-* unit created by
+  # services.btrfs.autoScrub. The upstream module fires every timer at
+  # the configured `interval` boundary (e.g. "monthly" = first-of-month
+  # 00:00:00), so a box with N scrubbed filesystems gets N concurrent
+  # scrubs at the same wallclock minute. On this box that pile-on was
+  # ~98 °C on an NVMe's NAND-array sensor every nightly tick — see
+  # docs/agent-notes/nvme-threshold-cascade.md. RandomizedDelaySec spreads
+  # scrubs across a 6h window so collisions become vanishingly rare
+  # regardless of FS count; Nice + IOSchedulingClass=idle drag each
+  # scrub out at lower CPU/IO priority so the thermal burst stays under
+  # the warn line. Reads `config.services.btrfs.autoScrub.fileSystems`
+  # so it transparently picks up the root scrub here AND every pool
+  # mountpoint appended from modules/storage-pools.nix.
+  systemd.timers = builtins.listToAttrs (map (fs:
+    lib.nameValuePair
+      "btrfs-scrub-${utils.escapeSystemdPath fs}"
+      { timerConfig.RandomizedDelaySec = "6h"; }
+  ) config.services.btrfs.autoScrub.fileSystems);
+
+  systemd.services = builtins.listToAttrs (map (fs:
+    lib.nameValuePair
+      "btrfs-scrub-${utils.escapeSystemdPath fs}"
+      {
+        serviceConfig = {
+          Nice = 19;
+          IOSchedulingClass = "idle";
+        };
+      }
+  ) config.services.btrfs.autoScrub.fileSystems);
 
   environment.systemPackages = with pkgs; [
     (python3.withPackages (python-pkgs: with python-pkgs; [

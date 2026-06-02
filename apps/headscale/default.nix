@@ -74,7 +74,7 @@ let
     done
   '';
 
-  headplane-port = 3009;
+  headplane-port = config.homefree.allocPort "headscale-headplane";
 
   ## Per-secret files for SOPS-managed secrets — same pattern as
   ## services/zitadel-podman.nix. The cookie secret is the one
@@ -131,11 +131,98 @@ let
   ## `policy.path: null`, `dns.extra_records: null`). The headscale
   ## daemon happily accepts these as "unset", but headplane treats
   ## the field as ill-typed. Strip nulls recursively before serialising.
+  ##
+  ## Additionally, strip the tailscale-IP placeholders (192.0.2.1 /
+  ## 2001:db8::1) from the headplane view. They're meaningful only to
+  ## the runtime substitution oneshot; admins viewing the DNS config
+  ## in Headplane shouldn't see TEST-NET-1 / docs-range addresses.
+  ## Real tailscale IPs are not in nix-eval scope.
+  resolverPlaceholderIpv4 = "192.0.2.1";
+  resolverPlaceholderIpv6 = "2001:db8::1";
+  isResolverPlaceholder = ip:
+    ip == resolverPlaceholderIpv4 || ip == resolverPlaceholderIpv6;
   headscaleSettingsForHeadplane =
-    lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings;
-  headscaleFullConfigFile =
-    (pkgs.formats.yaml {}).generate "headscale-full.yaml"
+    let
+      filtered = lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings;
+    in
+      lib.recursiveUpdate filtered {
+        dns.nameservers.global =
+          lib.filter (ip: !(isResolverPlaceholder ip))
+            (filtered.dns.nameservers.global or []);
+      };
+  ## Headplane-facing view — placeholders stripped (admins shouldn't see
+  ## TEST-NET-1 / docs-range), nulls filtered (headplane's validator
+  ## rejects null fields).
+  headscaleConfigForHeadplane =
+    (pkgs.formats.yaml {}).generate "headscale-for-headplane.yaml"
       headscaleSettingsForHeadplane;
+  ## Substitution-source view — keeps the resolver placeholders
+  ## (192.0.2.1 / 2001:db8::1) INTACT so the sed pass inside
+  ## substituteResolverPlaceholders below has lines to match. This is the
+  ## YAML the headscale daemon's runtime config is derived from; clients
+  ## see the substituted result, not this file directly.
+  ## Filter null fields only (headscale tolerates them, but parity with
+  ## the headplane view keeps the two outputs structurally identical
+  ## except for the placeholder lines).
+  headscaleConfigWithPlaceholders =
+    (pkgs.formats.yaml {}).generate "headscale-with-placeholders.yaml"
+      (lib.filterAttrsRecursive (_: v: v != null) config.services.headscale.settings);
+
+  ## Runtime config used by headscale.service: a writable copy of the
+  ## nix-rendered yaml with the resolver placeholders substituted for
+  ## the box's current tailscale IPs. See the substitution script and
+  ## the headscale-substitute-resolver.service oneshot below for the
+  ## "why" — Tailscale Android shows "DNS Unavailable" if the
+  ## configured resolver isn't a tailnet-native address.
+  headscaleRuntimeConfigPath = "/var/lib/headscale/runtime-config.yaml";
+  headscaleResolverStatePath = "/var/lib/headscale/.cached-tailnet-resolver-ip";
+
+  ## Substitute resolver placeholders in $1 → write to $2.
+  ## Falls back to STRIPPING the placeholder lines when tailscale isn't
+  ## up yet (first boot, before tailscaled-autoconnect has registered)
+  ## so clients receive a clean resolver list rather than the documentation
+  ## IPs. Output file is installed mode 0640 root:headscale so the
+  ## headscale daemon (running as that group) can read it.
+  substituteResolverPlaceholders = pkgs.writeShellScript "headscale-substitute-resolver" ''
+    set -euo pipefail
+    SRC="$1"
+    DST="$2"
+
+    TS_IPV4=$(${pkgs.tailscale}/bin/tailscale ip -4 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+    TS_IPV6=$(${pkgs.tailscale}/bin/tailscale ip -6 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+
+    TMP=$(${pkgs.coreutils}/bin/mktemp)
+    ${pkgs.coreutils}/bin/cp "$SRC" "$TMP"
+
+    if [ -n "$TS_IPV4" ]; then
+      ${pkgs.gnused}/bin/sed -i "s|- ${resolverPlaceholderIpv4}$|- $TS_IPV4|" "$TMP"
+    else
+      ${pkgs.gnused}/bin/sed -i "/- ${resolverPlaceholderIpv4}$/d" "$TMP"
+    fi
+
+    if [ -n "$TS_IPV6" ]; then
+      ${pkgs.gnused}/bin/sed -i "s|- ${resolverPlaceholderIpv6}$|- $TS_IPV6|" "$TMP"
+    else
+      ${pkgs.gnused}/bin/sed -i "/- ${resolverPlaceholderIpv6}$/d" "$TMP"
+    fi
+
+    ${pkgs.coreutils}/bin/install -m 0640 \
+      -o root -g ${config.services.headscale.group or "headscale"} \
+      "$TMP" "$DST"
+    ${pkgs.coreutils}/bin/rm -f "$TMP"
+
+    ## Also record the IPs we just baked in, so headscale-substitute-
+    ## resolver can detect "no change since last apply" and skip a
+    ## redundant headscale restart on rebuild. Without this, the
+    ## ExecStartPre would substitute correctly on the rebuild's
+    ## headscale restart, and then the oneshot would observe a missing
+    ## cache file and try-restart again — back-to-back restarts.
+    ${pkgs.coreutils}/bin/install -m 0640 \
+      -o root -g ${config.services.headscale.group or "headscale"} \
+      /dev/null ${headscaleResolverStatePath} 2>/dev/null || true
+    printf 'ipv4=%s ipv6=%s' "$TS_IPV4" "$TS_IPV6" \
+      > ${headscaleResolverStatePath}
+  '';
 
   headplaneSettings = {
     server = {
@@ -303,7 +390,7 @@ in
   ## leaving the nixpkgs-managed /etc/headscale/config.yaml stub alone
   ## (some headscale CLI invocations depend on its minimal shape).
   environment.etc."headscale/headplane-view.yaml" = lib.mkIf deployHeadplane {
-    source = headscaleFullConfigFile;
+    source = headscaleConfigForHeadplane;
     ## Headplane runs as the headscale user (per the upstream module),
     ## so make this readable by that group.
     mode = "0440";
@@ -313,7 +400,7 @@ in
 
   services.headscale = lib.optionalAttrs headscaleEnabled {
     enable = true ;
-    port = 8087;
+    port = config.homefree.allocPort "headscale";
     address = lan-address;
     settings = {
       server_url = "https://headscale.${cfg.system.domain}:443";
@@ -328,16 +415,34 @@ in
         ## Must be different from server domain
         base_domain = "homefree.vpn";
         # search_domains = search-domains;
-        ## Public-only global nameservers. Only use resolvers confirmed
-        ## reachable from this server — 9.9.9.10 (Quad9 unfiltered) times
-        ## out from eno1 and stalls every DNS query when Tailscale routes
-        ## through the VPN. 10.0.0.1 intentionally excluded (LAN-only).
-        nameservers.global = ["1.1.1.1" "8.8.8.8"];
-        ## Split DNS only covers internal TLDs (.lan, .homefree.lan).
-        ## The public domain (cypy.at) is NOT in split zones — it resolves
-        ## via public DNS so *.cypy.at is accessible from any network
-        ## without VPN. .lan zones route through the LAN resolver for
-        ## internal service discovery when connected to home network or VPN.
+        ## Order matters in headscale 0.26+: the first reachable resolver is
+        ## preferred, so put the LAN resolver first to get split-horizon and
+        ## ad-blocking; the public resolvers are fallbacks for when the LAN
+        ## resolver is unreachable.
+        ##
+        ## The two leading entries are PLACEHOLDERS (TEST-NET-1 192.0.2.1 and
+        ## docs-range 2001:db8::1) — at headscale startup, the substitution
+        ## script rewrites them to the box's current tailscale IPv4/IPv6, or
+        ## strips them if tailscaled hasn't registered yet. They sit FIRST so
+        ## tailscale clients probing the configured resolvers find a
+        ## tailnet-native address and don't show "DNS Unavailable" (Tailscale
+        ## Android's probe rejects subnet-routed LAN IPs like 10.0.0.1 even
+        ## though queries via the subnet route succeed). The tailscale-side
+        ## listener is the tailscale-dns-bridge dnsmasq forwarder, which
+        ## forwards to AdGuard so filtering stays consistent.
+        nameservers.global = [
+          ## Placeholder — substituted to the box's tailscale IPv4 at runtime.
+          resolverPlaceholderIpv4
+          ## Placeholder — substituted to the box's tailscale IPv6 at runtime.
+          resolverPlaceholderIpv6
+          ## Internal DNS — has local domain names + ad-blocking via unbound
+          lan-address
+          ## Backup if LAN resolver is unreachable (e.g. before tunnel is up)
+          "9.9.9.10"
+          ## Secondary backup
+          "9.9.9.9"
+        ];
+        ## Needed to resolve internal domains (includes proxied domains for Headscale VPN access)
         nameservers.split = lib.listToAttrs (lib.map (domain:
           {
             name = domain;
@@ -353,10 +458,33 @@ in
         v4 = "100.64.0.0/24";
         v6 = "fd7a:115c:a1e0::/48";
       };
-      derp = {
-        ## Frequency to update DERP maps
-        auto_update_enable = true;
-        update_frequency = "5m";
+      derp = let
+        ## The auto-update mechanism is *only* meaningful when we're
+        ## actually fetching a remote DERP list (`urls`). With urls=[]
+        ## there is nothing to fetch; leaving auto_update_enabled=true
+        ## (upstream default) makes headscale still tick the refresh
+        ## timer, churn the local DERP map, and broadcast netmap
+        ## updates to every client every `update_frequency` — which
+        ## destabilises mobile clients' control-plane long-poll
+        ## (observed: phone goes "offline" in headscale view ~10m
+        ## after each cycle, Tailscale Android raises a spurious
+        ## "DNS unavailable" banner). Both keys are set because
+        ## `auto_update_enable` was renamed to `auto_update_enabled`
+        ## upstream and we'd otherwise inherit the renamed key's
+        ## default-true and end up with both values in the YAML.
+        usePublicDerp = cfg.service-options.headscale.enable-public-derp-fallback;
+      in {
+        auto_update_enable = usePublicDerp;
+        auto_update_enabled = usePublicDerp;
+        ## Even *with* the public DERP list enabled, Tailscale's map
+        ## content changes a handful of times a year; refreshing every
+        ## 5 minutes just pushes byte-identical maps to every client
+        ## and causes spurious "derp-region-redefined" cycles. 24h is
+        ## plenty — the worst case is a public-fallback DERP IP change
+        ## going unnoticed until the next refresh or rebuild, which
+        ## doesn't matter when the embedded region 999 is the primary
+        ## path anyway.
+        update_frequency = "24h";
         server = {
           enabled = true;
           region_id = 999;
@@ -365,11 +493,21 @@ in
           stun_listen_addr = "0.0.0.0:${toString cfg.service-options.headscale.stun-port}";
           automatically_add_embedded_derp_region = true;
         };
-        urls = if cfg.service-options.headscale.enable-public-derp-fallback
+        urls = if usePublicDerp
           then [ "https://controlplane.tailscale.com/derpmap/default" ]
           else [];
         paths = [];
       };
+
+      ## Log level. Default is "info"; bumped to "debug" so the DERP
+      ## server logs every client connect/disconnect with the reason
+      ## (write timeout, normal close, etc.) — needed to root-cause
+      ## the "derp.Recv: EOF every 1-30 min" issue. The reverse-proxy
+      ## tweaks in the Caddy block below are the conservative fix
+      ## for the suspected cause; this log level lets us verify.
+      ## See docs/agent-notes (when written) for diagnosis context.
+      ## Revert to "info" once the root cause is confirmed and fixed.
+      log.level = "debug";
     };
   };
 
@@ -393,9 +531,40 @@ in
   systemd.services.headscale = lib.mkIf headscaleEnabled {
     after = [ "dns-ready.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-render the writable runtime config on every (re)start so the
+    ## tailscale-IP substitution stays current. On first boot, before
+    ## tailscaled-autoconnect has run, the substitution script strips
+    ## the placeholders and headscale starts with just the LAN + public
+    ## resolvers (identical to pre-fix behaviour). Once tailscaled is up
+    ## and the substitute-resolver oneshot fires, headscale is
+    ## try-restarted and this ExecStartPre runs again with the real IP.
     serviceConfig = {
       RestartSec = lib.mkForce "15s";
+      ExecStartPre = [
+        ## Upstream sets StateDirectory=headscale which gives us
+        ## /var/lib/headscale 0750 root:headscale, but only after
+        ## ExecStartPre runs. With `+` prefix this snippet runs as
+        ## root regardless of User=, so we can pre-create the dir
+        ## ourselves to ensure substituteResolverPlaceholders has
+        ## somewhere to write.
+        "+${pkgs.writeShellScript "headscale-prepare-runtime-config" ''
+          set -euo pipefail
+          ${pkgs.coreutils}/bin/mkdir -p /var/lib/headscale
+          ${pkgs.coreutils}/bin/chown root:${config.services.headscale.group} \
+            /var/lib/headscale
+          ${substituteResolverPlaceholders} \
+            ${headscaleConfigWithPlaceholders} \
+            ${headscaleRuntimeConfigPath}
+        ''}"
+      ];
     };
+    ## Override the upstream `script` to point --config at the runtime
+    ## (substituted) file rather than the immutable nix-store yaml.
+    ## We don't use postgres so the upstream's password-file branch is
+    ## irrelevant; just exec directly.
+    script = lib.mkForce ''
+      exec ${pkgs.headscale}/bin/headscale serve --config ${headscaleRuntimeConfigPath}
+    '';
     ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives in
     ## systemd, not [Service]. Putting them under serviceConfig renders them
     ## into the wrong section and systemd silently ignores them
@@ -405,6 +574,63 @@ in
       StartLimitBurst = lib.mkForce 10;
       StartLimitIntervalSec = lib.mkForce 300;
     };
+  };
+
+  ## After tailscaled-autoconnect has registered with headscale and the
+  ## local interface has a tailnet address, re-substitute the placeholders
+  ## in the runtime config and bump headscale so the new netmap (with the
+  ## real tailscale IP as the leading resolver) gets pushed to clients.
+  ##
+  ## Idempotent: a small state file caches the last-substituted IPs and we
+  ## skip the headscale restart when nothing has changed. Without this
+  ## check, every boot would unnecessarily disconnect every tailscale
+  ## client for ~5s.
+  systemd.services.headscale-substitute-resolver = lib.mkIf headscaleEnabled {
+    description = "Substitute box's tailscale IP into headscale resolver list and reload headscale";
+    after = [ "tailscaled-autoconnect.service" "headscale.service" ];
+    wants = [ "tailscaled-autoconnect.service" ];
+    requires = [ "headscale.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = false;
+    };
+    script = ''
+      set -euo pipefail
+
+      TS_IPV4=$(${pkgs.tailscale}/bin/tailscale ip -4 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+      TS_IPV6=$(${pkgs.tailscale}/bin/tailscale ip -6 2>/dev/null | ${pkgs.coreutils}/bin/head -n1 || true)
+
+      if [ -z "$TS_IPV4" ] && [ -z "$TS_IPV6" ]; then
+        echo "headscale-substitute-resolver: tailscaled has no IP yet, nothing to substitute"
+        exit 0
+      fi
+
+      CACHE=${headscaleResolverStatePath}
+      DESIRED="ipv4=$TS_IPV4 ipv6=$TS_IPV6"
+      CURRENT=""
+      if [ -r "$CACHE" ]; then
+        CURRENT=$(${pkgs.coreutils}/bin/cat "$CACHE")
+      fi
+
+      if [ "$DESIRED" = "$CURRENT" ]; then
+        echo "headscale-substitute-resolver: tailscale IPs unchanged ($DESIRED), no restart"
+        exit 0
+      fi
+
+      echo "headscale-substitute-resolver: substituting $DESIRED into runtime config"
+      ${substituteResolverPlaceholders} \
+        ${headscaleConfigWithPlaceholders} \
+        ${headscaleRuntimeConfigPath}
+      printf '%s' "$DESIRED" > "$CACHE"
+      ${pkgs.coreutils}/bin/chmod 0640 "$CACHE"
+
+      ## try-restart so we don't accidentally START headscale if it was
+      ## intentionally stopped. After this, the headscale-prepare-
+      ## runtime-config ExecStartPre will re-substitute on the new
+      ## start, picking up the same IPs.
+      ${pkgs.systemd}/bin/systemctl try-restart headscale.service
+    '';
   };
 
   ## @TODO: Figure out how to automatically approve exit node without using the web UI
@@ -490,6 +716,130 @@ in
 
       $HEADSCALE nodes approve-routes -i "$NODE_ID" -r "${lan-subnet}"
     '';
+  };
+
+  ## DERP EOF observability — small rollup that summarises every 10 min
+  ## how many `derp.Recv: EOF` events tailscaled has logged since the
+  ## previous tick. Without this, the EOFs are a single line buried in
+  ## the journal; the rollup makes them grep-able and gives a clear
+  ## before/after signal when tuning the Caddy /derp block above.
+  ##
+  ## Output (visible via `journalctl -u headscale-derp-eof-rollup`):
+  ##   "DERP EOFs in last 600s: <n>  (1-min cadence: <rate>/min)"
+  ## A value of 0 across consecutive ticks means the fix worked.
+  systemd.services.headscale-derp-eof-rollup = lib.mkIf headscaleEnabled {
+    description = "Rollup of tailscaled DERP EOF events (diagnosis aid)";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      ## journalctl read access — root keeps this simple. Output goes
+      ## back to the journal under THIS unit's name.
+    };
+    script = ''
+      WINDOW_SEC=600
+      COUNT=$(${pkgs.systemd}/bin/journalctl -u tailscaled.service \
+                --since "$WINDOW_SEC seconds ago" --no-pager 2>/dev/null \
+              | ${pkgs.gnugrep}/bin/grep -c "derp.Recv: EOF" || true)
+      RATE_PER_MIN=$(( COUNT * 60 / WINDOW_SEC ))
+      echo "DERP EOFs in last ''${WINDOW_SEC}s: $COUNT  (~$RATE_PER_MIN/min)"
+    '';
+  };
+
+  systemd.timers.headscale-derp-eof-rollup = lib.mkIf headscaleEnabled {
+    description = "Rollup of tailscaled DERP EOF events every 10 minutes";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "5min";
+      OnUnitInactiveSec = "10min";
+      Unit = "headscale-derp-eof-rollup.service";
+    };
+  };
+
+  ## DNS bridge for Tailscale clients.
+  ##
+  ## PROBLEM. Tailscale clients periodically probe the box's
+  ## Tailscale-interface IP on port 53 as a "configured DNS reachable?"
+  ## health check. Headscale pushes `lan-address` (10.0.0.1) as the
+  ## resolver, and queries to 10.0.0.1:53 DO arrive (via the
+  ## advertised 10.0.0.0/24 subnet route), but the probe ALSO checks
+  ## the box's Tailscale-side address (e.g. 100.64.0.2:53). AdGuard
+  ## binds only on `lan-address` + loopback (see apps/adguard) — it
+  ## intentionally avoids 0.0.0.0 to keep clear of podman's
+  ## aardvark-dns on 10.88.0.1:53 — so the Tailscale-IP probe gets
+  ## connection-refused and surfaces "DNS unavailable" in the
+  ## Tailscale client UI even when actual lookups still work.
+  ##
+  ## SOLUTION. A tiny dnsmasq running with `--bind-dynamic
+  ## --interface=tailscale0` listens on whatever IPs tailscaled
+  ## assigns to that interface, with NO static config knob — the IP
+  ## isn't known at Nix eval time (headscale chooses it at
+  ## registration). dnsmasq watches the interface for address
+  ## add/remove events and rebinds, so the listener follows the IP
+  ## even across reprovisions. All queries are forwarded to AdGuard
+  ## on 127.0.0.1:53, keeping filtering + upstream consistent with
+  ## non-Tailscale clients.
+  ##
+  ## --no-resolv / --no-hosts: dnsmasq must NOT consult /etc/resolv.conf
+  ## or /etc/hosts; it's purely a forwarder. CAP_NET_BIND_SERVICE
+  ## ambient cap lets it bind 53 while running as `nobody`.
+  systemd.services.tailscale-dns-bridge = lib.mkIf headscaleEnabled {
+    description = "DNS forwarder on tailscale0 → AdGuard (127.0.0.1:53)";
+    after = [ "tailscaled.service" "tailscaled-autoconnect.service" ];
+    requires = [ "tailscaled.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = lib.concatStringsSep " " [
+        "${pkgs.dnsmasq}/bin/dnsmasq"
+        "--no-daemon"
+        "--port=53"
+        "--bind-dynamic"
+        "--interface=tailscale0"
+        "--no-resolv"
+        "--no-hosts"
+        "--server=127.0.0.1#53"
+        ## Defensive: never bind on these even if --bind-dynamic
+        ## could see them — AdGuard / aardvark-dns already own
+        ## port 53 there and dnsmasq starting up faster than them
+        ## could otherwise win the bind race. lan-interface comes
+        ## from homefree.network so this is portable across
+        ## instances (no hardcoded `enp102s0` / similar).
+        "--except-interface=lo"
+        "--except-interface=${config.homefree.network.lan-interface}"
+        "--except-interface=podman0"
+      ];
+      Restart = "always";
+      RestartSec = "5s";
+      User = "nobody";
+      Group = "nobody";
+      AmbientCapabilities = "CAP_NET_BIND_SERVICE";
+      CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
+      NoNewPrivileges = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectControlGroups = true;
+      RestrictRealtime = true;
+      ## After the bridge comes up (tailscale0 has an address), nudge
+      ## the substitute-resolver oneshot so headscale's runtime config
+      ## reflects the current tailscale IP. The oneshot's cache check
+      ## makes this a no-op when the IP hasn't changed, so this is
+      ## cheap on routine restarts. Catches the rare case of a
+      ## tailnet reset that re-assigns the box a new IP.
+      ##
+      ## `+` prefix runs as root regardless of User=nobody. `--no-block`
+      ## so a slow oneshot can't stall the bridge start.
+      ExecStartPost = [
+        "+${pkgs.systemd}/bin/systemctl restart --no-block headscale-substitute-resolver.service"
+      ];
+      ## tailscale0 may not exist yet on first startup if tailscaled
+      ## is still establishing. dnsmasq exits on missing interface,
+      ## but Restart=always brings it back; once tailscaled raises
+      ## tailscale0 the next start succeeds and --bind-dynamic
+      ## adopts the IP.
+    };
   };
 
   ## Headplane is the Headscale admin UI. From 0.7 it ships a NixOS
@@ -757,7 +1107,7 @@ in
     ## regenerate that file but the unit definition is otherwise
     ## unchanged, NixOS won't restart the unit on rebuild and the new
     ## config goes unread. Tie restarts to the file's store path.
-    restartTriggers = [ headscaleFullConfigFile ];
+    restartTriggers = [ headscaleConfigForHeadplane ];
     ## Don't try to start until BOTH OIDC secrets are on disk. A
     ## fresh install briefly has no headplane until
     ## zitadel-provision.service writes the files and `try-restart`s
@@ -821,6 +1171,7 @@ in
   homefree.service-config = lib.optionals headscaleEnabled [
     {
       inherit (cfg.service-options.headscale) label name project-name;
+      port-request = 8087;
       systemd-service-names = [ "headscale" ]
         ++ lib.optional deployHeadplane "headplane";
       admin = {
@@ -847,23 +1198,81 @@ in
             respond 200
           }
 
-          # Handle DERP relay connections (requires HTTP upgrade)
+          # Handle DERP relay connections (requires HTTP upgrade).
+          #
+          # The DERP server (embedded Tailscale code) sends a keepalive
+          # frame every 60s ± 5s jitter to every connected client. Each
+          # write to the client uses tcpWriteTimeout, which defaults to
+          # 2 seconds (DefaultTCPWiteTimeout in derp_server.go — note
+          # the upstream typo). If ANY single keepalive write can't be
+          # flushed to the client within 2s — because Caddy was
+          # buffering, the upstream pool decided the connection was
+          # "idle" and pruned it, or backpressure stalled the write —
+          # the DERP server force-closes the connection and the client
+          # logs `derp.Recv: EOF`. That is the failure mode we see
+          # every 1-30 min in tailscaled logs.
+          #
+          # The block below lays out every Caddy knob that touches
+          # long-lived upgraded connections, set conservatively so
+          # nothing on our side can introduce a 2s+ stall:
+          #   transport http versions 1.1: DERP requires HTTP/1.1
+          #     Upgrade; h2 negotiation would break it.
+          #   read_timeout / write_timeout 0: no upstream timeouts.
+          #     Caddy's default is "until upstream closes" but explicit
+          #     is safer.
+          #   keepalive 24h, dial_timeout 5s: keep the upstream socket
+          #     alive across keepalives; only fail dialing if upstream
+          #     is genuinely unreachable.
+          #   flush_interval -1: do not coalesce writes from upstream;
+          #     each keepalive flushes immediately. Caddy auto-detects
+          #     Upgrade and does this anyway, but explicit makes it
+          #     auditable.
           @derp {
             path /derp /derp/*
           }
           handle @derp {
             reverse_proxy http://${lan-address}:${toString config.services.headscale.port} {
+              transport http {
+                versions 1.1
+                read_timeout 0
+                write_timeout 0
+                dial_timeout 5s
+                keepalive 24h
+              }
+              flush_interval -1
               header_up Connection {http.request.header.Connection}
               header_up Upgrade {http.request.header.Upgrade}
             }
           }
 
-          # Handle Tailscale control protocol (requires HTTP upgrade)
+          # Handle Tailscale control protocol (requires HTTP upgrade).
+          #
+          # /ts2021 carries the long-lived noise control connection
+          # used by tailscale ≥1.32 — clients hold it open and the
+          # server long-polls map updates over it, with a NoOp
+          # keepalive every ~60s as a liveness signal. Same shape as
+          # /derp above: HTTP/1.1 Upgrade, no upstream timeouts,
+          # immediate flush so the keepalive isn't buffered. Without
+          # this transport block, Caddy defaults silently cut the
+          # connection — observed as the phone's node cycling
+          # "node added" / "node online" in headscale every few
+          # seconds, even though data-plane wireguard packets keep
+          # flowing. Tailscale Android surfaces the resulting
+          # control-plane gap as "DNS unavailable" (it can't
+          # validate its DNS config is current).
           @ts2021 {
             path /ts2021
           }
           handle @ts2021 {
             reverse_proxy http://${lan-address}:${toString config.services.headscale.port} {
+              transport http {
+                versions 1.1
+                read_timeout 0
+                write_timeout 0
+                dial_timeout 5s
+                keepalive 24h
+              }
+              flush_interval -1
               header_up Connection {http.request.header.Connection}
               header_up Upgrade {http.request.header.Upgrade}
             }
@@ -971,6 +1380,16 @@ in
           ];
         }
       ];
+    }
+    ## Phantom entry: claims Headplane's host port (3009) under its own
+    ## label so the allocator deconflicts it alongside everything else.
+    {
+      label = "headscale-headplane";
+      enable = config.homefree.service-options.headscale.enable;
+      port-request = null;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }
   ];
   # Cache headscale DNS locally to reduce DNS queries from tailscaled DERP retries

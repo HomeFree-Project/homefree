@@ -238,3 +238,19 @@ class ServiceStatus:
     # the service-config entry itself — NOT services.<label> — so the admin UI
     # routes their toggles there instead of writing a dead services.<label>.
     external: bool = False
+    # Mirrors the Nix-side service-config `admin.show` flag (default true).
+    # The App Configuration page hides infra services (sso_kind == "infra")
+    # by default, but a service can opt back in by declaring admin.show = true
+    # — Zitadel does this because its enable/public are user-managed, while
+    # oauth2proxy sets admin.show = false to stay hidden.
+    admin_show: bool = True
+    # When set, the `enable` toggle for this service is owned by another
+    # module (the resolver has already overridden `enabled` to reflect the
+    # effective state). The UI uses this to render the Enable toggle as
+    # disabled + checked, with a tooltip naming the manager. Example:
+    # ntfy is force-enabled by services/alerts/default.nix whenever
+    # alerts.channels.ntfy.enable=true; in that case the resolver sets
+    # enable_managed_by="alerts" so the UI can explain why the user
+    # cannot toggle it directly. Slug, not free text — the frontend maps
+    # it to a human label.
+    enable_managed_by: Optional[str] = None

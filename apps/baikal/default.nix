@@ -2,7 +2,7 @@
 let
   containerDataPath = "/var/lib/baikal";
 
-  port = 3007;
+  port = config.homefree.allocPort "baikal";
 
   version = "0.10.1";
 
@@ -89,6 +89,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.baikal) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.baikal.enable;
       systemd-service-names = [
         "podman-baikal"

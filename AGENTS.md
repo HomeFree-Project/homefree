@@ -14,10 +14,15 @@ separate deployments. It is *not* one machine's config.
 - **Shared code** (this repo): `profiles/`, `services/`, `apps/`,
   `modules/`, `web-platform/`, `module.nix`, `configuration.nix`.
   Everything here ships to every HomeFree box.
-- **Instance config** lives elsewhere — `/etc/nixos/` on an installed
-  system (`configuration.nix`, `homefree-config.json`,
-  `homefree-configuration.nix`, per-instance assets). Never put
-  instance-specific files in this repo.
+- **Instance state** lives elsewhere — `/etc/nixos/` on an installed
+  system. ONLY these files belong there: `flake.nix` (wires the
+  shared loader), `homefree-config.json` (per-instance config),
+  `configuration.nix` (instance hardware/bootloader overrides),
+  `disko.nix` (filesystem layout), `hardware-configuration.nix`,
+  optional `custom-flakes.nix`, and the encrypted `secrets/` dir.
+- **The boundary is bidirectional.** Never put instance-specific
+  files in this repo, AND never put shared/generic code in
+  `/etc/nixos`. See rule 12.
 
 ## Rules for changes
 
@@ -68,14 +73,35 @@ separate deployments. It is *not* one machine's config.
    messages. Write the commit message as plain content with no
    tool-attribution footer.
 
-8. **All web assets must be vendored locally.** Every font, JS/CSS
-   library, icon set, and other asset used by any web page
-   (`web-platform/`, `services/landing-page/`, etc.) must be served
-   from this repo — never loaded from a CDN, Google Fonts, or any
-   third-party URL. HomeFree boxes must render fully offline and leak
-   no requests to outside hosts. The repo already vendors Lit
+8. **All web assets must be vendored locally — ZERO external requests
+   from any HomeFree-served page, ever.** Every font, JS/CSS library,
+   icon set, image, analytics/telemetry beacon, and other asset used by
+   any web page (`web-platform/`, `services/landing-page/`,
+   `services/landing-page/site/src/manual/`, any new service that ships
+   HTML, etc.) must be served from this repo. NEVER from a CDN, Google
+   Fonts, jsdelivr/unpkg/cdnjs, Gravatar, a favicon service, an
+   analytics pixel, a Sentry/error beacon, OR any other third-party
+   URL — not even at runtime as a "convenience," not even behind a
+   `<script async>`, not even if it's "industry standard." HomeFree
+   boxes must render fully offline and leak no requests to outside
+   hosts. The repo already vendors Lit
    (`web-platform/frontend/src/vendor/`) and the Inter font
-   (`src/assets/fonts/`); follow that pattern for anything new.
+   (`web-platform/frontend/src/assets/fonts/` + landing's
+   `services/landing-page/site/src/fonts/`); follow that pattern for
+   anything new.
+
+   **Before** declaring any new web surface "done" — and **whenever**
+   editing an HTML template — grep the templates and CSS for these
+   patterns and confirm zero hits: `https?://`, `fonts.googleapis`,
+   `fonts.gstatic`, `cdn.`, `jsdelivr`, `unpkg`, `cdnjs`, `gravatar`,
+   `googletagmanager`, `google-analytics`, `sentry.io`. Then load the
+   page in a real browser with the network panel filtered to
+   "3rd-party" and confirm zero off-domain requests. A single
+   third-party `<link>` slipped into a layout breaks the whole
+   privacy + resilience promise — a single Google Fonts line in
+   `services/landing-page/site/src/layouts/base.html` and a single
+   jsdelivr Mermaid `<script>` in `manual.html` were in production
+   for months before the audit caught them.
 
 9. **Fix root causes, not symptoms — and ask before working around.**
    When something breaks, find the real cause and fix it there. Do
@@ -130,6 +156,26 @@ separate deployments. It is *not* one machine's config.
     default to backwards-compatible changes; introducing a migration
     mechanism is a maintainer decision, not something to improvise.
 
+12. **Generic code does not belong in `/etc/nixos`.** The instance tree
+    is *state*, not *source* — anything that would also apply to a
+    second HomeFree box belongs in this shared repo (`profiles/`,
+    `services/`, `apps/`, `modules/`), behind a config-driven toggle
+    if it should be opt-in. A `.nix` module dropped into `/etc/nixos`
+    is invisible to every other deployment and rots there forever; the
+    very existence of `homefree-configuration.nix` (now deprecated)
+    happened because generated/shared logic was written into the
+    instance tree, and a binding added later in shared code silently
+    failed on every existing box. The temptation is real: dropping a
+    file in `/etc/nixos` is faster than threading a new option through
+    `module.nix` + the loader + a shared module. Don't take the
+    shortcut. If you are tempted to write any `.nix` file under
+    `/etc/nixos/` other than the seven listed in "What this repository
+    is" above, STOP and ask. `configuration.nix` is the one ambiguous
+    file — it legitimately holds instance hardware/bootloader overrides
+    but is also the easiest place to accidentally drop generic logic;
+    apply the same test (would this apply to another HomeFree box? →
+    it does not belong there).
+
 ## Version control
 
 This repo uses **jj (jujutsu)**, colocated with git — prefer it for
@@ -174,6 +220,12 @@ Situational knowledge — read the linked note when working in that area:
   a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap
   units and `RemainAfterExit`; podman readiness vs. process readiness.
   → `docs/agent-notes/systemd-unit-patterns.md`
+- **Podman/netavark shutdown hang** — every podman container's pre-stop
+  hook spawns a transient aardvark-dns scope, which systemd refuses
+  once `reboot.target` is queued (destructive transaction). We wrap
+  `reboot`/`poweroff`/`halt` to stop containers FIRST; `systemctl
+  reboot`, `shutdown`, power button, IPMI bypass the wrapper.
+  → `docs/agent-notes/podman-shutdown-hang.md`
 - **Blue/green deployment** — admin-api and oauth2-proxy run as two
   colour units; a flip activation script swaps them with zero downtime.
   Never `exit` in an activation script; snippets must precede flips.
@@ -188,6 +240,14 @@ Situational knowledge — read the linked note when working in that area:
   snapshot, and `flake update <input>` will NOT re-hash a dirty tree.
   The lock node must be stripped and re-locked, or edits silently don't
   take effect. → `docs/agent-notes/flake-lock-local-input-refresh.md`
+- **Local-flake `.git` ACL** — a root-run rebuild's git+file: fetcher
+  writes inside the developer's source `.git` as root, eventually
+  locking the owning user out of their own `objects/` subdirs and
+  silently corrupting refs (commit object never lands; ref points at a
+  ghost). Registering a local flake via the Developers UI applies an
+  owner-rwX ACL so root's writes stay writable for the developer.
+  Hand-edited local inputs bypass this and need the ACL applied
+  manually. → `docs/agent-notes/local-flake-acl.md`
 - **JSON→Nix mapping lives in a shared module** — `homefree-config.json`
   is the per-instance source of truth; the box's `flake.nix` reads it and
   the SHARED `modules/homefree-config-loader.nix` maps it into `homefree.*`
@@ -246,6 +306,21 @@ Situational knowledge — read the linked note when working in that area:
   parity; reclaim MUST `cryptsetup close` before `mdadm --stop`; create has
   rollback (close+erase) on any raised exception — don't add `return _error()`
   in the encrypted path. → `docs/agent-notes/storage-encryption.md`
+- **Landing-page edge fronting (Layer 7, opt-in)** — `trusted_proxies`
+  must live in Caddy's global `servers { }` block (per-listener, not
+  per-site); shipped CIDRs for `cloudflare`/`bunny` need diffing against
+  the upstream list periodically; without `originSharedSecretEnv` the
+  origin-bypass check is silently skipped (CDN bypassable by IP).
+  Operator-side CDN setup (DNS proxy, Transform Rule for the secret
+  header, page rule) is out-of-band.
+  → `docs/agent-notes/landing-page-edge-fronting.md`
+- **NVMe temperature thresholds** — Composite carries spec-defined
+  WCTEMP (`temp1_max`) and CCTEMP (`temp1_crit`); USE THEM as warn/err
+  directly, don't subtract a CPU-style margin (CCTEMP-15 sits below the
+  drive's own WCTEMP and false-positives). Auxiliary sensors (Sensor 1
+  / Sensor 2) deliberately omit limits — skip them in the alert source,
+  surface on the Hardware page only.
+  → `docs/agent-notes/nvme-threshold-cascade.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

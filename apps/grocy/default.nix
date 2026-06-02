@@ -8,7 +8,7 @@ let
 
   version = "4.6.0";
 
-  port = 3018;
+  port = config.homefree.allocPort "grocy";
 
   userOptions = {
     enable = lib.mkOption {
@@ -90,6 +90,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.grocy) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.grocy.enable;
       sso = {
         kind = "none";

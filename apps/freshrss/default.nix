@@ -11,7 +11,7 @@ let
   image = "freshrss/freshrss";
   version = "1.28.1";
 
-  port = 3028;
+  port = config.homefree.allocPort "freshrss";
 
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
@@ -346,6 +346,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.freshrss) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.freshrss.enable;
       systemd-service-names = [
         "podman-freshrss"

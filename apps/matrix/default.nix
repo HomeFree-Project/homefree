@@ -13,7 +13,7 @@ let
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
-  port = 8008;
+  port = config.homefree.allocPort "matrix";
   database-name = "matrix-synapse";
   database-user = "matrix-synapse";
 
@@ -357,6 +357,7 @@ in
 
     homefree.service-config = lib.optionals config.homefree.service-options.matrix.enable [{
       inherit (config.homefree.service-options.matrix) label name project-name;
+      port-request = null;
       systemd-service-names = [
         "podman-matrix-synapse"
         "postgresql"

@@ -999,11 +999,19 @@ in
       enable = true;
       to-path = "/mnt/ellis/Backups/homefree";
       # Note: /etc/nixos is always backed up automatically
-      ## Each entry is { path; enabled (default true) }. Order matters
-      ## — the index is baked into the restic repo label
-      ## (extra-path-N). To stop backing up a path without losing its
-      ## existing offsite snapshots, set `enabled = false` and leave
-      ## the entry in place; the slot stays reserved.
+      ## Each entry is { id; path; enabled (default true) }. The restic
+      ## repo label (extra-path-<id>) is owned by `id`, NOT by the
+      ## entry's position in the array, so reordering and deletion are
+      ## safe — they never rewire an existing repo to a different
+      ## source path. The admin UI / installer allocate `id`
+      ## automatically; if you write entries here by hand you may
+      ## either supply ids yourself or omit them (an on-activation
+      ## migration in services/backup/default.nix will fill them in
+      ## from the current index, preserving any existing
+      ## extra-path-N labels). To stop backing up a path while keeping
+      ## its snapshots, set `enabled = false`. To remove its repo
+      ## entirely, delete the entry and purge the orphaned repo from
+      ## the admin UI.
       extra-from-paths = [
         { path = "/mnt/ellis/Code"; }
         { path = "/mnt/ellis/Companies"; }

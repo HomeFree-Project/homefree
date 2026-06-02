@@ -30,9 +30,24 @@ let
   # /etc/exports line with no client spec exports to every host).
   exportable = lib.filter (s: clientsFor s != []) shares;
 
+  # Map the per-share `squash` enum + optional anon-uid/anon-gid to the NFS
+  # export options. Defaults reproduce the original `root_squash` line so a
+  # share that doesn't set squash behaves exactly as it did before.
+  squashOptFor = s:
+    if s.squash == "none" then "no_root_squash"
+    else if s.squash == "all" then "all_squash"
+    else "root_squash";
+
+  anonOptsFor = s:
+    lib.optional (s.anon-uid != null) "anonuid=${toString s.anon-uid}"
+    ++ lib.optional (s.anon-gid != null) "anongid=${toString s.anon-gid}";
+
   mkExportLine = s:
     let
-      opts = (if s.read-only then "ro" else "rw") + ",sync,no_subtree_check,root_squash";
+      rw = if s.read-only then "ro" else "rw";
+      opts = lib.concatStringsSep "," (
+        [ rw "sync" "no_subtree_check" (squashOptFor s) ] ++ anonOptsFor s
+      );
       clientStr = lib.concatMapStringsSep " " (c: "${c}(${opts})") (clientsFor s);
     in
       "${s.path} ${clientStr}";

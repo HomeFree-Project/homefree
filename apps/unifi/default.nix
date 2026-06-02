@@ -16,7 +16,7 @@ let
 
   version = "v1.0.0";
   containerDataPath = "/var/lib/unifi-os-podman";
-  port = 11443;
+  port = config.homefree.allocPort "unifi";
 
   preStart = ''
     mkdir -p ${containerDataPath}/data
@@ -166,6 +166,7 @@ in
   homefree.service-config = if config.homefree.services.unifi.enable == true then [
     {
       label = "unifi";
+      port-request = 11443;
       name = "UniFi OS";
       project-name = "UniFi OS Server";
       systemd-service-names = [

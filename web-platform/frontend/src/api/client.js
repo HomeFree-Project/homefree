@@ -273,15 +273,12 @@ export const getLanguages = () => _cachedGet('/api/locale/languages', _languages
 export const geocodeAddress = (q) =>
   get(`/api/geocode?q=${encodeURIComponent(q)}`);
 
-// IP-based geolocation — direct browser call to ipapi.co (CORS-enabled,
-// 1000 req/day free, no key). Returns { latitude, longitude,
-// country_code, timezone, city, ... }. Used as a one-click prefill for
-// the location form.
-export const ipGeolocate = async () => {
-  const r = await fetch('https://ipapi.co/json/', { mode: 'cors' });
-  if (!r.ok) throw new Error(`IP lookup failed: HTTP ${r.status}`);
-  return r.json();
-};
+// `ipGeolocate` (browser → ipapi.co) was removed: the admin UI must
+// not contact any third-party host (AGENTS.md rule 8). The location
+// picker now uses the browser's W3C navigator.geolocation API
+// directly — explicit user permission prompt, device-local
+// (GPS / Wi-Fi triangulation), no IP-based lookup. See
+// web-platform/frontend/src/components/shared/lat-lng-picker.js.
 
 // SSO state — provisioning status and per-service sentinels. The admin
 // SSO page consumes this. Not cached: we want fresh state every visit
@@ -330,36 +327,34 @@ export const updateOwnProfile = (patch) =>
 // metaservices, drops services with no resolvable URL.
 export const getVisibleServices = () => get('/api/services/visible-to-me');
 
-// Elevation lookup. Open-Meteo first (more reliable, 10k req/day non-
-// commercial, no key), Open-Elevation as fallback if Open-Meteo errors.
-// Both are CORS-enabled so this stays browser-side — the user's network
-// reaches the API directly, no proxy needed. Returns meters above sea
-// level as a number, or null if both services fail.
+// Elevation lookup — server-proxied through admin-api so the user's
+// browser never contacts a third party (AGENTS.md rule 8). The
+// upstream URL is operator-configurable via
+// `homefree.privacy.externalServices.elevation.url`; when unset the
+// admin-api endpoint returns 503 and the UI shows a "not configured"
+// message. Returns meters above sea level as a number, or throws.
 export const lookupElevation = async (latitude, longitude) => {
   if (typeof latitude !== 'number' || typeof longitude !== 'number') {
     throw new Error('Latitude and longitude required');
   }
-  // Open-Meteo: returns { elevation: [<meters>] }
-  try {
-    const url = `https://api.open-meteo.com/v1/elevation?latitude=${latitude}&longitude=${longitude}`;
-    const r = await fetch(url, { mode: 'cors' });
-    if (r.ok) {
-      const d = await r.json();
-      if (Array.isArray(d.elevation) && d.elevation.length > 0) {
-        return Math.round(d.elevation[0]);
-      }
-    }
-  } catch (e) {
-    // fall through to Open-Elevation
+  const r = await fetch(
+    `/api/network/elevation?lat=${latitude}&lon=${longitude}`,
+  );
+  if (r.status === 503) {
+    throw new Error(
+      'Elevation lookup is not configured. Set homefree.privacy.externalServices.elevation.url to enable.',
+    );
   }
-  // Open-Elevation: returns { results: [{ elevation: <meters>, ... }] }
-  const url = `https://api.open-elevation.com/api/v1/lookup?locations=${latitude},${longitude}`;
-  const r = await fetch(url, { mode: 'cors' });
-  if (!r.ok) throw new Error(`Elevation lookup failed: HTTP ${r.status}`);
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const j = await r.json();
+      if (j && j.detail) detail = j.detail;
+    } catch (_) { /* keep HTTP status */ }
+    throw new Error(`Elevation lookup failed: ${detail}`);
+  }
   const d = await r.json();
-  if (d.results && d.results[0] && typeof d.results[0].elevation === 'number') {
-    return Math.round(d.results[0].elevation);
-  }
+  if (typeof d.elevation === 'number') return d.elevation;
   throw new Error('Elevation lookup returned no data');
 };
 
@@ -426,6 +421,16 @@ export const deleteDeveloperFlake = (id) =>
   fetchAPI(`/api/developers/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const validateDeveloperFlake = (probe) =>
   post('/api/developers/flakes/validate', probe);
+// Probe a registered remote flake's upstream and compare to the rev pinned
+// in flake.lock. Read-only; nothing is written. Local flakes auto-refresh
+// on every Apply, so the UI hides these for them.
+export const checkDeveloperFlakeUpdate = (id) =>
+  get(`/api/developers/flakes/${encodeURIComponent(id)}/check-update`);
+// Re-lock a single remote flake input. Stages a change — the operator
+// applies via the sidebar Apply pill, which sees the new "build inputs
+// changed" reason.
+export const updateDeveloperFlake = (id) =>
+  post(`/api/developers/flakes/${encodeURIComponent(id)}/update`, {});
 
 // Alternate HomeFree base repo — build this system from a fork or a local
 // working copy instead of the official homefree-base. Saving rewrites
@@ -470,6 +475,13 @@ export const postAbuseBlockingUnban = (jail, ip) =>
 export const getDashboardOverview = () => get('/api/dashboard/overview');
 export const getDashboardHistory = () => get('/api/dashboard/history');
 export const getLanClients = () => get('/api/dashboard/lan-clients');
+
+// Speed Test — on-demand WAN measurement against Cloudflare's edge
+// (download / upload / latency / jitter / bufferbloat). Single-slot:
+// startSpeedTest cancels any prior run.
+export const startSpeedTest     = () => post('/api/speed-test/start', {});
+export const getSpeedTestStatus = () => get('/api/speed-test/status');
+export const cancelSpeedTest    = () => post('/api/speed-test/cancel', {});
 
 // Hardware — per-drive SMART + sensor snapshot, plus drive-temperature
 // history. Backs the Hardware admin page.
@@ -548,7 +560,6 @@ export default {
   getCurrencies,
   getLanguages,
   geocodeAddress,
-  ipGeolocate,
   lookupElevation,
   getSsoState,
   reprovisionSso,

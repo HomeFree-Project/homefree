@@ -375,7 +375,7 @@ header.site-header .nav-cta:hover {
   line-height: 1.55;
 }
 
-/* ── App tile grid (animated) ──────────────────────────── */
+/* ── Apps section (catalog screenshot) ─────────────────── */
 
 .apps-section {
   background: var(--bg-2);
@@ -383,104 +383,160 @@ header.site-header .nav-cta:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.apps-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 14px;
+.section-shot {
+  max-width: 980px;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+.section-shot img { width: 100%; height: auto; display: block; }
+
+/* ── Product tour carousel ─────────────────────────────── */
+/* Single slide at a time. Prev/next buttons, dot indicators,
+   keyboard left/right when carousel has focus. Stacks all
+   slides into the same grid cell so height = tallest slide
+   and switching is just an .is-active class swap.
+   No-JS fallback: only the first slide has .is-active in the
+   markup, so the carousel still renders one screen statically. */
+
+.tour-carousel {
+  max-width: 1000px;
+  margin: 0 auto;
+  outline: none;
+}
+.tour-carousel:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+  border-radius: 16px;
 }
 
-.app-tile {
+.tour-stage {
+  position: relative;
+}
+
+.tour-slides {
+  display: grid;
+  grid-template-areas: "slide";
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 18px 18px 16px;
-  transition: border-color 0.25s, transform 0.25s, background 0.25s;
-  position: relative;
+  border-radius: 14px;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-.app-tile::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(52,211,153,0.18), transparent 60%);
+
+.tour-slide {
+  grid-area: slide;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
   opacity: 0;
-  transition: opacity 0.4s;
-  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.25s ease;
 }
-.app-tile.lit::before { opacity: 1; }
-.app-tile.lit {
-  border-color: rgba(52,211,153,0.45);
-  background: var(--bg-3);
+.tour-slide.is-active {
+  opacity: 1;
+  visibility: visible;
+  z-index: 1;
 }
-.app-tile:hover {
-  border-color: var(--border-2);
-  transform: translateY(-1px);
-}
-
-.app-tile-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  background: rgba(255,255,255,0.06);
-  display: grid;
-  place-items: center;
-  margin-bottom: 12px;
-  color: var(--fg-2);
-  font-size: 13px;
+.tour-slide img { width: 100%; height: auto; display: block; }
+.tour-slide figcaption { padding: 20px 24px 22px; }
+.tour-slide figcaption h3 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  transition: background 0.25s, color 0.25s;
-}
-.app-tile.lit .app-tile-icon {
-  background: var(--accent);
-  color: var(--bg);
-}
-
-.app-tile-name {
-  font-weight: 600;
-  font-size: 0.96rem;
-  letter-spacing: -0.01em;
-  margin: 0 0 2px;
-  position: relative;
+  letter-spacing: -0.015em;
   color: var(--fg);
 }
-.app-tile-cat {
-  font-size: 0.78rem;
-  color: var(--fg-3);
+.tour-slide figcaption p {
   margin: 0;
-  position: relative;
-}
-.app-tile-blurb {
-  font-size: 0.82rem;
   color: var(--fg-2);
-  margin: 8px 0 0;
-  position: relative;
+  font-size: 0.95rem;
+  line-height: 1.55;
 }
 
-.sso-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 28px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(52,211,153,0.08);
-  border: 1px solid rgba(52,211,153,0.25);
-  color: var(--accent);
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-.sso-badge .dot {
-  width: 6px;
-  height: 6px;
+/* Prev/next overlay buttons.
+   Touch target is 44x44 even though the visible chevron is smaller.
+   Hidden entirely when JS doesn't upgrade the carousel (the
+   `data-carousel-ready` flag is set by landing.js). */
+.tour-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 2s infinite;
+  background: rgba(10, 12, 10, 0.75);
+  border: 1px solid var(--border-2);
+  color: var(--fg);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.55; }
+[data-carousel-ready] .tour-nav { display: flex; }
+.tour-nav:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.tour-nav:active { transform: translateY(-50%) scale(0.94); }
+.tour-nav svg { width: 22px; height: 22px; }
+.tour-nav-prev { left: 12px; }
+.tour-nav-next { right: 12px; }
+
+/* Dot indicators below the stage.
+   Hidden until JS upgrades the carousel; otherwise they're
+   non-functional buttons advertising controls that don't work. */
+.tour-dots {
+  display: none;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+[data-carousel-ready] .tour-dots { display: flex; }
+.tour-dot {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.tour-dot:hover { border-color: var(--accent); }
+.tour-dot.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.15);
+}
+
+@media (max-width: 560px) {
+  .tour-nav { width: 38px; height: 38px; }
+  .tour-nav svg { width: 18px; height: 18px; }
+  .tour-nav-prev { left: 6px; }
+  .tour-nav-next { right: 6px; }
+}
+
+.sso-callout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 32px 0 0;
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: center;
+}
+.sso-callout svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
 }
 
 /* ── Comparison table ──────────────────────────────────── */
@@ -802,5 +858,4 @@ footer.site-footer .footer-bottom {
     animation: none !important;
     transition: none !important;
   }
-  .app-tile.lit::before { opacity: 1; }
 }

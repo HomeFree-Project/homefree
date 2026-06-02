@@ -70,6 +70,10 @@ layout: base.html
     border: 0;
     padding: 0;
   }
+  /* Diagrams: hand-authored inline SVG, no runtime renderer.
+     The .mermaid class is kept as the diagram-wrapper hook for
+     consistent styling — the name is historical and was carried over
+     when the runtime Mermaid load was removed. */
   .manual-content .mermaid {
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -78,6 +82,7 @@ layout: base.html
     margin: 24px 0;
     text-align: center;
   }
+  .manual-content .mermaid svg { max-width: 100%; height: auto; }
   .manual-content h1 { margin-top: 8px; }
   .manual-content h2 {
     margin-top: 40px;
@@ -126,6 +131,7 @@ layout: base.html
     <ul>
       <li><a href="/developers/"{% if page.url == "/manual/developers/" %} class="active"{% endif %}>How HomeFree is built</a></li>
       <li><a href="/developers/advanced-installation/"{% if page.url == "/manual/developers/advanced-installation/" %} class="active"{% endif %}>Advanced installation</a></li>
+      <li><a href="/developers/traffic-surge-resilience/"{% if page.url == "/manual/developers/traffic-surge-resilience/" %} class="active"{% endif %}>Traffic-surge resilience</a></li>
     </ul>
   </aside>
   <article class="manual-content prose">
@@ -133,20 +139,10 @@ layout: base.html
   </article>
 </div>
 
-<script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-  mermaid.initialize({
-    startOnLoad: true,
-    theme: 'dark',
-    themeVariables: {
-      darkMode: true,
-      background: '#11141a',
-      primaryColor: '#181b21',
-      primaryTextColor: '#f5f7fa',
-      primaryBorderColor: '#34d399',
-      lineColor: '#b6bcc4',
-      secondaryColor: '#14181e',
-      tertiaryColor: '#181b21'
-    }
-  });
-</script>
+{# Mermaid runtime removed — diagrams are now pre-rendered inline SVG.
+   Do not reintroduce a runtime diagram library (mermaid, plantuml,
+   etc.) without first vendoring it locally; the previous jsdelivr
+   load was the only third-party asset in the manual surface and
+   violated the no-external-resources rule. See
+   AGENTS.md rule 8 and the diagram in
+   src/manual/hardware-setup.md for the inline-SVG pattern. #}

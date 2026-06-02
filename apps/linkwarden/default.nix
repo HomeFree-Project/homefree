@@ -9,7 +9,7 @@ let
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
-  port = 3005;
+  port = config.homefree.allocPort "linkwarden";
   database-name = "linkwarden";
   database-user = "linkwarden";
 
@@ -251,6 +251,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.linkwarden) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.linkwarden.enable;
       systemd-service-names = [
         "podman-linkwarden"

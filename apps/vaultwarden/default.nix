@@ -18,7 +18,7 @@ let
   domain = config.homefree.system.domain;
   secretsDir = "/var/lib/homefree-secrets/vaultwarden";
 
-  port = 8222;
+  port = config.homefree.allocPort "vaultwarden";
   version = "1.36.0";
 
   ssoEnvFile = "${containerDataPath}/sso.env";
@@ -187,6 +187,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.vaultwarden) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.vaultwarden.enable;
       systemd-service-names = [
         "podman-vaultwarden"

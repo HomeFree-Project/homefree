@@ -120,10 +120,11 @@ in
 
   # Install Linux md tooling + udev assembly rules whenever a parity volume
   # exists, so its array assembles automatically at boot. No effect (and no md
-  # in the closure) when there are only btrfs-native volumes. We do NOT manage
-  # mdadm.conf: HomeFree's OS root is btrfs (never md), and data arrays assemble
-  # by homehost via the udev rules without an ARRAY line — avoiding any conflict
-  # with an instance's own mdadm.conf.
+  # in the closure) when there are only btrfs-native volumes. We do not add
+  # ARRAY entries to mdadm.conf — assembly works via mdadm's homehost feature
+  # + NixOS's udev rules, no entry needed. The single `PROGRAM=` line we DO
+  # write (so `mdmonitor.service` doesn't exit 1 with "no MAILADDR or PROGRAM")
+  # is in `services/mdadm-monitor/`.
   boot.swraid.enable = lib.mkIf (mdPools != []) true;
 
   # NixOS's mdadm udev rules assemble arrays but DON'T reliably create the
@@ -142,6 +143,12 @@ in
     wantedBy = [ "cryptsetup.target" ];
     before = [ "cryptsetup.target" ];
     after = [ "systemd-udev-trigger.service" ];
+    # Run in the sysinit phase. With DefaultDependencies=yes, systemd adds
+    # an implicit After=sysinit.target, which closes a cycle through
+    # sysinit.target → cryptsetup.target → this unit → sysinit.target.
+    # systemd breaks the cycle by silently deleting cryptsetup.target/start
+    # (and a handful of sockets) every boot, leaving a malformed dep graph.
+    unitConfig.DefaultDependencies = false;
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;

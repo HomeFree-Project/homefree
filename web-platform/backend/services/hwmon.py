@@ -35,6 +35,30 @@ def _read_str(path: Path) -> Optional[str]:
         return None
 
 
+# Drivers signal "this limit is not defined" via two raw values:
+#   * NVMe identify uses 0xFFFF Kelvin → 65535 K = 65261.85 °C (= 65_261_850
+#     in sysfs millicelsius). The kernel passes the raw value through.
+#   * Several drivers leave `_min` as 0 K = −273.15 °C → −273_150.
+# Anything beyond a plausible semiconductor operating range (we use
+# ±150 °C as a generous ceiling — industrial parts go to ~125 °C) is
+# a sentinel, not a real limit, and must not flow through to threshold
+# inference.
+_SENTINEL_CEILING_MILLIDEG = 150_000
+_SENTINEL_FLOOR_MILLIDEG = -150_000
+
+
+def _read_temp_limit(path: Path) -> Optional[int]:
+    """Read a `temp{N}_max` / `temp{N}_crit` style file. Returns None if
+    the file is absent OR carries a sentinel value (driver-defined "not
+    implemented")."""
+    millideg = _read_int(path)
+    if millideg is None:
+        return None
+    if millideg >= _SENTINEL_CEILING_MILLIDEG or millideg <= _SENTINEL_FLOOR_MILLIDEG:
+        return None
+    return millideg
+
+
 def classify(driver: str) -> str:
     """Coarse bucket for a hwmon driver — used for UI grouping and as
     the persisted `kind` column in the history DB."""
@@ -56,9 +80,23 @@ def scan() -> List[Dict[str, Any]]:
       name   : driver (k10temp, nvme, spd5118, amdgpu, …)
       label  : the temp{N}_label string if present, else ""
       temp_c : current temperature (°C, one decimal)
+      max_c  : driver-reported `temp{N}_max` (°C, one decimal) if
+               present — None when the driver doesn't expose it.
+               Semantics vary by driver: NVMe reports the operating
+               max (above this degrades longevity); spd5118 reports
+               the JEDEC spec max; coretemp reports TCC activation.
+      crit_c : driver-reported `temp{N}_crit` (°C, one decimal) if
+               present — None when absent. Always "above this is
+               dangerous" — Tjmax for CPUs, controller crit for
+               NVMe. AMD `k10temp` and integrated GPUs typically
+               leave this absent (the driver doesn't surface it).
       kind   : classify(name) bucket
       key    : "<driver>:<label or tempN>" — stable identity for this
                sensor, used as the SQLite primary-key fragment.
+      hwmon_dir : absolute path of the hwmon device directory, e.g.
+               "/sys/class/hwmon/hwmon5". Lets callers walk to the
+               parent device (PCI vendor ID, etc.) when they need to
+               classify the silicon further.
 
     Skips sensors that report 0 (NVMe controllers leave unused sensor
     slots zeroed) so the history DB doesn't accumulate fake rows.
@@ -106,11 +144,20 @@ def scan() -> List[Dict[str, Any]]:
                 temp_input.name.replace("_input", "_label")
             )) or ""
             key_suffix = label or temp_input.name.replace("_input", "")
+            max_milli = _read_temp_limit(temp_input.with_name(
+                temp_input.name.replace("_input", "_max")
+            ))
+            crit_milli = _read_temp_limit(temp_input.with_name(
+                temp_input.name.replace("_input", "_crit")
+            ))
             out.append({
                 "key": f"{key_driver}:{key_suffix}",
                 "name": display_name,
                 "label": label,
                 "temp_c": round(millideg / 1000.0, 1),
+                "max_c": round(max_milli / 1000.0, 1) if max_milli is not None else None,
+                "crit_c": round(crit_milli / 1000.0, 1) if crit_milli is not None else None,
                 "kind": classify(driver),
+                "hwmon_dir": str(entry),
             })
     return out

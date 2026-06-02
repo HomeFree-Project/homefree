@@ -20,6 +20,10 @@ If you can plug in a router, you can do this. Most people finish in an afternoon
 - **[Hardware setup](/hardware-setup/)** — what you'll need, and how everything plugs in.
 - **[Installation](/installation/)** — download the installer, walk through the on-screen steps.
 
+## System
+
+- **[Storage](/manual/storage/)** — drives, volumes, mounts, and erase.
+
 ## Apps
 
 - **[FreshRSS](/apps/freshrss/)** — your news reader.

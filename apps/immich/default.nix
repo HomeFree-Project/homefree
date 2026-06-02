@@ -25,7 +25,7 @@ let
   # Seems to be hard coded in docker container, so can't override
   uploadLocation = "/usr/src/app/upload";
 
-  port = 2283;
+  port = config.homefree.allocPort "immich";
   port-machine-learning = 3003;
   port-redis = 6379;
   database-name = "immich";
@@ -529,6 +529,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.immich) label name project-name;
+      port-request = 2283;
       enable = config.homefree.service-options.immich.enable;
       release-tracking = {
         type = "github";

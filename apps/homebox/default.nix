@@ -3,7 +3,7 @@ let
   containerDataPath = "/var/lib/homebox-podman";
   secretsDir = "/var/lib/homefree-secrets/homebox";
 
-  port = 7745;
+  port = config.homefree.allocPort "homebox";
   version = "0.25.0";
 
   domain = config.homefree.system.domain;
@@ -180,6 +180,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.homebox) label name project-name;
+      port-request = null;
       enable = config.homefree.service-options.homebox.enable;
       systemd-service-names = [
         "podman-homebox"

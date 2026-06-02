@@ -18,7 +18,7 @@ let
 
   data-dir = "/var/lib/backup-canary";
   db-name = "backup_canary";
-  port = 8099;
+  port = config.homefree.allocPort "backup-canary";
 
   ## The canary's Postgres operations run as the system superuser role so
   ## the writer / self-test can psql without a password (peer auth).
@@ -201,6 +201,7 @@ in
     ## gets backed up, and stop/start-resolved, exactly like any service.
     homefree.service-config = [{
       inherit (cfg) label name project-name;
+      port-request = null;
 
       sso = {
         kind = "none";

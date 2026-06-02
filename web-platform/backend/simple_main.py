@@ -35,12 +35,14 @@ from resolvers.abuse_blocking import AbuseBlockingResolver
 from resolvers.dashboard import DashboardResolver
 from resolvers.hardware import HardwareResolver
 from resolvers.firmware import FirmwareResolver
+from resolvers.speed_test import SpeedTestResolver
 from services.fwupd_job import FwupdJob
 
 # Import API routers
 from resolvers.secrets import router as secrets_router
 from resolvers.backups import router as backups_router
 from resolvers.storage import router as storage_router
+from resolvers.alerts import router as alerts_router
 
 # Configure logging
 logging.basicConfig(
@@ -147,6 +149,75 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         if cls._dev_mode_cache is None:
             cls._dev_mode_cache = os.environ.get("HOMEFREE_DEVELOPMENT") == "1"
         return cls._dev_mode_cache
+
+    ## Stale-claim recovery cache for _live_admin_lookup().
+    ##
+    ## Maps username → (is_admin: bool, expires_at: monotonic float).
+    ## A short TTL caps Zitadel load when a non-admin (cookie that
+    ## genuinely lacks the role) keeps hitting admin endpoints, while
+    ## still letting a freshly-promoted user's grant land within the
+    ## TTL window.
+    _admin_lookup_cache: dict = {}
+    _ADMIN_LOOKUP_TTL_SECONDS = 30.0
+
+    @classmethod
+    async def _live_admin_lookup(cls, username: str) -> bool:
+        """Ask Zitadel directly whether `username` currently holds the
+        homefree-admin project role on the homefree project.
+
+        Used as a fallback in dispatch() when the cookie's groups
+        claim doesn't include homefree-admin. The cookie's claim is
+        frozen at session-mint time, so a user promoted AFTER they
+        signed in will be denied here forever (well, until the cookie
+        expires) unless we ask the source of truth. This makes
+        admin promotion self-healing: the very next request after
+        the grant lands in Zitadel gets through.
+
+        Cached per-username (positive AND negative results) for
+        _ADMIN_LOOKUP_TTL_SECONDS to bound the cost when a non-admin
+        keeps hitting admin URLs. The cache is in-process; admin-api
+        is a single uvicorn worker so this is sufficient.
+
+        Returns False on any error (Zitadel unreachable, user not
+        found, project not provisioned) — failing closed.
+        """
+        import time
+        now = time.monotonic()
+        cached = cls._admin_lookup_cache.get(username)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+
+        is_admin = False
+        try:
+            import httpx
+            base = _zitadel_base_url()
+            async with httpx.AsyncClient(timeout=5.0, verify=False) as cx:
+                user_id = await _resolve_user_id_by_name(cx, base, username)
+                project_id = await _get_homefree_project_id(cx, base)
+                r = await cx.post(
+                    f"{base}/management/v1/users/grants/_search",
+                    headers=_zitadel_headers(),
+                    json={"queries": [
+                        {"userIdQuery": {"userId": user_id}},
+                        {"projectIdQuery": {"projectId": project_id}},
+                    ]},
+                )
+                if r.status_code < 400:
+                    grants = r.json().get("result") or []
+                    is_admin = any(
+                        cls.ADMIN_ROLE in (g.get("roleKeys") or [])
+                        for g in grants
+                    )
+        except Exception as e:
+            logger.warning(
+                "Live admin lookup for '%s' failed: %s (treating as not-admin)",
+                username, e,
+            )
+
+        cls._admin_lookup_cache[username] = (
+            is_admin, now + cls._ADMIN_LOOKUP_TTL_SECONDS
+        )
+        return is_admin
 
     @staticmethod
     def _parse_groups(raw: str) -> set[str]:
@@ -272,6 +343,23 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
                         )
             except Exception as e:
                 logger.warning("Admin username check failed: %s", e)
+
+        ## Stale-cookie fallback. The cookie's groups claim is frozen
+        ## at session-mint time, so a user promoted AFTER they signed
+        ## in keeps an "empty/missing-admin" claim until the cookie
+        ## refreshes (potentially hours/days). Ask Zitadel directly:
+        ## if the grant exists right now, admit. Cached per-username
+        ## (30s) so a non-admin who hammers admin URLs doesn't bombard
+        ## Zitadel. Self-healing: makes "click Promote, user reloads"
+        ## work without the admin telling them to sign out first.
+        if not is_admin:
+            if await self._live_admin_lookup(user):
+                is_admin = True
+                logger.info(
+                    "Admitting '%s' via live Zitadel lookup "
+                    "(cookie groups stale; promotion in flight).",
+                    user,
+                )
 
         if not is_admin:
             expected = None
@@ -427,6 +515,7 @@ app.add_middleware(TrustedHeaderAuthMiddleware)
 app.include_router(secrets_router)
 app.include_router(backups_router)
 app.include_router(storage_router)
+app.include_router(alerts_router)
 
 # Startup event handler
 @app.on_event("startup")
@@ -1039,6 +1128,39 @@ async def get_dashboard_lan_clients():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/speed-test/start")
+async def start_speed_test():
+    """Kick off an on-demand WAN speed test against Cloudflare's public
+    endpoints. Returns immediately with a test_id; poll /status for
+    progress. A second start cancels the previous run."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.start))
+    except Exception as e:
+        logger.error(f"speed-test start: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/speed-test/status")
+async def get_speed_test_status():
+    """Current state of the speed test: phase, progress, partial results
+    (filled in as phases complete), final results once phase=='done'."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.status))
+    except Exception as e:
+        logger.error(f"speed-test status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/speed-test/cancel")
+async def cancel_speed_test():
+    """Signal the running test to abort at the next phase boundary."""
+    try:
+        return JSONResponse(content=await asyncio.to_thread(SpeedTestResolver.cancel))
+    except Exception as e:
+        logger.error(f"speed-test cancel: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/hardware/overview")
 async def get_hardware_overview():
     """Per-drive SMART + motherboard sensor snapshot for the Hardware page.
@@ -1368,6 +1490,100 @@ async def get_languages():
     except Exception as e:
         logger.error(f"Error getting languages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/system/privacy-defaults")
+async def privacy_defaults():
+    """Returns every external-service URL the box is currently
+    *configured* to use (per `homefree.privacy.externalServices.*`).
+    The frontend consumes this to pre-fill defaults for forms that
+    accept per-alert / per-feature overrides (e.g. the alerts
+    module's "public IP URL" and "DoH endpoint" fields), so an
+    operator who changes the system-wide default sees it reflected
+    in every form that hasn't been overridden.
+
+    Empty string means the feature is disabled (no upstream
+    configured). The future Privacy admin page will be the
+    canonical consumer of this endpoint.
+    """
+    return JSONResponse(content={
+        "publicIpUrl": os.environ.get(
+            "HOMEFREE_PRIVACY_PUBLIC_IP_URL", ""
+        ),
+        "dohUrl": os.environ.get("HOMEFREE_PRIVACY_DOH_URL", ""),
+        "elevationUrl": os.environ.get(
+            "HOMEFREE_ELEVATION_API_URL", ""
+        ),
+    })
+
+
+@app.get("/api/network/elevation")
+async def lookup_elevation(lat: float, lon: float):
+    """Server-side proxy for elevation lookup. Replaces a direct
+    browser fetch to api.open-meteo.com / api.open-elevation.com,
+    which leaked the user's IP to a third party on every "Look up
+    from coords" click in the location picker.
+
+    The upstream URL is operator-configurable via
+    `homefree.privacy.externalServices.elevation.url` (passed in as
+    `HOMEFREE_ELEVATION_API_URL`). When unset, the feature is
+    disabled — we return 503 so the UI shows a clear "not
+    configured" message rather than silently failing.
+
+    The default upstream when an operator enables this is Open-
+    Meteo, whose response shape is `{"elevation": [<meters>]}`.
+    Other providers must match that shape or the parsing below
+    needs to grow.
+    """
+    url_template = os.environ.get("HOMEFREE_ELEVATION_API_URL", "")
+    if not url_template:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Elevation lookup is not configured. Set "
+                "homefree.privacy.externalServices.elevation.url to "
+                "enable (default disabled — see option docstring)."
+            ),
+        )
+    try:
+        import httpx
+        url = url_template.replace("{lat}", str(lat)).replace(
+            "{lon}", str(lon)
+        )
+        async with httpx.AsyncClient(timeout=10.0) as cx:
+            r = await cx.get(
+                url,
+                headers={
+                    "User-Agent": (
+                        "HomeFree-Admin/1.0 (+https://homefree.host)"
+                    )
+                },
+            )
+            r.raise_for_status()
+            d = r.json()
+        if (
+            isinstance(d, dict)
+            and isinstance(d.get("elevation"), list)
+            and len(d["elevation"]) > 0
+            and isinstance(d["elevation"][0], (int, float))
+        ):
+            return JSONResponse(content={"elevation": round(d["elevation"][0])})
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Elevation upstream returned an unexpected shape; the "
+                "endpoint expects Open-Meteo's `{\"elevation\": [meters]}`."
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error looking up elevation for ({lat}, {lon}): {e}"
+        )
+        raise HTTPException(
+            status_code=502, detail=f"Elevation lookup failed: {e}"
+        )
+
 
 @app.get("/api/geocode")
 async def geocode_address(q: str):
@@ -3329,6 +3545,66 @@ async def delete_developer_flake(flake_id: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting developer flake: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/developers/flakes/{flake_id}/check-update")
+async def check_developer_flake_update(flake_id: str):
+    """
+    Probe a registered remote flake's upstream and compare its current
+    revision to the rev pinned in flake.lock. Stage-only — does not write
+    anything; the caller decides whether to invoke /update next.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.check_flake_update(flake_id)
+        if result.get("success"):
+            status = 200
+        elif "No flake with id" in (result.get("message") or ""):
+            status = 404
+        else:
+            status = 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking developer flake update: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/flakes/{flake_id}/update")
+async def update_developer_flake(flake_id: str):
+    """
+    Re-lock a single remote flake input via `nix flake update <inputName>`.
+    Does NOT rebuild — the resulting flake.lock drift surfaces through the
+    standard "build inputs changed" Apply reason.
+    """
+    try:
+        from services.mode import ModeService
+        from services.developers import DevelopersService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        result = DevelopersService.update_flake(flake_id)
+        if result.get("success"):
+            status = 200
+        elif "No flake with id" in (result.get("message") or ""):
+            status = 404
+        else:
+            status = 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating developer flake: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

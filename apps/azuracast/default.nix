@@ -50,8 +50,8 @@ let
     chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/acme
   '';
 
-  port = 8654;
-  port-ssh = 2033;
+  port = config.homefree.allocPort "azuracast";
+  port-ssh = config.homefree.allocPort "azuracast-ssh";
 
   userOptions = {
     enable = lib.mkOption {
@@ -139,6 +139,7 @@ in
   homefree.service-config = if config.homefree.services.azuracast.enable == true then [
     {
       label = "azuracast";
+      port-request = null;
       name = "AzuraCast";
       project-name = "AzuraCast";
       ## @TODO: Why is this not a list?
@@ -159,6 +160,16 @@ in
           containerDataPath
         ];
       };
+    }
+    {
+      label = "azuracast-ssh";
+      port-request = 2033;
+      name = "AzuraCast SSH";
+      project-name = "AzuraCast";
+      enable = config.homefree.services.azuracast.enable;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }
   ] else [];
   };

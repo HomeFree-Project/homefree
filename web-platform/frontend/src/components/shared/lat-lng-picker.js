@@ -1,11 +1,18 @@
 import { LitElement, html, css } from 'lit';
-import { geocodeAddress, ipGeolocate } from '../../api/client.js';
+import { geocodeAddress } from '../../api/client.js';
 
 /**
  * Latitude / Longitude picker.
  *
  * Two number inputs plus two prefill helpers:
- *   - "Use my IP"  → calls https://ipapi.co/json/ from the browser
+ *   - "Use my location" → browser navigator.geolocation API (W3C),
+ *                          explicit user permission prompt, device-
+ *                          local (GPS / Wi-Fi triangulation) — no
+ *                          third-party IP-geolocation service is
+ *                          contacted. (Previously called ipapi.co
+ *                          from the browser; replaced because the
+ *                          HomeFree admin UI must never reach any
+ *                          external host. See AGENTS.md rule 8.)
  *   - "From address" → expands an inline search box that proxies to
  *                       OpenStreetMap Nominatim through the backend
  *
@@ -23,7 +30,7 @@ class LatLngPicker extends LitElement {
     addressOpen: { type: Boolean, state: true },
     addressQuery: { type: String, state: true },
     addressResults: { type: Array, state: true },
-    busy: { type: String, state: true },     // "ip" | "geocode" | ""
+    busy: { type: String, state: true },     // "location" | "geocode" | ""
     error: { type: String, state: true },
   };
 
@@ -159,23 +166,34 @@ class LatLngPicker extends LitElement {
     this._emitChange();
   }
 
-  async _useMyIp() {
+  _useMyLocation() {
     this.error = '';
-    this.busy = 'ip';
-    try {
-      const r = await ipGeolocate();
-      if (typeof r.latitude === 'number' && typeof r.longitude === 'number') {
-        this.latitude = r.latitude;
-        this.longitude = r.longitude;
-        this._emitChange();
-      } else {
-        this.error = 'IP lookup returned no coordinates.';
-      }
-    } catch (e) {
-      this.error = `IP lookup failed: ${e.message || e}`;
-    } finally {
-      this.busy = '';
+    if (!navigator.geolocation) {
+      this.error = 'This browser does not expose a Geolocation API.';
+      return;
     }
+    this.busy = 'location';
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        this.latitude = position.coords.latitude;
+        this.longitude = position.coords.longitude;
+        this.busy = '';
+        this._emitChange();
+      },
+      (err) => {
+        this.busy = '';
+        if (err.code === err.PERMISSION_DENIED) {
+          this.error = 'Location access denied. Enter coordinates manually or use the address search.';
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          this.error = 'Location unavailable on this device.';
+        } else if (err.code === err.TIMEOUT) {
+          this.error = 'Location lookup timed out.';
+        } else {
+          this.error = `Location lookup failed: ${err.message || err.code}`;
+        }
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
   }
 
   _toggleAddress() {
@@ -248,9 +266,9 @@ class LatLngPicker extends LitElement {
         <button
           class="helper"
           type="button"
-          ?disabled=${this.busy === 'ip'}
-          @click=${this._useMyIp}
-        >${this.busy === 'ip' ? 'Looking up…' : 'Use my IP'}</button>
+          ?disabled=${this.busy === 'location'}
+          @click=${this._useMyLocation}
+        >${this.busy === 'location' ? 'Locating…' : 'Use my location'}</button>
         <button
           class="helper"
           type="button"

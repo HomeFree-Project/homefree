@@ -24,16 +24,27 @@ can at least see the drive exists.
 
 Thresholds
 ----------
-Per drive class, hardcoded:
+Per-drive warn/critical limits come from the drive itself. NVMe drives
+report a proper warn/critical pair via `nvme_composite_temperature_
+threshold` (Samsung 990 Pro: 82/85°C). ATA drives only report a real
+*trip* point (`ata_sct_temperature_history.temperature.limit_max`,
+70°C on IronWolf 12TB, 60°C on 28TB); we derive warn as trip − 10°C,
+the industry convention. The SCT `op_limit_max` field is ignored
+because Seagate reports it at 25–40°C (their MTBF-optimal hint, not
+a warning). Both surface in `smartctl -x` JSON.
 
-  HDD  : warn 45°C / err 50°C   (NAS-spinner derating range)
+Class defaults fill in only when a drive doesn't report — typically
+older USB-bridged enclosures that strip SCT:
+
+  HDD  : warn 50°C / err 60°C
   SSD  : warn 60°C / err 70°C
   NVMe : warn 70°C / err 80°C
 
-These are sensible defaults; no config knob today. Drive class is
-detected for free from `/sys/block/<name>/queue/rotational` and the
-device name (`/dev/nvme*`), so the shared-repo code carries no
-hostname/VID:PID assumptions.
+Drive class is detected from `/sys/block/<name>/queue/rotational` and
+the device name (`/dev/nvme*`), so the shared-repo code carries no
+hostname/VID:PID assumptions. Each row carries `temp_threshold_source`
+(`drive` / `drive-warn` / `drive-err` / `default`) so the UI can tell
+the user where the numbers came from.
 
 Privilege
 ---------
@@ -78,9 +89,10 @@ _SMARTCTL_POOL = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-# Per-class temperature thresholds (°C).
+# Fallback per-class temperature thresholds (°C). Only used when the
+# drive doesn't report its own via SCT/NVMe identify. See _read_drive_temp_limits.
 _TEMP_THRESHOLDS = {
-    "hdd":  {"warn": 45, "err": 50},
+    "hdd":  {"warn": 50, "err": 60},
     "ssd":  {"warn": 60, "err": 70},
     "nvme": {"warn": 70, "err": 80},
 }
@@ -167,7 +179,10 @@ def _smartctl_run(device: str, dtype: str) -> Tuple[Optional[Dict[str, Any]], Op
     failure, bits 2+ mean SMART asserted some condition (still valuable
     data). We accept anything where bits 0–1 are clear.
     """
-    cmd = [_SMARTCTL, "--json=c", "-a", "-d", dtype, device]
+    # -x includes everything -a does PLUS the SCT temperature status/history
+    # log (ATA) which carries the drive-reported warn/critical thresholds.
+    # NVMe is unaffected by -x (no SCT) — same data either way.
+    cmd = [_SMARTCTL, "--json=c", "-x", "-d", dtype, device]
 
     def _do() -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -274,15 +289,64 @@ def _ssd_wear_percent(data: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _classify_temp(drive_class: str, temp_c: Optional[int]) -> str:
+def _classify_temp(temp_c: Optional[int], warn_c: int, err_c: int) -> str:
     if temp_c is None:
         return "unknown"
-    thr = _TEMP_THRESHOLDS[drive_class]
-    if temp_c >= thr["err"]:
+    if temp_c >= err_c:
         return "err"
-    if temp_c >= thr["warn"]:
+    if temp_c >= warn_c:
         return "warn"
     return "ok"
+
+
+# Industry convention: derive ATA warn = (over-temp trip) - this many °C.
+# ATA drives only report the *trip* (`limit_max`) and an "MTBF-optimal"
+# hint (`op_limit_max`, often 25–40°C — way too low to use as warn).
+# Subtracting 10 from the trip matches what Seagate / WD documentation
+# and most NAS dashboards use as the "approaching critical" line.
+_ATA_WARN_BELOW_ERR_C = 10
+
+
+def _read_drive_temp_limits(
+    data: Dict[str, Any], drive_class: str,
+) -> Tuple[Optional[int], Optional[int]]:
+    """Extract drive-reported warn/critical temperature limits.
+
+    NVMe: `nvme_composite_temperature_threshold.{warning, critical}` —
+    these are the proper NVMe-spec warn/critical composite temperature
+    thresholds, already in Celsius. Samsung 990 Pro reports 82/85.
+
+    ATA (HDD/SATA SSD): only `ata_sct_temperature_history.temperature
+    .limit_max` is useful — the over-temperature trip. IronWolf 12TB
+    reports 70, 28TB reports 60. The sibling `op_limit_max` field is
+    the manufacturer's MTBF-optimal hint (often 25–40°C) and would
+    fire a warn on every normally-running drive, so we ignore it.
+    We derive warn = limit_max - 10 (industry convention).
+
+    Returns (warn_c, err_c). Either may be None if the drive doesn't
+    report; the caller fills missing tiers from class defaults.
+    Sanity-bound to 30–100°C to ignore obviously bogus values (some
+    USB bridges return 0 for unsupported fields).
+    """
+    def _sane(v: Any) -> Optional[int]:
+        if not isinstance(v, (int, float)):
+            return None
+        n = int(v)
+        return n if 30 <= n <= 100 else None
+
+    if drive_class == "nvme":
+        thr = data.get("nvme_composite_temperature_threshold") or {}
+        warn = _sane(thr.get("warning"))
+        err  = _sane(thr.get("critical"))
+        return warn, err
+
+    # ATA: only the trip is trustworthy; warn is derived.
+    sct = (data.get("ata_sct_temperature_history") or {}).get("temperature") or {}
+    err = _sane(sct.get("limit_max"))
+    if err is None:
+        return None, None
+    warn = err - _ATA_WARN_BELOW_ERR_C
+    return warn, err
 
 
 def _classify_wear(drive_class: str, used_pct: Optional[int], hdd_realloc: Optional[int],
@@ -327,6 +391,7 @@ def _build_row(disk: Dict[str, Any]) -> Dict[str, Any]:
         "temp_status": "unknown",               # ok | warn | err | unknown
         "temp_warn_c": thresholds["warn"],
         "temp_err_c": thresholds["err"],
+        "temp_threshold_source": "default",     # default | drive | drive-warn | drive-err
         "power_on_hours": None,
         "smart_passed": None,                    # True | False | None
         "smart_available": False,
@@ -358,6 +423,27 @@ def _build_row(disk: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(temp.get("current"), int):
         row["temp_c"] = temp["current"]
 
+    # Drive-reported warn/critical limits (SCT for ATA, controller
+    # identify for NVMe). Each tier is independently sourced — a drive
+    # may report only one; fill the missing tier from the class default.
+    drv_warn, drv_err = _read_drive_temp_limits(data, drive_class)
+    if drv_warn is not None and drv_err is not None:
+        row["temp_warn_c"] = drv_warn
+        row["temp_err_c"] = drv_err
+        row["temp_threshold_source"] = "drive"
+    elif drv_warn is not None:
+        row["temp_warn_c"] = drv_warn
+        row["temp_threshold_source"] = "drive-warn"
+    elif drv_err is not None:
+        row["temp_err_c"] = drv_err
+        row["temp_threshold_source"] = "drive-err"
+    # Guard against an inverted pair (warn >= err) from a malformed
+    # report — fall back to class defaults rather than nonsensical UI.
+    if row["temp_warn_c"] >= row["temp_err_c"]:
+        row["temp_warn_c"] = thresholds["warn"]
+        row["temp_err_c"] = thresholds["err"]
+        row["temp_threshold_source"] = "default"
+
     pot = data.get("power_on_time") or {}
     if isinstance(pot.get("hours"), int):
         row["power_on_hours"] = pot["hours"]
@@ -384,7 +470,9 @@ def _build_row(disk: Dict[str, Any]) -> Dict[str, Any]:
         row["pending_sectors"] = _find_ata_attr(data, 197)
         row["uncorrectable_sectors"] = _find_ata_attr(data, 198)
 
-    row["temp_status"] = _classify_temp(drive_class, row["temp_c"])
+    row["temp_status"] = _classify_temp(
+        row["temp_c"], row["temp_warn_c"], row["temp_err_c"],
+    )
     row["wear_status"] = _classify_wear(
         drive_class,
         row["life_used_percent"],

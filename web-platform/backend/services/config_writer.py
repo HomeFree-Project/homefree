@@ -146,6 +146,20 @@ class ConfigWriter:
             if 'snapshots' in config:
                 current_config['snapshots'] = config['snapshots']
 
+            # Alerts (System / Alerts page). The Alerts module emits the
+            # WHOLE alerts object on every field edit (the engine config
+            # is small and shaped for full-subtree replace), so we
+            # whole-replace here — exactly like snapshots / storage /
+            # mounts above. Without this branch the entire `alerts` key
+            # in the payload was silently dropped: toggling "ntfy push"
+            # then clicking Apply succeeded, but the resulting JSON had
+            # no `alerts` key, the loader applied its `or` defaults
+            # (everything off), and the UI checkbox came back unset
+            # after the rebuild. Same writer-allowlist failure mode as
+            # the snapshots bug fixed earlier.
+            if 'alerts' in config:
+                current_config['alerts'] = config['alerts']
+
             # NOTE: the `developers` section (registered custom flakes) is
             # deliberately NOT written here. It is owned exclusively by
             # DevelopersService, which writes it via its own endpoints and

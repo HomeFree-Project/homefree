@@ -6,16 +6,61 @@ let
   lan-interface = config.homefree.network.lan-interface;
   lan-address = config.homefree.network.lan-address;
   lan-subnet = config.homefree.network.lan-subnet;
-  vlan-wan-id = 100;
-  vlan-lan-id = 200;
-  vlan-iot-id = 201;
-  vlan-guest-id = 202;
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
   blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
     iifname ${wan-interface} ip saddr ${entry.ip} drop
     iifname ${wan-interface} ip daddr ${entry.ip} drop
   '') blocked-ips);
+
+  ## Guest networks (VLANs). Each entry creates a sub-interface on
+  ## lan-interface, an IP on the router, its own DHCP scope (dnsmasq),
+  ## and per-VLAN nftables forward rules below.
+  guest-networks = config.homefree.network.guest-networks;
+  cidr-prefix = subnet:
+    lib.toInt (builtins.elemAt (lib.splitString "/" subnet) 1);
+
+  ## Per-VLAN forward-chain rules. Each block:
+  ##   - allows or drops VLAN→WAN egress (internet-access)
+  ##   - allows or drops VLAN↔LAN (lan-access, both directions)
+  ##   - allows or drops VLAN↔every-other-VLAN (inter-network-access)
+  ## Pattern mirrors the existing podman0/tailscale0/wt0 rules below.
+  guest-network-forward-rules = lib.concatStringsSep "\n" (lib.map (gn:
+    let ifn = gn.id; in
+    ''
+    ## --- ${gn.name} (${ifn}, vlan ${toString gn.vlan-id}) ---
+    ''
+    + (if gn.internet-access then ''
+      iifname { "${ifn}" } oifname { "${wan-interface}" } accept comment "Allow ${ifn} to WAN"
+      iifname { "${wan-interface}" } oifname { "${ifn}" } ct state established, related accept comment "Allow established back to ${ifn}"
+    '' else ''
+      iifname { "${ifn}" } oifname { "${wan-interface}" } counter drop comment "Block ${ifn} from WAN"
+    '')
+    + (if gn.lan-access then ''
+      iifname { "${ifn}" } oifname { "${lan-interface}" } accept comment "Allow ${ifn} to main LAN"
+      iifname { "${lan-interface}" } oifname { "${ifn}" } accept comment "Allow main LAN to ${ifn}"
+    '' else ''
+      iifname { "${ifn}" } oifname { "${lan-interface}" } counter drop comment "Isolate ${ifn} from main LAN"
+      iifname { "${lan-interface}" } oifname { "${ifn}" } counter drop comment "Isolate main LAN from ${ifn}"
+    '')
+    + lib.concatStringsSep "" (lib.map (other:
+      if other.id == gn.id then ""
+      else if gn.inter-network-access then ''
+        iifname { "${ifn}" } oifname { "${other.id}" } accept comment "Allow ${ifn} to ${other.id}"
+      ''
+      else ''
+        iifname { "${ifn}" } oifname { "${other.id}" } counter drop comment "Isolate ${ifn} from ${other.id}"
+      ''
+    ) guest-networks)
+  ) guest-networks);
+
+  ## Input-chain accept list: every VLAN sub-interface is part of "our"
+  ## network and clients legitimately need to reach the router for
+  ## DHCP/DNS/gateway. (lan-interface gets the same blanket accept on
+  ## line ~292 below.)
+  guest-network-input-rules = lib.concatStringsSep "\n" (lib.map (gn:
+    ''iifname { "${gn.id}" } accept comment "Allow ${gn.id} VLAN to access the router"''
+  ) guest-networks);
 
   ## Static abuse blocklist for the abusive_nets4 / abusive_nets6
   ## nftables sets. Fully driven by config.homefree.network.
@@ -32,6 +77,29 @@ let
   enabled-abuse-cidrs6 = lib.filter (c:  (lib.hasInfix ":" c)) enabled-abuse-cidrs;
   abuse-cidrs4-str = lib.concatStringsSep ", " enabled-abuse-cidrs4;
   abuse-cidrs6-str = lib.concatStringsSep ", " enabled-abuse-cidrs6;
+
+  ## Per-IP concurrent-connection cap (homefree.network.perIpConnection-
+  ## Limit). `0` disables the cap. Emitted into the input chain BEFORE
+  ## the http/https accept rule so excess connections are dropped before
+  ## conntrack accepts them. Applies only on the WAN interface; LAN
+  ## clients are unrestricted.
+  ##
+  ## Uses nftables `meter` (anonymous dynamic set) — the canonical form
+  ## documented on the nftables wiki for per-source `ct count` limits.
+  ## A previous attempt with a named-set `add @set { ip saddr ct count
+  ## over N }` was rejected by the kernel ("Operation not supported");
+  ## `meter` creates the backing set implicitly and avoids whatever
+  ## combo of set-flag / `add`-statement bits the kernel doesn't accept
+  ## with `ct count`. IPv6 keys by the source's /64 prefix (the rule
+  ## ANDs `ip6 saddr` before counting) so SLAAC privacy addresses on
+  ## one client's /64 don't artificially fill the cap.
+  perIpConnLimit = config.homefree.network.perIpConnectionLimit;
+  perIpConnRules =
+    if perIpConnLimit == 0 then ""
+    else ''
+      iifname "${wan-interface}" tcp dport { http, https } meta nfproto ipv4 ct state new meter conn_count_v4 size 65535 { ip saddr ct count over ${toString perIpConnLimit} } counter drop comment "Per-IP conn cap v4 (>${toString perIpConnLimit})"
+      iifname "${wan-interface}" tcp dport { http, https } meta nfproto ipv6 ct state new meter conn_count_v6 size 65535 { ip6 saddr and ffff:ffff:ffff:ffff:: ct count over ${toString perIpConnLimit} } counter drop comment "Per-IP conn cap v6 (>${toString perIpConnLimit}, /64)"
+    '';
 
   # Firewall rules to open up ports for services
   public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
@@ -79,11 +147,26 @@ in
     "net.ipv6.ip_nonlocal_bind" = 1;
   };
 
-  # Required so netavark's IPv6 DNAT rules for podman containers actually load.
-  # Without this, inbound IPv6 to forwarded ports (e.g. forgejo ssh on 3022) is
-  # silently dropped, causing dual-stack clients to wait the full TCP SYN timeout
-  # before falling back to IPv4.
-  boot.kernelModules = [ "ip6table_nat" ];
+  # ip6table_nat: required so netavark's IPv6 DNAT rules for podman containers
+  # actually load. Without this, inbound IPv6 to forwarded ports (e.g. forgejo
+  # ssh on 3022) is silently dropped, causing dual-stack clients to wait the
+  # full TCP SYN timeout before falling back to IPv4.
+  # 8021q: networking.vlans below generates Kind=vlan netdev units, but the
+  # systemd-networkd path doesn't auto-modprobe and nothing else pulls 8021q in,
+  # so VLAN interfaces silently never come up. Only needed when guest networks
+  # are configured.
+  boot.kernelModules =
+    [
+      "ip6table_nat"
+      ## Connection-counter for `ct count over N` in the per-IP
+      ## connection-cap meter rules above (perIpConnRules). NixOS
+      ## usually auto-modprobes nft modules referenced by rules, but
+      ## we list it explicitly so a kernel that has it as a separate
+      ## module loads it deterministically at boot rather than racing
+      ## the first nftables ruleset apply.
+      "nf_conncount"
+    ]
+    ++ lib.optional (config.homefree.network.guest-networks != []) "8021q";
 
   ## @TODO: Is this overlapping/conflicting with "interfaces" settings?
   systemd.network = lib.optionalAttrs config.homefree.network.router.enable {
@@ -105,6 +188,13 @@ in
     networks = {
       "01-${lan-interface}" = {
         name = lan-interface;
+        # VLAN= entries attach guest-network sub-interfaces to this trunk.
+        # The auto-generated 40-${lan-interface}.network (from
+        # networking.interfaces + networking.vlans below) ALSO declares
+        # these, but networkd picks the lowest-priority matching file and
+        # ignores the rest, so without this line the VLAN bindings are
+        # silently dropped and 8021q sub-interfaces never come up.
+        vlan = map (gn: gn.id) guest-networks;
         networkConfig = {
           Description = "LAN link";
           Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
@@ -141,26 +231,19 @@ in
     useDHCP = false;
     nameservers = [ lan-address ];
 
-    ## Define VLANS
+    ## VLAN sub-interfaces — one per homefree.network.guest-networks
+    ## entry. Each is an 802.1Q-tagged sub-interface on the LAN NIC.
+    ## Reaching client devices on a given VLAN still requires an
+    ## 802.1Q-aware AP/switch downstream that maps clients onto the
+    ## right tagged segment.
     ## https://www.breakds.org/post/vlan-configuration-by-examples/
-    # vlans = {
-    #   wan = {
-    #     id = vlan-wan-id;
-    #     interface = wan-interface;
-    #   };
-    #   lan = {
-    #     id = vlan-lan-id;
-    #     interface = lan-interface;
-    #   };
-    #   iot = {
-    #     id = vlan-iot-id;
-    #     interface = lan-interface;
-    #   };
-    #   guest = {
-    #     id = vlan-guest-id;
-    #     interface = lan-interface;
-    #   };
-    # };
+    vlans = lib.listToAttrs (lib.map (gn: {
+      name = gn.id;
+      value = {
+        id = gn.vlan-id;
+        interface = lan-interface;
+      };
+    }) guest-networks);
 
     interfaces = {
       ${wan-interface} = {
@@ -173,30 +256,16 @@ in
           prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" lan-subnet) 1);
         }];
       };
-
-      # Handle the VLANs
-      # wan = {
-      #   useDHCP = false;
-      # };
-      # lan = {
-      #   ipv4.addresses = [{
-      #     address = "10.0.0.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-      # iot = {
-      #   ipv4.addresses = [{
-      #     address = "10.2.1.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-      # guest = {
-      #   ipv4.addresses = [{
-      #     address = "10.3.1.1";
-      #     prefixLength = 24;
-      #   }];
-      # };
-    };
+    } // (lib.listToAttrs (lib.map (gn: {
+      name = gn.id;
+      value = {
+        useDHCP = false;
+        ipv4.addresses = [{
+          address = gn.gateway;
+          prefixLength = cidr-prefix gn.subnet;
+        }];
+      };
+    }) guest-networks));
 
     #-----------------------------------------------------------------------------------------------------
     # Firewall
@@ -261,6 +330,14 @@ in
             flags timeout
           }
 
+          ## Per-source-IP conntrack count: the backing dynamic set is
+          ## created INLINE by the `meter conn_count_v{4,6} { ip[6]
+          ## saddr ct count over N } drop` rules in the input chain
+          ## (see profiles/router.nix near `perIpConnRules`). No
+          ## named-set declaration is needed — and an earlier attempt
+          ## with named sets + `add @set { ... ct count over N }` was
+          ## rejected by the kernel as "Operation not supported."
+
           ## allow all packets sent by the firewall machine itself
           chain output {
             type filter hook output priority 100; policy accept;
@@ -293,6 +370,17 @@ in
             iifname { "tailscale0" } accept comment "Allow tailscale network to access the router"
             iifname { "wt0" } accept comment "Allow netbird network to access the router"
             iifname { "podman0" } accept comment "Allow podman network to access the router"
+            ${guest-network-input-rules}
+
+            ## Per-IP concurrent-connection cap on web ports.
+            ## Drops connections from a single WAN source once it
+            ## holds more than `homefree.network.perIpConnectionLimit`
+            ## concurrent connections to http/https — protection
+            ## against scrapers, slowloris, and opportunistic floods
+            ## that fail2ban can't catch in time (fail2ban is
+            ## reactive; this is structural). Empty when the limit
+            ## is 0.
+            ${perIpConnRules}
 
             ## Allow for web traffic
             ## http is needed for headscale relaying
@@ -399,6 +487,13 @@ in
             ## Netbird-Podman
             iifname { "wt0" } oifname { "podman0" } accept comment "Allow trusted netbird to podman"
             iifname { "podman0" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+
+            ## Per-guest-network isolation policy (internet-access /
+            ## lan-access / inter-network-access). Generated from
+            ## config.homefree.network.guest-networks. Postrouting NAT
+            ## above (`oifname wan masquerade`) catches outbound from
+            ## any VLAN automatically, so no per-VLAN NAT rules needed.
+            ${guest-network-forward-rules}
           }
         }
 

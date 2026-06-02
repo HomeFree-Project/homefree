@@ -18,7 +18,11 @@ let
   secretsDir = "/var/lib/homefree-secrets/ollama";
 
   port-internal = 8254;
-  port = 3014;
+  ## Host-side port — claimed via the central allocator. Pinned to
+  ## 3014 (its historical value) so the migration is a behavioural
+  ## no-op; once every app is on the allocator, individual labels can
+  ## flip to `port-request = null` to get an auto-assigned number.
+  port = config.homefree.allocPort "ollama";
 
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
@@ -204,6 +208,13 @@ in
     homefree.service-config = [{
       inherit (config.homefree.service-options.ollama) label name project-name;
       enable = config.homefree.service-options.ollama.enable;
+      ## Pin our historical port 3014 in the central allocator so
+      ## `config.homefree.allocPort "ollama"` (used in the `let` block
+      ## above) resolves to the same number it always was. Future
+      ## work: flip to `null` once every other app is migrated, so
+      ## new HomeFree boxes can auto-assign without thinking about
+      ## the global port table.
+      port-request = null;
       ## @TODO: Why is this not a list?
       systemd-service-names = [
         "ollama"

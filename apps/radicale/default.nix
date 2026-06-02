@@ -16,7 +16,7 @@ let
 
   version = "3.6.1.0";
   containerDataPath = "/var/lib/radicale-podman";
-  port = 5232;
+  port = config.homefree.allocPort "radicale";
 
   ## Radicale 3.5+ supports an `oauth2` auth type which POSTs the
   ## user-supplied Basic credentials to an OAuth2 token endpoint
@@ -147,6 +147,7 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicale) label name project-name;
+      port-request = 5232;
       enable = config.homefree.service-options.radicale.enable;
       systemd-service-names = [
         "podman-radicale"

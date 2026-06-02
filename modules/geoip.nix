@@ -49,7 +49,7 @@ let
     for ym in "$CUR" "$PREV"; do
       url="$BASE/dbip-city-lite-$ym.mmdb.gz"
       echo "geoip-update: trying $url"
-      if ${pkgs.curl}/bin/curl -fsSL --max-time 300 -o "$TMP/db.mmdb.gz" "$url"; then
+      if ${pkgs.curl}/bin/curl -fsSL --max-time 30 -o "$TMP/db.mmdb.gz" "$url"; then
         fetched="$ym"
         break
       fi
@@ -103,6 +103,11 @@ lib.mkIf config.homefree.network.geoip.enable {
     serviceConfig = {
       Type = "oneshot";
       ExecStart = updateScript;
+      ## Hard cap: two curl attempts at --max-time 30 plus gzip/install
+      ## fits well under 90s. If the unit isn't done by then, DB-IP is
+      ## down — fail the unit so multi-user.target stops waiting and
+      ## the rebuild moves on. The weekly timer will retry.
+      TimeoutStartSec = "90s";
     };
   };
 

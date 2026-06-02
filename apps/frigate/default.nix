@@ -11,9 +11,11 @@ let
     else [];
   cameras-go2rtc = lib.filter (camera: camera.direct-stream == false) cameras-filtered;
   retain = config.homefree.service-options.frigate.retain;
-  container-external-port = 5000;
+  container-external-port = config.homefree.allocPort "frigate";
   authenticated-port = 8971;
   unauthenticated-port = 5000;
+  rtsp-port = config.homefree.allocPort "frigate-rtsp";
+  webrtc-port = config.homefree.allocPort "frigate-webrtc";
 
   frigate-config = {
     version = configVersion;
@@ -369,9 +371,9 @@ in
 
       ports = [
         "0.0.0.0:${toString container-external-port}:${toString unauthenticated-port}"
-        "8554:8554" # RTSP feeds
-        "8555:8555/tcp" # WebRTC over tcp
-        "8555:8555/udp" # WebRTC over udp
+        "${toString rtsp-port}:8554" # RTSP feeds
+        "${toString webrtc-port}:8555/tcp" # WebRTC over tcp
+        "${toString webrtc-port}:8555/udp" # WebRTC over udp
       ];
 
       volumes = [
@@ -433,6 +435,7 @@ in
     homefree.service-config = [{
       inherit (config.homefree.service-options.frigate) label name project-name;
       enable = config.homefree.service-options.frigate.enable;
+      port-request = null;
       systemd-service-names = [
         "podman-frigate"
       ];
@@ -484,6 +487,26 @@ in
           mediaPath
         ];
       } else {};
+    }
+    {
+      label = "frigate-rtsp";
+      name = "Frigate RTSP";
+      project-name = "Frigate NVR";
+      enable = config.homefree.service-options.frigate.enable;
+      port-request = 8554;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
+    }
+    {
+      label = "frigate-webrtc";
+      name = "Frigate WebRTC";
+      project-name = "Frigate NVR";
+      enable = config.homefree.service-options.frigate.enable;
+      port-request = 8555;
+      reverse-proxy.enable = false;
+      admin.show = false;
+      systemd-service-names = [];
     }];
   };
 }

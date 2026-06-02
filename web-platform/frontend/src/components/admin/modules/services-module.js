@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import { getServices, getServiceOptionsSchema, postServiceAction } from '../../../api/client.js';
 import '../../shared/config-section.js';
 import '../../shared/app-card.js';
@@ -555,7 +556,7 @@ class ServicesModule extends LitElement {
       gap: 8px;
       flex-shrink: 0;
       /* Every toggle carries the pill's padding + a transparent border,
-         even when off, so the public-on amber state only changes COLOUR
+         even when off, so the public-on tint only changes COLOUR
          and never the box size. Otherwise toggling Exposed widened the
          chip and knocked the header controls out of alignment with the
          neighbouring cards. */
@@ -564,19 +565,30 @@ class ServicesModule extends LitElement {
       border-radius: 999px;
     }
     /* When the service is exposed to the internet the chip gets a
-       warn-tinted background so the security-relevant state is obvious
-       at a glance, matching the amber used by status-badge.degraded
-       and sso-pill.warn. Same box size as the off state (see above). */
+       blue 'external' tint so the security-relevant state is obvious
+       at a glance, reusing the same hue as status-badge.external
+       (which already means 'reachable from outside' in this module).
+       Why not amber: amber is reserved throughout the admin UI for
+       pending unbuilt changes (--hf-warn-soft on undeployed rows /
+       instance groups), so an amber Exposed chip read as "this toggle
+       has unsaved changes" instead of "this service is publicly
+       exposed". Why not red: red is the failed/error state and made
+       the exposed chip read as a fault condition. Blue is semantically
+       'external' and carries neither overload. Opacity/border slightly
+       lifted vs. the 0.13 status-badge fills so the chip is legible
+       against the card header. Same box size as the off state
+       (see above). */
     .toggle-container.public-on {
-      background: rgba(245,158,11,0.13);
-      color: var(--hf-warn);
+      background: rgba(96,165,250,0.18);
+      border-color: rgba(96,165,250,0.5);
+      color: #60a5fa;
     }
     .toggle-container.public-on .toggle-label {
-      /* Colour alone signals the exposed state (plus the amber pill bg).
+      /* Colour alone signals the exposed state (plus the blue pill bg).
          No font-weight change: a bolder label is physically wider than
          the normal-weight OFF label, which made ON toggles wider than OFF
          and broke header alignment across cards. */
-      color: var(--hf-warn);
+      color: #60a5fa;
     }
 
     /* Invisible stand-in for the absent Exposed toggle on a DISABLED app,
@@ -681,7 +693,7 @@ class ServicesModule extends LitElement {
         display: none;
       }
       /* The exposed-to-internet pill would otherwise stretch full-width
-         with a lot of dead amber to the right; shrink it back to hug its
+         with a lot of dead tint to the right; shrink it back to hug its
          contents while still starting its own line via the wrap above. */
       .toggle-container.public-on {
         flex-basis: auto;
@@ -914,6 +926,35 @@ class ServicesModule extends LitElement {
       font-size: 11px;
       margin-top: 8px;
       word-break: break-word;
+    }
+
+    /* Per-card informational notice. Used for:
+         - external sign-in reachability warnings (SSO not public)
+         - "managed by another module" callouts (ntfy force-enabled
+           by the Alerts framework)
+       Deliberately NOT using --hf-warn-soft — that amber background
+       is the app-wide signal for an undeployed change (see
+       app-card[?undeployed], .status-row.undeployed), and overloading
+       it for static notices made the two look identical. Blue-tinted
+       accent background matches the existing .warning-box idiom. */
+    .card-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 3px solid var(--hf-accent);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--hf-text);
+    }
+    .card-notice-icon {
+      color: var(--hf-warn);
+      font-size: 14px;
+      line-height: 1.2;
+      flex-shrink: 0;
     }
 
     /* The card grid is responsive on its own (auto-fill minmax) — it
@@ -1497,7 +1538,11 @@ class ServicesModule extends LitElement {
 
         ${childServices.length > 0 ? html`
           <div class="instance-group-children">
-            ${childServices.map(child => this.renderServiceCard(child))}
+            ${repeat(
+              childServices,
+              child => child.label,
+              child => this.renderServiceCard(child)
+            )}
           </div>
         ` : html`
           <div class="instance-group-empty">No instances yet.</div>
@@ -1543,6 +1588,46 @@ class ServicesModule extends LitElement {
     // Admin service can't be disabled (no enable toggle)
     const cannotDisable = service.label === 'admin' || service.label === 'admin-api';
     const isAdminApi = service.label === 'admin-api';
+
+    // Enable-knob ownership. When another module force-enables a
+    // service (e.g. services/alerts/default.nix uses lib.mkForce to
+    // turn ntfy on whenever alerts.channels.ntfy.enable is true), the
+    // backend resolver sets enable_managed_by to a slug. We map that
+    // to a human label, lock the Enable toggle, and explain why on
+    // hover. The user can still toggle Public (rendered separately
+    // below), which is a legit user knob even on managed services.
+    // Note: tooltip is precomputed as a plain string so the html
+    // template body contains no nested backticked literals.
+    const enableManagedBy = service.enable_managed_by || null;
+    const enableManagedLabel = ({ alerts: 'Alerts' })[enableManagedBy] || enableManagedBy || '';
+    const enableManagedTooltip = enableManagedBy
+      ? 'Managed by ' + enableManagedLabel
+        + ' — turning the Alerts ntfy channel on forces this service on.'
+      : '';
+
+    // External-sign-in reachability gate. Any service that gates through
+    // Zitadel + oauth2-proxy (native_oidc, caddy_gated, basic_auth) needs
+    // sso.<domain> AND auth.<domain> reachable from the public internet
+    // for an off-LAN user to complete a login. Both endpoints are bound
+    // by a SINGLE toggle: services.zitadel.public (apps/zitadel/default.nix
+    // line 779: "Two endpoints, one toggle"). When that is false, every
+    // SSO-gated app that is itself public is reachable from the WAN at
+    // the TCP level but stalls at the SSO redirect. Surface that
+    // mismatch on both viewpoints:
+    //   - per-app row: "external users can't sign in"
+    //   - Zitadel's row: "N public apps are broken until SSO is exposed"
+    // Read from this.services (which is updated immediately on toggle by
+    // handlePublicToggle), so the warning appears/disappears within the
+    // same render pass — no Apply needed for feedback.
+    const SSO_GATED_KINDS = new Set(['native_oidc', 'caddy_gated', 'basic_auth']);
+    const zitadelEntry = this.services.find(s => s.label === 'zitadel');
+    const ssoIsPublic = !!(zitadelEntry && zitadelEntry.public);
+    const externalSigninBroken = SSO_GATED_KINDS.has(service.sso_kind)
+      && !!service.public
+      && !ssoIsPublic;
+    const ssoBlockedApps = (service.label === 'zitadel' && !ssoIsPublic)
+      ? this.services.filter(s => SSO_GATED_KINDS.has(s.sso_kind) && s.public)
+      : [];
 
     // Check if service has configuration options (secrets, options)
     const hasSecrets = this.secretsSchema[service.label] && Object.keys(this.secretsSchema[service.label]).length > 0;
@@ -1637,12 +1722,13 @@ class ServicesModule extends LitElement {
         <div slot="header" class="card-head">
           ${this.renderIconActions(service)}
           ${cannotDisable ? '' : html`
-            <div class="toggle-container">
+            <div class="toggle-container" title=${enableManagedTooltip}>
               <span class="toggle-label">Enabled</span>
               <label class="toggle-switch">
                 <input
                   type="checkbox"
                   .checked=${isEnabled}
+                  ?disabled=${!!enableManagedBy}
                   @change=${(e) => {
                     if (service.external) {
                       this._emitExternalToggle(service.label, 'enable', e.target.checked);
@@ -1726,6 +1812,36 @@ class ServicesModule extends LitElement {
         ` : ''}
 
         ${actionErr ? html`<div class="action-error">${actionErr}</div>` : ''}
+
+        ${enableManagedBy ? html`
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
+            <span>Required by ${enableManagedLabel} &mdash; toggle the ntfy
+            channel on the Alerts page to control this service.</span>
+          </div>
+        ` : ''}
+
+        ${externalSigninBroken ? html`
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
+            <span>External users can't sign in &mdash; SSO is not exposed to
+            the internet. Expose Single Sign-on (sso.* and auth.*) to make
+            external sign-in work.</span>
+          </div>
+        ` : ''}
+
+        ${ssoBlockedApps.length > 0 ? html`
+          <div class="card-notice">
+            <span class="card-notice-icon" aria-hidden="true">⚠</span>
+            <span>
+              ${ssoBlockedApps.length}
+              public ${ssoBlockedApps.length === 1 ? 'app' : 'apps'}
+              cannot accept external sign-ins until SSO is exposed to the
+              internet:
+              ${ssoBlockedApps.map(s => s.name || s.label).join(', ')}.
+            </span>
+          </div>
+        ` : ''}
       </app-card>
 
       <!-- The modal is a sibling of <app-card>, not slotted into it: a
@@ -2156,27 +2272,52 @@ class ServicesModule extends LitElement {
     // inside their parent's group box. Also hide the HomeFree Admin
     // itself: it is the surface you are looking at, not a manageable app.
     const HIDDEN_LABELS = new Set(['admin', 'admin-api']);
+    // Infrastructure services (oauth2-proxy, ntfy, etc. — anything
+    // tagged sso.kind="infra" in module.nix) are system wiring, not
+    // user-managed apps. Same posture the SSO admin page already
+    // uses for these (services-module.js line 1566). Without this
+    // filter they appear on App Configuration with a checkbox wired
+    // to homefree.services.<label>.enable, and the act of rendering
+    // the row + saving can pollute homefree-config.json with an
+    // inadvertent `enable: false` that then beats the alerts-module's
+    // auto-enable on the next rebuild.
+    //
+    // Opt-in exception: an infra service that legitimately exposes
+    // user-managed enable/public toggles (Zitadel — see
+    // apps/zitadel/default.nix options-metadata) sets admin.show=true
+    // on its service-config entry. The backend resolver propagates
+    // that to admin_show on each ServiceStatus, and we honor it
+    // here. Zitadel needs a home for the Exposed-to-internet toggle
+    // that drives sso.* and auth.*; oauth2-proxy keeps
+    // admin.show=false so it stays hidden.
     const parentServices = this.services.filter(
-      service => !service.parent && !HIDDEN_LABELS.has(service.label)
+      service => !service.parent
+        && !HIDDEN_LABELS.has(service.label)
+        && (service.sso_kind !== 'infra' || service.admin_show === true)
     );
 
-    // Sort against the LAST-APPLIED server state, not the merged
-    // `this.services` view. Pending enable/exposed toggles flow through
-    // `loadServices` and overwrite the in-memory `enabled` / `public`
-    // fields (services-module.js loadServices) so that the card's
-    // toggle reflects the user's intent immediately — but using those
-    // overwritten fields as the sort key would yank the card to a new
-    // position the instant the user clicks. Reading from
-    // `this.serverConfig.services[label]` keeps positions frozen
-    // until the next poll after "Apply changes" lands a fresh
-    // serverConfig.
-    const serverServices = this.serverConfig?.services || {};
+    // Sort against the LAST-APPLIED (deployed) state, not the merged
+    // `this.services` view and not the live disk `serverConfig`. Pending
+    // toggles flow through `loadServices` and overwrite the in-memory
+    // `enabled` / `public` fields immediately, and the auto-save then
+    // writes to disk within a debounce — so reading either of those as
+    // the sort key would yank the card to a new position seconds after
+    // the click. The user's mental model is: cards stay put while
+    // they're editing; positions only resettle when they Apply (a
+    // rebuild) or do a full page reload. `appliedConfig` is the
+    // snapshot of the last successful Apply (admin-app loads it from
+    // `/api/config/applied` and only refreshes it on initial mount and
+    // after a successful rebuild — never on the 5s disk poll), so it
+    // gives us exactly that freeze window. Fallback to the in-memory
+    // value covers services not yet represented in applied-config (new
+    // external proxies, fresh installs before the first Apply).
+    const appliedServices = this.appliedConfig?.services || {};
     const serverEnabled = (s) => {
-      const cfg = serverServices[s.label];
+      const cfg = appliedServices[s.label];
       return cfg ? !!cfg.enable : !!s.enabled;
     };
     const serverPublic = (s) => {
-      const cfg = serverServices[s.label];
+      const cfg = appliedServices[s.label];
       return cfg ? !!cfg.public : !!s.public;
     };
     const statusPriority = {
@@ -2293,9 +2434,13 @@ class ServicesModule extends LitElement {
         </div>
 
         <div class="service-grid">
-          ${filteredServices.map(service => this.isInstanceParent(service)
-            ? this.renderInstanceGroup(service)
-            : this.renderServiceCard(service))}
+          ${repeat(
+            filteredServices,
+            service => service.label,
+            service => this.isInstanceParent(service)
+              ? this.renderInstanceGroup(service)
+              : this.renderServiceCard(service)
+          )}
         </div>
 
         ${filteredServices.length === 0 ? html`

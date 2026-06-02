@@ -9,7 +9,7 @@ let
 
   containerDataPath = "/var/lib/homeassistant";
   haSecretsDir = "/var/lib/homefree-secrets/home-assistant";
-  port = 8123;
+  port = config.homefree.allocPort "home-assistant";
   domain = config.homefree.system.domain;
   adminUser = config.homefree.system.adminUsername;
 
@@ -707,6 +707,7 @@ in
   homefree.service-config = lib.optionals config.homefree.services.home-assistant.enable [
     {
       inherit (config.homefree.service-options.home-assistant) label name project-name;
+      port-request = 8123;
       systemd-service-names = [
         "podman-homeassistant"
       ];

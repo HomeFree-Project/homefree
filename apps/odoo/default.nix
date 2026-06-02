@@ -3,7 +3,7 @@
 let
   version = "19.0";
   containerDataPath = "/var/lib/odoo-podman";
-  port = 8069;
+  port = config.homefree.allocPort "odoo";
   database-name = "odoo";
   database-user = "odoo";
 
@@ -126,6 +126,7 @@ in
 
   homefree.service-config = if config.homefree.services.odoo.enable == true then [{
     label = "odoo";
+      port-request = null;
     name = "Odoo ERP";
     project-name = "odoo";
     systemd-service-names = [

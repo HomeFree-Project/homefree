@@ -68,6 +68,12 @@ in
       ## null, profiles/.../configuration.nix leaves the account's
       ## initialHashedPassword in place (see hashedPassword consumer).
       hashedPassword = jsonData.system.hashedPassword or null;
+      ## Boot mirror toggle. The installer writes `true` when the
+      ## install chose raid1 (which provisions an ESP on disk 2 at
+      ## /boot2 via disko_builder). `or false` so older JSON files
+      ## that predate this key still evaluate cleanly. Consumed by
+      ## modules/boot-mirror.nix.
+      bootMirror = jsonData.system.bootMirror or false;
     };
 
     network = {
@@ -82,13 +88,34 @@ in
       wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
       wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
 
-      # Static IPs conversion
+      # Static IPs conversion. `network` is the optional guest-network
+      # ID a reservation belongs to; null/missing = main LAN, so older
+      # homefree-config.json files predating guest networks evaluate
+      # unchanged (rule 11, backwards-compatible — no migration).
       static-ips = map (ip: {
         mac-address = ip.mac-address;
         hostname = ip.hostname;
         ip = ip.ip;
         wan-access = ip.wan-access or true;
+        network = ip.network or null;
       }) jsonData.network.static-ips;
+
+      ## Guest networks (VLANs). Each entry is one isolated network
+      ## segment with its own subnet, DHCP scope, and isolation policy.
+      ## `or []` so an older homefree-config.json without the key still
+      ## evaluates cleanly; per-field `or` defaults match module.nix.
+      guest-networks = map (gn: {
+        id = gn.id;
+        name = gn.name;
+        vlan-id = gn.vlan-id;
+        subnet = gn.subnet;
+        gateway = gn.gateway;
+        dhcp-range-start = gn.dhcp-range-start;
+        dhcp-range-end = gn.dhcp-range-end;
+        internet-access = gn.internet-access or true;
+        lan-access = gn.lan-access or false;
+        inter-network-access = gn.inter-network-access or false;
+      }) (jsonData.network.guest-networks or []);
 
       ## Abuse-block CIDR list — each entry { cidr, enabled, comment }.
       ## `cidr` may be IPv4 or IPv6. `or []` so a JSON file predating
@@ -192,7 +219,22 @@ in
         path      = s.path;
         allowed   = s.allowed or "";
         read-only = s.read-only or false;
+        squash    = s.squash or "root";
+        anon-uid  = s.anon-uid or null;
+        anon-gid  = s.anon-gid or null;
       }) (jsonData.storage.shares or []);
+    };
+
+    ## System-disk LUKS + TPM2 first-boot enrollment. Flipped to true by
+    ## the installer (services/install.py) when the user opts into LUKS at
+    ## install time. Scoped to SYSTEM disks (root + swap) only — data
+    ## pools are encrypted independently per-pool via homefree.storage.
+    ## The `or false` keeps older homefree-config.json files evaluating
+    ## cleanly — boxes installed before this module landed keep their
+    ## locally-imported homefree-encryption.nix doing the work until they
+    ## migrate the JSON key and drop the stale import.
+    system-disk-encryption = {
+      enable = jsonData.system-disk-encryption.enable or false;
     };
 
     ## Local btrfs timeline snapshots (snapper). Off by default; the chained
@@ -229,17 +271,43 @@ in
     ## only sets `public`), and the type system rejects unknown keys, so
     ## the per-service whitelist is no longer needed.
     ##
-    ## Orphaned-key filtering: a custom-flake app (registered via
-    ## Developers → Custom Flakes) declares its own
-    ## `homefree.services.<name>` option. When such a flake is removed,
-    ## its `services.<name>` block can linger in homefree-config.json
-    ## after the module that declared the option is gone — an
-    ## "orphaned" key. Passing it straight through would abort the whole
-    ## build with `error: The option 'homefree.services.<name>' does not
-    ## exist`. So we filter `jsonData.services` to keys that are
-    ## actually declared options under `homefree.services`; orphaned
-    ## keys are silently dropped (their settings stay inert in the JSON,
-    ## so re-adding the flake restores them).
+    ## Two layers of tolerance keep custom-flake apps from breaking the
+    ## build when their schemas drift from what the admin UI writes:
+    ##
+    ##   1. Orphaned-service filter — a custom-flake app (registered via
+    ##      Developers → Custom Flakes) declares its own
+    ##      `homefree.services.<name>` option. When such a flake is
+    ##      removed, its `services.<name>` block can linger in
+    ##      homefree-config.json after the module that declared the
+    ##      option is gone — an "orphaned" key. Passing it straight
+    ##      through would abort the whole build with `error: The option
+    ##      'homefree.services.<name>' does not exist`. So we filter
+    ##      `jsonData.services` to keys that are actually declared
+    ##      options under `homefree.services`; orphaned keys are
+    ##      silently dropped (their settings stay inert in the JSON, so
+    ##      re-adding the flake restores them).
+    ##
+    ##   2. Unknown-field filter — within each surviving service, the
+    ##      admin UI's `handleServiceToggle` seeds new entries as
+    ##      `{ enable: false, public: false }` (see
+    ##      web-platform/frontend/.../admin-app.js), so every service
+    ##      in homefree-config.json ends up with `public` regardless of
+    ##      whether the app's schema declares it. The in-tree apps all
+    ##      declare `public`, but a custom flake might not (the
+    ##      external homefree-mosaic flake declares only `enable` and
+    ##      `subdomain`, for example). Mirror the orphan-service filter
+    ##      at the field level: keep only keys that exist on the
+    ##      service's declared option attrset, drop the rest. Same
+    ##      silent-drop semantics — the JSON keeps the value, the
+    ##      loader just ignores it until the app's schema declares it.
+    ##
+    ## Both layers assume the in-tree shape
+    ## `options.homefree.services.<name> = userOptions;` where
+    ## userOptions is an attrset of mkOption results, so
+    ## `lib.attrNames` over the option set yields field names. A
+    ## custom flake using `mkOption { type = submodule { ... }; }`
+    ## instead would not benefit from the field filter, but no current
+    ## consumer uses that shape.
     ##
     ## Only mediawiki's instances need a real transform: `logo-path` is
     ## a *string* in JSON (filesystem path like
@@ -260,18 +328,26 @@ in
     ## user's logos are outside it, so pure eval would reject the import.)
     services =
       let
-        ## Only keys with a declared `homefree.services.<name>` option
-        ## survive — drops orphaned keys left by a removed custom flake
-        ## so the build doesn't abort. See the comment block above.
+        ## Stage 1: drop services whose option isn't declared by any
+        ## current app/flake (orphaned-service filter).
         declared = lib.filterAttrs
           (name: _: options.homefree.services ? ${name})
           (jsonData.services or {});
+
+        ## Stage 2: within each surviving service, drop JSON keys that
+        ## aren't declared sub-options on that service's submodule
+        ## (unknown-field filter). See comment block above for rationale.
+        pruned = lib.mapAttrs (name: svc:
+          lib.filterAttrs
+            (k: _: options.homefree.services.${name} ? ${k})
+            svc
+        ) declared;
       in
       ## mediawiki's instances need the logo-path string→path transform
       ## (see comment above). Only rewrite mediawiki when it is actually
       ## present in the config.
-      declared // (lib.optionalAttrs (declared ? mediawiki) {
-        mediawiki = declared.mediawiki // {
+      pruned // (lib.optionalAttrs (pruned ? mediawiki) {
+        mediawiki = pruned.mediawiki // {
           instances = map (instance: instance // {
             logo-path =
               let raw = instance.logo-path or null; in
@@ -283,21 +359,179 @@ in
                     then lib.strings.removePrefix "/etc/nixos/" raw
                     else raw;
                 in (homefreeInstanceDir + ("/" + stripped));
-          }) (declared.mediawiki.instances or []);
+          }) (pruned.mediawiki.instances or []);
         };
       });
+
+    ## Alerts framework. Off by default; `or`-defaults preserve
+    ## backwards compat with older homefree-config.json files (rule 11)
+    ## and mirror the option defaults in module.nix.
+    alerts =
+      let
+        a = jsonData.alerts or {};
+        ch = a.channels or {};
+        src = a.sources or {};
+        diskTemp = src.disk-temperature or {};
+        dtThr = diskTemp.thresholds or {};
+        diskSpace = src.disk-space or {};
+        smart = src.smart or {};
+        sensorTemp = src.sensor-temperature or {};
+        stThr = sensorTemp.thresholds or {};
+        servicesDown = src.services-down or {};
+      in {
+        enable = a.enable or false;
+        interval = a.interval or "1min";
+        channels.ntfy.enable = (ch.ntfy or {}).enable or false;
+        sources.disk-temperature = {
+          enable        = diskTemp.enable or true;
+          hysteresis-c  = diskTemp.hysteresis-c or 4;
+          channels      = diskTemp.channels or [ "ntfy" ];
+          thresholds = {
+            ## Backwards compat (rule 11): a JSON pre-dating the
+            ## warn/err split still has `hdd-c` / `ssd-c` / `nvme-c`
+            ## single-tier keys. Treat them as warn values; err
+            ## defaults to warn + 5 in that case so an upgrading box
+            ## doesn't suddenly fire err alerts at the old warn
+            ## level. New keys win when present.
+            hdd-warn-c  = dtThr.hdd-warn-c  or dtThr.hdd-c  or 45;
+            hdd-err-c   = dtThr.hdd-err-c   or
+                          (if dtThr ? hdd-c then (dtThr.hdd-c + 5) else 50);
+            ssd-warn-c  = dtThr.ssd-warn-c  or dtThr.ssd-c  or 60;
+            ssd-err-c   = dtThr.ssd-err-c   or
+                          (if dtThr ? ssd-c then (dtThr.ssd-c + 10) else 70);
+            nvme-warn-c = dtThr.nvme-warn-c or dtThr.nvme-c or 70;
+            nvme-err-c  = dtThr.nvme-err-c  or
+                          (if dtThr ? nvme-c then (dtThr.nvme-c + 10) else 80);
+          };
+        };
+        sources.disk-space = {
+          enable                 = diskSpace.enable or true;
+          ## Same backwards-compat treatment as disk-temperature:
+          ## old `threshold-percent` becomes warn; err defaults to
+          ## warn + 5.
+          threshold-warn-percent =
+            diskSpace.threshold-warn-percent or
+            diskSpace.threshold-percent or
+            90;
+          threshold-err-percent =
+            diskSpace.threshold-err-percent or
+            (if diskSpace ? threshold-percent
+              then (diskSpace.threshold-percent + 5)
+              else 95);
+          hysteresis-percent     = diskSpace.hysteresis-percent or 3;
+          fs-types               = diskSpace.fs-types or [
+            "ext2" "ext3" "ext4" "xfs" "btrfs" "zfs" "f2fs" "jfs"
+            "reiserfs" "ntfs" "ntfs3" "vfat" "exfat"
+            "nfs" "nfs4" "cifs"
+          ];
+          skip-mount-prefixes    = diskSpace.skip-mount-prefixes or [
+            "/proc" "/sys" "/dev" "/run"
+            "/var/lib/docker" "/var/lib/containers"
+            "/boot"
+          ];
+          channels               = diskSpace.channels or [ "ntfy" ];
+        };
+        sources.smart = {
+          enable   = smart.enable or true;
+          channels = smart.channels or [ "ntfy" ];
+        };
+        sources.sensor-temperature = {
+          enable       = sensorTemp.enable or true;
+          hysteresis-c = sensorTemp.hysteresis-c or 4;
+          channels     = sensorTemp.channels or [ "ntfy" ];
+          thresholds = {
+            ## Sensor-temperature thresholds are inferred at runtime
+            ## by the backend (driver `_crit`/`_max` first, then a
+            ## CPUID-family / PCI-vendor bucket), so an unset value
+            ## here flows through as null and the cascade picks the
+            ## right number for whatever silicon the box has. An
+            ## explicit number is a user override and is honored as-is.
+            ##
+            ## Backwards compat (rule 11): an older JSON pre-dating
+            ## the warn/err split has a single `cpu-c` / `nvme-c` /
+            ## `gpu-c` key. Treat it as a user-set warn override;
+            ## err derives via the old +5/+10 rule so upgrading boxes
+            ## see the same firing behaviour they did before. Boxes
+            ## that never set these keys at all flow through to
+            ## inference.
+            cpu-warn-c  = stThr.cpu-warn-c  or stThr.cpu-c  or null;
+            cpu-err-c   = stThr.cpu-err-c   or
+                          (if stThr ? cpu-c then (stThr.cpu-c + 5) else null);
+            nvme-warn-c = stThr.nvme-warn-c or stThr.nvme-c or null;
+            nvme-err-c  = stThr.nvme-err-c  or
+                          (if stThr ? nvme-c then (stThr.nvme-c + 10) else null);
+            gpu-warn-c  = stThr.gpu-warn-c  or stThr.gpu-c  or null;
+            gpu-err-c   = stThr.gpu-err-c   or
+                          (if stThr ? gpu-c then (stThr.gpu-c + 10) else null);
+          };
+        };
+        sources.services-down = {
+          enable   = servicesDown.enable or true;
+          channels = servicesDown.channels or [ "ntfy" ];
+        };
+        sources.backup-failures =
+          let bf = src.backup-failures or {}; in {
+            enable   = bf.enable or true;
+            channels = bf.channels or [ "ntfy" ];
+          };
+        sources.attacks =
+          let at = src.attacks or {}; in {
+            enable          = at.enable or true;
+            threshold-bans  = at.threshold-bans or 5;
+            hysteresis-bans = at.hysteresis-bans or 2;
+            channels        = at.channels or [ "ntfy" ];
+          };
+        sources.tls-cert =
+          let tc = src.tls-cert or {}; in {
+            enable    = tc.enable or true;
+            warn-days = tc.warn-days or 14;
+            channels  = tc.channels or [ "ntfy" ];
+          };
+        sources.wan-accessibility =
+          let wa = src.wan-accessibility or {}; in {
+            enable        = wa.enable or true;
+            public-ip-url = wa.public-ip-url or "https://ipinfo.io/ip";
+            doh-url       = wa.doh-url or "https://cloudflare-dns.com/dns-query";
+            channels      = wa.channels or [ "ntfy" ];
+          };
+        sources.headscale-accessibility =
+          let ha = src.headscale-accessibility or {}; in {
+            enable         = ha.enable or true;
+            journal-window = ha.journal-window or "5 min ago";
+            channels       = ha.channels or [ "ntfy" ];
+          };
+      };
 
     backups = {
       enable = jsonData.backups.enable;
       to-path = if jsonData.backups.to-path == "" then null else jsonData.backups.to-path;
-      ## Each extra-from-paths entry is { path = ...; enabled = ...; }.
-      ## A bare string is normalized to { path = <str>; enabled = true; }
+      ## Each extra-from-paths entry is { id; path; enabled }.
+      ##
+      ## `id` is the stable per-entry identifier that owns the restic
+      ## repository label (extra-path-<id>) so reordering or deleting
+      ## rows can never rewire an existing repo to a different source
+      ## path. The on-activation migration in services/backup/default.nix
+      ## persists `id` into homefree-config.json (legacy entries get
+      ## id = str(current_index) so their existing labels are preserved
+      ## bit-identically). Until that migration has written the JSON,
+      ## we fall back here at eval time to the current array index, so
+      ## the FIRST rebuild after upgrade produces unchanged labels even
+      ## before the activation script has run.
+      ##
+      ## A bare string is normalized to { path = <str>; enabled = true }
       ## so older homefree-config.json files (pre-schema-change) keep
       ## evaluating without a separate migration step.
-      extra-from-paths = map (entry:
-        if builtins.isString entry
-          then { path = entry; enabled = true; }
-          else { path = entry.path; enabled = entry.enabled or true; }
+      extra-from-paths = lib.imap0 (index: entry:
+        let
+          base =
+            if builtins.isString entry
+              then { path = entry; enabled = true; }
+              else { path = entry.path; enabled = entry.enabled or true; };
+          rawId =
+            if builtins.isAttrs entry && entry ? id then entry.id else "";
+        in base // {
+          id = if rawId == "" then toString index else rawId;
+        }
       ) (jsonData.backups.extra-from-paths or []);
       backblaze = {
         enable = jsonData.backups.backblaze-enable;
@@ -353,6 +587,33 @@ in
         };
       };
       public = e.public or false;
+      ## Opt-in: emit an HTTPS frontend vhost (Caddy terminates TLS,
+      ## talks HTTP to the backend) in addition to the HTTP-only
+      ## vhost. Default false to preserve historical behavior.
+      frontend-tls = e."frontend-tls" or false;
     }) (jsonData.proxied-domains or []);
+
+    ## Privacy / external-services config. The single source of truth
+    ## for every third-party host the box may contact AS PART OF A
+    ## FEATURE (alerts WAN-check, DoH leak detection, elevation
+    ## lookup, etc.). Asset loads on web pages are governed
+    ## separately by AGENTS.md rule 8 (vendoring) and have no
+    ## opt-in. `or`-defaults preserve backwards compat with older
+    ## homefree-config.json files that predate this section (rule
+    ## 11) and mirror the option defaults in module.nix.
+    privacy =
+      let
+        p = jsonData.privacy or {};
+        ext = p.externalServices or {};
+        elev = ext.elevation or {};
+        pip = ext.publicIp or {};
+        dohx = ext.doh or {};
+      in {
+        externalServices = {
+          elevation.url = elev.url or null;
+          publicIp.url = pip.url or "https://ipinfo.io/ip";
+          doh.url = dohx.url or "https://cloudflare-dns.com/dns-query";
+        };
+      };
   };
 }
