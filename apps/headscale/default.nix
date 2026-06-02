@@ -1245,12 +1245,34 @@ in
             }
           }
 
-          # Handle Tailscale control protocol (requires HTTP upgrade)
+          # Handle Tailscale control protocol (requires HTTP upgrade).
+          #
+          # /ts2021 carries the long-lived noise control connection
+          # used by tailscale ≥1.32 — clients hold it open and the
+          # server long-polls map updates over it, with a NoOp
+          # keepalive every ~60s as a liveness signal. Same shape as
+          # /derp above: HTTP/1.1 Upgrade, no upstream timeouts,
+          # immediate flush so the keepalive isn't buffered. Without
+          # this transport block, Caddy defaults silently cut the
+          # connection — observed as the phone's node cycling
+          # "node added" / "node online" in headscale every few
+          # seconds, even though data-plane wireguard packets keep
+          # flowing. Tailscale Android surfaces the resulting
+          # control-plane gap as "DNS unavailable" (it can't
+          # validate its DNS config is current).
           @ts2021 {
             path /ts2021
           }
           handle @ts2021 {
             reverse_proxy http://${lan-address}:${toString config.services.headscale.port} {
+              transport http {
+                versions 1.1
+                read_timeout 0
+                write_timeout 0
+                dial_timeout 5s
+                keepalive 24h
+              }
+              flush_interval -1
               header_up Connection {http.request.header.Connection}
               header_up Upgrade {http.request.header.Upgrade}
             }

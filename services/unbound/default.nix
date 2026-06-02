@@ -15,15 +15,19 @@ let
       []
   ) proxiedDomains);
 
-  # Extract unique base domains from non-public proxied domains (handle wildcards like *.example.com)
+  # Extract unique base domains from non-public proxied domains
+  # (strip wildcard prefix so a domain like `*.apps.example.com`
+  # becomes `apps.example.com`, the actual zone we want unbound to
+  # `redirect` for). The old code took only the last 2 labels, which
+  # truncated `*.apps.example.com` to `example.com` — already in
+  # `zones` (transparent) — and the redirect zone was filtered out,
+  # so deeper wildcards silently fell through to public DNS.
   nonPublicBaseDomains = lib.unique (lib.map (domain:
     let
       parts = lib.splitString "." domain;
-      # Filter out "*" from wildcard entries, then take last 2 parts
       cleanParts = lib.filter (p: p != "*") parts;
-      len = lib.length cleanParts;
     in
-      lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
+      lib.concatStringsSep "." cleanParts
   ) nonPublicProxiedDomains);
 
   preStart = ''
