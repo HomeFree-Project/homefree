@@ -18,8 +18,19 @@ let
   containerDataPath = "/var/lib/webdav";
   port = config.homefree.allocPort "webdav";
 
+  ## hacdias/webdav is a single Go binary. Listens on 6060 (non-
+  ## privileged) so no CAP_NET_BIND_SERVICE is needed; just drop
+  ## root and chown the data dir.
+  webdavUid = 806;
+  webdavGid = 806;
+
   preStart = ''
     mkdir -p ${containerDataPath}/data
+
+    if [ ! -f ${containerDataPath}/.chowned-${toString webdavUid} ]; then
+      chown -R ${toString webdavUid}:${toString webdavGid} ${containerDataPath}
+      touch ${containerDataPath}/.chowned-${toString webdavUid}
+    fi
   '';
 
   config-file = pkgs.writeText "config.yml" ''
@@ -161,11 +172,25 @@ in
   };
 
   config = {
+    users.users.webdav = lib.mkIf config.homefree.service-options.webdav.enable {
+      isSystemUser = true;
+      group = "webdav";
+      uid = webdavUid;
+      description = "WebDAV container runtime user";
+    };
+    users.groups.webdav = lib.mkIf config.homefree.service-options.webdav.enable {
+      gid = webdavGid;
+    };
+
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.webdav.enable {
     webdav = {
       image = "hacdias/webdav:${version}";
 
       autoStart = true;
+
+      ## Drop root inside the container. webdav listens on 6060 so
+      ## no CAP_NET_BIND_SERVICE is required.
+      user = "${toString webdavUid}:${toString webdavGid}";
 
       extraOptions = [
         # "--pull=always"

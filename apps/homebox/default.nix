@@ -9,6 +9,11 @@ let
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
 
+  ## Homebox is a single Go binary listening on 7745 (non-privileged).
+  ## No CAP_NET_BIND_SERVICE required.
+  homeboxUid = 807;
+  homeboxGid = 807;
+
   ## preStart synthesizes Homebox's OIDC env file from the secrets
   ## zitadel-provision writes to disk. Homebox v0.25+ has native OIDC
   ## (HBOX_OIDC_AUTH_*). Same pattern as Ollama (services/ollama-
@@ -22,6 +27,11 @@ let
   preStart = ''
     mkdir -p ${containerDataPath}
     install -m 600 /dev/null ${ssoEnvFile}
+
+    if [ ! -f ${containerDataPath}/.chowned-${toString homeboxUid} ]; then
+      chown -R ${toString homeboxUid}:${toString homeboxGid} ${containerDataPath}
+      touch ${containerDataPath}/.chowned-${toString homeboxUid}
+    fi
 
     ## ── CA bundle for OIDC discovery ───────────────────────────────
     ## Homebox is a Go binary that fetches Zitadel's
@@ -122,11 +132,24 @@ in
   };
 
   config = {
+    users.users.homebox = lib.mkIf config.homefree.service-options.homebox.enable {
+      isSystemUser = true;
+      group = "homebox";
+      uid = homeboxUid;
+      description = "Homebox container runtime user";
+    };
+    users.groups.homebox = lib.mkIf config.homefree.service-options.homebox.enable {
+      gid = homeboxGid;
+    };
+
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.homebox.enable {
     homebox = {
       image = "ghcr.io/sysadminsmedia/homebox:${version}";
 
       autoStart = true;
+
+      ## Single Go binary, non-privileged port — just drop root.
+      user = "${toString homeboxUid}:${toString homeboxGid}";
 
       extraOptions = [
         # "--pull=always"
