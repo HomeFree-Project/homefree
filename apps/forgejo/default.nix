@@ -329,6 +329,13 @@ in
         ## app.ini server config
         FORGEJO__server__HTTP_PORT = toString port;
         FORGEJO__server__DOMAIN = "git.${config.homefree.system.domain}";
+        ## SSH_DOMAIN drives the host shown in the repo "SSH clone"
+        ## URL (`ssh://git@<SSH_DOMAIN>:<SSH_PORT>/...`). It does NOT
+        ## fall back to DOMAIN when INSTALL_LOCK=true is set without
+        ## the install wizard having run — the shipped default of
+        ## "localhost" sticks, and every repo's clone URL surfaces as
+        ## `ssh://git@localhost:3022/...`. Pin it explicitly.
+        FORGEJO__server__SSH_DOMAIN = "git.${config.homefree.system.domain}";
         FORGEJO__server__MINIMUM_KEY_SIZE_CHECK = "false";
         FORGEJO__server__START_SSH_SERVER = "true";
         ## Container internal port
