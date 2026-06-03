@@ -59,9 +59,49 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
     }}
 
+    ## db-password — Postgres role "linkwarden"'s password. The
+    ## container today connects via TCP to lan-address:5432 under the
+    ## host pg_hba's trust rule for the podman bridge, so the value
+    ## is carried-but-not-enforced. Phase 2 wave (b)'s hba swap to
+    ## scram-sha-256 makes it live. Stripped to [A-Za-z0-9] via
+    ## `tr -d '/+='` so no URL-encoding is needed when embedded in
+    ## DATABASE_URL below.
+    ${anchor.anchorSecret {
+      service = "linkwarden";
+      key = "db-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
+    LINKWARDEN_DB_PASSWORD=$(cat ${secretsDir}/db-password)
+
+    ## Idempotent rotation: CREATE ROLE / ensureUsers handles role
+    ## creation declaratively; this ALTER ROLE keeps the cluster's
+    ## stored hash in sync with whatever the anchored value currently
+    ## is. On an existing box this swaps the (previously absent)
+    ## password for the anchored value on the first rebuild;
+    ## steady-state it ALTERs the role to its current value.
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+      DO \$do\$
+      BEGIN
+        IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${database-user}') THEN
+          EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', '${database-user}', '$LINKWARDEN_DB_PASSWORD');
+        END IF;
+      END
+      \$do\$;
+PGEOF
+
     install -m 600 /dev/null ${baseEnvFile}
     {
       echo "NEXTAUTH_SECRET=$(cat ${secretsDir}/nextauth-secret)"
+      ## DATABASE_URL synthesised here (not the static env block) so
+      ## the anchored password can be substituted at runtime. Embeds
+      ## the user + password + host + db; sslmode=disable because
+      ## both endpoints are on the same host (loopback over the
+      ## podman bridge → host lan-address).
+      printf 'DATABASE_URL=postgresql://%s:%s@%s:5432/%s?sslmode=disable\n' \
+        "${database-user}" "$LINKWARDEN_DB_PASSWORD" \
+        "${config.homefree.network.lan-address}" "${database-name}"
     } > ${baseEnvFile}
 
     ## OIDC env synthesized from zitadel-provision secrets. Empty file
@@ -181,7 +221,8 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        DATABASE_URL = "postgresql://${database-user}@${config.homefree.network.lan-address}:5432/${database-name}";
+        ## DATABASE_URL is synthesised into runtime.env by preStart so
+        ## the anchored db-password can be embedded at runtime.
         ## NextAuth needs its absolute base URL to construct the
         ## redirect_uri it registers with Zitadel. /api/v1/auth is
         ## Linkwarden's NextAuth mount point — same for all providers.
