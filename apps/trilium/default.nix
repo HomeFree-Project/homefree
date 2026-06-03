@@ -66,6 +66,19 @@ in
 
   virtualisation.oci-containers.containers = if config.homefree.services.trilium.enable == true then {
     trilium = {
+      ## SKIPPED Phase 3 UID-pin: the triliumnext/notes image's
+      ## entrypoint ALWAYS starts as root, runs `chown -R` over
+      ## /home/node, and then drops to the internal `node` user
+      ## (uid 1000) via `su`. Setting `user=` forces the container
+      ## to start as a non-root UID, the chown fails with
+      ## "Operation not permitted" on every file, and the `su` call
+      ## bombs with "must be suid to work properly". Trilium is
+      ## still non-root in practice (PID 1 runs as root briefly, the
+      ## actual Node.js process runs as node uid 1000), but its data
+      ## files end up owned by host uid 1000 (the OS admin). Fix-
+      ## options: build a custom image with USER set to a different
+      ## fixed UID, or run with --userns=keep-id and a host-side
+      ## uid-1000 owner override.
       image = "triliumnext/notes:v${version}";
 
       autoStart = true;

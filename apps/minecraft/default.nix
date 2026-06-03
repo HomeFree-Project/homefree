@@ -5,6 +5,15 @@ let
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 25565;
 
+  ## itzg/minecraft-server reads UID / GID env vars (note: not
+  ## PUID/PGID like LSIO) and chowns /data to that UID at entrypoint.
+  ## All minecraft instances on the box share a single HomeFree-
+  ## managed system user. Container PID 1 still runs as root briefly
+  ## while the entrypoint does setup, then the Java process drops to
+  ## this UID.
+  minecraftUid = 812;
+  minecraftGid = 812;
+
   userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -283,6 +292,16 @@ in
   };
 
   config = {
+    users.users.minecraft = lib.mkIf config.homefree.service-options.minecraft.enable {
+      isSystemUser = true;
+      group = "minecraft";
+      uid = minecraftUid;
+      description = "Minecraft (itzg) container runtime user";
+    };
+    users.groups.minecraft = lib.mkIf config.homefree.service-options.minecraft.enable {
+      gid = minecraftGid;
+    };
+
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.minecraft.enable (
     lib.listToAttrs (lib.imap0 (index: instance:
       let
@@ -330,6 +349,10 @@ in
             TZ = config.homefree.system.timeZone;
             EULA = "TRUE";
             MOTD = instance.name;
+            ## itzg/minecraft-server-specific UID/GID env (not PUID/
+            ## PGID). Entrypoint chowns /data and runs Java as this UID.
+            UID = toString minecraftUid;
+            GID = toString minecraftGid;
             # VERSION = minecraft_version;
             # OPS = "jumpingnosepizza,theomobile";
             # OPS = "ektoklast";

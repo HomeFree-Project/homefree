@@ -5,6 +5,14 @@ let
     then "${containerDataPath}/media"
     else config.homefree.service-options.jellyfin.media-path;
 
+  ## LinuxServer image, PUID/PGID pattern. s6-overlay stays as root
+  ## inside the container but the actual Jellyfin process runs as
+  ## this uid. Hardware transcoding needs /dev/dri access, which on
+  ## NixOS is split between the `video` (card0) and `render`
+  ## (renderD128) groups — we add both via --group-add below.
+  jellyfinUid = 811;
+  jellyfinGid = 811;
+
   preStart = ''
     mkdir -p ${containerDataPath}
     mkdir -p ${containerDataPath}/media
@@ -85,6 +93,16 @@ in
     ];
   };
 
+    users.users.jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
+      isSystemUser = true;
+      group = "jellyfin";
+      uid = jellyfinUid;
+      description = "Jellyfin container runtime user";
+    };
+    users.groups.jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
+      gid = jellyfinGid;
+    };
+
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
     jellyfin = {
       image = "lscr.io/linuxserver/jellyfin:${version}";
@@ -98,6 +116,12 @@ in
         "--device=/dev/dri:/dev/dri"
         "--cap-add=CAP_PERFMON" # For GPU statistics
         # "--privileged"
+        ## Supplementary groups so the Jellyfin process can access
+        ## /dev/dri/card0 (video) and /dev/dri/renderD128 (render).
+        ## Looked up from NixOS's config — falls back gracefully if a
+        ## group isn't declared on this box.
+        "--group-add=${toString config.users.groups.video.gid}"
+        "--group-add=${toString (config.users.groups.render.gid or 303)}"
       ];
 
       ports = [
@@ -125,6 +149,9 @@ in
       environment = {
         TZ = config.homefree.system.timeZone;
         JELLYFIN_PublishedServerUrl = "https://media.${config.homefree.system.domain}";
+        ## LinuxServer PUID/PGID — see comment in let block.
+        PUID = toString jellyfinUid;
+        PGID = toString jellyfinGid;
       };
     };
   };
