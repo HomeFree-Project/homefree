@@ -209,7 +209,14 @@ in
       ];
 
       ports = [
-        "0.0.0.0:${toString port}:${toString port}"
+        ## Bind only to loopback. The single consumer (immich-server)
+        ## reaches the container via the podman bridge (which is
+        ## unaffected by the host port-mapping bind address) and the
+        ## host-side prestarts connect via 127.0.0.1, so loopback is
+        ## sufficient and removes the cluster from any LAN/WAN
+        ## reachability surface — Caddy doesn't front this and there
+        ## is no legitimate off-host consumer.
+        "127.0.0.1:${toString port}:${toString port}"
       ];
 
       volumes = [

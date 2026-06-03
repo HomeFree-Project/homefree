@@ -258,6 +258,21 @@ in
         findtime = 60;
         bantime = 600;
       };
+
+      ## sshd auth failures. NixOS sshd logs to journald, so we use
+      ## the systemd backend (fail2ban reads via journalctl rather
+      ## than tailing a file). 5 failed logins in 10 minutes = ban
+      ## for an hour; the recidive escalation above takes care of
+      ## repeat offenders. Jail is a no-op on boxes where sshd is
+      ## disabled (no log entries to match).
+      sshd.settings = {
+        enabled = true;
+        filter = "sshd";
+        backend = "systemd";
+        maxretry = 5;
+        findtime = 600;
+        bantime = 3600;
+      };
     };
   };
 

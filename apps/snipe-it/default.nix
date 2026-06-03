@@ -83,13 +83,18 @@ let
 
     MYSQL_PASSWORD=$(cat ${mysqlPasswordFile})
 
-    ## @TODO: reduce privileges here. snipeit shouldn't be admin
+    ## Snipe-IT only needs full access to its own database — never
+    ## *.*. The unconditional REVOKE ON *.* below cleans up the
+    ## historical over-grant on existing boxes (was Phase 4's
+    ## documented @TODO); idempotent on already-converged boxes.
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
     ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'localhost'"
+    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'localhost'"
+    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'localhost'"
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
     ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'%'"
+    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'%'"
+    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
   '';
 
   version = "v8.4.1";
