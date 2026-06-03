@@ -248,6 +248,26 @@ let
     chown ${toString zitadelContainerUid}:${toString zitadelContainerGid} ${zitadelBootstrapPath}
     chmod 700 ${zitadelBootstrapPath}
 
+    ## db-user-password is anchored HERE (not in
+    ## zitadel-prepare-secrets) because NixOS's switch-to-configuration
+    ## does NOT reliably re-run oneshot+RemainAfterExit units when their
+    ## ExecStart hash or X-Restart-Triggers change — the unit is
+    ## already "active (exited)" from a prior boot and stays that way.
+    ## Container ExecStartPre, by contrast, re-runs every time the
+    ## container restarts, and rebuilds always restart the container
+    ## when its content changes. Same pattern snipe-it, nextcloud,
+    ## linkwarden, screeenly use. The anchor helper is idempotent so
+    ## putting the call here doesn't break anything; it just makes the
+    ## materialisation reliable on every existing instance.
+    mkdir -p ${zitadelSecretsDir}
+    ${anchor.preamble}
+    ${anchor.anchorSecret {
+      service = "zitadel";
+      key = "db-user-password";
+      dir = zitadelSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
     install -m 600 /dev/null ${zitadelEnvFile}
     {
       if [ -s "${zitadelSecretsDir}/masterkey" ]; then
@@ -257,13 +277,10 @@ let
         echo "ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD=$(cat ${zitadelSecretsDir}/admin-password)"
       fi
       ## DB password for the "zitadel" Postgres role on the host
-      ## cluster. Anchored by zitadel-prepare-secrets.service. Today
-      ## the host pg_hba uses trust auth on the podman bridge so the
-      ## value is sent-but-ignored; Phase 2 swaps to scram-sha-256 and
-      ## it goes live.
-      if [ -s "${zitadelSecretsDir}/db-user-password" ]; then
-        echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)"
-      fi
+      ## cluster. Today the host pg_hba uses trust auth on the podman
+      ## bridge so the value is sent-but-ignored; Phase 2's pg_hba
+      ## swap makes it live.
+      echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)"
     } > ${zitadelEnvFile}
     ## env file is read by podman from the host (not the container),
     ## so it stays root:root mode 600 — only the directory itself
@@ -276,18 +293,16 @@ let
     ## skips, subsequent boots rotate from whatever the historical
     ## literal was to the current anchored value, and steady-state
     ## boots set it to itself.
-    if [ -s "${zitadelSecretsDir}/db-user-password" ]; then
-      ZITADEL_DB_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)
-      ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
-        DO \$do\$
-        BEGIN
-          IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zitadel') THEN
-            EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'zitadel', '$ZITADEL_DB_PASSWORD');
-          END IF;
-        END
-        \$do\$;
+    ZITADEL_DB_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+      DO \$do\$
+      BEGIN
+        IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zitadel') THEN
+          EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'zitadel', '$ZITADEL_DB_PASSWORD');
+        END IF;
+      END
+      \$do\$;
 PGEOF
-    fi
   '';
 
   ## Body of zitadel-prepare-secrets.service. Extracted to a let-binding
@@ -313,18 +328,13 @@ PGEOF
       generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
     }}
 
-    ## db-user-password — Postgres role "zitadel"'s password.
-    ## Used by Zitadel itself (via env file) AND by the prestart
-    ## ALTER ROLE that keeps the cluster's stored hash in sync
-    ## with what Zitadel sends. Today carried-but-not-enforced
-    ## (trust auth on the podman bridge); Phase 2's pg_hba swap
-    ## makes the value live.
-    ${anchor.anchorSecret {
-      service = "zitadel";
-      key = "db-user-password";
-      dir = zitadelSecretsDir;
-      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
-    }}
+    ## NOTE: db-user-password is intentionally NOT anchored here. It
+    ## lives in zitadelPreStart (podman-zitadel's ExecStartPre)
+    ## because oneshot+RemainAfterExit units don't re-run reliably on
+    ## switch-to-configuration even with X-Restart-Triggers set,
+    ## leaving the secret missing on existing instances. The container
+    ## prestart pattern is the same one used by snipe-it, nextcloud,
+    ## linkwarden, screeenly and runs every time the container restarts.
 
     ## admin-password — the initial Zitadel admin password. In the
     ## normal install flow it's written by the web installer
@@ -701,20 +711,17 @@ in
       ## decrypted back out rather than regenerated. Regenerating the
       ## masterkey in particular would render the backed-up Zitadel
       ## database permanently undecryptable.
+      ##
+      ## NOTE on adding new anchors: do NOT add them here unless the
+      ## value must exist *before* podman-zitadel starts (e.g., the
+      ## masterkey, which Zitadel needs at container init). For
+      ## anything else, prefer zitadelPreStart (podman-zitadel's
+      ## ExecStartPre) — switch-to-configuration does NOT reliably
+      ## re-run oneshot+RemainAfterExit units, so a new anchor added
+      ## here may not materialise on existing instances even on a full
+      ## rebuild. Container ExecStartPre always re-runs when the
+      ## container restarts.
       script = zitadelPrepareSecretsScript;
-
-      ## NixOS's switch-to-configuration skips re-running oneshot
-      ## + RemainAfterExit units even when their ExecStart path
-      ## changes — the unit is already "active (exited)" and the
-      ## switch logic treats its job as done. Without this trigger,
-      ## adding a new `anchor.anchorSecret` call to the script
-      ## above would NOT materialise the new secret on existing
-      ## boxes until the operator manually `systemctl restart
-      ## zitadel-prepare-secrets`. Hashing the script body forces a
-      ## restart on the very next rebuild whenever the body changes.
-      restartTriggers = [
-        (pkgs.writeText "zitadel-prepare-secrets-script" zitadelPrepareSecretsScript)
-      ];
     };
 
     systemd.services.podman-zitadel = lib.mkIf zitadelEnabled {
