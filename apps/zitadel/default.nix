@@ -290,6 +290,94 @@ PGEOF
     fi
   '';
 
+  ## Body of zitadel-prepare-secrets.service. Extracted to a let-binding
+  ## so it can be referenced by both `script` and `restartTriggers`
+  ## below — see the long comment on `restartTriggers` for why.
+  zitadelPrepareSecretsScript = ''
+    ${anchor.preamble}
+
+    ## masterkey — must be exactly 32 bytes. `openssl rand -hex 16`
+    ## is 32 ASCII chars → 32 bytes, and avoids the base64 padding
+    ## `=` issue that breaks ZITADEL_MASTERKEY parsing in some shells.
+    ${anchor.anchorSecret {
+      service = "zitadel";
+      key = "masterkey";
+      dir = zitadelSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -hex 16";
+    }}
+
+    ${anchor.anchorSecret {
+      service = "zitadel";
+      key = "oauth2-cookie-secret";
+      dir = zitadelSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
+    }}
+
+    ## db-user-password — Postgres role "zitadel"'s password.
+    ## Used by Zitadel itself (via env file) AND by the prestart
+    ## ALTER ROLE that keeps the cluster's stored hash in sync
+    ## with what Zitadel sends. Today carried-but-not-enforced
+    ## (trust auth on the podman bridge); Phase 2's pg_hba swap
+    ## makes the value live.
+    ${anchor.anchorSecret {
+      service = "zitadel";
+      key = "db-user-password";
+      dir = zitadelSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
+    ## admin-password — the initial Zitadel admin password. In the
+    ## normal install flow it's written by the web installer
+    ## (web-platform/backend/services/install.py:1549) to match the OS
+    ## admin user's password, so SSO + shell credentials are unified
+    ## from the very first boot. The PAM bridge
+    ## (apps/zitadel/pam-bridge.nix) keeps them in sync going forward
+    ## by POSTing every later `passwd` change to Zitadel's API.
+    ##
+    ## End users never log into Zitadel directly — orchestration is
+    ## handled by install.py and the HomeFree admin-api backend.
+    ##
+    ## This auto-generate path is a SAFETY NET for the case where
+    ## install.py never ran (skipped install, manual rebuild, file
+    ## wiped). Without it Zitadel would fall back to its compiled-in
+    ## default password, which is weak and well-known. Generating a
+    ## strong random value here keeps the bootstrap secure even when
+    ## the normal flow was bypassed; recovery is to set the OS
+    ## password (e.g., via the installer or `passwd`), which the
+    ## PAM bridge then propagates into Zitadel.
+    ##
+    ## adoptExisting=false: the PAM bridge updates Zitadel via its
+    ## Management API but does NOT rewrite this file, so the on-disk
+    ## value goes stale the moment the OS admin first changes their
+    ## password. Anchoring the file's value would persist a
+    ## possibly-stale credential into the encrypted store. We anchor
+    ## only on fresh generation — branch (3) of secrets-anchor.nix —
+    ## and let install.py's write be the source of truth for the
+    ## happy path. Base64-of-24-bytes minus /+= is mixed-case
+    ## alphanumeric, satisfying Zitadel's default policy.
+    ${anchor.anchorSecret {
+      service = "zitadel";
+      key = "admin-password";
+      dir = zitadelSecretsDir;
+      adoptExisting = false;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
+      onGenerate = ''
+        ## Operator-facing journal warning. End users should never
+        ## reach this — install.py writes admin-password as part of
+        ## the normal install flow, so a freshly-generated value
+        ## here means the install flow was skipped or the file was
+        ## wiped. The value is unknown to the OS user, so SSO
+        ## still works for them via the PAM bridge as soon as they
+        ## run `passwd` (or re-run the installer).
+        ##
+        ## Tagged with WARNING so it shows up at -p warning in
+        ## journalctl.
+        logger -t zitadel-prepare-secrets -p warning \
+          "Generated a fresh Zitadel admin password as a safety-net (install.py did not stash one). Run \`passwd\` as the OS admin to sync, or re-run the installer. The generated value is at ${zitadelSecretsDir}/admin-password — only readable by root."
+      '';
+    }}
+  '';
+
   ## (Historically there was a `deployOauth2Proxy` symbol here that
   ## gated the oauth2-proxy container on the existence of three SOPS
   ## secret files via builtins.pathExists. That gate caused a
@@ -613,79 +701,20 @@ in
       ## decrypted back out rather than regenerated. Regenerating the
       ## masterkey in particular would render the backed-up Zitadel
       ## database permanently undecryptable.
-      script = ''
-        ${anchor.preamble}
+      script = zitadelPrepareSecretsScript;
 
-        ## masterkey — must be exactly 32 bytes. `openssl rand -hex 16`
-        ## is 32 ASCII chars → 32 bytes, and avoids the base64 padding
-        ## `=` issue that breaks ZITADEL_MASTERKEY parsing in some shells.
-        ${anchor.anchorSecret {
-          service = "zitadel";
-          key = "masterkey";
-          dir = zitadelSecretsDir;
-          generate = "${pkgs.openssl}/bin/openssl rand -hex 16";
-        }}
-
-        ${anchor.anchorSecret {
-          service = "zitadel";
-          key = "oauth2-cookie-secret";
-          dir = zitadelSecretsDir;
-          generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
-        }}
-
-        ## db-user-password — Postgres role "zitadel"'s password.
-        ## Used by Zitadel itself (via env file) AND by the prestart
-        ## ALTER ROLE that keeps the cluster's stored hash in sync
-        ## with what Zitadel sends. Today carried-but-not-enforced
-        ## (trust auth on the podman bridge); Phase 2's pg_hba swap
-        ## makes the value live.
-        ${anchor.anchorSecret {
-          service = "zitadel";
-          key = "db-user-password";
-          dir = zitadelSecretsDir;
-          generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
-        }}
-
-        ## admin-password — the initial Zitadel admin password. Normally
-        ## written by the web installer (install.py); auto-generated
-        ## here only on a fresh-rebuild path that skipped the installer,
-        ## so a pre-SSO box upgrade still produces a working bootstrap
-        ## rather than Zitadel's unstable compiled-in default.
-        ##
-        ## adoptExisting=false: after first login Zitadel forces a
-        ## password change and does NOT sync it back to this file, so
-        ## the on-disk value goes stale. We anchor it only when freshly
-        ## generated — never adopt a possibly-stale on-disk value into
-        ## the encrypted store. Base64-of-24-bytes minus /+= is mixed-
-        ## case alphanumeric, satisfying Zitadel's default policy.
-        ${anchor.anchorSecret {
-          service = "zitadel";
-          key = "admin-password";
-          dir = zitadelSecretsDir;
-          adoptExisting = false;
-          generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
-          onGenerate = ''
-            ## Journal banner — visible via:
-            ##   sudo journalctl -u zitadel-prepare-secrets.service
-            PW=$(cat "${zitadelSecretsDir}/admin-password")
-            echo ""
-            echo "════════════════════════════════════════════════════════════════════════════════"
-            echo "  HomeFree SSO — Initial Zitadel admin password (FIRST LOGIN ONLY)"
-            echo "────────────────────────────────────────────────────────────────────────────────"
-            echo "  Username : ${config.homefree.system.adminUsername}"
-            echo "  Password : $PW"
-            echo ""
-            echo "  → Log in once at https://sso.${config.homefree.system.domain}/"
-            echo "  → Zitadel will prompt you to set a new password — pick one you'll remember."
-            echo ""
-            echo "  This is the only time the password appears in the log."
-            echo "  To retrieve it again before first login:"
-            echo "    sudo cat ${zitadelSecretsDir}/admin-password"
-            echo "════════════════════════════════════════════════════════════════════════════════"
-            echo ""
-          '';
-        }}
-      '';
+      ## NixOS's switch-to-configuration skips re-running oneshot
+      ## + RemainAfterExit units even when their ExecStart path
+      ## changes — the unit is already "active (exited)" and the
+      ## switch logic treats its job as done. Without this trigger,
+      ## adding a new `anchor.anchorSecret` call to the script
+      ## above would NOT materialise the new secret on existing
+      ## boxes until the operator manually `systemctl restart
+      ## zitadel-prepare-secrets`. Hashing the script body forces a
+      ## restart on the very next rebuild whenever the body changes.
+      restartTriggers = [
+        (pkgs.writeText "zitadel-prepare-secrets-script" zitadelPrepareSecretsScript)
+      ];
     };
 
     systemd.services.podman-zitadel = lib.mkIf zitadelEnabled {
