@@ -309,6 +309,17 @@ in
   config = {
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
       freshrss = {
+        ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
+        ## entrypoint does extensive root-only setup on every start —
+        ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
+        ## ini files under /etc/php/, runs a2enmod for
+        ## mod_auth_openidc, drops a cron PID file under /var/run,
+        ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
+        ## every one of those fails and the container exits 1. The
+        ## image is fundamentally root-in-container; making it
+        ## non-root requires either a custom image build or
+        ## --userns=keep-id with a host-side UID matching the
+        ## image's expected www-data uid.
         image = "${image}:${version}";
 
         autoStart = true;

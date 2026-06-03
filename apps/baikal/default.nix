@@ -55,6 +55,15 @@ in
   config = {
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.baikal.enable {
     baikal = {
+      ## SKIPPED Phase 3 non-root pass: the ckulka/baikal-nginx
+      ## image's entrypoint does `chown -R www-data /var/www/baikal`
+      ## on every start — including the image's own vendor PHP files
+      ## which are owned by root in the image layer. As a non-root
+      ## UID the chown fails with "Operation not permitted" on every
+      ## file and the container exits 1. Fix-options if hardening
+      ## becomes a priority: (a) build a custom image with --chown=
+      ## baked in and the entrypoint chown removed, (b) switch to a
+      ## different Baikal image (sabre/baikal-podman variants exist).
       image = "ckulka/baikal:${version}-nginx";
 
       autoStart = true;
