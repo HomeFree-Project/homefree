@@ -92,6 +92,15 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
     }}
 
+    ## Synthesise runtime.env carrying DB_PASSWORD. immich-server
+    ## reads it via environmentFiles. Required because Phase 2's
+    ## pg_hba swap turns vectorchord's podman-bridge trust auth into
+    ## scram-sha-256 — the container has to actually send the
+    ## password matching the immich role.
+    install -m 600 /dev/null ${containerDataPath}/runtime.env
+    printf 'DB_PASSWORD=%s\n' "$(cat ${immichSecretsDir}/db-password)" \
+      > ${containerDataPath}/runtime.env
+
     ## Build a CA bundle the container can mount over its own
     ## /etc/ssl/certs/ca-certificates.crt so Immich's Node OIDC
     ## client can validate https://sso.<domain>/.well-known/
@@ -322,6 +331,14 @@ in
   systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost =
   let
     postStartScript = pkgs.writeShellScript "postgres-vectorchord-poststart" ''
+      ## All psql calls below connect as the postgres superuser via
+      ## 127.0.0.1:6432. Phase 2's pg_hba swap turns that path from
+      ## trust auth into scram-sha-256, so we MUST export PGPASSWORD
+      ## now. The value is rotated and anchored by the vectorchord
+      ## prestart + ExecStartPost rotation script in
+      ## services/postgres-vectorchord/default.nix.
+      export PGPASSWORD=$(cat /var/lib/homefree-secrets/postgres-vectorchord/superuser-password)
+
       # Wait for database to be ready (max 30 seconds)
       for i in {1..30}; do
         if ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
@@ -474,6 +491,9 @@ in
         DB_PORT = "6432";
         DB_DATABASE_NAME = database-name;
         DB_USERNAME = database-user;
+        ## DB_PASSWORD comes from runtime.env (synthesised in
+        ## preStart from the anchored value at
+        ## ${immichSecretsDir}/db-password).
         REDIS_HOSTNAME = "immich-redis";
         REDIS_PORT = toString port-redis;
         IMMICH_MACHINE_LEARNING_URL = "http://immich-machine-learning:${toString port-machine-learning}";
@@ -481,6 +501,11 @@ in
         IMMICH_HOST = "0.0.0.0";
         IMMICH_PORT = toString port;
       };
+
+      ## runtime.env carries DB_PASSWORD (anchored, synthesised in
+      ## preStart). Without it, Phase 2's vectorchord pg_hba swap to
+      ## scram-sha-256 leaves the container unable to authenticate.
+      environmentFiles = [ "${containerDataPath}/runtime.env" ];
     };
 
     immich-machine-learning = {

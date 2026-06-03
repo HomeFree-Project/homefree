@@ -40,28 +40,35 @@ let
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
+  ## Phase 2: TCP entries use scram-sha-256. The only consumer is
+  ## immich-server (DB_PASSWORD wired into runtime.env) and the
+  ## host-side prestarts on this container, which export PGPASSWORD
+  ## from /var/lib/homefree-secrets/postgres-vectorchord/superuser-password.
+  ## Local socket stays trust — only root inside the container itself
+  ## reaches it; nothing on the host uses the socket path.
   hba-file = pkgs.writeText "pg_hba.conf" ''
     #type database  DBuser  auth-method
     local all       all     trust
 
     #type database DBuser origin-address auth-method
     # ipv4
-    host  all      all     127.0.0.1/32   trust
+    host  all      all     127.0.0.1/32   scram-sha-256
     # host
-    host  all      all     10.0.0.0/16   trust
+    host  all      all     10.0.0.0/16    scram-sha-256
     # podman
-    host  all      all     10.88.0.0/16   trust
+    host  all      all     10.88.0.0/16   scram-sha-256
     # ipv6
-    host all       all     ::1/128        trust
-    host all       all     fd00::/8       trust
+    host all       all     ::1/128        scram-sha-256
+    host all       all     fd00::/8       scram-sha-256
     # Allow replication connections from localhost, by a user with the
-    # replication privilege.
+    # replication privilege. (Not currently used — keeping the entries
+    # in place for future replica setups, with the same auth method.)
     local   replication     all                                     trust
-    host    replication     all             127.0.0.1/32            trust
-    host    replication     all             10.0.0.0/16             trust
-    host    replication     all             10.88.0.0/16            trust
-    host    replication     all             ::1/128                 trust
-    host    replication     all             fd00::/8                 trust
+    host    replication     all             127.0.0.1/32            scram-sha-256
+    host    replication     all             10.0.0.0/16             scram-sha-256
+    host    replication     all             10.88.0.0/16            scram-sha-256
+    host    replication     all             ::1/128                 scram-sha-256
+    host    replication     all             fd00::/8                 scram-sha-256
   '';
 
   ## Override config injected via the include_if_exists hook the
