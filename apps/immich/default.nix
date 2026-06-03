@@ -80,6 +80,18 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
     }}
 
+    ## DB password for the "immich" Postgres role on the
+    ## postgres-vectorchord container. Today the immich-server container
+    ## connects via the podman bridge under trust auth so the value is
+    ## carried-but-not-enforced; Phase 2 swaps the vectorchord pg_hba
+    ## to scram-sha-256 and the value goes live.
+    ${anchor.anchorSecret {
+      service = "immich";
+      key = "db-password";
+      dir = immichSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
     ## Build a CA bundle the container can mount over its own
     ## /etc/ssl/certs/ca-certificates.crt so Immich's Node OIDC
     ## client can validate https://sso.<domain>/.well-known/
@@ -137,8 +149,11 @@ let
     DB_PORT="6432"
     DB_NAME="${database-name}"
     DB_USER="postgres"
-    DB_PASS="changeme"   # matches POSTGRES_PASSWORD on the
-                         # postgres-vectorchord container
+    ## Superuser password rotated and anchored by
+    ## services/postgres-vectorchord/default.nix. Today the vectorchord
+    ## pg_hba allows trust on 127.0.0.1 so this value is sent-but-ignored;
+    ## Phase 2 swaps to scram-sha-256 and it goes live.
+    DB_PASS=$(cat /var/lib/homefree-secrets/postgres-vectorchord/superuser-password)
 
     ## ── 1. Wait for Immich to come up ───────────────────────────
     for i in $(seq 1 60); do
@@ -317,6 +332,22 @@ in
         sleep 1
       done
 
+      ## Anchor the immich-role password here as well as in immich's
+      ## own prestart, because THIS script runs first (vectorchord's
+      ## ExecStartPost fires before immich-server's ExecStartPre) and
+      ## reads the value below. The anchor helper is idempotent — the
+      ## immich prestart's call becomes a no-op on every boot after
+      ## the first.
+      ${anchor.preamble}
+      ${anchor.anchorSecret {
+        service = "immich";
+        key = "db-password";
+        dir = immichSecretsDir;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+      }}
+
+      IMMICH_DB_PASSWORD=$(cat ${immichSecretsDir}/db-password)
+
       ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres << EOF
         DO
         \$do\$
@@ -328,7 +359,7 @@ in
               RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
            ELSE
               BEGIN   -- nested block
-                 CREATE ROLE "immich" WITH LOGIN PASSWORD 'changeme';
+                 CREATE ROLE "immich" WITH LOGIN PASSWORD '$IMMICH_DB_PASSWORD';
               EXCEPTION
                  WHEN duplicate_object THEN
                     RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
@@ -337,6 +368,12 @@ in
         END
         \$do\$;
       EOF
+
+      ## Unconditional rotation: idempotent ALTER. On a pre-anchoring
+      ## box this swaps the historical literal "changeme" for the
+      ## anchored value; subsequent rebuilds set it to itself.
+      ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres \
+        -c "ALTER ROLE \"${database-user}\" WITH PASSWORD '$IMMICH_DB_PASSWORD'"
 
       ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 

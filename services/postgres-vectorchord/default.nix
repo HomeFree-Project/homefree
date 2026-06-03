@@ -34,6 +34,11 @@ let
   port = 6432;
   containerDataPath = "/var/lib/postgres-vectorchord-podman";
   containerDataPathInternal = "/var/lib/postgresql/data";
+  secretsDir = "/var/lib/homefree-secrets/postgres-vectorchord";
+
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
   hba-file = pkgs.writeText "pg_hba.conf" ''
     #type database  DBuser  auth-method
@@ -94,6 +99,69 @@ let
 
   preStart = ''
     mkdir -p ${containerDataPath}/pgdata
+    mkdir -p ${secretsDir}
+
+    ${anchor.preamble}
+
+    ## Anchor the postgres superuser password. POSTGRES_PASSWORD in the
+    ## upstream image is consulted only by initdb on a fresh data dir
+    ## (an existing pgdata ignores it), so the runtime rotation happens
+    ## via SQL in postStart below. Anchoring still matters for fresh
+    ## installs and for backup→restore: the password baked into the
+    ## restored pgdata must match what we hand to consumers.
+    ${anchor.anchorSecret {
+      service = "postgres-vectorchord";
+      key = "superuser-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
+    ## Synthesise the env file the container reads. The Postgres image
+    ## consumes POSTGRES_PASSWORD at initdb time on fresh boxes; on
+    ## existing boxes the value is irrelevant to the image but kept
+    ## here as the single source of truth for the rotation script.
+    install -m 600 /dev/null ${containerDataPath}/runtime.env
+    printf 'POSTGRES_PASSWORD=%s\n' "$(cat ${secretsDir}/superuser-password)" \
+      > ${containerDataPath}/runtime.env
+  '';
+
+  ## Runs AFTER the container is up. The image's POSTGRES_PASSWORD env
+  ## is initdb-only — on a pre-existing pgdata the internal superuser
+  ## password is whatever it was originally seeded with (likely the
+  ## historical literal "changeme"). The only reliable rotation knob is
+  ## an in-band ALTER USER. The script tries the new password first
+  ## (post-rotation steady state) and falls back to "changeme" exactly
+  ## once during the one-time upgrade. After one successful rebuild,
+  ## the new-password branch wins forever.
+  postStart = ''
+    set -eu
+    NEW=$(cat ${secretsDir}/superuser-password)
+
+    ## Wait for the cluster to accept connections — the container is
+    ## marked "up" before postgres finishes starting/recovering.
+    for i in $(seq 1 60); do
+      if ${pkgs.postgresql}/bin/pg_isready -h 127.0.0.1 -p ${toString port} -U postgres -q; then
+        break
+      fi
+      sleep 1
+    done
+
+    if PGPASSWORD="$NEW" ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p ${toString port} \
+         -U postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+      ## Already rotated; re-issue the ALTER idempotently so a fresh
+      ## restore (where pgdata has the right hash) is a confirmed no-op.
+      PGPASSWORD="$NEW" ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p ${toString port} \
+        -U postgres -c "ALTER USER postgres WITH PASSWORD '$NEW'" >/dev/null
+    elif PGPASSWORD=changeme ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p ${toString port} \
+         -U postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+      ## One-time upgrade from the historical literal password.
+      PGPASSWORD=changeme ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p ${toString port} \
+        -U postgres -c "ALTER USER postgres WITH PASSWORD '$NEW'" >/dev/null
+      echo "rotated postgres-vectorchord superuser password from literal to anchored value"
+    else
+      echo "FATAL: could not authenticate to postgres-vectorchord with either anchored or legacy password" >&2
+      exit 1
+    fi
   '';
 in
 {
@@ -151,8 +219,11 @@ in
       environment = {
         TZ = config.homefree.system.timeZone;
         PGDATA = "/var/lib/postgresql/data/pgdata";
-        POSTGRES_PASSWORD = "changeme";
       };
+
+      ## POSTGRES_PASSWORD lives in runtime.env, anchored to
+      ## /etc/nixos/secrets so it survives a backup→restore.
+      environmentFiles = [ "${containerDataPath}/runtime.env" ];
     };
   };
 
@@ -161,6 +232,7 @@ in
     wants = [ "dns-ready.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "postgres-vectorchord-prestart" preStart}" ];
+      ExecStartPost = [ "!${pkgs.writeShellScript "postgres-vectorchord-rotate-superuser" postStart}" ];
       # Add restart delay to prevent rapid restart loops
       RestartSec = 30;
     };

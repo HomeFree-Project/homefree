@@ -172,20 +172,35 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
     }}
 
+    ## DB password for the "nextcloud" Postgres role. Today the
+    ## container connects via the bind-mounted /run/postgresql socket
+    ## under trust auth (services/postgres pg_hba), so the value is
+    ## carried-but-not-enforced. Anchoring it now lets Phase 2 swap
+    ## the host pg_hba from trust → scram-sha-256 without changing
+    ## anything in this module.
+    ${anchor.anchorSecret {
+      service = "nextcloud";
+      key = "db-password";
+      dir = "/var/lib/homefree-secrets/nextcloud";
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
     ## Synthesise the env file the container reads. POSTGRES_PASSWORD
-    ## matches the literal 'changeme' baked into the role-creation
-    ## DO-block below — keep them in sync. NEXTCLOUD_ADMIN_PASSWORD
+    ## is kept in sync with the role's password — the role-creation
+    ## DO-block below reads the same anchored file. NEXTCLOUD_ADMIN_PASSWORD
     ## is what the install wizard uses to provision the initial admin
     ## user named after homefree.system.adminUsername (set via
     ## NEXTCLOUD_ADMIN_USER in the container env).
     install -m 600 /dev/null ${containerDataPath}/runtime.env
     {
-      echo "POSTGRES_PASSWORD=changeme"
+      echo "POSTGRES_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)"
       echo "NEXTCLOUD_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/admin-password)"
     } > ${containerDataPath}/runtime.env
 
-    # Database initialization for postgres-vectorchord if needed
+    # Database initialization for the host postgres
     ${''
+      NEXTCLOUD_DB_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)
+
       ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres << EOF
         DO
         \$do\$
@@ -197,7 +212,7 @@ let
               RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
            ELSE
               BEGIN   -- nested block
-                 CREATE ROLE "${database-user}" WITH LOGIN PASSWORD 'changeme';
+                 CREATE ROLE "${database-user}" WITH LOGIN PASSWORD '$NEXTCLOUD_DB_PASSWORD';
               EXCEPTION
                  WHEN duplicate_object THEN
                     RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
@@ -206,6 +221,12 @@ let
         END
         \$do\$;
       EOF
+
+      ## Unconditional rotation: idempotent ALTER. On a pre-anchoring
+      ## box this swaps the historical literal "changeme" for the
+      ## anchored value; subsequent rebuilds set it to itself.
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres \
+        -c "ALTER ROLE \"${database-user}\" WITH PASSWORD '$NEXTCLOUD_DB_PASSWORD'"
 
       ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
