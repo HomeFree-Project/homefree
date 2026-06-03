@@ -256,16 +256,22 @@ let
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set htaccess.RewriteBase --value='/'
     ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:update:htaccess
 
-    HARP_PASSWORD=$(cat ${containerDataPath}/harp-pw.txt)
+    ${lib.optionalString config.homefree.service-options.nextcloud.appapi ''
+      ## AppAPI HaRP daemon registration. Only fires when the appapi
+      ## option is on — otherwise the daemon would point at a
+      ## non-existent container and silently break sidecar-app
+      ## installs from the Nextcloud UI.
+      HARP_PASSWORD=$(cat ${containerDataPath}/harp-pw.txt)
 
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:unregister harp_proxy_host
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:register \
-      harp_proxy_host "HaRP Proxy (Host)" "docker-install" "http" \
-      "nextcloud-appapi-harp:8780" "http://nextcloud" \
-      --harp \
-      --harp_frp_address "nextcloud-appapi-harp:8782" \
-      --harp_shared_key "$HARP_PASSWORD" \
-      --set-default
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:unregister harp_proxy_host
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:register \
+        harp_proxy_host "HaRP Proxy (Host)" "docker-install" "http" \
+        "nextcloud-appapi-harp:8780" "http://nextcloud" \
+        --harp \
+        --harp_frp_address "nextcloud-appapi-harp:8782" \
+        --harp_shared_key "$HARP_PASSWORD" \
+        --set-default
+    ''}
 
     # Install/enable apps
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
@@ -388,6 +394,39 @@ let
       description = "Open to public on WAN port";
     };
 
+    appapi = lib.mkOption {
+      type = lib.types.bool;
+      ## Upgrade-shim: default to `true` for any box that previously
+      ## ran the AppAPI HaRP proxy (the harp-pw.txt is written by the
+      ## main nextcloud container's preStart only when AppAPI was in
+      ## the container set). Fresh installs get the harp container —
+      ## and its /run/podman/podman.sock bind-mount — off by default.
+      ##
+      ## The bind-mount of the host podman socket into a container is
+      ## a documented container-escape vector: any RCE in the
+      ## AppAPI-proxied PHP code reaches the same docker API that
+      ## podman gives to root. AppAPI's Nextcloud-managed sidecar
+      ## apps (Whiteboard, Talk-recording, etc.) use it. Most
+      ## HomeFree users won't install those — gating it default-off
+      ## removes the escape surface for everyone who doesn't need it.
+      default = builtins.pathExists "/var/lib/nextcloud-podman/harp-pw.txt";
+      description = ''
+        Enable the Nextcloud AppAPI HaRP proxy container. Required for
+        Nextcloud-managed sidecar apps (Whiteboard, Talk-recording,
+        Speech-to-text, etc.) — they get installed and orchestrated
+        via the docker socket bind-mount that this container needs.
+
+        Defaults true on boxes that already had AppAPI running (the
+        upgrade-shim detects /var/lib/nextcloud-podman/harp-pw.txt),
+        false on fresh installs. Set explicitly if you want AppAPI
+        sidecar apps on a new install.
+
+        Security note: enabling exposes the host podman socket inside
+        the AppAPI container, which is a documented container-escape
+        path. Leave off unless you actively use AppAPI sidecar apps.
+      '';
+    };
+
     secrets = {
       admin-password = lib.mkOption {
         type = lib.types.nullOr lib.types.path;
@@ -454,7 +493,8 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  virtualisation.oci-containers.containers =
+    (lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     nextcloud = {
       image = "nextcloud:${version}-apache";
 
@@ -531,26 +571,6 @@ in
       };
     };
 
-    nextcloud-appapi-harp = {
-      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
-
-      autoStart = true;
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/podman/podman.sock:/var/run/docker.sock"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        NC_INSTANCE_URL = "http://nextcloud";
-      };
-
-      environmentFiles = [
-        "${containerDataPath}/harp-env.txt"
-      ];
-    };
-
     # Cron container for background jobs
     nextcloud-cron = {
       image = "nextcloud:${version}-apache";
@@ -599,7 +619,38 @@ in
         "${containerDataPath}/runtime.env"
       ];
     };
-  };
+  })
+  ## AppAPI HaRP proxy — opt-in, gates the podman.sock bind-mount
+  ## behind an explicit option. See the comment on the option in
+  ## userOptions for the security trade-off. The upgrade-shim default
+  ## (pathExists harp-pw.txt) preserves existing behaviour on boxes
+  ## that already ran this container.
+  // (lib.optionalAttrs (config.homefree.service-options.nextcloud.enable
+                         && config.homefree.service-options.nextcloud.appapi) {
+    nextcloud-appapi-harp = {
+      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
+
+      autoStart = true;
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        ## Bind-mounts the host podman socket — this is the docker-
+        ## compatible API AppAPI uses to spawn sidecar apps. It is
+        ## also the container-escape surface that gates this whole
+        ## entry behind `homefree.services.nextcloud.appapi`.
+        "/run/podman/podman.sock:/var/run/docker.sock"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        NC_INSTANCE_URL = "http://nextcloud";
+      };
+
+      environmentFiles = [
+        "${containerDataPath}/harp-env.txt"
+      ];
+    };
+  });
 
   systemd.services.podman-nextcloud = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" "postgresql.service" ];
@@ -628,7 +679,9 @@ in
     wants = [ "dns-ready.service" ];
   };
 
-  systemd.services.podman-nextcloud-appapi-harp = lib.mkIf config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud-appapi-harp = lib.mkIf
+    (config.homefree.service-options.nextcloud.enable
+     && config.homefree.service-options.nextcloud.appapi) {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "podman-nextcloud.service" ];
@@ -650,10 +703,10 @@ in
       systemd-service-names = [
         "podman-nextcloud"
         "podman-nextcloud-redis"
-        "podman-nextcloud-appapi-harp"
         "podman-nextcloud-cron"
         "postgresql"
-      ];
+      ] ++ lib.optional config.homefree.service-options.nextcloud.appapi
+        "podman-nextcloud-appapi-harp";
       sso = {
         kind = "native_oidc";
         ## Dev context (intentionally not surfaced in the admin UI):
