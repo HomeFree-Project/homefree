@@ -396,34 +396,38 @@ let
 
     appapi = lib.mkOption {
       type = lib.types.bool;
-      ## Upgrade-shim: default to `true` for any box that previously
-      ## ran the AppAPI HaRP proxy (the harp-pw.txt is written by the
-      ## main nextcloud container's preStart only when AppAPI was in
-      ## the container set). Fresh installs get the harp container —
-      ## and its /run/podman/podman.sock bind-mount — off by default.
+      ## Default-off security posture. An earlier iteration tried an
+      ## upgrade-shim — `builtins.pathExists
+      ## "/var/lib/nextcloud-podman/harp-pw.txt"` to preserve existing
+      ## AppAPI users — but flake evaluation runs in pure mode and
+      ## refuses to inspect host paths outside the flake source, so
+      ## pathExists always returns false in this codebase. Hardcoded
+      ## false is honest about the actual behaviour: every box gets
+      ## AppAPI off unless the operator explicitly opts in.
       ##
-      ## The bind-mount of the host podman socket into a container is
-      ## a documented container-escape vector: any RCE in the
-      ## AppAPI-proxied PHP code reaches the same docker API that
-      ## podman gives to root. AppAPI's Nextcloud-managed sidecar
-      ## apps (Whiteboard, Talk-recording, etc.) use it. Most
-      ## HomeFree users won't install those — gating it default-off
-      ## removes the escape surface for everyone who doesn't need it.
-      default = builtins.pathExists "/var/lib/nextcloud-podman/harp-pw.txt";
+      ## The bind-mount of /run/podman/podman.sock that this container
+      ## requires is functionally equivalent to root on the host — see
+      ## the description below for the threat model.
+      default = false;
       description = ''
-        Enable the Nextcloud AppAPI HaRP proxy container. Required for
-        Nextcloud-managed sidecar apps (Whiteboard, Talk-recording,
-        Speech-to-text, etc.) — they get installed and orchestrated
-        via the docker socket bind-mount that this container needs.
+        Enable the Nextcloud AppAPI HaRP proxy container. Required
+        for Nextcloud-managed sidecar apps (Whiteboard, Talk
+        Recording, Speech-to-text, Assistant, OCR, LibreTranslate,
+        etc.) — they are installed via the Nextcloud Apps UI under
+        "External Apps" and orchestrated through this container.
 
-        Defaults true on boxes that already had AppAPI running (the
-        upgrade-shim detects /var/lib/nextcloud-podman/harp-pw.txt),
-        false on fresh installs. Set explicitly if you want AppAPI
-        sidecar apps on a new install.
+        Default: false. AppAPI is opt-in security-by-default because
+        the container bind-mounts /run/podman/podman.sock, which is
+        the host's container-management API socket. Any code reaching
+        that socket — through a vulnerability in HaRP itself, a
+        compromised External App, or an exploit in Nextcloud's
+        AppAPI registration endpoints — can spawn a new container
+        that mounts the host filesystem and gains root on the host.
 
-        Security note: enabling exposes the host podman socket inside
-        the AppAPI container, which is a documented container-escape
-        path. Leave off unless you actively use AppAPI sidecar apps.
+        Leave off unless you actively use External Apps. Enabling is
+        a one-line change in homefree-config.json
+        (`homefree.services.nextcloud.appapi = true`) or a toggle on
+        the Nextcloud service config page in the admin UI.
       '';
     };
 
@@ -814,6 +818,19 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "appapi";
+          type = "bool";
+          default = false;
+          description = ''
+            Enable AppAPI sidecar apps (Whiteboard, Talk Recording, Speech-to-text, OCR, etc.).
+            Security note: AppAPI requires bind-mounting the host podman socket into a container.
+            That socket grants effective root on the host to anything that can reach it — a
+            vulnerability in HaRP, a compromised External App, or an exploit in Nextcloud's
+            AppAPI endpoints could escape to the host. Leave off unless you actually install
+            External Apps from the Nextcloud Apps UI.
+          '';
         }
       ];
     }];
