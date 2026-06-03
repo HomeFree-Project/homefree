@@ -1103,11 +1103,22 @@ in
     after = [ "headscale.service" "dns-ready.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
     requires = [ "headscale.service" "headplane-prepare-secrets.service" "headscale-mint-api-key.service" ];
     wants = [ "dns-ready.service" ];
-    ## Headplane reads the headscale config file at startup; if we
-    ## regenerate that file but the unit definition is otherwise
-    ## unchanged, NixOS won't restart the unit on rebuild and the new
-    ## config goes unread. Tie restarts to the file's store path.
-    restartTriggers = [ headscaleConfigForHeadplane ];
+    ## Headplane reads two YAML files at startup whose store paths can
+    ## change without the unit definition changing — meaning NixOS
+    ## won't restart the unit on rebuild and the new config goes
+    ## unread. Tie restarts to BOTH store paths:
+    ##   * headscale-for-headplane.yaml — headscale's settings as seen
+    ##     by headplane (DERP region IDs, IP prefixes, etc.).
+    ##   * /etc/headplane/config.yaml — headplane's own config,
+    ##     including 'server.port' which the port-allocator can shift
+    ##     when the auto-pool's alphabetical assignment moves. Without
+    ##     this trigger, an allocator-reshuffled headplane port keeps
+    ##     binding the OLD number, and the new tenant of that number
+    ##     (e.g. grocy) fails to start with EADDRINUSE.
+    restartTriggers = [
+      headscaleConfigForHeadplane
+      config.environment.etc."headplane/config.yaml".source
+    ];
     ## Don't try to start until BOTH OIDC secrets are on disk. A
     ## fresh install briefly has no headplane until
     ## zitadel-provision.service writes the files and `try-restart`s
