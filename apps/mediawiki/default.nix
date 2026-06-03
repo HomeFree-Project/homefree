@@ -103,8 +103,13 @@ let
     $wgEmailAuthentication = false;
 
     ## Database settings
+    ## $wgDBserver with a leading colon = UNIX socket path (MediaWiki/
+    ## PHP mysqli convention). The host MariaDB socket is bind-mounted
+    ## into the container at /run/mysqld/mysqld.sock so this path
+    ## resolves. Pairs with services/mysql dropping its lan-address
+    ## TCP bind.
     $wgDBtype = "mysql";
-    $wgDBserver = "${config.homefree.network.lan-address}";
+    $wgDBserver = ":/run/mysqld/mysqld.sock";
     $wgDBuser = "mediawiki";
     $wgDBpassword = '{{MYSQL_PASSWORD}}';
 
@@ -483,6 +488,11 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           "${containerDataPath}/html/images:/var/www/html/images"
           "${extensions}/MobileFrontend:/var/www/html/extensions/MobileFrontend:ro"
           "${extra-apache-conf}:/etc/apache2/conf-enabled/extra.conf"
+          ## Bind-mount the host MariaDB socket directory so MediaWiki
+          ## can reach the DB without a LAN TCP listener. See
+          ## $wgDBserver in the LocalSettings template above and
+          ## services/mysql for the matching bind-address drop.
+          "/run/mysqld:/run/mysqld"
         ] ++ (if logo-raw != null then [
           "${site.logo-path}:/var/www/html/images/${logo-basename}"
           "${favicon}:/var/www/html/images/favicon.ico"
@@ -503,7 +513,12 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           MEDIAWIKI_SITE_NAME = site.name;
           # MEDIAWIKI_UPDATE = true;
           MEDIAWIKI_DB_TYPE = "mysql";
-          MEDIAWIKI_DB_HOST = "${config.homefree.network.lan-address}";
+          ## Belt-and-suspenders for any image-side script that
+          ## reads this env (the actual connection path is via
+          ## $wgDBserver in LocalSettings.php which points at the
+          ## unix socket). "localhost" makes PHP fall back to the
+          ## socket by default if anything ever tries to use this.
+          MEDIAWIKI_DB_HOST = "localhost";
           MEDIAWIKI_DB_USER = "mediawiki";
           MEDIAWIKI_DB_NAME = site-id;
         };

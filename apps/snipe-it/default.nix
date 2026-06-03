@@ -160,6 +160,11 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:/var/lib/snipeit"
+        ## Bind-mount the host MariaDB socket directory so the
+        ## container can reach the DB without a LAN-routable TCP
+        ## listener. DB_SOCKET below points at the exact socket file.
+        ## Pairs with services/mysql dropping its lan-address bind.
+        "/run/mysqld:/run/mysqld"
       ];
 
       ## runtime.env carries auto-generated APP_KEY + DB_PASSWORD. The
@@ -204,7 +209,14 @@ in
         # REQUIRED: DATABASE SETTINGS
         # --------------------------------------------
         DB_CONNECTION = "mysql";
-        DB_HOST = config.homefree.network.lan-address;
+        ## Connect via UNIX socket instead of TCP — see the
+        ## /run/mysqld bind-mount in volumes above. Laravel's PDO
+        ## mysql driver reads DB_SOCKET and uses it as `unix_socket`
+        ## (which takes precedence over host/port). DB_HOST kept as
+        ## "localhost" for any logging/UI that surfaces it, but is
+        ## not used for the actual connection.
+        DB_HOST = "localhost";
+        DB_SOCKET = "/run/mysqld/mysqld.sock";
         DB_DATABASE = "snipeit";
         DB_PORT = "3306";
         DB_USERNAME = "snipeit";

@@ -366,7 +366,13 @@ in
         # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
         "--device=/dev/dri:/dev/dri"
         "--cap-add=CAP_PERFMON" # For GPU statistics
-        "--privileged"
+        ## --privileged removed: the GPU device (/dev/dri), Coral TPU
+        ## (/dev/bus/usb), and GPU statistics capability (CAP_PERFMON)
+        ## are already declared explicitly above, which is what
+        ## --privileged was implicitly providing. If a particular
+        ## hardware setup needs more (e.g., camera USB devices), add
+        ## the specific --device=/--cap-add= rather than restoring the
+        ## blanket --privileged.
       ];
 
       ports = [

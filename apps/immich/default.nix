@@ -520,7 +520,10 @@ in
         "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
         "--device=/dev/dri:/dev/dri" # For intel hwaccel, needs to be updated for your hardware
         "--cap-add=CAP_PERFMON" # For GPU statistics
-        "--privileged"
+        ## --privileged removed: GPU device, Coral TPU, and
+        ## CAP_PERFMON are already declared explicitly above. If a
+        ## particular hardware setup needs more, add the specific
+        ## --device=/--cap-add= rather than restoring --privileged.
       ];
 
       volumes = [
