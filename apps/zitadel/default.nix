@@ -256,10 +256,38 @@ let
       if [ -s "${zitadelSecretsDir}/admin-password" ]; then
         echo "ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD=$(cat ${zitadelSecretsDir}/admin-password)"
       fi
+      ## DB password for the "zitadel" Postgres role on the host
+      ## cluster. Anchored by zitadel-prepare-secrets.service. Today
+      ## the host pg_hba uses trust auth on the podman bridge so the
+      ## value is sent-but-ignored; Phase 2 swaps to scram-sha-256 and
+      ## it goes live.
+      if [ -s "${zitadelSecretsDir}/db-user-password" ]; then
+        echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)"
+      fi
     } > ${zitadelEnvFile}
     ## env file is read by podman from the host (not the container),
     ## so it stays root:root mode 600 — only the directory itself
     ## needs to be writable by the container.
+
+    ## Idempotent rotation of the "zitadel" Postgres role's password.
+    ## On a fresh install the role doesn't exist yet (the Zitadel init
+    ## container creates it on first boot via the ADMIN credentials),
+    ## so the ALTER is guarded behind an existence check — first-boot
+    ## skips, subsequent boots rotate from whatever the historical
+    ## literal was to the current anchored value, and steady-state
+    ## boots set it to itself.
+    if [ -s "${zitadelSecretsDir}/db-user-password" ]; then
+      ZITADEL_DB_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)
+      ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+        DO \$do\$
+        BEGIN
+          IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zitadel') THEN
+            EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'zitadel', '$ZITADEL_DB_PASSWORD');
+          END IF;
+        END
+        \$do\$;
+PGEOF
+    fi
   '';
 
   ## (Historically there was a `deployOauth2Proxy` symbol here that
@@ -369,9 +397,18 @@ in
             ZITADEL_DATABASE_POSTGRES_PORT = "5432";
             ZITADEL_DATABASE_POSTGRES_DATABASE = "zitadel";
             ZITADEL_DATABASE_POSTGRES_USER_USERNAME = "zitadel";
-            ZITADEL_DATABASE_POSTGRES_USER_PASSWORD = "zitadel";
+            ## ZITADEL_DATABASE_POSTGRES_USER_PASSWORD comes from the
+            ## synthesised env file (zitadelEnvFile), anchored value.
             ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE = "disable";
             ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME = "postgres";
+            ## @TODO Phase 2: the host postgres superuser still has no
+            ## per-cluster password — every service that needs to
+            ## CREATE ROLE / CREATE DATABASE connects as `postgres`
+            ## under trust auth (socket or podman bridge). The literal
+            ## "postgres" here is sent-but-ignored. When Phase 2
+            ## introduces a real cluster password it must be anchored
+            ## centrally (services/postgres) and read by every
+            ## consumer, including this env var.
             ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD = "postgres";
             ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE = "disable";
 
@@ -594,6 +631,19 @@ in
           key = "oauth2-cookie-secret";
           dir = zitadelSecretsDir;
           generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | head -c 32";
+        }}
+
+        ## db-user-password — Postgres role "zitadel"'s password.
+        ## Used by Zitadel itself (via env file) AND by the prestart
+        ## ALTER ROLE that keeps the cluster's stored hash in sync
+        ## with what Zitadel sends. Today carried-but-not-enforced
+        ## (trust auth on the podman bridge); Phase 2's pg_hba swap
+        ## makes the value live.
+        ${anchor.anchorSecret {
+          service = "zitadel";
+          key = "db-user-password";
+          dir = zitadelSecretsDir;
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
         }}
 
         ## admin-password — the initial Zitadel admin password. Normally
