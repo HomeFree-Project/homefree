@@ -277,6 +277,28 @@ in
 
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
     forgejo = {
+      ## SKIPPED Phase 3 non-root pass: this image uses s6-overlay
+      ## as its init system, which requires root inside the
+      ## container (it manages the `git` worker user, sockets,
+      ## etc.). Two paths exist if hardening here becomes a
+      ## priority:
+      ##
+      ##   (a) Switch to `codeberg.org/forgejo/forgejo:<v>-rootless`
+      ##       — built specifically for non-root operation; uses a
+      ##       different volume layout and binds different ports
+      ##       internally, so the migration is non-trivial.
+      ##
+      ##   (b) Add USER_UID / USER_GID env vars to pin the internal
+      ##       `git` user to a HomeFree-managed UID instead of the
+      ##       image-default 1000 (which collides with the OS admin
+      ##       on every box). Requires a one-time chown of
+      ##       /var/lib/forgejo from 1000:1000 to the new UID; per
+      ##       rule 11 this is per-instance data mutation and needs
+      ##       an explicit migration step.
+      ##
+      ## Today the forgejo *worker process* (where any RCE lands)
+      ## already runs as UID 1000 inside the container; only the s6
+      ## supervisor is root.
       image = "codeberg.org/forgejo/forgejo:${version}";
 
       autoStart = true;
