@@ -231,15 +231,20 @@ in
         snapshots      = p.snapshots or false;
       }) (jsonData.storage.pools or []);
       shares = map (s: {
-        enabled   = s.enabled or true;
-        name      = s.name;
-        path      = s.path;
-        allowed   = s.allowed or "";
-        read-only = s.read-only or false;
-        squash    = s.squash or "root";
-        anon-uid  = s.anon-uid or null;
-        anon-gid  = s.anon-gid or null;
+        enabled    = s.enabled or true;
+        name       = s.name;
+        path       = s.path;
+        allowed    = s.allowed or "";
+        read-only  = s.read-only or false;
+        squash     = s.squash or "root";
+        anon-uid   = s.anon-uid or null;
+        anon-gid   = s.anon-gid or null;
+        media      = s.media or false;
+        media-type = s.media-type or "all";
       }) (jsonData.storage.shares or []);
+      media-server = {
+        friendly-name = (jsonData.storage.media-server or {}).friendly-name or null;
+      };
     };
 
     ## System-disk LUKS + TPM2 first-boot enrollment. Flipped to true by

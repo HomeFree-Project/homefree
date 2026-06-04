@@ -1198,8 +1198,49 @@
                 NFS server default. Pairs with anon-uid.
               '';
             };
+            media = lib.mkOption {
+              type = bool;
+              default = false;
+              description = ''
+                Expose this folder through the DLNA/UPnP media server (minidlna)
+                so smart TVs and AV receivers on the LAN can browse and play its
+                contents — the same role Synology's "Media Server" played. This
+                is independent of the NFS export (`enabled`): a folder can be
+                media-only, NFS-only, or both.
+
+                SECURITY: DLNA has NO authentication. Any device on the LAN can
+                read an exposed folder's contents. It is LAN-only (the router
+                firewall never exposes DLNA to the WAN). Off by default; tick
+                only for media folders.
+              '';
+            };
+            media-type = lib.mkOption {
+              type = enum [ "all" "audio" "video" "pictures" ];
+              default = "all";
+              description = ''
+                Which media kinds this folder contributes to the DLNA library
+                (only used when `media` is true). Maps to minidlna's media_dir
+                type prefixes:
+                - "all" (default): audio + video + images (no prefix).
+                - "audio":    A, prefix — keeps a music folder out of the TV's
+                              video menu.
+                - "video":    V, prefix.
+                - "pictures": P, prefix.
+              '';
+            };
           };
         });
+      };
+
+      media-server = {
+        friendly-name = lib.mkOption {
+          type = with lib.types; nullOr str;
+          default = null;
+          description = ''
+            Name the DLNA/UPnP media server advertises to TVs and receivers on
+            the LAN. null falls back to the box hostname.
+          '';
+        };
       };
     };
 

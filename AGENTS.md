@@ -362,6 +362,14 @@ Situational knowledge — read the linked note when working in that area:
   parity; reclaim MUST `cryptsetup close` before `mdadm --stop`; create has
   rollback (close+erase) on any raised exception — don't add `return _error()`
   in the encrypted path. → `docs/agent-notes/storage-encryption.md`
+- **DLNA media server (minidlna)** — the Shared Folders page's per-folder
+  `media` toggle is served by a HOST `services.minidlna` (NOT podman: SSDP
+  multicast on 1900/udp can't cross the bridge), driven from
+  `homefree.storage.shares`. LAN-only + unauthenticated; `openFirewall` off
+  (reach via the nftables LAN-accept rule, never WAN). Shares 1900/udp with Home
+  Assistant's SSDP integration (coexist via `SO_REUSEADDR` — verify, don't
+  assume); Jellyfin stays a separate app, not a DLNA engine.
+  → `docs/agent-notes/dlna-media-server.md`
 - **Landing-page edge fronting (Layer 7, opt-in)** — `trusted_proxies`
   must live in Caddy's global `servers { }` block (per-listener, not
   per-site); shipped CIDRs for `cloudflare`/`bunny` need diffing against

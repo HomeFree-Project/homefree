@@ -2476,9 +2476,10 @@ class AdminApp extends LitElement {
       case 'dns': return 'dns';
       case 'mounts': return 'storage';   // Mounts UI merged into the Storage page
       case 'storage':
-        // storage.shares lives on its own page (Shared Folders); volumes/pools
-        // and everything else under storage.* stay on Storage.
-        if (seg[1] === 'shares') return 'shared-folders';
+        // storage.shares and the DLNA media-server name live on their own page
+        // (Shared Folders); volumes/pools and everything else under storage.*
+        // stay on Storage.
+        if (seg[1] === 'shares' || seg[1] === 'media-server') return 'shared-folders';
         return 'storage';
       case 'snapshots': return 'storage';
       case 'service-config': return 'extra-proxies';

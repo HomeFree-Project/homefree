@@ -1,4 +1,12 @@
 { lib, pkgs, ... }:
+let
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
+  superuserPasswordDir = "/var/lib/homefree-secrets/postgres";
+  superuserPasswordFile = "${superuserPasswordDir}/superuser-password";
+in
 {
   services.postgresql = {
     enable = true;
@@ -44,6 +52,67 @@
       host  all      all     10.88.0.0/16   scram-sha-256
       # ipv6
       host all       all     ::1/128        scram-sha-256
+    '';
+  };
+
+  ## Anchor + rotate the `postgres` superuser password. Closes the
+  ## Phase 2 TODO at apps/zitadel/default.nix where the literal
+  ## "postgres" was sent over TCP as the ADMIN password — fine while
+  ## pg_hba was `trust` (Phase 2 wave (a)), broken the moment Phase 2
+  ## wave (b) flipped TCP to `scram-sha-256` on any box whose
+  ## `postgres` role didn't happen to have a matching password.
+  ##
+  ## Design notes:
+  ##  - Type=oneshot WITHOUT RemainAfterExit. The
+  ##    oneshot+RemainAfterExit combo doesn't reliably re-run on
+  ##    `nixos-rebuild switch` (bit us twice: Phase 1.5
+  ##    zitadel-prepare-secrets, Phase 5 M9 setup-state). Plain
+  ##    oneshot re-runs every switch, which is what we want — the
+  ##    body is idempotent.
+  ##  - `wantedBy + after = [ "postgresql.service" ]` so it fires
+  ##    once postgres is up. ALTER USER via local socket (still
+  ##    trust auth per pg_hba above) so no chicken-and-egg.
+  ##  - The anchored value goes into encrypted
+  ##    /etc/nixos/secrets/secrets.yaml via lib/secrets-anchor.nix,
+  ##    so it survives a backup→restore.
+  systemd.services.postgres-anchor-superuser-password = {
+    description = "Anchor + rotate the postgres superuser password";
+    wantedBy = [ "postgresql.service" ];
+    after = [ "postgresql.service" ];
+    requires = [ "postgresql.service" ];
+    path = with pkgs; [ coreutils postgresql ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = false;
+    };
+    script = ''
+      set -eu
+
+      ${anchor.preamble}
+      ${anchor.anchorSecret {
+        service = "postgres";
+        key = "superuser-password";
+        dir = superuserPasswordDir;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+      }}
+
+      ## Wait for postgres to accept local socket connections —
+      ## postgresql.service "active" doesn't necessarily mean the
+      ## listener is up (initdb / recovery delay on first boot).
+      for i in $(seq 1 60); do
+        if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -U postgres -q; then
+          break
+        fi
+        sleep 1
+      done
+
+      ## Idempotent rotation: sets the role's password to the
+      ## anchored value. No-op when they already match. Connects via
+      ## the local socket under trust auth — does not need any
+      ## existing password.
+      PWD=$(cat ${superuserPasswordFile})
+      ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres \
+        -c "ALTER USER postgres WITH PASSWORD '$PWD'" >/dev/null
     '';
   };
 }

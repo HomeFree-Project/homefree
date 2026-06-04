@@ -281,6 +281,15 @@ let
       ## bridge so the value is sent-but-ignored; Phase 2's pg_hba
       ## swap makes it live.
       echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)"
+      ## Cluster superuser password — anchored + rotated by
+      ## services/postgres's postgres-anchor-superuser-password
+      ## oneshot. Used by Zitadel's init container to CREATE ROLE
+      ## zitadel / CREATE DATABASE zitadel. The systemd unit below
+      ## orders podman-zitadel after the oneshot so this file is
+      ## guaranteed to exist by the time we read it.
+      if [ -s /var/lib/homefree-secrets/postgres/superuser-password ]; then
+        echo "ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/postgres/superuser-password)"
+      fi
     } > ${zitadelEnvFile}
     ## env file is read by podman from the host (not the container),
     ## so it stays root:root mode 600 — only the directory itself
@@ -499,15 +508,14 @@ in
             ## synthesised env file (zitadelEnvFile), anchored value.
             ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE = "disable";
             ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME = "postgres";
-            ## @TODO Phase 2: the host postgres superuser still has no
-            ## per-cluster password — every service that needs to
-            ## CREATE ROLE / CREATE DATABASE connects as `postgres`
-            ## under trust auth (socket or podman bridge). The literal
-            ## "postgres" here is sent-but-ignored. When Phase 2
-            ## introduces a real cluster password it must be anchored
-            ## centrally (services/postgres) and read by every
-            ## consumer, including this env var.
-            ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD = "postgres";
+            ## ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD comes from the
+            ## synthesised env file (zitadelEnvFile), sourced from the
+            ## anchored value at
+            ## /var/lib/homefree-secrets/postgres/superuser-password
+            ## (anchored + rotated by
+            ## postgres-anchor-superuser-password.service in
+            ## services/postgres). Was previously a hardcoded literal
+            ## "postgres" — see commit history if it surfaces again.
             ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE = "disable";
 
             ## Default-instance domain policy — applied to BOTH the
@@ -725,8 +733,20 @@ in
     };
 
     systemd.services.podman-zitadel = lib.mkIf zitadelEnabled {
-      after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
-      requires = [ "zitadel-prepare-secrets.service" ];
+      after = [
+        "dns-ready.service"
+        "zitadel-prepare-secrets.service"
+        ## Wait for the host postgres superuser password to be anchored
+        ## + applied to the cluster (services/postgres). Zitadel's init
+        ## container connects as `postgres` over TCP under
+        ## scram-sha-256; without this ordering it would race the
+        ## anchor on first boot and fail authentication.
+        "postgres-anchor-superuser-password.service"
+      ];
+      requires = [
+        "zitadel-prepare-secrets.service"
+        "postgres-anchor-superuser-password.service"
+      ];
       wants = [ "dns-ready.service" ];
       serviceConfig = {
         ExecStartPre = [ "!${pkgs.writeShellScript "zitadel-prestart" zitadelPreStart}" ];
