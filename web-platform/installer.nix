@@ -360,9 +360,24 @@ in {
     MUTTER_DEBUG_ENABLE_ATOMIC_KMS = "0";
   };
 
-  # Enable SSH for development/debugging
+  # Enable SSH for development/debugging — bound to loopback only.
+  #
+  # The installer ISO ships with weak passwords (`nixos` / `root`) so
+  # the operator can shell in during a kiosk-mode install without
+  # needing to provision keys first. The combination "weak passwords
+  # + reachable on the LAN" is bad on a hostile network, so sshd is
+  # restricted to 127.0.0.1. The operator forwards a port from their
+  # workstation via `ssh -L 2222:127.0.0.1:22 nixos@<lan-ip>` once
+  # the install desktop is up, or uses the local terminal. The
+  # alternative (full sshd on all interfaces with these defaults) is
+  # an attractive target for anyone scanning the LAN during an
+  # install. See docs/agent-notes/security-audit-phase-5.md H3.
   services.openssh = {
     enable = true;
+    listenAddresses = [
+      { addr = "127.0.0.1"; port = 22; }
+      { addr = "::1";       port = 22; }
+    ];
     settings = {
       PermitRootLogin = "yes";  # Allow root login for installer debugging
       PasswordAuthentication = true;

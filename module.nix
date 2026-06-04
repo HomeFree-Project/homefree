@@ -201,6 +201,43 @@
         description = "Email address for the system admin";
       };
 
+      ssh-key-only = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Disable SSH password + keyboard-interactive authentication
+          on the deployed system, requiring SSH public-key auth only.
+
+          Default `false` because most deployments depend on password
+          login for the admin user (the Phase 4 sshd fail2ban jail
+          and the WAN-firewall mitigate brute-force). Flip to `true`
+          ONLY after confirming you can already log in via SSH with
+          your key — otherwise you lose remote SSH access.
+
+          Set in homefree-config.json as `system.ssh-key-only: true`
+          (or via the System tab in the admin UI).
+        '';
+      };
+
+      wheel-passwordless = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Whether the `wheel` group gets `NOPASSWD: ALL` in sudoers.
+
+          Default `true` (the historical HomeFree behavior — useful
+          for debugging, dev shells, and unattended automation that
+          calls `sudo` non-interactively). Flip to `false` to require
+          the admin user to re-enter their password on every `sudo`,
+          which restores password-as-second-factor for privilege
+          escalation but breaks scripts relying on passwordless sudo.
+
+          Set in homefree-config.json as
+          `system.wheel-passwordless: false` (or via the System tab
+          in the admin UI).
+        '';
+      };
+
       ## Pre-hashed password for the admin user. Set from
       ## homefree-config.json (`system.hashedPassword`) by
       ## modules/homefree-config-loader.nix. It is a crypt-style hash

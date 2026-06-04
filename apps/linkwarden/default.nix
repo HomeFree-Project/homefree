@@ -275,8 +275,12 @@ in
   };
 
   systemd.services.podman-linkwarden = lib.mkIf config.homefree.service-options.linkwarden.enable {
-    after = [ "dns-ready.service" ];
+    after = [ "dns-ready.service" "postgresql.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-bind /run/postgresql when postgres restarts — without
+    ## partOf the container's existing mount is orphaned and DB
+    ## queries fail with ENOENT. Same pattern as nextcloud/freshrss.
+    partOf = [ "postgresql.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "linkwarden-prestart" preStart}" ];
     };

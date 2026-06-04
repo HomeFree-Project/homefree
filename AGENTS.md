@@ -321,6 +321,12 @@ Situational knowledge — read the linked note when working in that area:
   / Sensor 2) deliberately omit limits — skip them in the alert source,
   surface on the Hardware page only.
   → `docs/agent-notes/nvme-threshold-cascade.md`
+- **Security audit — Phase 5** — Standing list of residual
+  hardening findings beyond the per-app Phases 1–4 work, with
+  severity, fix path, and a Status: field per item so the doc
+  evolves as fixes land. Read this before starting any new
+  hardening work to avoid duplicating effort.
+  → `docs/agent-notes/security-audit-phase-5.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

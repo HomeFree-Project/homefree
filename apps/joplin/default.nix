@@ -89,8 +89,17 @@ in
   };
 
   systemd.services.podman-joplin = lib.mkIf config.homefree.service-options.joplin.enable {
-    after = [ "dns-ready.service" ];
+    after = [ "dns-ready.service" "postgresql.service" ];
     wants = [ "dns-ready.service" ];
+    ## The container bind-mounts /run/postgresql into itself for
+    ## socket DB access. /run/postgresql is owned by postgresql's
+    ## RuntimeDirectory and gets a fresh inode every time postgresql
+    ## restarts. Without partOf the container's existing mount is
+    ## orphaned on a postgres restart — joplin then fails every
+    ## query with ENOENT on /run/postgresql/.s.PGSQL.5432. Same fix
+    ## as the long-standing pattern in apps/nextcloud and
+    ## apps/freshrss.
+    partOf = [ "postgresql.service" ];
   };
 
     homefree.service-config = [{

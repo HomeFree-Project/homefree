@@ -52,6 +52,12 @@ in
       adminUsername = jsonData.system.adminUsername;
       adminDescription = jsonData.system.adminDescription;
       adminEmail = jsonData.system.adminEmail;
+      ## Phase 5 H1/H2 — security toggles. `or <default>` so older JSON
+      ## files that predate these keys still evaluate cleanly. Defaults
+      ## preserve the historical (more-permissive) behaviour; operators
+      ## opt into tighter posture explicitly.
+      ssh-key-only = jsonData.system.ssh-key-only or false;
+      wheel-passwordless = jsonData.system.wheel-passwordless or true;
       localDomain = jsonData.system.localDomain;
       additionalDomains = jsonData.system.additionalDomains;
       authorizedKeys = jsonData.system.authorizedKeys;

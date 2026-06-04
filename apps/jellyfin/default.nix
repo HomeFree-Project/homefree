@@ -16,6 +16,19 @@ let
   preStart = ''
     mkdir -p ${containerDataPath}
     mkdir -p ${containerDataPath}/media
+
+    ## Marker-gated full-tree chown to the dedicated jellyfin UID.
+    ## The LSIO entrypoint chowns /config on first start when PUID
+    ## changes, but its chown has been observed to miss deep
+    ## descendants (jellyfin.db left at uid 911 after switching
+    ## PUID=811 in Phase 3, breaking the SQLite write path). A
+    ## host-side `chown -R` once per UID change is the reliable
+    ## fix. Marker file gates so subsequent boots are a no-op even
+    ## on a multi-TB library; remove the marker to force re-chown.
+    if [ ! -f ${containerDataPath}/.chowned-${toString jellyfinUid} ]; then
+      chown -R ${toString jellyfinUid}:${toString jellyfinGid} ${containerDataPath}
+      touch ${containerDataPath}/.chowned-${toString jellyfinUid}
+    fi
   '';
 
   port = config.homefree.allocPort "jellyfin";

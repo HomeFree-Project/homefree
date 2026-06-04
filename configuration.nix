@@ -46,6 +46,7 @@ in
     ./modules/setup-state.nix
     ./modules/finish-setup-console.nix
     ./modules/boot-mirror.nix
+    ./modules/auditd.nix
   ]
   ## Infrastructure modules (system services shared by apps; not
   ## user-facing). Discovered from services/.

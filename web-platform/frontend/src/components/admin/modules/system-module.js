@@ -603,6 +603,31 @@ class SystemModule extends LitElement {
               <li>You'll need the corresponding private key to manage secrets through the admin UI</li>
             </ul>
           </div>
+
+          <!--
+            H1 + H2 from docs/agent-notes/security-audit-phase-5.md.
+            Defaults preserve historical behaviour; operator opts in.
+            Both toggles change /etc/ssh/sshd_config or /etc/sudoers
+            on the next rebuild — verify your SSH key works before
+            flipping ssh-key-only or you may lose remote access.
+          -->
+          <form-field
+            label="SSH key-only authentication"
+            type="boolean"
+            .value=${system['ssh-key-only'] || false}
+            help="Disable SSH password + keyboard-interactive auth. Requires a working SSH public key for the admin user — confirm it works BEFORE enabling, or you'll lose remote SSH access. The Phase 4 sshd fail2ban jail mitigates brute-force; this option goes further."
+            ?undeployed=${this._undeployed('system.ssh-key-only')}
+            @field-change=${(e) => this.handleFieldChange('system.ssh-key-only', e.detail.value)}
+          ></form-field>
+
+          <form-field
+            label="Passwordless sudo for wheel group"
+            type="boolean"
+            .value=${system['wheel-passwordless'] !== false}
+            help="When enabled (default), wheel-group members can sudo without re-entering their password. Useful for debugging and unattended automation. Disable to require the password on every sudo — tighter security, but breaks scripts that rely on passwordless sudo."
+            ?undeployed=${this._undeployed('system.wheel-passwordless')}
+            @field-change=${(e) => this.handleFieldChange('system.wheel-passwordless', e.detail.value)}
+          ></form-field>
         </config-section>
       </div>
     `;

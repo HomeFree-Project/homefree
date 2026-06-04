@@ -32,7 +32,17 @@ in
     environment = {
       TZ = config.homefree.system.timeZone;
       MONGO_INITDB_ROOT_USERNAME = "root";
-      MONGO_INITDB_ROOT_PASSWORD = "password";
+      ## @TODO before re-enabling this module (rename `_mongo` → `mongo`):
+      ## anchor the root password via lib/secrets-anchor.nix and feed it
+      ## through environmentFiles, the same way snipe-it/nextcloud/
+      ## zitadel do (see docs/agent-notes/security-audit-phase-5.md M8).
+      ## Do NOT restore the literal `MONGO_INITDB_ROOT_PASSWORD =
+      ## "password"` — that's the bug this empty-string default is
+      ## documenting away. Mongo's image initialises with no
+      ## authentication when PASSWORD is empty, which is fine for the
+      ## inert state (the `_` prefix on the dirname blocks
+      ## auto-discovery so the container never starts).
+      MONGO_INITDB_ROOT_PASSWORD = "";
     };
   };
 

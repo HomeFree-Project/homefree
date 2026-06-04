@@ -57,6 +57,40 @@ in
     script = ''
       set -u
       mkdir -p ${secretsDir}
+      ## Phase 5 M9 — tighten the secrets-dir mode. Individual secret
+      ## files inside are already 600 (per lib/secrets-anchor.nix), so
+      ## the secrets themselves are safe to begin with. The directory
+      ## defaulted to umask (0755) which let any local user enumerate
+      ## the set of services that have secrets (the file *names* under
+      ## here leak the catalog).
+      ##
+      ## Mode 0711 (drwx--x--x), NOT 0700. The dir contains two
+      ## sentinel files (`.setup-complete`, `.sso-provisioned`) that
+      ## NON-root code paths must be able to stat-by-name:
+      ##   - Caddy (running as the `caddy` user) needs to evaluate
+      ##     CEL `file({"try_files": [...]})` matchers against these
+      ##     sentinels — that's what gates the @sso_gate matcher and
+      ##     keeps the admin UI's forward_auth chain functional.
+      ##   - SSH login shells run `[ -e .setup-complete ]` from
+      ##     /etc/profile to decide whether to show the "setup not
+      ##     finished" banner.
+      ## Mode 0700 made the dir untraversable by non-root, so Caddy's
+      ## file() matcher silently evaluated false → @sso_gate failed →
+      ## no X-Auth-Request-User reached admin-api → admin UI broke
+      ## with "missing X-Auth-Request-User". 0711 lets any user
+      ## stat-by-name (the sentinels work) but still blocks `ls`
+      ## enumeration of the secrets catalog — which is the actual
+      ## attack we cared about. Per-secret files inside stay 0600
+      ## root:root, so this is a no-op on confidentiality.
+      ##
+      ## The chmod is unconditional so existing boxes get tightened
+      ## on the next rebuild — idempotent on already-converged boxes.
+      ## See docs/agent-notes/security-audit-phase-5.md M9. Per-
+      ## service subdirectories under here are intentionally NOT
+      ## touched — they have their own mode/owner requirements
+      ## (headscale's needs to be 0750 root:headscale, etc., per
+      ## feedback_no_dir_perm_clobber.md).
+      chmod 711 ${secretsDir}
 
       ## The override sentinel is only meaningful WHILE setup is pending.
       ## If setup is already complete, drop a stale override marker.
@@ -68,4 +102,20 @@ in
       fi
     '';
   };
+
+  ## Belt-and-suspenders for the M9 chmod above. The homefree-setup-
+  ## state oneshot has `RemainAfterExit = true`, and NixOS's switch
+  ## script does NOT reliably re-run such units when their content
+  ## changes (observed empirically with zitadel-prepare-secrets in
+  ## earlier audit work). An activation script ALWAYS runs on every
+  ## `nixos-rebuild switch`, so this guarantees the mode flip lands
+  ## on the very next rebuild — important here because the wrong mode
+  ## (0700) breaks Caddy's @sso_gate file() matcher and takes the
+  ## admin UI offline. Activation scripts run as root, so the chmod
+  ## always succeeds; idempotent.
+  system.activationScripts.homefree-secrets-dir-mode = ''
+    if [ -d ${secretsDir} ]; then
+      chmod 711 ${secretsDir}
+    fi
+  '';
 }

@@ -20,6 +20,16 @@ let
   mkMountOptions = m:
     let
       safetyOpts = [ "nofail" "x-systemd.device-timeout=15s" ];
+      ## Phase 5 L4 — NFS auth note. We only set the protocol version
+      ## here; the auth flavour defaults to `AUTH_UNIX` (uid-based,
+      ## trust-the-client). That's fine when the NFS server is on the
+      ## same trusted LAN and you control both endpoints — but a
+      ## malicious client on the same network can spoof any uid to
+      ## the server. If you mount from an untrusted NFS server, add
+      ## `"sec=krb5i"` (Kerberos integrity) or at minimum `"sec=sys"`
+      ## paired with server-side `root_squash` + per-export network
+      ## ACL, via the per-mount `extra-options` admin-UI field. See
+      ## docs/agent-notes/security-audit-phase-5.md L4.
       nfsOpts = lib.optional (m.fs-type == "nfs") "nfsvers=${m.nfs-version}";
       automountOpts = lib.optionals m.automount [
         "x-systemd.automount"

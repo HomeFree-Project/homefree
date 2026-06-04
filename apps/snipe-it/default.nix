@@ -362,8 +362,14 @@ in
   };
 
   systemd.services.podman-snipe-it = lib.mkIf config.homefree.service-options.snipe-it.enable {
-    after = [ "dns-ready.service" ];
+    after = [ "dns-ready.service" "mysql.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-bind /run/mysqld when mariadb restarts. The container
+    ## bind-mounts the host MariaDB socket dir (Phase 4 socket-switch);
+    ## a postgres-style mount-orphan happens when mariadb is restarted,
+    ## breaking DB access until snipe-it is restarted. Same pattern as
+    ## the existing postgres-socket mount fix in nextcloud/freshrss.
+    partOf = [ "mysql.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "snipe-it-prestart" preStart}" ];
     };

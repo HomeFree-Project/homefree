@@ -1290,9 +1290,11 @@ in
           }
 
           handle /admin* {
-            ## Headplane binds on 127.0.0.1:3009 (server.host above); reach
-            ## it via loopback rather than ${lan-address} where it doesn't listen.
-            reverse_proxy http://127.0.0.1:3009
+            ## Headplane binds on 127.0.0.1:${toString headplane-port}
+            ## (port comes from the central allocator so it can shift
+            ## between rebuilds — must not be hardcoded). Reach it via
+            ## loopback rather than ${lan-address} where it doesn't listen.
+            reverse_proxy http://127.0.0.1:${toString headplane-port}
           }
 
           ## Land users at the Headplane admin UI when they visit
