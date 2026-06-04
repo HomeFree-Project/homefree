@@ -122,7 +122,14 @@ in
   ## their password on `sudo`. See module.nix for the option
   ## declaration and docs/agent-notes/security-audit-phase-5.md for
   ## the rationale.
-  security.sudo.extraRules = lib.optionals config.homefree.system.wheel-passwordless [
+  ## `or false`: profiles/common.nix is shared with lan-client, which does NOT
+  ## import the homefree options module, so a bare `config.homefree.*` read
+  ## throws "attribute 'homefree' missing" and breaks lan-client eval. Read
+  ## defensively so this shared base profile evaluates with or without the
+  ## homefree options present. Proper fix (tracked): extract these
+  ## product-specific knobs into a homefree-only profile — a shared/generic
+  ## base profile should not reach into Layer-2 `homefree.*` options.
+  security.sudo.extraRules = lib.optionals (config.homefree.system.wheel-passwordless or false) [
     {
       groups = [ "wheel" ];
       commands = [ { command = "ALL"; options = [ "NOPASSWD" ]; } ];
@@ -204,7 +211,9 @@ in
   # access is lost. See docs/agent-notes/security-audit-phase-5.md.
   services.openssh = {
     enable = true;
-    settings = lib.mkIf config.homefree.system.ssh-key-only {
+    # `or false`: defensive read — shared with lan-client which lacks the
+    # homefree options module (see the wheel-passwordless note above).
+    settings = lib.mkIf (config.homefree.system.ssh-key-only or false) {
       PasswordAuthentication = false;
       KbdInteractiveAuthentication = false;
     };

@@ -9,20 +9,10 @@ let
   # This works because the whole homefree repo is in the nix store when building
   installerWebPath = ../../web-platform;
 
-  # Python environment with required packages
-  pythonEnv = pkgs.python3.withPackages (ps: with ps; [
-    fastapi
-    uvicorn
-    psutil
-    pyudev
-    pydantic
-    pyyaml
-    babel
-    httpx
-    ## GeoIP lookups for the Abuse Blocking page's traffic-source
-    ## table. Reads the DB-IP mmdb maintained by modules/geoip.nix.
-    geoip2
-  ]);
+  # Python environment with required packages. The dependency set is factored
+  # into web-platform/backend/python-env.nix so the backend import-all gate
+  # (checks/default.nix) builds the SAME closure this service runs under.
+  pythonEnv = pkgs.python3.withPackages (import (installerWebPath + "/backend/python-env.nix"));
 
   # Admin backend service package
   # Uses the same web-platform backend, but in admin mode

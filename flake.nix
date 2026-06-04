@@ -129,6 +129,13 @@
         modules = [
           self.nixosModules.homefree
           "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
+          ## Standalone eval/test config — NOT an instance (no homefree-config.json
+          ## loader / specialArgs). modules/abuse-blocking.nix asserts
+          ## networking.nftables.enable = true; a real box gets that from
+          ## profiles/router.nix via instance config. Enable it here so this test
+          ## config evaluates for the eval gate. Realistic router behaviour is
+          ## covered by the Wave 0b VM smoke test with a sample homefree-config.json.
+          { networking.nftables.enable = true; }
         ];
         specialArgs = {
           system = system;
@@ -165,6 +172,17 @@
     };
     packages.${system} = {
       inherit update-versions;
+    };
+
+    ## Verification gates (Wave 0a of the test-net + decomposition plan). Run
+    ## all with `nix flake check`, or one with
+    ## `nix build .#checks.x86_64-linux.<name>`. Offline + sandbox-safe; the
+    ## browser/VM suites live outside this set (see scripts/test.sh). Uses the
+    ## STABLE nixpkgs for deterministic check tooling.
+    checks.${system} = import ./checks {
+      inherit self system;
+      pkgs = inputs.nixpkgs.legacyPackages.${system};
+      lib = inputs.nixpkgs.lib;
     };
   };
 }
