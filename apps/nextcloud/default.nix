@@ -430,32 +430,6 @@ let
         the Nextcloud service config page in the admin UI.
       '';
     };
-
-    secrets = {
-      admin-password = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
-      };
-
-      env = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = ''
-          Location of docker env file. Contains:
-
-          NEXTCLOUD_ADMIN_PASSWORD=<password>
-
-          Should not be a file included in your source repo.
-        '';
-      };
-
-      secret-file = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
-      };
-    };
   };
 in
 {
@@ -547,12 +521,9 @@ in
 
       ## runtime.env is synthesised by preStart from the on-disk
       ## admin-password (auto-generated on first boot) plus the
-      ## hardcoded postgres password. The optional user-provided
-      ## env file overrides on top — order matters, last one wins.
+      ## hardcoded postgres password.
       environmentFiles = [
         "${containerDataPath}/runtime.env"
-      ] ++ lib.optionals (config.homefree.service-options.nextcloud.secrets.env != null) [
-        config.homefree.service-options.nextcloud.secrets.env
       ];
     };
 

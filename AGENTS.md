@@ -176,6 +176,62 @@ separate deployments. It is *not* one machine's config.
     apply the same test (would this apply to another HomeFree box? →
     it does not belong there).
 
+13. **New apps/services must not run as root unless absolutely
+    necessary.** A new container or systemd service that defaults to
+    running as root inside is a regression on the Phase 3 hardening
+    work. Before adding one:
+
+    - **Containers**: set `user = "<uid>:<gid>"` on the
+      `virtualisation.oci-containers.containers.<name>` declaration,
+      pointing at a dedicated `users.users.<name>` system user
+      (HomeFree app range is 800–899; check
+      `docs/agent-notes/security-audit-phase-5.md` and existing
+      `apps/*/default.nix` files for already-claimed UIDs). Chown the
+      bind-mounted data dir to that UID in the container's
+      `preStart`, gated by a marker file so the recursive walk is
+      one-shot. Same pattern as `apps/vaultwarden/default.nix`,
+      `apps/webdav/default.nix`, `apps/homebox/default.nix`.
+
+    - **LinuxServer (lscr.io/linuxserver/*) images**: use
+      `PUID`/`PGID` env vars instead of `user=` — their s6-overlay
+      init needs root, but renames the internal `abc` user to the
+      PUID at runtime, so the app process runs as the dedicated
+      UID. Pattern at `apps/grocy/default.nix`,
+      `apps/jellyfin/default.nix`.
+
+    - **Privileged ports (<1024) inside the container**: drop root +
+      add `--cap-add=CAP_NET_BIND_SERVICE` to `extraOptions` rather
+      than reaching for `--privileged`. If the upstream image lets
+      you change the listen port via env (e.g., Rocket's
+      `ROCKET_PORT`), do that instead — see
+      `apps/vaultwarden/default.nix`. Apache/nginx-based PHP images
+      typically need the `CAP_NET_BIND_SERVICE` route.
+
+    - **`--privileged` is forbidden** unless the image genuinely
+      needs raw device access AND no specific `--cap-add` +
+      `--device=` combination achieves the same thing. Gate any
+      remaining `--privileged` behind a per-service option default-
+      `true` (so the operator can opt out per-deployment), the same
+      way `apps/home-assistant/default.nix` does.
+
+    - **If the image refuses non-root** (entrypoint runs `chown
+      -R` over root-owned image files, or runs `su`, or writes
+      `/etc/...`): document-skip with an inline comment explaining
+      what was tried and why the image is incompatible, the way
+      `apps/forgejo/default.nix`, `apps/baikal/default.nix`,
+      `apps/freshrss/default.nix`, `apps/trilium/default.nix` do.
+      Don't silently leave it as root.
+
+    - **Systemd services on the host** (non-container): set an
+      explicit `User = "..."` on `serviceConfig` and create the
+      matching `users.users.<name>` system user. Default-root
+      systemd units leak privileges that the service almost never
+      actually needs.
+
+    See `docs/agent-notes/security-audit-phase-5.md` for the full
+    audit context and the catalog of which apps are non-root vs
+    documented-skip.
+
 ## Version control
 
 This repo uses **jj (jujutsu)**, colocated with git — prefer it for

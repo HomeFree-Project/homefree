@@ -849,11 +849,6 @@ in
 
       nextcloud = {
         enable = true;
-        secrets = {
-          admin-password = config.sops.secrets."nextcloud/admin-password".path;
-          env = config.sops.secrets."nextcloud/env".path;
-          secret-file = config.sops.secrets."nextcloud/secret-file".path;
-        };
       };
 
       nzbget = {
