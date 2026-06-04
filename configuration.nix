@@ -67,16 +67,19 @@ in
     description = config.homefree.system.adminDescription;
     extraGroups = [ "wheel" "docker" ];
     openssh.authorizedKeys.keys = config.homefree.system.authorizedKeys;
-    initialHashedPassword = "";  # Empty password - should be set on first login or via SSH
-  } // lib.optionalAttrs (config.homefree.system.hashedPassword != null) {
-    ## Admin password hash from homefree-config.json
-    ## (system.hashedPassword), wired by
-    ## modules/homefree-config-loader.nix. Replaces the old generated
-    ## homefree-configuration.nix `users.users.<name>.hashedPassword`
-    ## block. hashedPassword overrides initialHashedPassword once the
-    ## account exists, so this is the persistent admin password.
-    hashedPassword = config.homefree.system.hashedPassword;
-  });
+  } // (
+    ## Set exactly one password option so NixOS doesn't warn about
+    ## conflicting precedence. When a hash is configured in
+    ## homefree-config.json (system.hashedPassword, wired by
+    ## modules/homefree-config-loader.nix) it is the persistent admin
+    ## password. Otherwise fall back to an empty initial password,
+    ## which is set on first login or via SSH.
+    if config.homefree.system.hashedPassword != null then {
+      hashedPassword = config.homefree.system.hashedPassword;
+    } else {
+      initialHashedPassword = "";
+    }
+  ));
 
   # --------------------------------------------------------------------------------------
   # i18n

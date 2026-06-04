@@ -2035,6 +2035,15 @@
           description = "Path to landing page";
         };
 
+        suppressDefaultWarning = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Suppress the build warning emitted when the landing page is
+            left at the default Homefree landing page.
+          '';
+        };
+
         rateLimit = {
           enable = lib.mkOption {
             type = lib.types.bool;
@@ -3369,7 +3378,8 @@
         ''
       ] else [])
     ++
-      (if config.homefree.services.landing-page.path == options.homefree.services.landing-page.path.default then [
+      (if config.homefree.services.landing-page.path == options.homefree.services.landing-page.path.default
+          && !config.homefree.services.landing-page.suppressDefaultWarning then [
         ''
           Landing page is set to the default Homefree project landing page.
 
