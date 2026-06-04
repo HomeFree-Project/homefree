@@ -3,7 +3,7 @@ import '../../shared/config-section.js';
 import '../../shared/form-field.js';
 import '../../shared/lat-lng-picker.js';
 import '../../shared/table-editor.js';
-import { alertDialog } from '../../shared/confirm-dialog.js';
+import { alertDialog, confirmDialog } from '../../shared/confirm-dialog.js';
 import {
   getTimezones, getLocales, getCountries, getCurrencies, getLanguages,
   lookupElevation,
@@ -296,6 +296,40 @@ class SystemModule extends LitElement {
     }));
   }
 
+  // Enabling SSH key-only auth is a remote-lockout risk: if no working
+  // SSH key is on the admin account, the next rebuild leaves no way back
+  // in over SSH. Disabling is harmless — no confirm needed there.
+  async confirmSshKeyOnlyToggle(value) {
+    if (value !== true) {
+      this.handleFieldChange('system.ssh-key-only', false);
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Enable SSH key-only authentication?',
+      message:
+        'Before applying, SSH into this box from another machine using ' +
+        'your SSH key (NOT a password) to confirm the key works. If the ' +
+        'key is wrong or missing, this change locks you out of remote ' +
+        'SSH after the next rebuild.',
+      confirmText: 'Enable',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    });
+    if (!ok) {
+      // The user's click toggled the native <input>.checked before the
+      // modal opened. form-field's bound .value (false) hasn't changed,
+      // so a parent re-render won't re-trigger form-field's render —
+      // Lit skips DOM updates when the rendered value matches the
+      // previous render. Reach into the form-field's shadow root and
+      // re-sync the checkbox directly.
+      const ff = this.renderRoot?.querySelector('#ssh-key-only-field');
+      const cb = ff?.renderRoot?.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = !!this.config.system['ssh-key-only'];
+      return;
+    }
+    this.handleFieldChange('system.ssh-key-only', true);
+  }
+
   // table-editor passes back the full row-object array; the JSON
   // schema stores additionalDomains as a flat string array, so we
   // unpack the `domain` field on the way out. Empty/whitespace
@@ -310,6 +344,7 @@ class SystemModule extends LitElement {
 
   render() {
     const { system } = this.config;
+    const hasSshKeys = (system.authorizedKeys || []).length > 0;
 
     // Keyboard layout options — small fixed list since these mirror the
     // X11/console keymaps we explicitly support. The other dropdowns
@@ -595,7 +630,7 @@ class SystemModule extends LitElement {
             </div>
           </div>
 
-          <div style="margin-top: 16px; padding: 14px 18px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--hf-accent); border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--hf-text-muted);">
+          <div style="margin-top: 16px; margin-bottom: 16px; padding: 14px 18px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--hf-accent); border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--hf-text-muted);">
             <strong style="color: var(--hf-text);">💡 Tip:</strong> The first SSH key will be used for encrypting service secrets.
             <ul style="margin: 8px 0 0 20px; padding: 0;">
               <li>After adding a key, click "Save & Apply" to activate it</li>
@@ -606,27 +641,32 @@ class SystemModule extends LitElement {
 
           <!--
             H1 + H2 from docs/agent-notes/security-audit-phase-5.md.
-            Defaults preserve historical behaviour; operator opts in.
             Both toggles change /etc/ssh/sshd_config or /etc/sudoers
-            on the next rebuild — verify your SSH key works before
-            flipping ssh-key-only or you may lose remote access.
+            on the next rebuild. The SSH key-only checkbox is gated on
+            the presence of at least one authorized key (a true value
+            with no keys is also clamped to false in the loader, so
+            hand-edited JSON can't lock the admin out either).
           -->
           <form-field
+            id="ssh-key-only-field"
             label="SSH key-only authentication"
             type="boolean"
-            .value=${system['ssh-key-only'] || false}
-            help="Disable SSH password + keyboard-interactive auth. Requires a working SSH public key for the admin user — confirm it works BEFORE enabling, or you'll lose remote SSH access. The Phase 4 sshd fail2ban jail mitigates brute-force; this option goes further."
+            .value=${(system['ssh-key-only'] || false) && hasSshKeys}
+            ?disabled=${!hasSshKeys}
+            help=${hasSshKeys
+              ? "Disable SSH password + keyboard-interactive auth. Requires a working SSH public key for the admin user — confirm it works BEFORE enabling, or you'll lose remote SSH access. The Phase 4 sshd fail2ban jail mitigates brute-force; this option goes further."
+              : "Add at least one SSH key above before enabling this option."}
             ?undeployed=${this._undeployed('system.ssh-key-only')}
-            @field-change=${(e) => this.handleFieldChange('system.ssh-key-only', e.detail.value)}
+            @field-change=${(e) => this.confirmSshKeyOnlyToggle(e.detail.value)}
           ></form-field>
 
           <form-field
-            label="Passwordless sudo for wheel group"
+            label="Require password for sudo"
             type="boolean"
-            .value=${system['wheel-passwordless'] !== false}
-            help="When enabled (default), wheel-group members can sudo without re-entering their password. Useful for debugging and unattended automation. Disable to require the password on every sudo — tighter security, but breaks scripts that rely on passwordless sudo."
+            .value=${system['wheel-passwordless'] === false}
+            help="When enabled, wheel-group members must re-enter their password on every sudo. Tighter security; recommended."
             ?undeployed=${this._undeployed('system.wheel-passwordless')}
-            @field-change=${(e) => this.handleFieldChange('system.wheel-passwordless', e.detail.value)}
+            @field-change=${(e) => this.handleFieldChange('system.wheel-passwordless', !e.detail.value)}
           ></form-field>
         </config-section>
       </div>

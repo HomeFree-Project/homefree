@@ -56,7 +56,18 @@ in
       ## files that predate these keys still evaluate cleanly. Defaults
       ## preserve the historical (more-permissive) behaviour; operators
       ## opt into tighter posture explicitly.
-      ssh-key-only = jsonData.system.ssh-key-only or false;
+      ##
+      ## ssh-key-only is additionally clamped to false when no
+      ## authorizedKeys are on file — flipping sshd's
+      ## PasswordAuthentication off with no working key locks the admin
+      ## out of remote SSH. The admin UI also disables the checkbox in
+      ## this state; this clamp guards against a hand-edited
+      ## homefree-config.json.
+      ssh-key-only =
+        let
+          requested = jsonData.system.ssh-key-only or false;
+          keys = jsonData.system.authorizedKeys or [];
+        in requested && (keys != []);
       wheel-passwordless = jsonData.system.wheel-passwordless or true;
       localDomain = jsonData.system.localDomain;
       additionalDomains = jsonData.system.additionalDomains;
