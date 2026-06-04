@@ -23,6 +23,16 @@ let
 
   ssoEnvFile = "${containerDataPath}/sso.env";
 
+  ## Container runs under a dedicated unprivileged host UID instead
+  ## of root. The vaultwarden upstream image's default USER is root
+  ## but `/start.sh` does no chown-on-entry, so the data dir just has
+  ## to be writable by the target UID. UIDs in the 800–899 range are
+  ## reserved for HomeFree app-container runtimes (NixOS auto-assigns
+  ## system users from 999 downward, so this range stays clear well
+  ## into the foreseeable future).
+  vaultwardenUid = 801;
+  vaultwardenGid = 801;
+
   ## preStart writes Vaultwarden's OIDC env file from Zitadel
   ## secrets, plus a combined CA bundle so Vaultwarden's Rust HTTP
   ## stack trusts sso.<domain>'s Caddy-issued cert.
@@ -38,6 +48,15 @@ let
   ## derives the vault encryption key. Users set it on first login.
   preStart = ''
     mkdir -p ${containerDataPath}
+
+    ## One-shot chown of the data dir to the dedicated container UID.
+    ## Marker file gates the recursive walk so subsequent boots are a
+    ## no-op even on a multi-GB vault directory. After a UID change
+    ## the operator can `rm` the marker to force a re-chown.
+    if [ ! -f ${containerDataPath}/.chowned-${toString vaultwardenUid} ]; then
+      chown -R ${toString vaultwardenUid}:${toString vaultwardenGid} ${containerDataPath}
+      touch ${containerDataPath}/.chowned-${toString vaultwardenUid}
+    fi
 
     ## Combined CA bundle (system + Caddy local CA) for Rust
     ## native-tls. SSL_CERT_FILE env var below points the container
@@ -134,18 +153,39 @@ in
   };
 
   config = {
+    users.users.vaultwarden = lib.mkIf config.homefree.service-options.vaultwarden.enable {
+      isSystemUser = true;
+      group = "vaultwarden";
+      uid = vaultwardenUid;
+      description = "Vaultwarden container runtime user";
+    };
+    users.groups.vaultwarden = lib.mkIf config.homefree.service-options.vaultwarden.enable {
+      gid = vaultwardenGid;
+    };
+
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
       vaultwarden = {
         image = "vaultwarden/server:${version}";
 
         autoStart = true;
 
+        ## Drop root inside the container. The vaultwarden image's
+        ## /start.sh does no chown-on-entry — the bind-mounted /data
+        ## just needs to be writable by this UID, which preStart
+        ## ensures.
+        user = "${toString vaultwardenUid}:${toString vaultwardenGid}";
+
         extraOptions = [
           # "--pull=always"
         ];
 
         ports = [
-          "0.0.0.0:${toString port}:80"
+          ## Container-internal listen port is 8080, not the upstream
+          ## image default of 80. Non-root processes can't bind to
+          ## privileged ports (<1024) and we now run vaultwarden as
+          ## UID ${toString vaultwardenUid}. ROCKET_PORT below tells
+          ## the Rocket HTTP server to listen on 8080.
+          "0.0.0.0:${toString port}:8080"
         ];
 
         volumes = [
@@ -170,6 +210,11 @@ in
           SIGNUPS_ALLOWED = "false";
           ## Rust native-tls honors SSL_CERT_FILE.
           SSL_CERT_FILE = "/etc/ssl/homefree-ca-bundle.crt";
+          ## Rocket's listen port. Must be >= 1024 because vaultwarden
+          ## runs as a non-root UID inside the container (see `user`
+          ## above). The container port mapping in `ports` above
+          ## matches this.
+          ROCKET_PORT = "8080";
         };
 
         ## OIDC env synthesized by preStart from Zitadel secrets.

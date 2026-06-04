@@ -172,20 +172,35 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
     }}
 
+    ## DB password for the "nextcloud" Postgres role. Today the
+    ## container connects via the bind-mounted /run/postgresql socket
+    ## under trust auth (services/postgres pg_hba), so the value is
+    ## carried-but-not-enforced. Anchoring it now lets Phase 2 swap
+    ## the host pg_hba from trust → scram-sha-256 without changing
+    ## anything in this module.
+    ${anchor.anchorSecret {
+      service = "nextcloud";
+      key = "db-password";
+      dir = "/var/lib/homefree-secrets/nextcloud";
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
     ## Synthesise the env file the container reads. POSTGRES_PASSWORD
-    ## matches the literal 'changeme' baked into the role-creation
-    ## DO-block below — keep them in sync. NEXTCLOUD_ADMIN_PASSWORD
+    ## is kept in sync with the role's password — the role-creation
+    ## DO-block below reads the same anchored file. NEXTCLOUD_ADMIN_PASSWORD
     ## is what the install wizard uses to provision the initial admin
     ## user named after homefree.system.adminUsername (set via
     ## NEXTCLOUD_ADMIN_USER in the container env).
     install -m 600 /dev/null ${containerDataPath}/runtime.env
     {
-      echo "POSTGRES_PASSWORD=changeme"
+      echo "POSTGRES_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)"
       echo "NEXTCLOUD_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/admin-password)"
     } > ${containerDataPath}/runtime.env
 
-    # Database initialization for postgres-vectorchord if needed
+    # Database initialization for the host postgres
     ${''
+      NEXTCLOUD_DB_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)
+
       ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres << EOF
         DO
         \$do\$
@@ -197,7 +212,7 @@ let
               RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
            ELSE
               BEGIN   -- nested block
-                 CREATE ROLE "${database-user}" WITH LOGIN PASSWORD 'changeme';
+                 CREATE ROLE "${database-user}" WITH LOGIN PASSWORD '$NEXTCLOUD_DB_PASSWORD';
               EXCEPTION
                  WHEN duplicate_object THEN
                     RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
@@ -206,6 +221,12 @@ let
         END
         \$do\$;
       EOF
+
+      ## Unconditional rotation: idempotent ALTER. On a pre-anchoring
+      ## box this swaps the historical literal "changeme" for the
+      ## anchored value; subsequent rebuilds set it to itself.
+      ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres \
+        -c "ALTER ROLE \"${database-user}\" WITH PASSWORD '$NEXTCLOUD_DB_PASSWORD'"
 
       ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h ${postgres-host} -p ${toString postgres-port} -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
@@ -235,16 +256,22 @@ let
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set htaccess.RewriteBase --value='/'
     ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:update:htaccess
 
-    HARP_PASSWORD=$(cat ${containerDataPath}/harp-pw.txt)
+    ${lib.optionalString config.homefree.service-options.nextcloud.appapi ''
+      ## AppAPI HaRP daemon registration. Only fires when the appapi
+      ## option is on — otherwise the daemon would point at a
+      ## non-existent container and silently break sidecar-app
+      ## installs from the Nextcloud UI.
+      HARP_PASSWORD=$(cat ${containerDataPath}/harp-pw.txt)
 
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:unregister harp_proxy_host
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:register \
-      harp_proxy_host "HaRP Proxy (Host)" "docker-install" "http" \
-      "nextcloud-appapi-harp:8780" "http://nextcloud" \
-      --harp \
-      --harp_frp_address "nextcloud-appapi-harp:8782" \
-      --harp_shared_key "$HARP_PASSWORD" \
-      --set-default
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:unregister harp_proxy_host
+      ${pkgs.podman}/bin/podman exec nextcloud php occ app_api:daemon:register \
+        harp_proxy_host "HaRP Proxy (Host)" "docker-install" "http" \
+        "nextcloud-appapi-harp:8780" "http://nextcloud" \
+        --harp \
+        --harp_frp_address "nextcloud-appapi-harp:8782" \
+        --harp_shared_key "$HARP_PASSWORD" \
+        --set-default
+    ''}
 
     # Install/enable apps
     ${pkgs.podman}/bin/podman exec nextcloud php occ config:system:set appstoreenabled --value=true --type=boolean
@@ -367,30 +394,41 @@ let
       description = "Open to public on WAN port";
     };
 
-    secrets = {
-      admin-password = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Nextcloud admin password file. Should not be a file included in your source repo.";
-      };
+    appapi = lib.mkOption {
+      type = lib.types.bool;
+      ## Default-off security posture. An earlier iteration tried an
+      ## upgrade-shim — `builtins.pathExists
+      ## "/var/lib/nextcloud-podman/harp-pw.txt"` to preserve existing
+      ## AppAPI users — but flake evaluation runs in pure mode and
+      ## refuses to inspect host paths outside the flake source, so
+      ## pathExists always returns false in this codebase. Hardcoded
+      ## false is honest about the actual behaviour: every box gets
+      ## AppAPI off unless the operator explicitly opts in.
+      ##
+      ## The bind-mount of /run/podman/podman.sock that this container
+      ## requires is functionally equivalent to root on the host — see
+      ## the description below for the threat model.
+      default = false;
+      description = ''
+        Enable the Nextcloud AppAPI HaRP proxy container. Required
+        for Nextcloud-managed sidecar apps (Whiteboard, Talk
+        Recording, Speech-to-text, Assistant, OCR, LibreTranslate,
+        etc.) — they are installed via the Nextcloud Apps UI under
+        "External Apps" and orchestrated through this container.
 
-      env = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = ''
-          Location of docker env file. Contains:
+        Default: false. AppAPI is opt-in security-by-default because
+        the container bind-mounts /run/podman/podman.sock, which is
+        the host's container-management API socket. Any code reaching
+        that socket — through a vulnerability in HaRP itself, a
+        compromised External App, or an exploit in Nextcloud's
+        AppAPI registration endpoints — can spawn a new container
+        that mounts the host filesystem and gains root on the host.
 
-          NEXTCLOUD_ADMIN_PASSWORD=<password>
-
-          Should not be a file included in your source repo.
-        '';
-      };
-
-      secret-file = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Location of Nextcloud secrets file. Should not be a file included in your source repo.";
-      };
+        Leave off unless you actively use External Apps. Enabling is
+        a one-line change in homefree-config.json
+        (`homefree.services.nextcloud.appapi = true`) or a toggle on
+        the Nextcloud service config page in the admin UI.
+      '';
     };
   };
 in
@@ -433,7 +471,8 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
+  virtualisation.oci-containers.containers =
+    (lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     nextcloud = {
       image = "nextcloud:${version}-apache";
 
@@ -482,12 +521,9 @@ in
 
       ## runtime.env is synthesised by preStart from the on-disk
       ## admin-password (auto-generated on first boot) plus the
-      ## hardcoded postgres password. The optional user-provided
-      ## env file overrides on top — order matters, last one wins.
+      ## hardcoded postgres password.
       environmentFiles = [
         "${containerDataPath}/runtime.env"
-      ] ++ lib.optionals (config.homefree.service-options.nextcloud.secrets.env != null) [
-        config.homefree.service-options.nextcloud.secrets.env
       ];
     };
 
@@ -508,26 +544,6 @@ in
       environment = {
         TZ = config.homefree.system.timeZone;
       };
-    };
-
-    nextcloud-appapi-harp = {
-      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
-
-      autoStart = true;
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/podman/podman.sock:/var/run/docker.sock"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        NC_INSTANCE_URL = "http://nextcloud";
-      };
-
-      environmentFiles = [
-        "${containerDataPath}/harp-env.txt"
-      ];
     };
 
     # Cron container for background jobs
@@ -578,7 +594,38 @@ in
         "${containerDataPath}/runtime.env"
       ];
     };
-  };
+  })
+  ## AppAPI HaRP proxy — opt-in, gates the podman.sock bind-mount
+  ## behind an explicit option. See the comment on the option in
+  ## userOptions for the security trade-off. The upgrade-shim default
+  ## (pathExists harp-pw.txt) preserves existing behaviour on boxes
+  ## that already ran this container.
+  // (lib.optionalAttrs (config.homefree.service-options.nextcloud.enable
+                         && config.homefree.service-options.nextcloud.appapi) {
+    nextcloud-appapi-harp = {
+      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
+
+      autoStart = true;
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        ## Bind-mounts the host podman socket — this is the docker-
+        ## compatible API AppAPI uses to spawn sidecar apps. It is
+        ## also the container-escape surface that gates this whole
+        ## entry behind `homefree.services.nextcloud.appapi`.
+        "/run/podman/podman.sock:/var/run/docker.sock"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        NC_INSTANCE_URL = "http://nextcloud";
+      };
+
+      environmentFiles = [
+        "${containerDataPath}/harp-env.txt"
+      ];
+    };
+  });
 
   systemd.services.podman-nextcloud = lib.mkIf config.homefree.service-options.nextcloud.enable {
     after = [ "dns-ready.service" "postgresql.service" ];
@@ -607,7 +654,9 @@ in
     wants = [ "dns-ready.service" ];
   };
 
-  systemd.services.podman-nextcloud-appapi-harp = lib.mkIf config.homefree.service-options.nextcloud.enable {
+  systemd.services.podman-nextcloud-appapi-harp = lib.mkIf
+    (config.homefree.service-options.nextcloud.enable
+     && config.homefree.service-options.nextcloud.appapi) {
     after = [ "podman-nextcloud.service" ];
     requires = [ "podman-nextcloud.service" ];
     partOf = [ "podman-nextcloud.service" ];
@@ -629,10 +678,10 @@ in
       systemd-service-names = [
         "podman-nextcloud"
         "podman-nextcloud-redis"
-        "podman-nextcloud-appapi-harp"
         "podman-nextcloud-cron"
         "postgresql"
-      ];
+      ] ++ lib.optional config.homefree.service-options.nextcloud.appapi
+        "podman-nextcloud-appapi-harp";
       sso = {
         kind = "native_oidc";
         ## Dev context (intentionally not surfaced in the admin UI):
@@ -740,6 +789,19 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "appapi";
+          type = "bool";
+          default = false;
+          description = ''
+            Enable AppAPI sidecar apps (Whiteboard, Talk Recording, Speech-to-text, OCR, etc.).
+            Security note: AppAPI requires bind-mounting the host podman socket into a container.
+            That socket grants effective root on the host to anything that can reach it — a
+            vulnerability in HaRP, a compromised External App, or an exploit in Nextcloud's
+            AppAPI endpoints could escape to the host. Leave off unless you actually install
+            External Apps from the Nextcloud Apps UI.
+          '';
         }
       ];
     }];

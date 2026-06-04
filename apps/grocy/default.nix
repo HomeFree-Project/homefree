@@ -2,6 +2,15 @@
 let
   containerDataPath = "/var/lib/grocy";
 
+  ## LinuxServer.io images use s6-overlay as PID 1, which requires
+  ## root inside the container. The standard Phase 3 fix for LSIO
+  ## images is PUID/PGID env vars: s6 starts as root, then drops the
+  ## actual app process to PUID:PGID and chowns /config to match.
+  ## We point those at a dedicated HomeFree-managed UID so grocy's
+  ## data isn't owned by either root or the OS admin (host uid 1000).
+  grocyUid = 803;
+  grocyGid = 803;
+
   preStart = ''
     mkdir -p ${containerDataPath}
   '';
@@ -52,6 +61,16 @@ in
   };
 
   config = {
+    users.users.grocy = lib.mkIf config.homefree.service-options.grocy.enable {
+      isSystemUser = true;
+      group = "grocy";
+      uid = grocyUid;
+      description = "Grocy container runtime user (LinuxServer PUID/PGID)";
+    };
+    users.groups.grocy = lib.mkIf config.homefree.service-options.grocy.enable {
+      gid = grocyGid;
+    };
+
     ## @NOTE: Default username and password: admin, admin
     ## @TODO: Setup LDAP login (see /var/lib/grocy/data/config.php)
     ##        Can this be set up with env vars?
@@ -76,6 +95,14 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
+        ## LinuxServer PUID/PGID: the image's s6-overlay init runs as
+        ## root (mandatory for s6) but chowns /config and forks the
+        ## app process to PUID:PGID. Pointing this at a HomeFree-
+        ## managed system user instead of the LSIO default (uid 911 /
+        ## "abc") keeps data ownership outside the OS admin's UID
+        ## namespace and avoids collisions with future LSIO images.
+        PUID = toString grocyUid;
+        PGID = toString grocyGid;
       };
     };
   };

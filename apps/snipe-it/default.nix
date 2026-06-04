@@ -83,13 +83,18 @@ let
 
     MYSQL_PASSWORD=$(cat ${mysqlPasswordFile})
 
-    ## @TODO: reduce privileges here. snipeit shouldn't be admin
+    ## Snipe-IT only needs full access to its own database — never
+    ## *.*. The unconditional REVOKE ON *.* below cleans up the
+    ## historical over-grant on existing boxes (was Phase 4's
+    ## documented @TODO); idempotent on already-converged boxes.
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
     ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'localhost'"
+    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'localhost'"
+    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'localhost'"
     ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
     ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'snipeit'@'%'"
+    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'%'"
+    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
   '';
 
   version = "v8.4.1";
@@ -155,6 +160,11 @@ in
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${containerDataPath}:/var/lib/snipeit"
+        ## Bind-mount the host MariaDB socket directory so the
+        ## container can reach the DB without a LAN-routable TCP
+        ## listener. DB_SOCKET below points at the exact socket file.
+        ## Pairs with services/mysql dropping its lan-address bind.
+        "/run/mysqld:/run/mysqld"
       ];
 
       ## runtime.env carries auto-generated APP_KEY + DB_PASSWORD. The
@@ -199,7 +209,14 @@ in
         # REQUIRED: DATABASE SETTINGS
         # --------------------------------------------
         DB_CONNECTION = "mysql";
-        DB_HOST = config.homefree.network.lan-address;
+        ## Connect via UNIX socket instead of TCP — see the
+        ## /run/mysqld bind-mount in volumes above. Laravel's PDO
+        ## mysql driver reads DB_SOCKET and uses it as `unix_socket`
+        ## (which takes precedence over host/port). DB_HOST kept as
+        ## "localhost" for any logging/UI that surfaces it, but is
+        ## not used for the actual connection.
+        DB_HOST = "localhost";
+        DB_SOCKET = "/run/mysqld/mysqld.sock";
         DB_DATABASE = "snipeit";
         DB_PORT = "3306";
         DB_USERNAME = "snipeit";
@@ -345,8 +362,14 @@ in
   };
 
   systemd.services.podman-snipe-it = lib.mkIf config.homefree.service-options.snipe-it.enable {
-    after = [ "dns-ready.service" ];
+    after = [ "dns-ready.service" "mysql.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-bind /run/mysqld when mariadb restarts. The container
+    ## bind-mounts the host MariaDB socket dir (Phase 4 socket-switch);
+    ## a postgres-style mount-orphan happens when mariadb is restarted,
+    ## breaking DB access until snipe-it is restarted. Same pattern as
+    ## the existing postgres-socket mount fix in nextcloud/freshrss.
+    partOf = [ "mysql.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "snipe-it-prestart" preStart}" ];
     };

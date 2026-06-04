@@ -57,12 +57,10 @@ in
       allowed-users = [ "@wheel" ];
       substituters = [
         "https://cache.nixos.org"
-        "https://hydra.nixos.org"
         "https://nix-community.cachix.org"
       ];
       trusted-public-keys = [
         "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-        "hydra.nixos.org-1:CNHJZBh9K4tP3EKF6FkkgeVYsS3ohTl+oS0Qa8bezVs="
         "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
       ];
     };
@@ -117,7 +115,14 @@ in
     gid = 33;
   };
 
-  security.sudo.extraRules = [
+  ## Wheel-group NOPASSWD: ALL is gated behind
+  ## `homefree.system.wheel-passwordless` (default true — historical
+  ## behaviour; useful for debugging and unattended automation). When
+  ## flipped to false, the rule is omitted and wheel members re-enter
+  ## their password on `sudo`. See module.nix for the option
+  ## declaration and docs/agent-notes/security-audit-phase-5.md for
+  ## the rationale.
+  security.sudo.extraRules = lib.optionals config.homefree.system.wheel-passwordless [
     {
       groups = [ "wheel" ];
       commands = [ { command = "ALL"; options = [ "NOPASSWD" ]; } ];
@@ -189,8 +194,20 @@ in
   services.printing.drivers = [ pkgs.brlaser ];
 
   # Enable the OpenSSH daemon.
+  #
+  # PasswordAuthentication + KbdInteractiveAuthentication are gated
+  # behind `homefree.system.ssh-key-only` (default false — preserves
+  # historical password-login behaviour, mitigated by the WAN
+  # firewall + Phase 4 sshd fail2ban jail). When the option is
+  # flipped to true, only SSH public-key auth is accepted — confirm
+  # the admin user already has a working SSH key first or remote
+  # access is lost. See docs/agent-notes/security-audit-phase-5.md.
   services.openssh = {
     enable = true;
+    settings = lib.mkIf config.homefree.system.ssh-key-only {
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+    };
   };
 
   # This will save you money and possibly your life!

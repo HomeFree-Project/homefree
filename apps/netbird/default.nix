@@ -1,5 +1,17 @@
 { config, lib, pkgs, ... }:
 
+## SKIPPED Phase 3 non-root pass: NetBird's stack is 5 containers
+## (management, signal, relay, dashboard, coturn) — four bind
+## container-internal port 80, coturn uses --network=host for
+## STUN/TURN, and the management container has a complex provisioning
+## chain (JSON config, OIDC secrets, relay-secret). Each container
+## would need its own UID, group memberships, and CAP_NET_BIND_SERVICE
+## audit. Given that NetBird is the secondary VPN (Headscale is the
+## daily driver per the project notes), the hardening payoff doesn't
+## justify the per-container investigation risk. Each container still
+## runs as root inside, but the host firewall + Caddy SSO gate are the
+## primary defences here.
+##
 ## NetBird is a second VPN platform offered alongside Headscale. They
 ## coexist on the same router: different ports, different subdomains,
 ## different OIDC client in Zitadel. Clients pick one or the other.

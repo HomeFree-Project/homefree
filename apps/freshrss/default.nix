@@ -35,9 +35,25 @@ let
   DB_HOST = "/run/postgresql";
   DB_PASSWORD = "";
   DB_USER = "freshrss";
-  ADMIN_API_PASSWORD = "changeme";
-  ADMIN_EMAIL = "ellis@rahh.al";
-  ADMIN_PASSWORD = "changeme";
+
+  ## Initial admin email — comes from the instance config (set by the
+  ## installer's "Email" field). Falls back to <admin>@<domain> only
+  ## when no email is configured. Same pattern used by Zitadel and
+  ## Immich; replaces a previously hardcoded address that was an
+  ## instance-specific leak in shared code (rule 1 violation).
+  ADMIN_EMAIL =
+    if (config.homefree.system.adminEmail or "") != ""
+    then config.homefree.system.adminEmail
+    else "${adminUsername}@${domain}";
+
+  ## ADMIN_PASSWORD / ADMIN_API_PASSWORD are anchored to
+  ## /var/lib/homefree-secrets/freshrss by preStart and folded into
+  ## FRESHRSS_INSTALL / FRESHRSS_USER via runtime.env. The FreshRSS
+  ## image consumes these env vars ONLY during first-time install
+  ## (after install they're baked into config.php and ignored); the
+  ## anchored values matter for fresh installs and as a documented
+  ## SSO-down recovery credential.
+  runtimeEnvFile = "${containerDataPath}/runtime.env";
 
   ## preStart synthesizes:
   ##   * ca-bundle.crt — system roots + Caddy local CA, mounted over
@@ -105,6 +121,42 @@ PGEOF
       dir = secretsDir;
       generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
     }}
+
+    ## admin-password — local FreshRSS admin login password. Consumed
+    ## by --password in FRESHRSS_USER on first install; after install
+    ## it's baked into config.php and the env var is ignored. Carried
+    ## as a documented SSO-down recovery credential.
+    ${anchor.anchorSecret {
+      service = "freshrss";
+      key = "admin-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
+    }}
+
+    ## admin-api-password — Fever API password for mobile clients.
+    ## Same one-shot install lifecycle as admin-password.
+    ${anchor.anchorSecret {
+      service = "freshrss";
+      key = "admin-api-password";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
+    }}
+
+    ## Synthesise runtime.env with FRESHRSS_INSTALL and FRESHRSS_USER
+    ## as single-line values carrying the anchored passwords. FreshRSS
+    ## tokenises these via `set $FRESHRSS_INSTALL` and only consults
+    ## them on the very first install — rebuilds after install have no
+    ## effect on the live FreshRSS user, but the values are kept in
+    ## sync so a fresh install always uses the anchored credentials.
+    FRESHRSS_ADMIN_PASSWORD=$(cat ${secretsDir}/admin-password)
+    FRESHRSS_ADMIN_API_PASSWORD=$(cat ${secretsDir}/admin-api-password)
+    install -m 600 /dev/null ${runtimeEnvFile}
+    {
+      printf 'FRESHRSS_INSTALL=--api-enabled --base-url %s --db-base %s --db-host %s --db-password "%s" --db-type pgsql --db-user %s --default-user %s --language en\n' \
+        "${BASE_URL}" "${DB_BASE}" "${DB_HOST}" "${DB_PASSWORD}" "${DB_USER}" "${adminUsername}"
+      printf 'FRESHRSS_USER=--api-password %s --email %s --language en --password %s --user %s\n' \
+        "$FRESHRSS_ADMIN_API_PASSWORD" "${ADMIN_EMAIL}" "$FRESHRSS_ADMIN_PASSWORD" "${adminUsername}"
+    } > ${runtimeEnvFile}
 
     install -m 600 /dev/null ${ssoEnvFile}
     if [ -s ${secretsDir}/oidc-client-id ] \
@@ -257,6 +309,17 @@ in
   config = {
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
       freshrss = {
+        ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
+        ## entrypoint does extensive root-only setup on every start —
+        ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
+        ## ini files under /etc/php/, runs a2enmod for
+        ## mod_auth_openidc, drops a cron PID file under /var/run,
+        ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
+        ## every one of those fails and the container exits 1. The
+        ## image is fundamentally root-in-container; making it
+        ## non-root requires either a custom image build or
+        ## --userns=keep-id with a host-side UID matching the
+        ## image's expected www-data uid.
         image = "${image}:${version}";
 
         autoStart = true;
@@ -289,39 +352,21 @@ in
           FRESHRSS_ENV = "development";
           SERVER_DNS = "freshrss.${domain}";
           CRON_MIN = "1,31";
-          # Optional auto-install parameters (the Web interface install is recommended instead):
-          # ⚠️ Parameters below are only used at the very first run (so far).
-          # So if changes are made (or in .env file), first delete the service and volumes.
-          # ℹ️ All the --db-* parameters can be omitted if using built-in SQLite database.
-          ## --default-user must match the Zitadel preferred_username
-          ## of the homefree admin so the first OIDC sign-in lands on
-          ## an admin account (FreshRSS's admin == the user whose name
-          ## matches default-user). adminUsername comes from
-          ## homefree.system.adminUsername.
-          FRESHRSS_INSTALL = ''
-            --api-enabled
-            --base-url ${BASE_URL}
-            --db-base ${DB_BASE}
-            --db-host ${DB_HOST}
-            --db-password ${DB_PASSWORD}
-            --db-type pgsql
-            --db-user ${DB_USER}
-            --default-user ${adminUsername}
-            --language en
-          '';
-          FRESHRSS_USER = ''
-            --api-password ${ADMIN_API_PASSWORD}
-            --email ${ADMIN_EMAIL}
-            --language en
-            --password ${ADMIN_PASSWORD}
-            --user ${adminUsername}
-          '';
+          ## FRESHRSS_INSTALL and FRESHRSS_USER are synthesised into
+          ## runtime.env by preStart, carrying the anchored admin
+          ## password + Fever API password. They are consumed by the
+          ## FreshRSS image's first-install code path only (after
+          ## install, FreshRSS reads config.php and ignores them).
+          ## See the let-binding ADMIN_EMAIL above for how the email
+          ## comes from instance config.
         };
 
-        ## OIDC_* env synthesized by preStart. Empty file pre-
-        ## provisioning so OIDC_ENABLED defaults to undefined and the
-        ## Apache <IfDefine OIDC_ENABLED> block is inert.
-        environmentFiles = [ ssoEnvFile ];
+        ## runtime.env: FRESHRSS_INSTALL + FRESHRSS_USER (anchored
+        ## passwords). ssoEnvFile: OIDC_* synthesized when Zitadel
+        ## has provisioned the OIDC client. Pre-provisioning,
+        ## ssoEnvFile is empty so OIDC_ENABLED defaults to undefined
+        ## and the Apache <IfDefine OIDC_ENABLED> block is inert.
+        environmentFiles = [ runtimeEnvFile ssoEnvFile ];
       };
     };
 

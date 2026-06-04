@@ -103,8 +103,13 @@ let
     $wgEmailAuthentication = false;
 
     ## Database settings
+    ## $wgDBserver with a leading colon = UNIX socket path (MediaWiki/
+    ## PHP mysqli convention). The host MariaDB socket is bind-mounted
+    ## into the container at /run/mysqld/mysqld.sock so this path
+    ## resolves. Pairs with services/mysql dropping its lan-address
+    ## TCP bind.
     $wgDBtype = "mysql";
-    $wgDBserver = "${config.homefree.network.lan-address}";
+    $wgDBserver = ":/run/mysqld/mysqld.sock";
     $wgDBuser = "mediawiki";
     $wgDBpassword = '{{MYSQL_PASSWORD}}';
 
@@ -153,9 +158,14 @@ let
     # Changing this will log out all existing sessions.
     $wgAuthenticationTokenVersion = "1";
 
-    # Site upgrade key. Must be set to a string (default provided) to turn on the
-    # web installer while LocalSettings.php is in place
-    $wgUpgradeKey = "377f1af203cdd10b";
+    # Site upgrade key. Substituted from /var/lib/homefree-state/mediawiki/
+    # wg-upgrade-key (anchored, per-instance random). The historical
+    # literal "377f1af203cdd10b" was shared across every HomeFree
+    # deployment — public knowledge of that key would let anyone re-
+    # enter the MediaWiki web installer if LocalSettings.php were ever
+    # absent. Per-instance random value closes that. See
+    # docs/agent-notes/security-audit-phase-5.md M7.
+    $wgUpgradeKey = "{{WG_UPGRADE_KEY}}";
 
     ## For attaching licensing metadata to pages, and displaying an
     ## appropriate copyright notice / icon. GNU Free Documentation
@@ -483,6 +493,11 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           "${containerDataPath}/html/images:/var/www/html/images"
           "${extensions}/MobileFrontend:/var/www/html/extensions/MobileFrontend:ro"
           "${extra-apache-conf}:/etc/apache2/conf-enabled/extra.conf"
+          ## Bind-mount the host MariaDB socket directory so MediaWiki
+          ## can reach the DB without a LAN TCP listener. See
+          ## $wgDBserver in the LocalSettings template above and
+          ## services/mysql for the matching bind-address drop.
+          "/run/mysqld:/run/mysqld"
         ] ++ (if logo-raw != null then [
           "${site.logo-path}:/var/www/html/images/${logo-basename}"
           "${favicon}:/var/www/html/images/favicon.ico"
@@ -503,7 +518,12 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           MEDIAWIKI_SITE_NAME = site.name;
           # MEDIAWIKI_UPDATE = true;
           MEDIAWIKI_DB_TYPE = "mysql";
-          MEDIAWIKI_DB_HOST = "${config.homefree.network.lan-address}";
+          ## Belt-and-suspenders for any image-side script that
+          ## reads this env (the actual connection path is via
+          ## $wgDBserver in LocalSettings.php which points at the
+          ## unix socket). "localhost" makes PHP fall back to the
+          ## socket by default if anything ever tries to use this.
+          MEDIAWIKI_DB_HOST = "localhost";
           MEDIAWIKI_DB_USER = "mediawiki";
           MEDIAWIKI_DB_NAME = site-id;
         };
@@ -598,6 +618,21 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
           generate = "${pkgs.openssl}/bin/openssl rand -hex 32";
         }}
 
+        # Phase 5 M7 — anchored wgUpgradeKey. Substituted into
+        # LocalSettings.php below. Hex is fine here (the key is only
+        # ever compared by MediaWiki internally as a string).
+        ${anchor.anchorSecret {
+          service = "mediawiki";
+          key = "wgUpgradeKey";
+          fileName = "wg-upgrade-key";
+          dir = "/var/lib/homefree-state/mediawiki";
+          mkdirMode = null;
+          generate = "${pkgs.openssl}/bin/openssl rand -hex 16";
+        }}
+
+        WG_UPGRADE_KEY_FILE="$SECRETS_DIR/wg-upgrade-key"
+        WG_UPGRADE_KEY=$(cat "$WG_UPGRADE_KEY_FILE")
+
         MYSQL_PASSWORD_RAW=$(cat "$MYSQL_PASSWORD_FILE")
         # Defensive: still escape single quotes in case future generation
         # logic ever produces them. Current generation strips '/+=' but
@@ -625,6 +660,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
 
         ${pkgs.gnused}/bin/sed -e "s/{{MYSQL_PASSWORD}}/$MYSQL_PASSWORD/g" \
           -e "s/{{WG_SECRET_KEY}}/$WG_SECRET_KEY/g" \
+          -e "s/{{WG_UPGRADE_KEY}}/$WG_UPGRADE_KEY/g" \
           ${local-settings} > ${containerDataPath}/LocalSettings.php
 
         # Container env file: the MediaWiki container reads
@@ -654,8 +690,14 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
     {
       name = "podman-${site-id}";
       value = {
-        after = [ "dns-ready.service" ];
+        after = [ "dns-ready.service" "mysql.service" ];
         wants = [ "dns-ready.service" ];
+        ## Re-bind /run/mysqld when mariadb restarts. The container
+        ## bind-mounts the host MariaDB socket dir (Phase 4 socket-
+        ## switch); a mariadb restart orphans the existing mount and
+        ## breaks DB queries with ENOENT until the container is
+        ## restarted. Same pattern as nextcloud/freshrss for postgres.
+        partOf = [ "mysql.service" ];
         serviceConfig = {
           ExecStartPre = [ "!${pkgs.writeShellScript "${site-id}-prestart" preStart}" ];
           ExecStartPost = [ "!${pkgs.writeShellScript "${site-id}-poststart" postStart}" ];

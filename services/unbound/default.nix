@@ -429,6 +429,17 @@ in
         # Based on recommended settings in https://doc.pi-hole.net/guides/dns/unbound/#configure-unbound
         harden-glue = true;
         harden-dnssec-stripped = true;
+
+        # Phase 5 L5 — bootstrap the root DNSSEC trust anchor so
+        # validation is fully enabled, not just "harden against
+        # stripped sigs." Unbound writes the IANA root key to this
+        # path on first run (uses the bundled `unbound-anchor` tool)
+        # and refreshes it via RFC 5011 thereafter. Without an
+        # explicit anchor, unbound only catches downgrade attacks
+        # against pre-validated chains — it doesn't independently
+        # validate from the root. See
+        # docs/agent-notes/security-audit-phase-5.md L5.
+        auto-trust-anchor-file = "/var/lib/unbound/root.key";
         use-caps-for-id = false;
         prefetch = true;
         edns-buffer-size = 1232;

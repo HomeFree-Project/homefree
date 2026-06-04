@@ -606,6 +606,22 @@ in
               X-Frame-Options "SAMEORIGIN"
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
+              # Phase 5 M3 — CSP + Permissions-Policy baselines.
+              # Default-src is same-origin only. Apps that legitimately
+              # embed OTHER HomeFree apps (the AI catalog iframes the
+              # individual app surfaces; CryptPad uses a separate
+              # docs-sandbox.<domain> origin for its sandboxed renderer)
+              # need cross-subdomain frame/script/style/connect. The
+              # *.<domain> source list permits any subdomain of this
+              # box's domain, but still rejects arbitrary off-host
+              # content. 'unsafe-inline' + 'unsafe-eval' on scripts
+              # cover the many third-party apps in this repo that emit
+              # inline handlers or use eval indirectly. Per-vhost
+              # overrides via extraCaddyConfig where a tighter policy
+              # is feasible. See
+              # docs/agent-notes/security-audit-phase-5.md M3.
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
           '' else "")
           ## Redirect http:// to https:// once the service's cert exists.
@@ -760,6 +776,14 @@ in
               X-Frame-Options "SAMEORIGIN"
               Referrer-Policy "strict-origin-when-cross-origin"
               X-XSS-Protection "1; mode=block"
+              # Phase 5 M3 — CSP + Permissions-Policy baselines.
+              # Same shared baseline as the reverse-proxy block above
+              # — including *.<domain> source allowlist to keep the
+              # policy uniform across surfaces. Apps that need a
+              # tighter or different policy override via
+              # extraCaddyConfig.
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
             ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''
               ## Hashed-asset cache override (vendor-hashed policy).

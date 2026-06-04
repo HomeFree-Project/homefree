@@ -529,6 +529,28 @@ let
       description = "Open to public on WAN port";
     };
 
+    privileged = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Run the Home Assistant container with --privileged. Enabled
+        by default because most Home Assistant deployments need
+        direct access to host hardware — Bluetooth controllers for
+        BLE device discovery, USB-attached Z-Wave/Zigbee dongles,
+        thermal/HID sensors, etc. — and --privileged is the standard
+        upstream-recommended way to grant that access.
+
+        Set to false on deployments that have no host-hardware
+        integrations (HA only talks to network devices: Hue bridges,
+        smart plugs over Wi-Fi, MQTT brokers, etc.). With --network=
+        host kept on, HA can still reach LAN devices and run mDNS/
+        SSDP discovery. The container loses its blanket access to
+        host devices, /sys, /proc raw IO and most kernel capabilities
+        — a meaningful reduction in container-escape surface for
+        deployments that don't use it.
+      '';
+    };
+
     enable-hacs = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -667,8 +689,8 @@ in
       extraOptions = [
         # "--pull=always"
         "--network=host"
-        "--privileged"
-      ];
+      ] ++ lib.optional config.homefree.services.home-assistant.privileged
+        "--privileged";
 
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
@@ -782,6 +804,18 @@ in
           type = "bool";
           default = false;
           description = "Make service accessible from WAN";
+        }
+        {
+          path = "privileged";
+          type = "bool";
+          default = true;
+          description = ''
+            Run the Home Assistant container with --privileged. Required for direct host hardware access:
+            Bluetooth/BLE, USB-attached Z-Wave/Zigbee dongles, HID sensors, etc. Disable if your HA
+            deployment only uses network-side integrations (Wi-Fi devices, Hue, MQTT, HomeKit, etc.) —
+            removes a major container-escape surface, but breaks any peripheral that depends on /dev,
+            raw IO, or kernel capabilities.
+          '';
         }
         {
           path = "enable-hacs";

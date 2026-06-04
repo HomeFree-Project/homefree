@@ -3,7 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HomeFree Installer</title>
+  <!--
+    Single index.html serves three surfaces (installer wizard, admin
+    UI, home dashboard) selected at runtime by shared/surface-switcher.js,
+    so the static title is the generic project name. If per-surface
+    titles become useful, the surface switcher can set document.title
+    when it mounts.
+  -->
+  <title>HomeFree</title>
 
   <!-- Import map for Lit module resolution (vendored locally) -->
   <script type="importmap">

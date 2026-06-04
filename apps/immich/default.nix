@@ -80,6 +80,27 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 24";
     }}
 
+    ## DB password for the "immich" Postgres role on the
+    ## postgres-vectorchord container. Today the immich-server container
+    ## connects via the podman bridge under trust auth so the value is
+    ## carried-but-not-enforced; Phase 2 swaps the vectorchord pg_hba
+    ## to scram-sha-256 and the value goes live.
+    ${anchor.anchorSecret {
+      service = "immich";
+      key = "db-password";
+      dir = immichSecretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
+    ## Synthesise runtime.env carrying DB_PASSWORD. immich-server
+    ## reads it via environmentFiles. Required because Phase 2's
+    ## pg_hba swap turns vectorchord's podman-bridge trust auth into
+    ## scram-sha-256 — the container has to actually send the
+    ## password matching the immich role.
+    install -m 600 /dev/null ${containerDataPath}/runtime.env
+    printf 'DB_PASSWORD=%s\n' "$(cat ${immichSecretsDir}/db-password)" \
+      > ${containerDataPath}/runtime.env
+
     ## Build a CA bundle the container can mount over its own
     ## /etc/ssl/certs/ca-certificates.crt so Immich's Node OIDC
     ## client can validate https://sso.<domain>/.well-known/
@@ -137,8 +158,11 @@ let
     DB_PORT="6432"
     DB_NAME="${database-name}"
     DB_USER="postgres"
-    DB_PASS="changeme"   # matches POSTGRES_PASSWORD on the
-                         # postgres-vectorchord container
+    ## Superuser password rotated and anchored by
+    ## services/postgres-vectorchord/default.nix. Today the vectorchord
+    ## pg_hba allows trust on 127.0.0.1 so this value is sent-but-ignored;
+    ## Phase 2 swaps to scram-sha-256 and it goes live.
+    DB_PASS=$(cat /var/lib/homefree-secrets/postgres-vectorchord/superuser-password)
 
     ## ── 1. Wait for Immich to come up ───────────────────────────
     for i in $(seq 1 60); do
@@ -307,6 +331,14 @@ in
   systemd.services.podman-postgres-vectorchord.serviceConfig.ExecStartPost =
   let
     postStartScript = pkgs.writeShellScript "postgres-vectorchord-poststart" ''
+      ## All psql calls below connect as the postgres superuser via
+      ## 127.0.0.1:6432. Phase 2's pg_hba swap turns that path from
+      ## trust auth into scram-sha-256, so we MUST export PGPASSWORD
+      ## now. The value is rotated and anchored by the vectorchord
+      ## prestart + ExecStartPost rotation script in
+      ## services/postgres-vectorchord/default.nix.
+      export PGPASSWORD=$(cat /var/lib/homefree-secrets/postgres-vectorchord/superuser-password)
+
       # Wait for database to be ready (max 30 seconds)
       for i in {1..30}; do
         if ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "SELECT 1" &>/dev/null; then
@@ -316,6 +348,22 @@ in
         echo "Waiting for database to be ready... (attempt $i/30)"
         sleep 1
       done
+
+      ## Anchor the immich-role password here as well as in immich's
+      ## own prestart, because THIS script runs first (vectorchord's
+      ## ExecStartPost fires before immich-server's ExecStartPre) and
+      ## reads the value below. The anchor helper is idempotent — the
+      ## immich prestart's call becomes a no-op on every boot after
+      ## the first.
+      ${anchor.preamble}
+      ${anchor.anchorSecret {
+        service = "immich";
+        key = "db-password";
+        dir = immichSecretsDir;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+      }}
+
+      IMMICH_DB_PASSWORD=$(cat ${immichSecretsDir}/db-password)
 
       ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres << EOF
         DO
@@ -328,7 +376,7 @@ in
               RAISE NOTICE 'Role "${database-user}" already exists. Skipping.';
            ELSE
               BEGIN   -- nested block
-                 CREATE ROLE "immich" WITH LOGIN PASSWORD 'changeme';
+                 CREATE ROLE "immich" WITH LOGIN PASSWORD '$IMMICH_DB_PASSWORD';
               EXCEPTION
                  WHEN duplicate_object THEN
                     RAISE NOTICE 'Role "${database-user}" was just created by a concurrent transaction. Skipping.';
@@ -337,6 +385,12 @@ in
         END
         \$do\$;
       EOF
+
+      ## Unconditional rotation: idempotent ALTER. On a pre-anchoring
+      ## box this swaps the historical literal "changeme" for the
+      ## anchored value; subsequent rebuilds set it to itself.
+      ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres \
+        -c "ALTER ROLE \"${database-user}\" WITH PASSWORD '$IMMICH_DB_PASSWORD'"
 
       ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -U postgres -p 6432 -tc "SELECT 1 FROM pg_database WHERE datname = '${database-name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || ${pkgs.postgresql}/bin/psql -h 127.0.0.1 -p 6432 -U postgres -c "CREATE DATABASE \"${database-name}\" WITH OWNER \"${database-user}\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
 
@@ -437,6 +491,9 @@ in
         DB_PORT = "6432";
         DB_DATABASE_NAME = database-name;
         DB_USERNAME = database-user;
+        ## DB_PASSWORD comes from runtime.env (synthesised in
+        ## preStart from the anchored value at
+        ## ${immichSecretsDir}/db-password).
         REDIS_HOSTNAME = "immich-redis";
         REDIS_PORT = toString port-redis;
         IMMICH_MACHINE_LEARNING_URL = "http://immich-machine-learning:${toString port-machine-learning}";
@@ -444,6 +501,11 @@ in
         IMMICH_HOST = "0.0.0.0";
         IMMICH_PORT = toString port;
       };
+
+      ## runtime.env carries DB_PASSWORD (anchored, synthesised in
+      ## preStart). Without it, Phase 2's vectorchord pg_hba swap to
+      ## scram-sha-256 leaves the container unable to authenticate.
+      environmentFiles = [ "${containerDataPath}/runtime.env" ];
     };
 
     immich-machine-learning = {
@@ -458,7 +520,10 @@ in
         "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
         "--device=/dev/dri:/dev/dri" # For intel hwaccel, needs to be updated for your hardware
         "--cap-add=CAP_PERFMON" # For GPU statistics
-        "--privileged"
+        ## --privileged removed: GPU device, Coral TPU, and
+        ## CAP_PERFMON are already declared explicitly above. If a
+        ## particular hardware setup needs more, add the specific
+        ## --device=/--cap-add= rather than restoring --privileged.
       ];
 
       volumes = [

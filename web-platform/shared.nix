@@ -158,10 +158,21 @@
     };
   };
 
-  # Firewall rules for platform services
+  # Firewall rules for platform services.
+  #
+  # 8000 (admin-api / install web UI) stays LAN-reachable so a remote
+  # operator on the trusted LAN can drive the install from their own
+  # workstation without setting up a serial console / VNC.
+  #
+  # 9090 (Cockpit) intentionally NOT opened. Cockpit is a full system-
+  # management UI shipped only for emergency / debug use during
+  # install; reachable over the loopback for anyone SSHed in with a
+  # `ssh -L 9090:127.0.0.1:9090` tunnel (the operator already needs
+  # SSH access for any other emergency-debug task anyway). This
+  # closes the H4 finding in docs/agent-notes/security-audit-phase-5.md.
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 8000 9090 ];  # Backend and Cockpit
+    allowedTCPPorts = [ 8000 ];
   };
 
   # Install base packages needed for web platform

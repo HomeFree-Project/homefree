@@ -145,6 +145,20 @@ in
     # (DAD can't complete on a down link) and AdGuardHome fatals on startup,
     # taking out DNS for the whole host.
     "net.ipv6.ip_nonlocal_bind" = 1;
+
+    # Phase 5 M6: loose-mode reverse-path filter. NixOS default is 0
+    # (disabled) which lets a packet with a source IP that doesn't
+    # match any reachable route in via *any* interface — useful for
+    # asymmetric routing setups, but on a router with well-defined
+    # WAN/LAN/podman bridges it's just a spoofing assist. Mode 2
+    # (loose) accepts the packet if the source is reachable via ANY
+    # interface — tolerates asymmetric routing (so this doesn't
+    # break netbird/headscale tunnel return paths) while rejecting
+    # obviously spoofed traffic. Mode 1 (strict) would be tighter
+    # but does break asymmetric paths. See
+    # docs/agent-notes/security-audit-phase-5.md M6.
+    "net.ipv4.conf.all.rp_filter" = 2;
+    "net.ipv4.conf.default.rp_filter" = 2;
   };
 
   # ip6table_nat: required so netavark's IPv6 DNAT rules for podman containers
@@ -358,8 +372,22 @@ in
             iifname "${wan-interface}" ip saddr @f2b_banned4 counter drop comment "fail2ban v4"
             iifname "${wan-interface}" ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6"
 
-            ## Allow for ipv6 route advertisements
-            icmpv6 type { echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, nd-redirect, ind-neighbor-solicit, ind-neighbor-advert, router-renumbering, mld-listener-query, mld-listener-report, mld-listener-done, mld-listener-reduction, mld2-listener-report } accept;
+            ## Allow ICMPv6 neighbor/router discovery + multicast
+            ## listener discovery from anywhere — these are required
+            ## for IPv6 to work and are sourced from anywhere by
+            ## design. nd-redirect is split out below because it's
+            ## the one ICMPv6 message that can be abused for
+            ## off-link traffic redirection.
+            icmpv6 type { echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, ind-neighbor-solicit, ind-neighbor-advert, router-renumbering, mld-listener-query, mld-listener-report, mld-listener-done, mld-listener-reduction, mld2-listener-report } accept;
+
+            ## Phase 5 M5: nd-redirect only from link-local sources.
+            ## Legitimate ND redirects come from a router on the same
+            ## L2 link and use a fe80::/10 source. Accepting from
+            ## arbitrary sources (the previous rule did) lets a WAN
+            ## attacker who can spoof ICMPv6 redirect traffic to
+            ## attacker-controlled hosts. See
+            ## docs/agent-notes/security-audit-phase-5.md M5.
+            icmpv6 type nd-redirect ip6 saddr fe80::/10 accept comment "ND redirect — link-local source only"
             meta l4proto ipv6-icmp accept comment "Accept ICMPv6"
             meta l4proto icmp accept comment "Accept ICMP"
             ip protocol igmp accept comment "Accept IGMP"

@@ -156,6 +156,8 @@ class InstallationService:
     "localDomain": "lan",
     "additionalDomains": [],
     "authorizedKeys": [],
+    "ssh-key-only": false,
+    "wheel-passwordless": false,
     "bootMirror": @@system_boot_mirror@@
   },
   "network": {

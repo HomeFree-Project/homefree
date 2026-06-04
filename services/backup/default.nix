@@ -95,6 +95,23 @@ let
   ## real restic repo with its own snapshot history and retention - so a
   ## corrupt latest snapshot can be rolled back offsite too, and `prune`
   ## bounds the offsite size. The credentials live in an EnvironmentFile.
+  ##
+  ## Phase 5 L3 — recommended B2 application-key scope. The
+  ## B2_ACCOUNT_ID + B2_ACCOUNT_KEY anchored under
+  ## /var/lib/homefree-secrets/backup/ should be a per-bucket
+  ## APPLICATION KEY (NOT the master account key), with:
+  ##   - capabilities limited to listBuckets, listFiles, readFiles,
+  ##     shareFiles, writeFiles, deleteFiles (drop everything else)
+  ##   - bucket scope: ONLY this backup bucket (no broader scope)
+  ##   - optional Object Lock / File Lock enabled on the bucket so an
+  ##     attacker who exfiltrates the creds can write but not destroy
+  ##     existing snapshots (`restic prune` still works because Object
+  ##     Lock only protects past the retention window — set the
+  ##     bucket's lifecycle to match restic's keep policy below)
+  ## Generate at https://secure.backblaze.com/app_keys.htm.
+  ## If you must use the master key, document the blast radius:
+  ## leaked creds = full account compromise, every bucket affected.
+  ## See docs/agent-notes/security-audit-phase-5.md L3.
   backblaze-enabled = config.homefree.backups.enable
     && config.homefree.backups.backblaze.enable;
   backblaze-bucket = config.homefree.backups.backblaze.bucket;

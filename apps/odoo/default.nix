@@ -104,8 +104,16 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        HOST = config.homefree.network.lan-address;
-        PORT = "5432";
+        ## libpq treats a host beginning with `/` as a unix socket
+        ## directory. /run/postgresql is bind-mounted into the
+        ## container (volumes above), so odoo connects via the socket
+        ## under local-trust auth — no password needed, and the
+        ## connection bypasses the host pg_hba TCP rules entirely.
+        ## Same pattern as freshrss / joplin / matrix / nextcloud.
+        ## (Previously HOST was the lan-address with TCP+trust; Phase
+        ## 2's hba swap to scram-sha-256 broke that path because
+        ## odoo's role has no password.)
+        HOST = "/run/postgresql";
         USER = database-user;
       };
 
@@ -119,6 +127,10 @@ in
     after = [ "dns-ready.service" "postgresql.service" ];
     requires = [ "postgresql.service" ];
     wants = [ "dns-ready.service" ];
+    ## Re-bind /run/postgresql when postgres restarts — without
+    ## partOf the container's existing mount is orphaned and DB
+    ## queries fail with ENOENT. Same pattern as nextcloud/freshrss.
+    partOf = [ "postgresql.service" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "odoo-prestart" preStart}" ];
     };
