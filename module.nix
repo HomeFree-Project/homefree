@@ -35,6 +35,26 @@
           line, e.g. `import /run/homefree/admin-api-upstream.caddy`.
         '';
       };
+
+      ## Generic per-service backup-source registry. The backup primitive
+      ## (services/backup) consumes THIS, not homefree.service-config, so it
+      ## stays decoupled from the service-config schema. Populated by the
+      ## composition layer (config section below) from each service-config
+      ## entry's backup fields. Generic per-entry shape:
+      ## { label, paths, postgres-databases, mysql-databases }.
+      backup-sources = lib.mkOption {
+        type = with lib.types; listOf (submodule {
+          options = {
+            label = lib.mkOption { type = str; };
+            paths = lib.mkOption { type = listOf str; default = [ ]; };
+            postgres-databases = lib.mkOption { type = listOf str; default = [ ]; };
+            mysql-databases = lib.mkOption { type = listOf str; default = [ ]; };
+          };
+        });
+        internal = true;
+        default = [ ];
+        description = "Generic backup-source registry consumed by services/backup, decoupled from service-config.";
+      };
     };
 
     system = {
@@ -3374,6 +3394,17 @@
   };
 
   config = {
+    ## Composition glue: project each service-config entry's backup fields into
+    ## the generic homefree.internal.backup-sources registry that the backup
+    ## primitive consumes. This homefree-specific mapping keeps the backup
+    ## module itself free of the service-config schema (registry middle-path).
+    homefree.internal.backup-sources = lib.map
+      (entry: {
+        inherit (entry) label;
+        inherit (entry.backup) paths postgres-databases mysql-databases;
+      })
+      config.homefree.service-config;
+
     assertions =
       let
         elemInList = x: xs: lib.foldl' (acc: el: acc || el == x) false xs;
