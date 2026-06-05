@@ -76,8 +76,10 @@ in
   ## merge-ha-yaml, the alerts engine, …).
   python-unit = pkgs.runCommandLocal "hf-python-unit"
     { nativeBuildInputs = [ pythonUnitEnv ]; } ''
-    cd ${backendSrc}
-    HOME=$TMPDIR PYTHONPATH=${backendSrc} pytest -q tests/
+    cd ${self}
+    export HOME=$TMPDIR PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${backendSrc}
+    pytest -q --import-mode=importlib -p no:cacheprovider \
+      web-platform/backend/tests scripts/tests
     touch $out
   '';
 
