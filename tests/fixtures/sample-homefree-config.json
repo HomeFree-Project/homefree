@@ -1,0 +1,343 @@
+{
+  "system": {
+    "domain": "homefree.example",
+    "hostName": "homefree-test",
+    "timeZone": "America/Los_Angeles",
+    "defaultLocale": "en_US.UTF-8",
+    "countryCode": "US",
+    "keyMap": "us",
+    "adminUsername": "admin",
+    "adminDescription": "HomeFree Admin",
+    "adminEmail": "admin@homefree.example",
+    "localDomain": "homefree.lan",
+    "additionalDomains": [],
+    "authorizedKeys": [],
+    "language": "en",
+    "currency": "USD",
+    "latitude": 0.0,
+    "longitude": 0.0,
+    "unitSystem": "us_customary",
+    "elevation": 233,
+    "project-mode": true,
+    "hashedPassword": "$6$rTESTrTESTrTEST$0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab",
+    "bootMirror": true,
+    "ssh-key-only": false,
+    "wheel-passwordless": true
+  },
+  "network": {
+    "wan-interface": "eth0",
+    "lan-interface": "eth1",
+    "router-enable": true,
+    "lan-address": "10.0.0.1",
+    "lan-subnet": "10.0.0.0/24",
+    "dhcp-range-start": "10.0.0.100",
+    "dhcp-range-end": "10.0.0.200",
+    "wan-bitrate-mbps-down": 1000,
+    "wan-bitrate-mbps-up": 1000,
+    "static-ips": [],
+    "enable-unbound-adblock": false,
+    "abuseBlockCidrs": [
+      {
+        "cidr": "47.74.0.0/15",
+        "enabled": true,
+        "comment": "Alibaba Cloud (AS45102/AS37963) — scraper network, seeded by HomeFree default"
+      },
+      {
+        "cidr": "47.76.0.0/14",
+        "enabled": true,
+        "comment": "Alibaba Cloud (AS45102/AS37963) — scraper network, seeded by HomeFree default"
+      },
+      {
+        "cidr": "47.80.0.0/13",
+        "enabled": true,
+        "comment": "Alibaba Cloud (AS45102/AS37963) — scraper network, seeded by HomeFree default"
+      },
+      {
+        "cidr": "203.159.90.116/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.94.31.119/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.154.98.35/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.94.31.32/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "35.237.24.94/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "95.164.157.196/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.226.13.15/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "128.203.192.244/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "104.43.251.173/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "62.60.130.227/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "195.178.110.199/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "2602:fb54:1400::1ab/128",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.94.31.112/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "194.26.192.20/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "34.75.75.174/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "4.228.83.111/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "172.202.92.73/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "74.249.173.207/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.104.103.230/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "4.201.75.230/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.116.59.164/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "191.232.209.213/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.206.88.59/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.151.222.215/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.104.50.125/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.9.22.213/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "172.170.252.255/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.226.24.199/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "130.131.225.103/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.148.10.120/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "172.212.149.205/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.63.34.46/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "151.243.150.23/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.206.92.242/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "20.104.98.143/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "2602:fb54:1a00::1c3/128",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "165.232.189.48/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "2602:fb54:1a00::cb/128",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "45.148.10.95/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "5.255.122.176/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      },
+      {
+        "cidr": "84.247.152.177/32",
+        "enabled": true,
+        "comment": "Blocked from traffic view"
+      }
+    ],
+    "guest-networks": []
+  },
+  "dns": {
+    "overrides": [],
+    "dynamic-dns": {
+      "interval": "10m",
+      "usev4": "webv4, webv4=ipinfo.io/ip",
+      "usev6": "webv6, webv6=v6.ipinfo.io/ip",
+      "zones": []
+    },
+    "cert-management": {
+      "provider": "hetzner"
+    },
+    "local": {
+      "overrides": []
+    }
+  },
+  "services": {
+    "admin": {
+      "enable": true,
+      "public": false
+    },
+    "landing-page": {
+      "enable": true,
+      "public": false,
+      "suppressDefaultWarning": true
+    },
+    "jellyfin": {
+      "enable": false,
+      "public": false
+    }
+  },
+  "backups": {
+    "enable": true,
+    "to-path": "/var/backup",
+    "backblaze-enable": false,
+    "backblaze-bucket": "",
+    "extra-from-paths": [],
+    "backblaze": {
+      "enable": true,
+      "bucket": "homefree"
+    }
+  },
+  "sso": {
+    "per-service": {}
+  },
+  "mounts": [],
+  "service-config": [],
+  "proxied-domains": [],
+  "developers": {
+    "flakes": [],
+    "homefree-base": {
+      "enabled": false,
+      "type": "local",
+      "localUrl": "/etc/nixos/homefree",
+      "remoteUrl": "https://git.example/homefree"
+    }
+  },
+  "storage": {
+    "pools": [],
+    "shares": [],
+    "media-server": {
+      "friendly-name": "Media Server"
+    }
+  },
+  "system-disk-encryption": {
+    "enable": true
+  },
+  "snapshots": {
+    "system": {
+      "enable": false
+    }
+  },
+  "alerts": {
+    "channels": {
+      "ntfy": {
+        "enable": true
+      }
+    },
+    "enable": true,
+    "interval": "1min"
+  }
+}

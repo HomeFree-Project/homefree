@@ -98,7 +98,13 @@ in
   ## stays a trivial `touch`.
   nix-eval =
     let
-      cfgs = [ "homefree" "lan-client" "homefree-installer" ];
+      cfgs = [
+        "homefree"
+        "lan-client"
+        "homefree-installer"
+        "homefree-loader-test"
+        "homefree-loader-test-minimal"
+      ];
       drvPaths = map
         (n: self.nixosConfigurations.${n}.config.system.build.toplevel.drvPath)
         cfgs;
@@ -109,4 +115,39 @@ in
       echo "${forced}" >&2
       touch $out
     '';
+
+  ## Loader mapping + rule-11 backwards-compat. Asserts the
+  ## homefree-config.json -> homefree.* loader maps values correctly (the full
+  ## fixture) AND that an OLDER JSON missing the optional system.* keys still
+  ## evaluates and receives the documented `or`-defaults
+  ## (homefree-loader-test-minimal). Reads homefree.* VALUES — lazy, does not
+  ## realise the systems. The fixture lives at
+  ## tests/fixtures/sample-homefree-config.json (see flake-modules/loader-test.nix).
+  loader-mapping =
+    let
+      full = self.nixosConfigurations.homefree-loader-test.config.homefree;
+      minimal = self.nixosConfigurations.homefree-loader-test-minimal.config.homefree;
+      tests = {
+        "full: system.domain mapped" = full.system.domain == "homefree.example";
+        "full: system.localDomain mapped" = full.system.localDomain == "homefree.lan";
+        "full: network.lan-address mapped" = full.network.lan-address == "10.0.0.1";
+        "full: network.lan-subnet mapped" = full.network.lan-subnet == "10.0.0.0/24";
+        # rule-11: minimal JSON omits these -> loader `or`-defaults them.
+        "bc: unitSystem -> metric" = minimal.system.unitSystem == "metric";
+        "bc: currency -> null" = minimal.system.currency == null;
+        "bc: language -> null" = minimal.system.language == null;
+        "bc: wheel-passwordless -> true" = minimal.system.wheel-passwordless == true;
+        "bc: project-mode -> false" = minimal.system.project-mode == false;
+        "bc: bootMirror -> false" = minimal.system.bootMirror == false;
+        "bc: hashedPassword -> null" = minimal.system.hashedPassword == null;
+        "bc: ssh-key-only -> false" = minimal.system.ssh-key-only == false;
+      };
+      failures = builtins.attrNames (lib.filterAttrs (_: v: !v) tests);
+      total = builtins.length (builtins.attrNames tests);
+    in
+    pkgs.runCommandLocal "hf-loader-mapping" { } (
+      if failures == [ ]
+      then ''echo "loader-mapping: all ${toString total} assertions pass" >&2; touch $out''
+      else ''echo "loader-mapping FAILURES: ${builtins.concatStringsSep ", " failures}" >&2; exit 1''
+    );
 }
