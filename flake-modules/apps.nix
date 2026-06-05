@@ -7,9 +7,9 @@
     let
       update-versions = pkgs.writeShellApplication {
         name = "update-versions";
-        runtimeInputs = with pkgs; [ python3 skopeo ];
+        runtimeInputs = [ (pkgs.python3.withPackages (ps: [ ps.httpx ps.fastapi ])) ];
         text = ''
-          exec python3 ${../scripts/check-container-updates.py} "$@"
+          exec python3 ${../scripts/upgrade-apps.py} "$@"
         '';
       };
 
