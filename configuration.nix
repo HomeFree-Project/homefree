@@ -32,6 +32,7 @@ in
     ./profiles/hardware-configuration.nix
     ./profiles/router.nix
     ./profiles/secrets.nix
+    ./profiles/security-policy.nix
     ./profiles/traffic-control.nix
     ./profiles/virtualisation.nix
 

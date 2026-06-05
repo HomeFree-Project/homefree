@@ -115,26 +115,9 @@ in
     gid = 33;
   };
 
-  ## Wheel-group NOPASSWD: ALL is gated behind
-  ## `homefree.system.wheel-passwordless` (default true — historical
-  ## behaviour; useful for debugging and unattended automation). When
-  ## flipped to false, the rule is omitted and wheel members re-enter
-  ## their password on `sudo`. See module.nix for the option
-  ## declaration and docs/agent-notes/security-audit-phase-5.md for
-  ## the rationale.
-  ## `or false`: profiles/common.nix is shared with lan-client, which does NOT
-  ## import the homefree options module, so a bare `config.homefree.*` read
-  ## throws "attribute 'homefree' missing" and breaks lan-client eval. Read
-  ## defensively so this shared base profile evaluates with or without the
-  ## homefree options present. Proper fix (tracked): extract these
-  ## product-specific knobs into a homefree-only profile — a shared/generic
-  ## base profile should not reach into Layer-2 `homefree.*` options.
-  security.sudo.extraRules = lib.optionals (config.homefree.system.wheel-passwordless or false) [
-    {
-      groups = [ "wheel" ];
-      commands = [ { command = "ALL"; options = [ "NOPASSWD" ]; } ];
-    }
-  ];
+  # Wheel-group NOPASSWD and the ssh-key-only password-auth policy live in the
+  # homefree-only profiles/security-policy.nix — this base profile is shared
+  # with lan-client and must not reference homefree.* options.
 
   # --------------------------------------------------------------------------------------
   # Package config
@@ -200,24 +183,10 @@ in
   # @TODO: Move to "environment"?
   services.printing.drivers = [ pkgs.brlaser ];
 
-  # Enable the OpenSSH daemon.
-  #
-  # PasswordAuthentication + KbdInteractiveAuthentication are gated
-  # behind `homefree.system.ssh-key-only` (default false — preserves
-  # historical password-login behaviour, mitigated by the WAN
-  # firewall + Phase 4 sshd fail2ban jail). When the option is
-  # flipped to true, only SSH public-key auth is accepted — confirm
-  # the admin user already has a working SSH key first or remote
-  # access is lost. See docs/agent-notes/security-audit-phase-5.md.
-  services.openssh = {
-    enable = true;
-    # `or false`: defensive read — shared with lan-client which lacks the
-    # homefree options module (see the wheel-passwordless note above).
-    settings = lib.mkIf (config.homefree.system.ssh-key-only or false) {
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
-    };
-  };
+  # Enable the OpenSSH daemon. The ssh-key-only PasswordAuthentication policy
+  # lives in the homefree-only profiles/security-policy.nix (not here — this
+  # base profile is shared with lan-client).
+  services.openssh.enable = true;
 
   # This will save you money and possibly your life!
   services.thermald.enable = true;
