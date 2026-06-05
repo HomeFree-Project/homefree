@@ -15,6 +15,10 @@ let
 
   # SAME dependency closure the admin/installer backend runs under.
   pythonEnv = pkgs.python3.withPackages (import (backendSrc + "/python-env.nix"));
+
+  # The backend closure plus pytest, for the pure-logic unit tests.
+  pythonUnitEnv = pkgs.python3.withPackages (ps:
+    (import (backendSrc + "/python-env.nix") ps) ++ [ ps.pytest ]);
 in
 {
   ## Frontend syntax gate — `node --check` over every source module (excl. the
@@ -62,6 +66,18 @@ in
     { nativeBuildInputs = [ pythonEnv ]; } ''
     cd ${backendSrc}
     PYTHONPATH=${backendSrc} python ${backendSrc}/tests/import_all.py
+    touch $out
+  '';
+
+  ## Python unit tests — pure-logic regression tests (pytest). Pins the
+  ## hardware temperature threshold cascade (services/hw_buckets.py), incl. the
+  ## NVMe both-limits regression (docs/agent-notes/nvme-threshold-cascade.md).
+  ## Grows as more pure logic is covered (check-container-updates, sync-config,
+  ## merge-ha-yaml, the alerts engine, …).
+  python-unit = pkgs.runCommandLocal "hf-python-unit"
+    { nativeBuildInputs = [ pythonUnitEnv ]; } ''
+    cd ${backendSrc}
+    HOME=$TMPDIR PYTHONPATH=${backendSrc} pytest -q tests/
     touch $out
   '';
 
