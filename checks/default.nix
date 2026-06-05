@@ -69,18 +69,26 @@ in
   ## nixosConfiguration's toplevel (without BUILDING it), so `nix flake check`
   ## fails on any eval error or untracked .nix that breaks the flake. This is
   ## the structure-agnostic regression oracle the decomposition refactor leans
-  ## on. Referencing each `.drvPath` instantiates (evaluates) the derivation
-  ## but does not realise the system.
+  ## on.
+  ##
+  ## IMPORTANT: do NOT put the toplevel `.drvPath` strings into the derivation
+  ## env — a `.drvPath` carries string context, so Nix adds the three systems
+  ## to this check's input closure and `nix flake check` would REALISE all
+  ## three full NixOS systems (slow; needs network/secrets; observed pulling
+  ## in mercurial/crypton/... before this fix). Instead `deepSeq` the drvPaths
+  ## to force their evaluation, then return a context-free string so the build
+  ## stays a trivial `touch`.
   nix-eval =
     let
       cfgs = [ "homefree" "lan-client" "homefree-installer" ];
       drvPaths = map
         (n: self.nixosConfigurations.${n}.config.system.build.toplevel.drvPath)
         cfgs;
+      forced = builtins.deepSeq drvPaths
+        "nix-eval: all ${toString (builtins.length cfgs)} nixosConfigurations evaluate";
     in
-    pkgs.runCommandLocal "hf-nix-eval" { inherit drvPaths; } ''
-      echo "nix-eval: all nixosConfigurations instantiated:" >&2
-      for d in $drvPaths; do echo "  $d" >&2; done
+    pkgs.runCommandLocal "hf-nix-eval" { } ''
+      echo "${forced}" >&2
       touch $out
     '';
 }
