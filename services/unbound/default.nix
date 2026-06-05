@@ -4,7 +4,11 @@ let
   lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
-  proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  ## DNS/ingress consumer: read the generic ingress-vhosts registry (label +
+  ## reverse-proxy), NOT homefree.service-config directly — decoupled from the
+  ## service-config schema, same as services/caddy. The composition layer
+  ## projects service-config into it (module.nix, homefree.internal.ingress-vhosts).
+  proxiedHostConfig = lib.filter (vhost: vhost.reverse-proxy.enable == true) config.homefree.internal.ingress-vhosts;
   proxiedDomains = config.homefree.proxied-domains;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
 
