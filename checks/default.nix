@@ -79,7 +79,7 @@ in
     cd ${self}
     export HOME=$TMPDIR PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=${backendSrc}
     pytest -q --import-mode=importlib -p no:cacheprovider \
-      web-platform/backend/tests scripts/tests
+      web-platform/backend/tests scripts/tests apps/home-assistant/tests
     touch $out
   '';
 
