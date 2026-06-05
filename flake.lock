@@ -503,7 +503,8 @@
         "nixpkgs": "nixpkgs_3",
         "nixpkgs-unstable": "nixpkgs-unstable",
         "nixvim-config": "nixvim-config",
-        "sops-nix": "sops-nix"
+        "sops-nix": "sops-nix",
+        "web-platform": "web-platform"
       }
     },
     "rust-overlay": {
@@ -574,6 +575,22 @@
         "repo": "default",
         "type": "github"
       }
+    },
+    "web-platform": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./web-platform",
+        "type": "path"
+      },
+      "original": {
+        "path": "./web-platform",
+        "type": "path"
+      },
+      "parent": []
     }
   },
   "root": "root",

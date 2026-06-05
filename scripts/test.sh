@@ -20,7 +20,7 @@ frontend_syntax() {
   return $fail
 }
 
-frontend_imports() { node scripts/check-frontend-imports.mjs web-platform/frontend; }
+frontend_imports() { node web-platform/check-frontend-imports.mjs web-platform/frontend; }
 
 # New source files present on disk but not git-tracked are excluded from the
 # flake source and silently break builds. Flag them before they ever reach a

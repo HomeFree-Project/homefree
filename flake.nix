@@ -50,6 +50,13 @@
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
     import-tree.url = "github:vic/import-tree";
+
+    ## web-platform is its own flake (the Python + JS subsystem) with its own
+    ## devShell + checks. homefree re-exports those checks (flake-modules/
+    ## checks.nix). Wiring homefree to also consume its source tree as this
+    ## input (replacing installerWebPath = ../../web-platform) is a later step.
+    web-platform.url = "path:./web-platform";
+    web-platform.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = inputs:
