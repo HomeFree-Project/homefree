@@ -56,15 +56,16 @@
         description = "Generic backup-source registry consumed by services/backup, decoupled from service-config.";
       };
 
-      ## Generic ingress vhost registry consumed by services/caddy, decoupled
-      ## from the service-config schema. Each entry is { label, reverse-proxy }
-      ## — the ONLY service-config fields the caddy generator reads. Populated
-      ## by the composition layer (config section below).
+      ## Generic ingress registry consumed by the ingress-related primitives —
+      ## services/caddy (vhosts), services/unbound (split-horizon DNS records),
+      ## profiles/router (WAN firewall ports for public services). Decoupled
+      ## from the service-config schema; each entry is
+      ## { label, reverse-proxy, firewall }. Populated by the composition layer.
       ingress-vhosts = lib.mkOption {
         type = with lib.types; listOf attrs;
         internal = true;
         default = [ ];
-        description = "Generic ingress vhost registry (label + reverse-proxy) consumed by services/caddy.";
+        description = "Generic ingress registry (label + reverse-proxy + firewall) consumed by caddy, unbound, and the router.";
       };
 
       ## Generic port-request registry consumed by services/port-allocator
@@ -3438,7 +3439,7 @@
     ## service-config entry into the generic ingress-vhosts registry that the
     ## caddy generator consumes (it reads only label + reverse-proxy).
     homefree.internal.ingress-vhosts = lib.map
-      (entry: { inherit (entry) label reverse-proxy; })
+      (entry: { inherit (entry) label reverse-proxy firewall; })
       config.homefree.service-config;
 
     ## Composition glue for the remaining generic-primitive consumers (port

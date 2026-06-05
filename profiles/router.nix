@@ -103,7 +103,10 @@ let
     '';
 
   # Firewall rules to open up ports for services
-  public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
+  # Read the generic ingress registry (reverse-proxy + firewall), not
+  # homefree.service-config directly — decoupled from the service-config schema
+  # (module.nix projects it; shared with caddy + unbound).
+  public-service-configs = lib.filter (vhost: vhost.reverse-proxy.enable == true && vhost.reverse-proxy.public == true) config.homefree.internal.ingress-vhosts;
   service-input-rules = lib.concatStringsSep "\n" (lib.map (service-config:
     lib.concatStringsSep "\n" (lib.map (tcp-port: "tcp dport { ${toString tcp-port} } ct state new accept;") service-config.firewall.open-ports.tcp)
     +
