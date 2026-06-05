@@ -66,6 +66,24 @@
         default = [ ];
         description = "Generic ingress vhost registry (label + reverse-proxy) consumed by services/caddy.";
       };
+
+      ## Generic port-request registry consumed by services/port-allocator
+      ## (label + port-request), decoupled from service-config.
+      port-requests = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic port-request registry (label + port-request) consumed by the port allocator.";
+      };
+
+      ## Generic managed-unit registry consumed by modules/service-restart-policy
+      ## (enable + systemd-service-names), decoupled from service-config.
+      managed-units = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic managed-unit registry (enable + systemd-service-names) consumed by the restart policy.";
+      };
     };
 
     system = {
@@ -3421,6 +3439,16 @@
     ## caddy generator consumes (it reads only label + reverse-proxy).
     homefree.internal.ingress-vhosts = lib.map
       (entry: { inherit (entry) label reverse-proxy; })
+      config.homefree.service-config;
+
+    ## Composition glue for the remaining generic-primitive consumers (port
+    ## allocator, restart policy) — same pattern, narrow projections.
+    homefree.internal.port-requests = lib.map
+      (entry: { inherit (entry) label port-request; })
+      config.homefree.service-config;
+
+    homefree.internal.managed-units = lib.map
+      (entry: { inherit (entry) label enable systemd-service-names; })
       config.homefree.service-config;
 
     assertions =

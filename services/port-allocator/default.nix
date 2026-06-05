@@ -70,7 +70,10 @@ let
   ## reserved even while it's off — otherwise toggling it on later
   ## could collide with another app the allocator handed its number
   ## to in the meantime.
-  allEntries = config.homefree.service-config;
+  ## Read the generic port-request registry (label + port-request), not
+  ## homefree.service-config directly — decoupled from the service-config
+  ## schema (module.nix projects it).
+  allEntries = config.homefree.internal.port-requests;
 
   ## Pull (label, port-request) pairs in stable order. Empty labels
   ## (which can show up if an app's submodule is partially populated)
