@@ -2,7 +2,12 @@
 let
   lan-address = config.homefree.network.lan-address;
   lan-address-v6 = config.homefree.network.lan-address-v6;
-  proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  ## Ingress consumer: the caddy generator reads its vhosts from the generic
+  ## homefree.internal.ingress-vhosts registry (label + reverse-proxy), NOT
+  ## homefree.service-config directly — so it is decoupled from the
+  ## service-config schema. The composition layer projects service-config into
+  ## that registry. See module.nix (homefree.internal.ingress-vhosts).
+  proxiedHostConfig = lib.filter (vhost: vhost.reverse-proxy.enable == true) config.homefree.internal.ingress-vhosts;
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 

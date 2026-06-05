@@ -55,6 +55,17 @@
         default = [ ];
         description = "Generic backup-source registry consumed by services/backup, decoupled from service-config.";
       };
+
+      ## Generic ingress vhost registry consumed by services/caddy, decoupled
+      ## from the service-config schema. Each entry is { label, reverse-proxy }
+      ## — the ONLY service-config fields the caddy generator reads. Populated
+      ## by the composition layer (config section below).
+      ingress-vhosts = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic ingress vhost registry (label + reverse-proxy) consumed by services/caddy.";
+      };
     };
 
     system = {
@@ -3403,6 +3414,13 @@
         inherit (entry) label;
         inherit (entry.backup) paths postgres-databases mysql-databases;
       })
+      config.homefree.service-config;
+
+    ## Composition glue: project the ingress-relevant fields of each
+    ## service-config entry into the generic ingress-vhosts registry that the
+    ## caddy generator consumes (it reads only label + reverse-proxy).
+    homefree.internal.ingress-vhosts = lib.map
+      (entry: { inherit (entry) label reverse-proxy; })
       config.homefree.service-config;
 
     assertions =
