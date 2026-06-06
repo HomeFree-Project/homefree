@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "v2.14.1";
-  version-meili = "v1.43.0";
+  version-meili = "v1.45.2";
   containerDataPath = "/var/lib/linkwarden-podman";
   secretsDir = "/var/lib/homefree-secrets/linkwarden";
 

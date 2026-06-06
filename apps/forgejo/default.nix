@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "15.0.1";
+  version = "15.0.2";
   containerDataPath = "/var/lib/forgejo";
   port = config.homefree.allocPort "forgejo";
   ssh-port = config.homefree.allocPort "forgejo-ssh";

@@ -1008,33 +1008,38 @@ class AdminApp extends LitElement {
         section: 'System'
       },
       {
-        // Per-container view of which image versions are deployed vs
-        // available upstream. Read-only; refresh runs daily in the
-        // background plus on-demand.
-        id: 'app-versions',
-        title: 'App Versions',
-        section: 'Advanced'
-      },
-      {
         // Build status + rebuild log viewer + the pending-changes list.
-        // Grouped with the other power-user / Advanced tools.
+        // Top of Advanced so the operator's primary deploy lever is the
+        // first thing they see.
         id: 'build-logs',
         title: 'Build & Logs',
         section: 'Advanced'
       },
       {
         // Register custom Nix flakes that extend the system with the
-        // user's own apps/modules. A power-user feature.
+        // user's own apps/modules. Surfaces as "Plugins" — the same
+        // user-visible name as the marketplace concept; the underlying
+        // module id stays `developers` for API/route compat.
         id: 'developers',
-        title: 'Custom Flakes',
+        title: 'Plugins',
         section: 'Advanced'
       },
       {
-        // Raw homefree-config.json viewer — a power-user / debugging
-        // surface, grouped with the other Advanced tools.
+        // Source Code page — alternate HomeFree repository management,
+        // an Update Apps button (enabled when a local checkout is set),
+        // and the per-container current/latest version table.
+        // Lives under Developer because everything here is power-user
+        // tooling for editing the source tree HomeFree builds from.
+        id: 'app-versions',
+        title: 'Source Code',
+        section: 'Developer'
+      },
+      {
+        // Raw homefree-config.json viewer — power-user / debugging
+        // surface, grouped with the other Developer tools.
         id: 'json-config',
         title: 'JSON Config',
-        section: 'Advanced'
+        section: 'Developer'
       }
     ];
   }
@@ -3086,7 +3091,11 @@ class AdminApp extends LitElement {
 
       case 'app-versions':
         return html`
-          <app-versions-module></app-versions-module>
+          <app-versions-module
+            .undeployedPaths=${this.undeployedPaths}
+            .appliedConfig=${this.appliedConfig}
+            @updates-applied=${this.checkConfigDirty}
+          ></app-versions-module>
         `;
 
       case 'updates':

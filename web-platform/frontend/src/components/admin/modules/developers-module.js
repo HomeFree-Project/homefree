@@ -6,9 +6,6 @@ import {
   validateDeveloperFlake,
   checkDeveloperFlakeUpdate,
   updateDeveloperFlake,
-  getHomefreeBase,
-  saveHomefreeBase,
-  validateHomefreeBase,
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
@@ -58,22 +55,6 @@ class DevelopersModule extends LitElement {
     probeResult: { type: Object, state: true },
     fileBrowserOpen: { type: Boolean, state: true },
     editingId: { type: String, state: true },
-    // Alternate HomeFree base repo panel state.
-    baseLoading: { type: Boolean, state: true },
-    baseOfficialUrl: { type: String, state: true },
-    baseEnabled: { type: Boolean, state: true },
-    baseType: { type: String, state: true },
-    // Both kinds are kept independently so toggling the type doesn't
-    // discard the other's value — both round-trip to config; the active
-    // type selects which one is applied to the build.
-    baseLocalUrl: { type: String, state: true },
-    baseRemoteUrl: { type: String, state: true },
-    baseSaving: { type: Boolean, state: true },
-    baseProbing: { type: Boolean, state: true },
-    baseProbeResult: { type: Object, state: true },
-    baseErrors: { type: Array, state: true },
-    baseWarnings: { type: Array, state: true },
-    baseBrowserOpen: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -319,20 +300,8 @@ class DevelopersModule extends LitElement {
     this.loading = true;
     this.error = '';
     this.notice = '';
-    this.baseLoading = true;
-    this.baseOfficialUrl = '';
-    this.baseEnabled = false;
     this.undeployedPaths = new Set();
     this.appliedConfig = null;
-    this.baseType = 'local';
-    this.baseLocalUrl = '';
-    this.baseRemoteUrl = '';
-    this.baseSaving = false;
-    this.baseProbing = false;
-    this.baseProbeResult = null;
-    this.baseErrors = [];
-    this.baseWarnings = [];
-    this.baseBrowserOpen = false;
     // Transient per-row update state for remote flakes, keyed by flake id.
     // Shape: { state, latestRev, oldRev, newRev, error, message }. Not a
     // Lit reactive property — the Map identity never changes and Lit can't
@@ -344,27 +313,6 @@ class DevelopersModule extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.loadFlakes();
-    this.loadBaseOverride();
-  }
-
-  async loadBaseOverride() {
-    this.baseLoading = true;
-    try {
-      const data = await getHomefreeBase();
-      this.baseOfficialUrl = data.officialUrl || '';
-      this.baseEnabled = !!data.enabled;
-      this.baseType = data.type || 'local';
-      // Local entries are stored git+file://-prefixed; show the bare path.
-      const local = data.localUrl || '';
-      this.baseLocalUrl = local.startsWith('git+file://')
-        ? local.slice('git+file://'.length)
-        : local;
-      this.baseRemoteUrl = data.remoteUrl || '';
-    } catch (e) {
-      this.error = e.message || 'Failed to load the alternate-base setting.';
-    } finally {
-      this.baseLoading = false;
-    }
   }
 
   _resetForm() {
@@ -620,253 +568,6 @@ class DevelopersModule extends LitElement {
     }
   }
 
-  // ---- alternate HomeFree base repo panel -------------------------
-  //
-  // The panel persists like the rest of the admin UI — no Save button.
-  // The enabled toggle and the type toggle persist immediately; the URL
-  // field persists on blur / Enter (not on every keystroke, so a
-  // half-typed path never rewrites flake.nix). Enabling with no URL yet
-  // is not persisted — it just reveals the field — so it cannot fail
-  // the backend's enabled-needs-a-URL check.
-
-  // The URL for the currently-selected type — what gets validated and
-  // applied to the build.
-  get _activeBaseUrl() {
-    return this.baseType === 'remote' ? this.baseRemoteUrl : this.baseLocalUrl;
-  }
-
-  // True when there is something coherent to persist: either the
-  // override is off, or it is on AND the active URL has been entered.
-  get _baseReadyToPersist() {
-    return !this.baseEnabled || !!(this._activeBaseUrl || '').trim();
-  }
-
-  async _persistBase() {
-    if (!this._baseReadyToPersist) return;  // enabled but URL not entered yet
-    this.baseSaving = true;
-    this.baseErrors = [];
-    this.baseWarnings = [];
-    this.error = '';
-    emitSaveStatus(this, 'saving');
-    try {
-      const result = await saveHomefreeBase({
-        enabled: this.baseEnabled,
-        type: this.baseType,
-        localUrl: this.baseLocalUrl,
-        remoteUrl: this.baseRemoteUrl,
-      });
-      // The backend always saves the setting; an invalid path/URL comes
-      // back as warnings (the repo is saved but not applied), not errors.
-      // No success notice — the top-bar "Saved" pill is the feedback;
-      // only warnings (saved-but-not-applied) get a bar of their own.
-      this.baseWarnings = result.warnings || [];
-      this.baseProbeResult = null;
-      await this.loadBaseOverride();
-      this._notifyDirty();
-      emitSaveStatus(this, 'saved');
-    } catch (e) {
-      this.baseErrors = (e.body && e.body.errors)
-        || [e.message || 'Failed to save the alternate base repository.'];
-      emitSaveStatus(this, 'error', this.baseErrors[0]);
-    } finally {
-      this.baseSaving = false;
-    }
-  }
-
-  _onBaseToggle(e) {
-    this.baseEnabled = e.target.checked;
-    this.baseProbeResult = null;
-    // Disabling always persists; enabling persists only once a URL exists.
-    this._persistBase();
-  }
-
-  _setBaseType(type) {
-    if (this.baseType === type) return;
-    this.baseType = type;
-    this.baseProbeResult = null;
-    // Both URLs are kept; persist so the active type is recorded. The
-    // other kind's value stays in config, ready when toggled back.
-    this._persistBase();
-  }
-
-  _handleBasePathSelected(e) {
-    this.baseLocalUrl = e.detail.path;
-    this.baseBrowserOpen = false;
-    this._persistBase();
-  }
-
-  // Persist when the URL field loses focus or the user presses Enter.
-  _onBaseUrlCommit() {
-    this._persistBase();
-  }
-
-  async _probeBase() {
-    if (!this._activeBaseUrl) {
-      this.baseErrors = ['Enter a repository path or URL before validating.'];
-      return;
-    }
-    this.baseProbing = true;
-    this.baseProbeResult = null;
-    this.baseErrors = [];
-    try {
-      this.baseProbeResult = await validateHomefreeBase({
-        type: this.baseType,
-        url: this._activeBaseUrl,
-      });
-    } catch (e) {
-      this.baseErrors = [e.message || 'Could not probe the repository.'];
-    } finally {
-      this.baseProbing = false;
-    }
-  }
-
-  _renderBaseProbe() {
-    const p = this.baseProbeResult;
-    if (!p) return '';
-    const normalized = p.normalizedUrl && p.normalizedUrl !== (this._activeBaseUrl || '').trim()
-      ? p.normalizedUrl
-      : '';
-    return html`
-      ${normalized
-        ? html`<div class="notice">Interpreted as <code>${normalized}</code></div>`
-        : ''}
-      ${(p.errors || []).map((m) => html`<div class="error">${m}</div>`)}
-      ${(p.warnings || []).map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
-      ${p.valid && (p.errors || []).length === 0 && (p.warnings || []).length === 0
-        ? html`<div class="notice">Repository is reachable and exposes nixosModules.homefree.</div>`
-        : ''}
-    `;
-  }
-
-  _renderBasePanel() {
-    if (this.baseLoading) {
-      return html`
-        <div class="card">
-          <h3 style="margin-top:0">Alternate HomeFree repository</h3>
-          <p class="muted">Loading…</p>
-        </div>`;
-    }
-    return html`
-      <div class="card">
-        <h3 style="margin-top:0">Alternate HomeFree repository</h3>
-        <p class="muted">
-          Build this system from an alternate HomeFree repository — a fork or
-          a local working copy — instead of the official one, while still
-          managing everything from this admin panel.
-        </p>
-
-        ${this.baseErrors.map((m) => html`<div class="error">${m}</div>`)}
-        ${this.baseWarnings.map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
-
-        <label class="toggle-switch ${this._baseFieldChanged('enabled') ? 'changed' : ''}" style="margin-bottom:14px">
-          <input
-            type="checkbox"
-            .checked=${this.baseEnabled}
-            @change=${this._onBaseToggle}
-          />
-          <span class="lbl" style="margin:0">Enable</span>
-        </label>
-
-        ${this.baseEnabled
-          ? html`
-            <div class="warn">
-              Alternate HomeFree repository is active. System updates will not
-              be visible unless the alternate repository is disabled.
-            </div>
-
-            <div class="type-toggle ${this._baseFieldChanged('type') ? 'changed' : ''}">
-              <button
-                class=${this.baseType === 'local' ? 'active' : ''}
-                @click=${() => this._setBaseType('local')}
-              >Local repository</button>
-              <button
-                class=${this.baseType === 'remote' ? 'active' : ''}
-                @click=${() => this._setBaseType('remote')}
-              >Remote URL</button>
-            </div>
-
-            ${this.baseType === 'local'
-              ? html`
-                <label class="field ${this._baseFieldChanged('localUrl') ? 'changed' : ''}">
-                  <span class="lbl">Local HomeFree repository</span>
-                  <div class="input-with-browse">
-                    <input
-                      type="text"
-                      .value=${this.baseLocalUrl}
-                      placeholder="/home/you/homefree"
-                      @input=${(e) => { this.baseLocalUrl = e.target.value; }}
-                      @change=${this._onBaseUrlCommit}
-                      @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                    />
-                    <button class="btn" @click=${() => { this.baseBrowserOpen = true; }}>
-                      📁 Browse
-                    </button>
-                  </div>
-                  <span class="hint">
-                    A git checkout of a HomeFree repository on this machine.
-                    Stored as a git+file:// flake reference. Saved when you
-                    click away or press Enter.
-                  </span>
-                </label>
-              `
-              : html`
-                <label class="field ${this._baseFieldChanged('remoteUrl') ? 'changed' : ''}">
-                  <span class="lbl">Repository URL</span>
-                  <input
-                    type="text"
-                    .value=${this.baseRemoteUrl}
-                    placeholder="github:owner/homefree"
-                    @input=${(e) => { this.baseRemoteUrl = e.target.value; }}
-                    @change=${this._onBaseUrlCommit}
-                    @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                  />
-                  <span class="hint">
-                    A flake reference to a HomeFree repository, e.g.
-                    github:owner/homefree or git+https://example.com/homefree.git.
-                    Saved when you click away or press Enter.
-                  </span>
-                </label>
-              `}
-          `
-          : html`
-            <p class="muted">
-              Currently building from the official HomeFree repository:
-              <br />
-              <code style="font-family:ui-monospace,monospace;font-size:12px">
-                ${this.baseOfficialUrl}
-              </code>
-            </p>
-          `}
-
-        ${this._renderBaseProbe()}
-
-        ${this.baseEnabled
-          ? html`
-            <div class="actions">
-              <button
-                class="btn"
-                ?disabled=${this.baseProbing || !this._activeBaseUrl}
-                @click=${this._probeBase}
-              >${this.baseProbing ? 'Validating…' : 'Validate'}</button>
-              ${this.baseSaving
-                ? html`<span class="muted" style="align-self:center">Saving…</span>`
-                : ''}
-            </div>
-          `
-          : ''}
-      </div>
-
-      ${this.baseBrowserOpen ? html`
-        <file-browser
-          ?open=${this.baseBrowserOpen}
-          .currentPath=${this.baseLocalUrl || '/home'}
-          @path-selected=${this._handleBasePathSelected}
-          @close=${() => { this.baseBrowserOpen = false; }}
-        ></file-browser>
-      ` : ''}
-    `;
-  }
-
   _renderProbe() {
     const p = this.probeResult;
     if (!p) return '';
@@ -1093,15 +794,6 @@ class DevelopersModule extends LitElement {
     return false;
   }
 
-  // True when one Alternate-HomeFree-base field differs from the deployed
-  // config — drives the per-control amber. The toggle/type/URL also rewrite
-  // flake.nix, but that side of the change is caught independently by the
-  // backend's build-inputs check (surfaced as the Custom Flakes nav badge);
-  // here we mirror the homefree-config.json developers.homefree-base.<field> diff.
-  _baseFieldChanged(field) {
-    return this.undeployedPaths?.has('developers.homefree-base.' + field) || false;
-  }
-
   // True when a registered flake differs from its deployed entry (newly added
   // or modified), matched by stable id. list_flakes() returns the rows verbatim
   // from developers.flakes, so the applied snapshot is the identical shape and a
@@ -1123,18 +815,17 @@ class DevelopersModule extends LitElement {
         ${this._developersUndeployed() ? html`
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:var(--hf-warn-soft);border:1px solid var(--hf-warn);color:var(--hf-warn);font-size:13px;font-weight:500;">
             <span style="width:8px;height:8px;border-radius:50%;background:var(--hf-warn);flex-shrink:0;"></span>
-            <span>Undeployed flake changes — click Apply in the sidebar to deploy.</span>
+            <span>Undeployed plugin changes — click Apply in the sidebar to deploy.</span>
           </div>
         ` : ''}
-        ${this._renderBasePanel()}
 
         <div class="info-box">
-          <strong>Custom Flakes</strong>
-          Register your own Nix flakes to extend HomeFree with custom apps and
-          modules. Each registered flake's <code>nixosModules</code> are composed
-          into the system build — so you can run your own code while still
-          receiving upstream updates. Registering a flake does not rebuild;
-          click <strong>Apply</strong> in the sidebar afterwards.
+          <strong>Plugins</strong>
+          Register Nix flakes that extend HomeFree with custom apps and modules.
+          Each registered flake's <code>nixosModules</code> are composed into the
+          system build, so you can run your own code while still receiving
+          upstream updates. Registering a plugin does not rebuild; click
+          <strong>Apply</strong> in the sidebar afterwards.
         </div>
 
         ${this.notice ? html`<div class="notice"><strong>Done.</strong> ${this.notice}</div>` : ''}

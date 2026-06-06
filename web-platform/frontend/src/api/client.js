@@ -504,6 +504,13 @@ export const getFirmwareUpdateStatus = () => get('/api/firmware/update-status');
 export const getAppVersions = () => get('/api/apps/versions');
 export const refreshAppVersions = () => post('/api/apps/versions/refresh', {});
 
+// Runs scripts/upgrade-apps.py against the local checkout and returns
+// the JSON summary (bumped, skipped_zitadel, warnings, errors,
+// unmapped). The endpoint refuses unless an alternate-base local
+// repository is configured — bumping pins in the read-only upstream
+// /nix/store tree can't take effect.
+export const upgradeApps = (opts = {}) => post('/api/apps/versions/upgrade', opts);
+
 // Power off — confirmation-gated by the caller (see confirmDialog).
 // rebootSystem is already exported above in the "System Control"
 // section (used by the installer's "reboot after install" button).

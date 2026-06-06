@@ -165,14 +165,72 @@ def _semver_tuple(tag: str) -> Optional[Tuple[int, int, int, int, str]]:
     return (major, minor, patch, fourth, suffix_sortable)
 
 
-def _pick_latest(tags: List[str], current_tag: str) -> Optional[str]:
-    """Pick the highest semver-shaped tag whose MAJOR matches current's.
+# Captures (leading_text_before_digits, trailing_text_after_semver_core).
+# Used to distinguish parallel release streams that share a semver core
+# (nextcloud `33.0.5-apache` vs `33.0.5`; baikal `0.10.1-nginx` vs
+# `0.10.1`; grocy `4.6.0` vs `version-v4.6.0`). The picker requires an
+# exact shape match against the current tag so it never recommends a
+# cross-flavour or cross-prefix-stream tag as "newer".
+_SHAPE_RE = re.compile(r"^([^\d]*)(\d+(?:\.\d+)*)(.*)$")
 
-    Pinning the major is a safety call: a HomeFree operator can read
-    'latest: 11.0.0' and decide to bump; they can't read
-    'latest: 11.0.0' and have us pretend a 10.x -> 11.x leap is the
-    same kind of small step as a patch bump. If current_tag itself
-    isn't parseable, fall back to highest overall."""
+
+def _tag_shape(tag: str) -> Optional[Tuple[str, str]]:
+    """Return (leading_prefix, trailing_suffix) for a semver-shaped tag.
+
+    Leading prefix is everything before the first digit ('', 'v',
+    'version-v', 'release-'). Trailing suffix is everything after the
+    last digit-or-dot of the semver core ('', '-apache', '-rc1',
+    '-b.88'). None if the tag has no semver core."""
+    if not tag:
+        return None
+    m = _SHAPE_RE.match(tag)
+    if not m:
+        return None
+    return (m.group(1), m.group(3))
+
+
+def _same_release(current: str, latest: str) -> bool:
+    """Two tags refer to the same upstream release iff they share both
+    a semver core (parsed via _semver_tuple) AND a shape (parsed via
+    _tag_shape). Falls back to string equality when either tag isn't
+    semver-shaped."""
+    cs = _tag_shape(current)
+    ls = _tag_shape(latest)
+    if cs is None or ls is None or cs != ls:
+        return False
+    ct = _semver_tuple(current)
+    lt = _semver_tuple(latest)
+    if ct is None or lt is None:
+        return current == latest
+    return ct == lt
+
+
+def _pick_latest(tags: List[str], current_tag: str) -> Optional[str]:
+    """Pick the highest semver-shaped tag in the SAME release stream as
+    current's, AND only if it's >= current. 'Same release stream' =
+    same _tag_shape (matching leading prefix AND trailing suffix) AND
+    same major.
+
+    Failure modes this guards against:
+      * Flavor switch — current `33.0.5-apache` won't pick plain `33.0.5`
+        (different stream); current `0.10.1-nginx` won't pick plain
+        `0.10.1`.
+      * Pre-release leakage — current `v0.107.73` won't auto-pick a
+        `v0.108.0-b.88` beta (different suffix); the operator bumps
+        across streams by hand.
+      * Cross-prefix confusion — current `4.6.0` won't pick
+        `version-v4.6.0` from the same registry.
+      * Cross-major recommendation — current `15.0.1` (forgejo) won't
+        pick `1.21.x` from an old release line; current `2026.4`
+        (home-assistant) won't pick `2021.7.1`.
+      * Paginated-listing downgrade — registries cap tag listings at
+        100 entries, often dominated by `sha256-...` cosign artifacts
+        and floats. When the current pin isn't in the window, the next
+        candidate is almost always older — never recommend a tag whose
+        semver tuple is below current's. The row falls back to
+        status=unknown, which is honest about the listing limit.
+
+    If current_tag isn't semver-shaped, refuse — nothing to anchor."""
     semver_tags: List[Tuple[Tuple[int, int, int, int, str], str]] = []
     for t in tags:
         st = _semver_tuple(t)
@@ -181,14 +239,44 @@ def _pick_latest(tags: List[str], current_tag: str) -> Optional[str]:
         semver_tags.append((st, t))
     if not semver_tags:
         return None
+
+    current_shape = _tag_shape(current_tag)
     current = _semver_tuple(current_tag)
-    if current is not None:
-        same_major = [
-            (st, t) for (st, t) in semver_tags if st[0] == current[0]
-        ]
-        if same_major:
-            return max(same_major)[1]
-    return max(semver_tags)[1]
+
+    if current_shape is None:
+        # Nothing to anchor a stream to; refuse to guess.
+        return None
+
+    same_shape = [
+        (st, t) for (st, t) in semver_tags if _tag_shape(t) == current_shape
+    ]
+    if not same_shape:
+        return None
+
+    if current is None:
+        # Shape matched but current's semver didn't parse — trust the
+        # highest in-shape candidate (rare; e.g. weird 5-segment tags).
+        return max(same_shape)[1]
+
+    same_shape_same_major = [
+        (st, t) for (st, t) in same_shape if st[0] == current[0]
+    ]
+    if not same_shape_same_major:
+        # No tags share current's major in current's stream. Could be a
+        # paginated listing that doesn't reach current, or a renamed
+        # release line. Cross-major would be a downgrade or surprise
+        # leap — refuse.
+        return None
+
+    candidate_st, candidate_t = max(same_shape_same_major)
+    if candidate_st < current:
+        # Best in-stream same-major candidate is OLDER than current.
+        # The registry's recent tags don't include anything at or above
+        # the current pin — almost certainly the page-size cap hiding
+        # newer tags. Refusing here keeps the row honest (status=unknown)
+        # instead of silently flagging it as outdated to an older tag.
+        return None
+    return candidate_t
 
 
 # ─── Floating-tag handling ────────────────────────────────────────────
@@ -215,6 +303,18 @@ def _is_floating(tag: str) -> bool:
 # have no upstream by design.
 def _is_local(tag: str) -> bool:
     return (tag or "").lower() == "local"
+
+
+# Cosign-style signature / attestation artifacts. Modern ghcr.io (and
+# increasingly other registries) publish one or two of these per real
+# release, so a `?n=100` tag listing can be entirely consumed by them
+# before any actual semver tag appears. We drop them before semver
+# matching so the page-size budget goes to real tags.
+_COSIGN_TAG_RE = re.compile(r"^sha256-[a-f0-9]{64}(\.(sig|att|sbom))?$")
+
+
+def _is_cosign_artifact(tag: str) -> bool:
+    return bool(_COSIGN_TAG_RE.match(tag or ""))
 
 
 # ─── Per-registry tag fetchers ────────────────────────────────────────
@@ -261,11 +361,16 @@ async def _fetch_ghcr_tags(repo: str, _registry: str) -> List[str]:
     even for public images; ghcr.io issues one to anyone who asks for
     the repository:pull scope. Hard-coding the token URL is faster
     than the generic Www-Authenticate probe — ghcr is by far the
-    most common non-Docker-Hub registry on a HomeFree box."""
+    most common non-Docker-Hub registry on a HomeFree box.
+
+    Uses n=1000 because GHCR tag listings are dominated by cosign
+    `sha256-*` artifacts (one or two per release) plus a `-arm`,
+    `-rootless`, `-hardened` etc. flavor expansion. The default n=100
+    is routinely consumed before any real semver appears."""
     token_url = (
         f"https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull"
     )
-    list_url = f"https://ghcr.io/v2/{repo}/tags/list?n=100"
+    list_url = f"https://ghcr.io/v2/{repo}/tags/list?n=1000"
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_S) as cx:
         tr = await cx.get(token_url)
         tr.raise_for_status()
@@ -278,7 +383,7 @@ async def _fetch_ghcr_tags(repo: str, _registry: str) -> List[str]:
         r.raise_for_status()
         data = r.json()
     tags = data.get("tags") or []
-    return [t for t in tags if isinstance(t, str)]
+    return [t for t in tags if isinstance(t, str) and not _is_cosign_artifact(t)]
 
 
 # Parses a Www-Authenticate Bearer challenge into a dict of params.
@@ -305,7 +410,7 @@ async def _fetch_oci_v2_tags(repo: str, registry: str) -> List[str]:
     Returns [] when the registry replies with an error we can't
     recover from. The caller distinguishes 'no tags returned' from
     'network error' by the surrounding try/except in _fetch_latest."""
-    list_url = f"https://{registry}/v2/{repo}/tags/list?n=100"
+    list_url = f"https://{registry}/v2/{repo}/tags/list?n=1000"
     async with httpx.AsyncClient(
         timeout=_HTTP_TIMEOUT_S, follow_redirects=True
     ) as cx:
@@ -336,7 +441,7 @@ async def _fetch_oci_v2_tags(repo: str, registry: str) -> List[str]:
         r.raise_for_status()
         data = r.json()
     tags = data.get("tags") or []
-    return [t for t in tags if isinstance(t, str)]
+    return [t for t in tags if isinstance(t, str) and not _is_cosign_artifact(t)]
 
 
 # Dispatch table: (registry_hostname_pattern, fetcher_callable). The
@@ -683,8 +788,7 @@ def _build_payload() -> List[Dict[str, Any]]:
             status = "floating"
         elif latest is None:
             status = "unknown"
-        elif (current and latest
-              and current.lstrip("v@") == latest.lstrip("v")):
+        elif current and latest and _same_release(current, latest):
             status = "up-to-date"
         else:
             # Digest-pinned with a known upstream falls in here. The
@@ -785,3 +889,118 @@ async def post_app_versions_refresh(
     refresh just waits for the first to finish instead of fanning out."""
     background_tasks.add_task(_refresh_in_background)
     return {"status": "refreshing"}
+
+
+@router.post("/versions/upgrade")
+async def post_app_versions_upgrade() -> Dict[str, Any]:
+    """Run scripts/upgrade-apps.py against the alternate-base local
+    checkout and return its JSON summary.
+
+    Requires an alternate-base `local` repository to be configured —
+    the upstream `/nix/store` tree the box would otherwise build from
+    is read-only, so a bump has nowhere to land. The script's own
+    safety guard (is_unsafe_bump) refuses cross-major / cross-flavour /
+    downgrade picks; this endpoint is otherwise a thin wrapper.
+
+    Run synchronously with a hard timeout because the script's
+    bottleneck is its disk writes, not network — the registry lookups
+    are already cached. A typical run on ~35 apps finishes in well
+    under a second."""
+    import subprocess
+    import sys as _sys
+    from fastapi import HTTPException
+
+    # Lazy import — keep the resolver's import chain clean for the
+    # daily timer entrypoint that doesn't need developers/.
+    from services.developers import DevelopersService
+
+    base = DevelopersService.get_base_override()
+    if not base.get("enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate HomeFree repository is not enabled. "
+                   "Configure a local checkout on the Source Code page "
+                   "before running Update apps.",
+        )
+    if (base.get("type") or "") != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Update apps requires a LOCAL alternate base. "
+                   "A remote URL points at a read-only tree.",
+        )
+    local_url = base.get("localUrl") or ""
+    if local_url.startswith("git+file://"):
+        local_url = local_url[len("git+file://"):]
+    local_url = local_url.strip()
+    if not local_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate base is enabled but the local repository "
+                   "path is empty.",
+        )
+
+    repo_root = Path(local_url)
+    script = repo_root / "scripts" / "upgrade-apps.py"
+    if not script.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"upgrade-apps.py not found at {script}. "
+                   "Is the alternate base actually a HomeFree checkout?",
+        )
+
+    # Invoke with the SAME interpreter the admin-api is running under so
+    # we don't pay a nix-shell spin-up. The interpreter already has
+    # httpx + fastapi (it's serving us right now).
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            [_sys.executable, str(script),
+             "--json", "--no-color",
+             "--repo-root", str(repo_root)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail="upgrade-apps.py exceeded 120s. The script normally "
+                   "finishes in under a second — check the admin-api "
+                   "journal for what stalled.",
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to spawn upgrade-apps.py: {e}",
+        )
+
+    # The script uses exit code 2 when at least one file was edited,
+    # 0 when nothing was outdated, 1 when an error occurred. The JSON
+    # body is on stdout in every case; treat 1 as a body-bearing error.
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode == 1 and not stdout:
+        raise HTTPException(
+            status_code=500,
+            detail=f"upgrade-apps.py failed: {stderr or 'no output'}",
+        )
+    try:
+        data = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"upgrade-apps.py emitted unparseable JSON: {e}. "
+                   f"stderr: {stderr[:500]}",
+        )
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="upgrade-apps.py emitted non-object JSON.",
+        )
+    data.setdefault("bumped", [])
+    data.setdefault("skipped_zitadel", [])
+    data.setdefault("warnings", [])
+    data.setdefault("errors", [])
+    data.setdefault("unmapped", [])
+    data["exit_code"] = proc.returncode
+    return data

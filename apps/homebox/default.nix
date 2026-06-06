@@ -144,7 +144,12 @@ in
 
     virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.homebox.enable {
     homebox = {
-      image = "ghcr.io/sysadminsmedia/homebox:${version}";
+      # Docker Hub keeps the full version-tag history; GHCR's daily
+      # cleanup workflow (clear-stale-docker-images.yml in the upstream
+      # repo) rotates older tags out of ghcr.io, so resolver lookups
+      # for the pinned version 404 once the cleanup runs. Same image,
+      # both registries push from the same workflow.
+      image = "docker.io/sysadminsmedia/homebox:${version}";
 
       autoStart = true;
 

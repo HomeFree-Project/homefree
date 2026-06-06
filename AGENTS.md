@@ -370,6 +370,15 @@ Situational knowledge — read the linked note when working in that area:
   Assistant's SSDP integration (coexist via `SO_REUSEADDR` — verify, don't
   assume); Jellyfin stays a separate app, not a DLNA engine.
   → `docs/agent-notes/dlna-media-server.md`
+- **Meilisearch data-migration on minor bumps** — `data.ms` carries a
+  version marker; the engine refuses to start on a newer image until
+  the operator dump/imports or rebuilds. Only `apps/linkwarden`
+  uses it today, and Linkwarden's index is derived from its postgres,
+  so the recovery is: stop, `mv data.ms data.ms.old-<old>`, start
+  fresh, click Re-index in Linkwarden. Don't generalise to apps where
+  meili is the source-of-truth. The `upgrade-apps.py` safety guard
+  doesn't catch this — bumps look semver-clean.
+  → `docs/agent-notes/meilisearch-data-migration.md`
 - **Landing-page edge fronting (Layer 7, opt-in)** — `trusted_proxies`
   must live in Caddy's global `servers { }` block (per-listener, not
   per-site); shipped CIDRs for `cloudflare`/`bunny` need diffing against

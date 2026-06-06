@@ -1,14 +1,40 @@
 import { LitElement, html, css } from 'lit';
-import { getAppVersions, refreshAppVersions } from '../../../api/client.js';
+import {
+  getAppVersions,
+  refreshAppVersions,
+  upgradeApps,
+  getHomefreeBase,
+  saveHomefreeBase,
+  validateHomefreeBase,
+} from '../../../api/client.js';
+import '../../shared/file-browser.js';
+
+// Drives the admin top-bar Saving/Saved pill from this module's
+// out-of-band persistence (the alt-base panel saves via its own
+// endpoint, not the merged-config auto-save). Same shape as the
+// helper in developers-module.js.
+function emitSaveStatus(el, status, error = '') {
+  el.dispatchEvent(new CustomEvent('save-status', {
+    detail: { status, error },
+    bubbles: true,
+    composed: true,
+  }));
+}
 
 /**
- * App Versions module (Advanced section).
+ * Source Code module (Developer section, route id app-versions).
  *
- * Read-only view of every container declared on the box, showing its
- * currently-deployed image tag alongside the latest tag available
- * from upstream. The backend serves a cached snapshot — see
- * web-platform/backend/resolvers/app_versions.py for how the cache
- * is populated (daily systemd timer + on-demand refresh button).
+ * Combines three power-user surfaces into one page:
+ *   1. Alternate HomeFree repository panel — pick a fork or a local
+ *      working copy to build the system from instead of the official
+ *      remote.
+ *   2. Update Apps button — runs scripts/upgrade-apps.py against the
+ *      local checkout to bump every safely-bumpable image pin. Only
+ *      enabled when the alternate base is set to a local repo (the
+ *      official-remote tree isn't writable from this box).
+ *   3. App version table — every container declared on the box, with
+ *      current vs. upstream-latest. Cache is refreshed daily by a
+ *      systemd timer plus on-demand via the Refresh button.
  */
 class AppVersionsModule extends LitElement {
   static properties = {
@@ -16,6 +42,29 @@ class AppVersionsModule extends LitElement {
     refreshing: { type: Boolean, state: true },
     error: { type: String, state: true },
     apps: { type: Array, state: true },
+    // Surfaced from admin-app so the alt-base panel's per-field amber
+    // dirty-state highlight matches the rest of the admin UI.
+    undeployedPaths: { type: Object },
+    appliedConfig: { type: Object },
+    // Alternate HomeFree base repo panel state (moved here from the
+    // Plugins page; copy-mirrored, not extracted to a shared component,
+    // because only two surfaces use it).
+    baseLoading: { type: Boolean, state: true },
+    baseOfficialUrl: { type: String, state: true },
+    baseEnabled: { type: Boolean, state: true },
+    baseType: { type: String, state: true },
+    baseLocalUrl: { type: String, state: true },
+    baseRemoteUrl: { type: String, state: true },
+    baseSaving: { type: Boolean, state: true },
+    baseProbing: { type: Boolean, state: true },
+    baseProbeResult: { type: Object, state: true },
+    baseErrors: { type: Array, state: true },
+    baseWarnings: { type: Array, state: true },
+    baseBrowserOpen: { type: Boolean, state: true },
+    // Update Apps button state.
+    upgrading: { type: Boolean, state: true },
+    upgradeResult: { type: Object, state: true },
+    upgradeError: { type: String, state: true },
   };
 
   static styles = css`
@@ -235,6 +284,142 @@ class AppVersionsModule extends LitElement {
       .name .registry-inline { display: none; }
       td.col-latest .current-inline { display: none; }
     }
+
+    /* Alt-base panel + Update Apps bar styles, mirrored from the
+       Plugins page so the look is identical between the two surfaces. */
+    .card {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .notice {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-accent);
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .notice strong { color: var(--hf-text); }
+    .warn {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--hf-warn);
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    h3 { color: var(--hf-text); margin: 24px 0 12px; font-size: 16px; }
+    label.field { display: block; margin-bottom: 14px; }
+    label.field .lbl {
+      display: block;
+      color: var(--hf-text);
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    label.field .hint {
+      color: var(--hf-text-muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    input[type=text] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .type-toggle {
+      display: inline-flex;
+      margin-bottom: 14px;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .type-toggle button {
+      padding: 7px 16px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text-muted);
+      border: none;
+      border-right: 1px solid var(--hf-border-2);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .type-toggle button:last-child { border-right: none; }
+    .type-toggle button.active {
+      background: var(--hf-accent);
+      color: #06281c;
+      font-weight: 600;
+    }
+    .input-with-browse { display: flex; gap: 8px; }
+    .input-with-browse input { flex: 1; }
+    .toggle-switch { display: inline-flex; align-items: center; gap: 6px; }
+    .toggle-switch.changed {
+      background: var(--hf-warn-soft);
+      border: 1px solid var(--hf-warn);
+      border-radius: 6px;
+      padding: 4px 10px;
+    }
+    .type-toggle.changed { border-color: var(--hf-warn); }
+    label.field.changed .lbl {
+      display: inline-block;
+      background: var(--hf-warn-soft);
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+    label.field.changed input[type=text] {
+      background: var(--hf-warn-soft);
+      border-color: var(--hf-warn);
+    }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+
+    /* Update Apps bar — bumper UI between the alt-base panel and the
+       version table. Disabled state communicates the prereq: a local
+       alternate base is required because that's the only writable
+       source tree on the box. */
+    .upgrade-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px 14px;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .upgrade-bar .grow { flex: 1; }
+    .upgrade-bar .hint {
+      color: var(--hf-text-muted);
+      font-size: 12px;
+    }
+    .upgrade-result {
+      padding: 12px 14px;
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--hf-text-muted);
+      line-height: 1.6;
+    }
+    .upgrade-result strong { color: var(--hf-text); }
+    .upgrade-result ul { margin: 6px 0 0; padding-left: 20px; }
+    .upgrade-result code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--hf-text);
+    }
   `;
 
   constructor() {
@@ -245,11 +430,29 @@ class AppVersionsModule extends LitElement {
     this.apps = [];
     this._pollTimer = null;
     this._pollDeadline = 0;
+    this.undeployedPaths = new Set();
+    this.appliedConfig = null;
+    this.baseLoading = true;
+    this.baseOfficialUrl = '';
+    this.baseEnabled = false;
+    this.baseType = 'local';
+    this.baseLocalUrl = '';
+    this.baseRemoteUrl = '';
+    this.baseSaving = false;
+    this.baseProbing = false;
+    this.baseProbeResult = null;
+    this.baseErrors = [];
+    this.baseWarnings = [];
+    this.baseBrowserOpen = false;
+    this.upgrading = false;
+    this.upgradeResult = null;
+    this.upgradeError = '';
   }
 
   connectedCallback() {
     super.connectedCallback();
     this.load();
+    this.loadBaseOverride();
   }
 
   disconnectedCallback() {
@@ -316,6 +519,145 @@ class AppVersionsModule extends LitElement {
     this._pollTimer = setTimeout(
       () => this._pollForUpdates(baseline), 5000
     );
+  }
+
+  // ---- Alternate HomeFree base repo panel ------------------------------
+  //
+  // Same persistence model as the rest of the admin UI: enabled and type
+  // toggles persist immediately; URL field persists on blur / Enter (not
+  // every keystroke, so a half-typed path never rewrites flake.nix).
+  // Enabling with no URL yet is not persisted, so the backend's
+  // enabled-needs-a-URL check never fires.
+
+  async loadBaseOverride() {
+    this.baseLoading = true;
+    try {
+      const data = await getHomefreeBase();
+      this.baseOfficialUrl = data.officialUrl || '';
+      this.baseEnabled = !!data.enabled;
+      this.baseType = data.type || 'local';
+      const local = data.localUrl || '';
+      this.baseLocalUrl = local.startsWith('git+file://')
+        ? local.slice('git+file://'.length)
+        : local;
+      this.baseRemoteUrl = data.remoteUrl || '';
+    } catch (e) {
+      this.error = e.message || 'Failed to load the alternate-base setting.';
+    } finally {
+      this.baseLoading = false;
+    }
+  }
+
+  get _activeBaseUrl() {
+    return this.baseType === 'remote' ? this.baseRemoteUrl : this.baseLocalUrl;
+  }
+
+  get _baseReadyToPersist() {
+    return !this.baseEnabled || !!(this._activeBaseUrl || '').trim();
+  }
+
+  async _persistBase() {
+    if (!this._baseReadyToPersist) return;
+    this.baseSaving = true;
+    this.baseErrors = [];
+    this.baseWarnings = [];
+    this.error = '';
+    emitSaveStatus(this, 'saving');
+    try {
+      const result = await saveHomefreeBase({
+        enabled: this.baseEnabled,
+        type: this.baseType,
+        localUrl: this.baseLocalUrl,
+        remoteUrl: this.baseRemoteUrl,
+      });
+      this.baseWarnings = result.warnings || [];
+      this.baseProbeResult = null;
+      await this.loadBaseOverride();
+      this.dispatchEvent(new CustomEvent('updates-applied', {
+        bubbles: true, composed: true,
+      }));
+      emitSaveStatus(this, 'saved');
+    } catch (e) {
+      this.baseErrors = (e.body && e.body.errors)
+        || [e.message || 'Failed to save the alternate base repository.'];
+      emitSaveStatus(this, 'error', this.baseErrors[0]);
+    } finally {
+      this.baseSaving = false;
+    }
+  }
+
+  _onBaseToggle(e) {
+    this.baseEnabled = e.target.checked;
+    this.baseProbeResult = null;
+    this._persistBase();
+  }
+
+  _setBaseType(type) {
+    if (this.baseType === type) return;
+    this.baseType = type;
+    this.baseProbeResult = null;
+    this._persistBase();
+  }
+
+  _handleBasePathSelected(e) {
+    this.baseLocalUrl = e.detail.path;
+    this.baseBrowserOpen = false;
+    this._persistBase();
+  }
+
+  _onBaseUrlCommit() {
+    this._persistBase();
+  }
+
+  async _probeBase() {
+    if (!this._activeBaseUrl) {
+      this.baseErrors = ['Enter a repository path or URL before validating.'];
+      return;
+    }
+    this.baseProbing = true;
+    this.baseProbeResult = null;
+    this.baseErrors = [];
+    try {
+      this.baseProbeResult = await validateHomefreeBase({
+        type: this.baseType,
+        url: this._activeBaseUrl,
+      });
+    } catch (e) {
+      this.baseErrors = [e.message || 'Could not probe the repository.'];
+    } finally {
+      this.baseProbing = false;
+    }
+  }
+
+  _baseFieldChanged(field) {
+    return this.undeployedPaths?.has('developers.homefree-base.' + field) || false;
+  }
+
+  // True when bumping pins from this UI is meaningful: the box is
+  // building from a local checkout the admin-api process can edit.
+  // A remote URL is read-only; the official upstream is read-only.
+  get _canUpgradeApps() {
+    return this.baseEnabled
+      && this.baseType === 'local'
+      && !!(this.baseLocalUrl || '').trim();
+  }
+
+  async runUpgradeApps() {
+    if (this.upgrading || !this._canUpgradeApps) return;
+    this.upgrading = true;
+    this.upgradeError = '';
+    this.upgradeResult = null;
+    try {
+      this.upgradeResult = await upgradeApps({ dryRun: false });
+      // Re-poll versions so the table reflects the new pins immediately
+      // (the resolver cache still shows old current until next refresh,
+      // but the operator gets visual confirmation the run finished).
+      await this.load();
+    } catch (e) {
+      this.upgradeError = e.message || 'Update Apps failed.';
+    } finally {
+      this.upgrading = false;
+    }
   }
 
   _renderCounts() {
@@ -424,9 +766,227 @@ class AppVersionsModule extends LitElement {
     `;
   }
 
+  _renderBaseProbe() {
+    const p = this.baseProbeResult;
+    if (!p) return '';
+    const normalized = p.normalizedUrl && p.normalizedUrl !== (this._activeBaseUrl || '').trim()
+      ? p.normalizedUrl
+      : '';
+    return html`
+      ${normalized
+        ? html`<div class="notice">Interpreted as <code>${normalized}</code></div>`
+        : ''}
+      ${(p.errors || []).map((m) => html`<div class="error">${m}</div>`)}
+      ${(p.warnings || []).map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
+      ${p.valid && (p.errors || []).length === 0 && (p.warnings || []).length === 0
+        ? html`<div class="notice">Repository is reachable and exposes nixosModules.homefree.</div>`
+        : ''}
+    `;
+  }
+
+  _renderBasePanel() {
+    if (this.baseLoading) {
+      return html`
+        <div class="card">
+          <h3 style="margin-top:0">Alternate HomeFree repository</h3>
+          <p class="muted">Loading…</p>
+        </div>`;
+    }
+    return html`
+      <div class="card">
+        <h3 style="margin-top:0">Alternate HomeFree repository</h3>
+        <p class="muted">
+          Build this system from an alternate HomeFree repository — a fork or
+          a local working copy — instead of the official one, while still
+          managing everything from this admin panel.
+        </p>
+
+        ${this.baseErrors.map((m) => html`<div class="error">${m}</div>`)}
+        ${this.baseWarnings.map((m) => html`<div class="warn">⚠️ ${m}</div>`)}
+
+        <label class="toggle-switch ${this._baseFieldChanged('enabled') ? 'changed' : ''}" style="margin-bottom:14px">
+          <input
+            type="checkbox"
+            .checked=${this.baseEnabled}
+            @change=${this._onBaseToggle}
+          />
+          <span class="lbl" style="margin:0">Enable</span>
+        </label>
+
+        ${this.baseEnabled
+          ? html`
+            <div class="warn">
+              Alternate HomeFree repository is active. System updates will not
+              be visible unless the alternate repository is disabled.
+            </div>
+
+            <div class="type-toggle ${this._baseFieldChanged('type') ? 'changed' : ''}">
+              <button
+                class=${this.baseType === 'local' ? 'active' : ''}
+                @click=${() => this._setBaseType('local')}
+              >Local repository</button>
+              <button
+                class=${this.baseType === 'remote' ? 'active' : ''}
+                @click=${() => this._setBaseType('remote')}
+              >Remote URL</button>
+            </div>
+
+            ${this.baseType === 'local'
+              ? html`
+                <label class="field ${this._baseFieldChanged('localUrl') ? 'changed' : ''}">
+                  <span class="lbl">Local HomeFree repository</span>
+                  <div class="input-with-browse">
+                    <input
+                      type="text"
+                      .value=${this.baseLocalUrl}
+                      placeholder="/home/you/homefree"
+                      @input=${(e) => { this.baseLocalUrl = e.target.value; }}
+                      @change=${this._onBaseUrlCommit}
+                      @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                    />
+                    <button class="btn" @click=${() => { this.baseBrowserOpen = true; }}>
+                      📁 Browse
+                    </button>
+                  </div>
+                  <span class="hint">
+                    A git checkout of a HomeFree repository on this machine.
+                    Stored as a git+file:// flake reference. Saved when you
+                    click away or press Enter.
+                  </span>
+                </label>
+              `
+              : html`
+                <label class="field ${this._baseFieldChanged('remoteUrl') ? 'changed' : ''}">
+                  <span class="lbl">Repository URL</span>
+                  <input
+                    type="text"
+                    .value=${this.baseRemoteUrl}
+                    placeholder="github:owner/homefree"
+                    @input=${(e) => { this.baseRemoteUrl = e.target.value; }}
+                    @change=${this._onBaseUrlCommit}
+                    @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                  />
+                  <span class="hint">
+                    A flake reference to a HomeFree repository, e.g.
+                    github:owner/homefree or git+https://example.com/homefree.git.
+                    Saved when you click away or press Enter.
+                  </span>
+                </label>
+              `}
+          `
+          : html`
+            <p class="muted">
+              Currently building from the official HomeFree repository:
+              <br />
+              <code style="font-family:ui-monospace,monospace;font-size:12px">
+                ${this.baseOfficialUrl}
+              </code>
+            </p>
+          `}
+
+        ${this._renderBaseProbe()}
+
+        ${this.baseEnabled
+          ? html`
+            <div class="actions">
+              <button
+                class="btn"
+                ?disabled=${this.baseProbing || !this._activeBaseUrl}
+                @click=${this._probeBase}
+              >${this.baseProbing ? 'Validating…' : 'Validate'}</button>
+              ${this.baseSaving
+                ? html`<span class="muted" style="align-self:center">Saving…</span>`
+                : ''}
+            </div>
+          `
+          : ''}
+      </div>
+
+      ${this.baseBrowserOpen ? html`
+        <file-browser
+          ?open=${this.baseBrowserOpen}
+          .currentPath=${this.baseLocalUrl || '/home'}
+          @path-selected=${this._handleBasePathSelected}
+          @close=${() => { this.baseBrowserOpen = false; }}
+        ></file-browser>
+      ` : ''}
+    `;
+  }
+
+  _renderUpgradeBar() {
+    const can = this._canUpgradeApps;
+    const hint = can
+      ? 'Bumps every safely-bumpable image pin in the local checkout. Rebuild after to deploy.'
+      : 'Enable an alternate HomeFree repository above with a local checkout to make pins editable.';
+    return html`
+      <div class="upgrade-bar">
+        <button
+          class="btn primary"
+          ?disabled=${!can || this.upgrading}
+          @click=${this.runUpgradeApps}
+        >${this.upgrading ? 'Updating apps…' : 'Update apps'}</button>
+        <span class="hint grow">${hint}</span>
+      </div>
+      ${this.upgradeError ? html`<div class="error">${this.upgradeError}</div>` : ''}
+      ${this._renderUpgradeResult()}
+    `;
+  }
+
+  _renderUpgradeResult() {
+    const r = this.upgradeResult;
+    if (!r) return '';
+    const bumped = Array.isArray(r.bumped) ? r.bumped : [];
+    const zskipped = Array.isArray(r.skipped_zitadel) ? r.skipped_zitadel : [];
+    const warnings = Array.isArray(r.warnings) ? r.warnings : [];
+    const errors = Array.isArray(r.errors) ? r.errors : [];
+    const nothing = bumped.length === 0 && zskipped.length === 0
+      && warnings.length === 0 && errors.length === 0;
+    if (nothing) {
+      return html`<div class="upgrade-result"><strong>All up-to-date.</strong> No bumps were needed.</div>`;
+    }
+    return html`
+      <div class="upgrade-result">
+        ${bumped.length > 0 ? html`
+          <div><strong>${bumped.length} pin(s) bumped:</strong></div>
+          <ul>
+            ${bumped.map((b) => html`
+              <li>
+                <code>${b.app}</code>
+                ${b.binding ? html` / <code>${b.binding}</code>` : ''}
+                : <code>${b.current_value}</code> → <code>${b.new_value}</code>
+              </li>
+            `)}
+          </ul>
+          <div style="margin-top:8px">
+            Re-build to deploy: <code>sudo scripts/build.sh --switch</code>
+          </div>
+        ` : ''}
+        ${zskipped.length > 0 ? html`
+          <div style="margin-top:10px">
+            <strong>${zskipped.length} Zitadel pin(s) skipped</strong>
+            to avoid SSO lockout. Bump by hand after arranging an
+            out-of-band login.
+          </div>
+        ` : ''}
+        ${warnings.length > 0 ? html`
+          <div style="margin-top:10px"><strong>Warnings:</strong></div>
+          <ul>${warnings.map((w) => html`<li>${w}</li>`)}</ul>
+        ` : ''}
+        ${errors.length > 0 ? html`
+          <div style="margin-top:10px"><strong>Errors:</strong></div>
+          <ul>${errors.map((e) => html`<li>${e}</li>`)}</ul>
+        ` : ''}
+      </div>
+    `;
+  }
+
   render() {
     return html`
       <div class="module-container">
+        ${this._renderBasePanel()}
+
+        ${this._renderUpgradeBar()}
+
         <div class="info-box">
           <strong>App versions</strong>
           Every container declared on this box, with the version that is

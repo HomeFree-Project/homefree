@@ -40,10 +40,11 @@ const PATHS = {
   'speed-test': svg`<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>`,
   'json-config': svg`<path d="M16 18 22 12 16 6"/><path d="M8 6 2 12 8 18"/>`,
   'build-logs': svg`<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>`,
-  // Lucide `package-check` — a closed box with a small check on the
-  // upper-right face. Reads as "container, status known", matching the
-  // page's per-container current-vs-latest comparison.
-  'app-versions': svg`<path d="m16 16 2 2 4-4"/><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>`,
+  // Lucide `brain` — the "source code" / power-user surface where the
+  // operator points at a fork, bumps pins, edits raw config. Swapped
+  // with `developers` (the Plugins page) — the brain reads as
+  // engineering tooling and Source Code is the right home for it.
+  'app-versions': svg`<path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>`,
   updates: svg`<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>`,
   // Lucide `bell-ring` — bell with motion lines flanking it. Reads
   // unambiguously as notifications/alerts at the small nav size; sits
@@ -60,8 +61,12 @@ const PATHS = {
   // --- admin: Identity section ---------------------------------------
   users: svg`<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>`,
   sso: svg`<circle cx="16.5" cy="7.5" r="4.5"/><path d="m13.3 10.7-9.3 9.3"/><path d="m6 17 1.5 1.5"/><path d="m3.5 14.5 2 2"/>`,
-  // --- admin: Developers section -------------------------------------
-  developers: svg`<path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>`,
+  // --- admin: Advanced section, Plugins page -------------------------
+  // Lucide `package-check` — a closed box with a small check on the
+  // upper-right face. Reads as "a packaged extension, status known",
+  // matching the Plugins page (register a flake, see whether it's
+  // valid/active). Swapped with the brain icon, now on Source Code.
+  developers: svg`<path d="m16 16 2 2 4-4"/><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>`,
   // --- home portal + admin "Apps" -------------------------------------
   apps: svg`<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>`,
   profile: svg`<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>`,
