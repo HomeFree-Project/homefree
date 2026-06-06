@@ -236,6 +236,11 @@ class TableEditor extends LitElement {
       justify-content: center;
       z-index: 1000;
       backdrop-filter: blur(2px);
+      /* Inset so a tall modal never touches the screen edges, and so the
+         max-height cap below leaves a visible margin on short/phone
+         viewports. box-sizing keeps the padding inside the fixed box. */
+      padding: 16px;
+      box-sizing: border-box;
     }
 
     /* Opaque card with a clearly visible frame — see confirm-dialog.js
@@ -250,6 +255,16 @@ class TableEditor extends LitElement {
       width: 90%;
       box-shadow: var(--hf-shadow-lg);
       color: var(--hf-text);
+      /* Cap height to the viewport (overlay adds 16px inset) and lay the
+         modal out as a column so the header + action buttons stay pinned
+         while only the field list scrolls. Without this a form with many
+         fields grows past the screen and the centered overlay clips its
+         top and bottom with no way to reach them — the regression that
+         long per-field descriptions introduced on phones. */
+      max-height: calc(100vh - 32px);
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
     }
 
     .modal-header {
@@ -257,10 +272,23 @@ class TableEditor extends LitElement {
       font-size: 18px;
       font-weight: 600;
       color: var(--hf-text);
+      flex-shrink: 0;
     }
 
     .modal-body {
       margin-bottom: 24px;
+      /* Scroll the field list, not the whole modal. min-height:0 lets a
+         flex child actually shrink below its content height so overflow
+         engages. The negative margin + matching padding bleed the
+         scrollbar to the modal edge while keeping focus rings from being
+         clipped. */
+      overflow-y: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+      margin-left: -24px;
+      margin-right: -24px;
+      padding-left: 24px;
+      padding-right: 24px;
     }
 
     .modal-field {
@@ -279,6 +307,9 @@ class TableEditor extends LitElement {
       display: flex;
       align-items: center;
       gap: 8px;
+      /* Let an optional .field-desc wrap onto its own full-width line
+         below the checkbox+label row instead of crowding beside it. */
+      flex-wrap: wrap;
     }
 
     .modal-field.boolean label {
@@ -291,6 +322,23 @@ class TableEditor extends LitElement {
       width: 16px;
       height: 16px;
       flex-shrink: 0;
+    }
+
+    /* Optional helper text under a field in the edit modal (col.description). */
+    .modal-field .field-desc {
+      display: block;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--hf-text-muted);
+      margin-top: 4px;
+    }
+
+    .modal-field.boolean .field-desc {
+      flex-basis: 100%;
+      /* The checkbox row's <label> carries order:2, so order it after
+         to keep the helper text below the checkbox, not above it. */
+      order: 3;
+      margin-top: 6px;
     }
 
     /* Path-type column: text input + Browse button side-by-side. Matches the
@@ -329,6 +377,8 @@ class TableEditor extends LitElement {
       display: flex;
       gap: 10px;
       justify-content: flex-end;
+      /* Stay pinned at the modal's bottom edge while .modal-body scrolls. */
+      flex-shrink: 0;
     }
 
     .btn {
@@ -552,7 +602,12 @@ class TableEditor extends LitElement {
           <h3 class="modal-header">${modalTitle}</h3>
 
           <div class="modal-body">
-            ${this.columns.map(col => html`
+            ${this.columns.map(col => {
+              // modalLabel lets a terse table header (e.g. "No KA") expand
+              // to a readable label in the edit modal ("Disable keep-alive");
+              // falls back to the column label when unset.
+              const fieldLabel = col.modalLabel || col.label;
+              return html`
               <div class="modal-field ${col.type === 'boolean' ? 'boolean' : ''}">
                 ${col.type === 'boolean' ? html`
                   <label>
@@ -561,10 +616,10 @@ class TableEditor extends LitElement {
                       .checked=${this.editingRow[col.key]}
                       @change=${(e) => this.handleFieldChange(col.key, e.target.checked)}
                     />
-                    <span>${col.label}</span>
+                    <span>${fieldLabel}</span>
                   </label>
                 ` : col.type === 'path' ? html`
-                  <label>${col.label}</label>
+                  <label>${fieldLabel}</label>
                   <div class="input-with-browse">
                     <input
                       type="text"
@@ -576,14 +631,14 @@ class TableEditor extends LitElement {
                             @click=${() => this._openBrowse(col.key, col.rootPath)}>Browse…</button>
                   </div>
                 ` : col.type === 'tags' ? html`
-                  <label>${col.label}</label>
+                  <label>${fieldLabel}</label>
                   <tag-input
                     .value=${this.editingRow[col.key] || ''}
                     placeholder=${col.placeholder || ''}
                     @change=${(e) => this.handleFieldChange(col.key, e.detail.value)}
                   ></tag-input>
                 ` : col.type === 'select' ? html`
-                  <label>${col.label}</label>
+                  <label>${fieldLabel}</label>
                   <select
                     .value=${this.editingRow[col.key] ?? ''}
                     @change=${(e) => this.handleFieldChange(col.key, e.target.value)}
@@ -595,7 +650,7 @@ class TableEditor extends LitElement {
                     })}
                   </select>
                 ` : html`
-                  <label>${col.label}</label>
+                  <label>${fieldLabel}</label>
                   <input
                     type="${col.type || 'text'}"
                     .value=${this.editingRow[col.key] ?? ''}
@@ -603,8 +658,10 @@ class TableEditor extends LitElement {
                     placeholder="${col.placeholder || ''}"
                   />
                 `}
+                ${col.description ? html`<small class="field-desc">${col.description}</small>` : ''}
               </div>
-            `)}
+              `;
+            })}
           </div>
 
           <div class="modal-actions">

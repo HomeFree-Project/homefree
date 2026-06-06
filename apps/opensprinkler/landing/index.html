@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenSprinkler UI · HomeFree</title>
+  <!--
+    Self-contained setup page for the locally-hosted OpenSprinkler UI.
+    Per AGENTS.md rule 8: NO external resources — all CSS/JS is inline,
+    no fonts/images/scripts are loaded off-host. The inline script only
+    fills in this box's own origin so the shown URL is correct on any
+    deployment.
+  -->
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2029;
+      --border: #2a323d;
+      --text: #e6e9ed;
+      --muted: #9aa4b2;
+      --accent: #4aa8ff;
+      --code-bg: #0b0f14;
+      --note-bg: #1d2630;
+      --note-border: #34507a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.55;
+      padding: 32px 16px;
+      display: flex;
+      justify-content: center;
+    }
+    main.card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+    }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    h2 { margin: 28px 0 10px; font-size: 17px; }
+    .lead { color: var(--muted); margin: 0 0 8px; }
+    ol { margin: 0; padding-left: 22px; }
+    ol li { margin-bottom: 16px; }
+    small { color: var(--muted); display: block; margin-top: 4px; }
+    code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+    .code {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-top: 8px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 14px;
+      word-break: break-all;
+    }
+    .copy {
+      margin-left: auto;
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .copy:hover { border-color: var(--accent); }
+    .note {
+      background: var(--note-bg);
+      border: 1px solid var(--note-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 24px 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .note strong { color: var(--text); }
+    .btn {
+      display: inline-block;
+      background: var(--accent);
+      color: #06121f;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 9px 16px;
+      border-radius: 7px;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>OpenSprinkler UI</h1>
+    <p class="lead">
+      This host serves the OpenSprinkler web interface locally from your
+      HomeFree box — no connection to <code>ui.opensprinkler.com</code>,
+      works fully offline.
+    </p>
+
+    <h2>Point your controller here</h2>
+    <ol>
+      <li>
+        On your OpenSprinkler controller, open its script-URL page in a browser:
+        <div class="code">http://<span id="ctrl">YOUR-CONTROLLER</span>/su</div>
+        <small>Use the controller's LAN address — for example <code>opensprinkler.lan</code> or its IP.</small>
+      </li>
+      <li>
+        Set the <strong>Javascript path</strong> to:
+        <div class="code"><span data-origin-js>…/js</span><button type="button" class="copy">Copy</button></div>
+      </li>
+      <li>
+        Save, then reload your controller's web page. It now loads the
+        UI from this box instead of the vendor CDN.
+      </li>
+    </ol>
+
+    <div class="note">
+      <strong>Keep this box online.</strong> If it's unreachable, the
+      controller's web UI won't load — but your programs and watering
+      continue to run on the controller itself.
+    </div>
+
+    <p><a class="btn" href="/index.html">Launch the app directly →</a></p>
+
+    <footer>
+      Vendored from the open-source OpenSprinkler-App · served by HomeFree · no external requests.
+    </footer>
+  </main>
+
+  <script>
+    // Fill in this deployment's own origin so the shown URL is always correct.
+    var jsUrl = location.origin + "/js";
+    document.querySelectorAll("[data-origin-js]").forEach(function (el) {
+      el.textContent = jsUrl;
+    });
+    var btn = document.querySelector(".copy");
+    if (btn && navigator.clipboard) {
+      btn.addEventListener("click", function () {
+        navigator.clipboard.writeText(jsUrl).then(function () {
+          btn.textContent = "Copied";
+          setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+        });
+      });
+    } else if (btn) {
+      btn.style.display = "none";
+    }
+  </script>
+</body>
+</html>

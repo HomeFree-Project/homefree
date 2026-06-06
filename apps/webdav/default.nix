@@ -14,7 +14,7 @@ let
     };
   };
 
-  version = "v5.11.8";
+  version = "v5.11.10";
   containerDataPath = "/var/lib/webdav";
   port = config.homefree.allocPort "webdav";
 

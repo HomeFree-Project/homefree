@@ -9,7 +9,7 @@ let
 
   # image = "lscr.io/linuxserver/freshrss";
   image = "freshrss/freshrss";
-  version = "1.28.1";
+  version = "1.29.1";
 
   port = config.homefree.allocPort "freshrss";
 

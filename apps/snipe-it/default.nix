@@ -97,7 +97,7 @@ let
     ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
   '';
 
-  version = "v8.4.1";
+  version = "v8.6.1";
 
   port = config.homefree.allocPort "snipe-it";
 in

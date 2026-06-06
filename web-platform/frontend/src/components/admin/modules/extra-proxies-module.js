@@ -58,12 +58,14 @@ class ExtraProxiesModule extends LitElement {
   handleProxiesChange(e) {
     // table-editor returns rows with snake_case keys; subdomains is a
     // comma-separated text field that we split/join.
+    const splitList = (v) => Array.isArray(v)
+      ? v
+      : (typeof v === 'string'
+          ? v.split(',').map(s => s.trim()).filter(Boolean)
+          : []);
     const data = (e.detail.data || []).map(row => {
-      const parsedSubdomains = Array.isArray(row.subdomains)
-        ? row.subdomains
-        : (typeof row.subdomains === 'string'
-            ? row.subdomains.split(',').map(s => s.trim()).filter(Boolean)
-            : []);
+      const parsedSubdomains = splitList(row.subdomains);
+      const parsedCspSources = splitList(row['extra-csp-sources']);
       const entry = {
         ...row,
         port: row.port === '' || row.port == null ? 80 : Number(row.port),
@@ -72,8 +74,13 @@ class ExtraProxiesModule extends LitElement {
         // subdomain (an empty list yields no URL and no Caddy route).
         subdomains: parsedSubdomains.length > 0
           ? parsedSubdomains
-          : (row.label ? [row.label] : [])
+          : (row.label ? [row.label] : []),
+        'extra-csp-sources': parsedCspSources
       };
+      // Keep the entry minimal: drop the CSP-allowlist key entirely when
+      // empty (the common case), so a blank field isn't read as an
+      // undeployed change against deployed entries that omit it.
+      if (parsedCspSources.length === 0) delete entry['extra-csp-sources'];
       // Keep the entry minimal: store enable/public only when they differ
       // from their defaults (enable=true, public=false). This matches the
       // deployed shape — so toggling to a default value isn't read as an
@@ -99,27 +106,47 @@ class ExtraProxiesModule extends LitElement {
       ...r,
       enable: r.enable !== false,   // absent => enabled (the default)
       public: !!r.public,
-      subdomains: Array.isArray(r.subdomains) ? r.subdomains.join(', ') : (r.subdomains || '')
+      subdomains: Array.isArray(r.subdomains) ? r.subdomains.join(', ') : (r.subdomains || ''),
+      'extra-csp-sources': Array.isArray(r['extra-csp-sources'])
+        ? r['extra-csp-sources'].join(', ')
+        : (r['extra-csp-sources'] || '')
     });
     const rows = (this.config['service-config'] || []).map(toRow);
     // Deployed rows in the same shape, so table-editor can flag added/changed
     // rows (those not present in the last-applied config).
     const appliedRows = (this.appliedConfig?.['service-config'] || []).map(toRow);
 
+    // Short table headers keep the grid narrow (each boolean renders a
+    // single ✓/✗ glyph); `modalLabel` spells the field out in the edit
+    // modal and `description` adds subtext there. The help box above the
+    // table still gives the overview.
     const columns = [
-      { key: 'enable', label: 'Enabled', type: 'boolean', default: true },
-      { key: 'label', label: 'Label', type: 'text', placeholder: 'envoy' },
-      { key: 'name', label: 'Display Name', type: 'text', placeholder: 'Enphase Solar' },
-      { key: 'host', label: 'Backend Host', type: 'text', placeholder: 'envoy.lan or 10.0.0.43' },
-      { key: 'port', label: 'Port', type: 'text', placeholder: '80' },
-      { key: 'subdomains', label: 'Subdomains (comma-sep)', type: 'text', placeholder: 'envoy' },
-      // Short headers — the boolean columns render a single ✓/✗ glyph,
-      // so a long header needlessly widens the whole table. The help
-      // box above the table explains each field in full.
-      { key: 'ssl', label: 'HTTPS', type: 'boolean' },
-      { key: 'ssl-no-verify', label: 'No Verify', type: 'boolean' },
-      { key: 'disable-keepalive', label: 'No KA', type: 'boolean' },
-      { key: 'public', label: 'Public', type: 'boolean' }
+      { key: 'enable', label: 'Enabled', type: 'boolean', default: true,
+        description: 'Uncheck to keep this entry but stop routing it — no Caddy vhost and no DNS record are emitted.' },
+      { key: 'label', label: 'Label', type: 'text', placeholder: 'envoy',
+        description: 'Unique short identifier for this entry.' },
+      { key: 'name', label: 'Display Name', type: 'text', placeholder: 'Enphase Solar',
+        description: 'Friendly name shown in the app catalog.' },
+      { key: 'host', label: 'Backend Host', type: 'text', placeholder: 'envoy.lan or 10.0.0.43',
+        description: 'Hostname or IP of the device on your network.' },
+      { key: 'port', label: 'Port', type: 'text', placeholder: '80',
+        description: 'Backend port (typically 80, or 443 when the device serves HTTPS).' },
+      { key: 'subdomains', label: 'Subdomains (comma-sep)', type: 'text', placeholder: 'envoy',
+        description: 'Subdomains to serve this on; defaults to the label if blank.' },
+      { key: 'ssl', label: 'HTTPS', type: 'boolean', modalLabel: 'Backend uses HTTPS',
+        description: 'Enable when the device serves HTTPS itself (most consumer hardware on port 443, usually with a self-signed cert).' },
+      { key: 'ssl-no-verify', label: 'No Verify', type: 'boolean', modalLabel: 'Skip certificate verification',
+        description: 'Trust the backend TLS cert without validating it — needed for the self-signed certs most appliances ship. Only meaningful with “Backend uses HTTPS”.' },
+      { key: 'disable-keepalive', label: 'No KA', type: 'boolean', modalLabel: 'Disable keep-alive',
+        description: 'Open a fresh connection per request (HTTP/1.1) instead of reusing one. Turn on for tiny embedded servers that close the socket after each response, which otherwise cause intermittent 502s (OpenSprinkler, some NAS admin pages).' },
+      { key: 'strip-cookies', label: 'No Cookie', type: 'boolean', modalLabel: 'Strip cookies',
+        description: 'Remove the browser’s Cookie header before forwarding. Turn on if the device returns “The request was too large” — its small request buffer can’t hold HomeFree’s SSO session cookie, which the device never needs.' },
+      { key: 'public', label: 'Public', type: 'boolean', modalLabel: 'Public (expose on WAN)',
+        description: 'Serve this on the WAN interface. Leave off to keep it reachable only from the LAN.' },
+      { key: 'extra-csp-sources', label: 'CSP Allow', type: 'text',
+        placeholder: 'https://ui.opensprinkler.com',
+        modalLabel: 'Allowed external sources (CSP)',
+        description: 'Comma-separated origins to allow in this vhost’s Content-Security-Policy (script/style/img/font/connect). Leave blank for almost everything — only needed when a proxied device loads its own UI from a vendor CDN (e.g. OpenSprinkler from ui.opensprinkler.com). This lets the page make off-box requests, so prefer self-hosting where possible.' }
     ];
 
     return html`
@@ -134,6 +161,13 @@ class ExtraProxiesModule extends LitElement {
           HTTPS</strong> when the device serves HTTPS itself (most
           consumer hardware does on port 443 with a self-signed cert
           — combine with <strong>Skip Cert Verify</strong>).
+          For tiny embedded appliances (OpenSprinkler and similar),
+          <strong>No KA</strong> disables HTTP keep-alive and
+          <strong>No Cookie</strong> strips the forwarded cookie header
+          — turn the latter on if the device returns
+          <em>"The request was too large"</em> when reached through its
+          <code>homefree.host</code> subdomain (its buffer can't hold
+          the browser's SSO cookie, which the device never needs).
           HomeFree's own services have their own auto-generated
           entries; you don't need to list them here.
         </div>

@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "v0.107.73";
+  version = "v0.108.0-b.88";
   image = "adguard/adguardhome:${version}";
   containerDataPath = "/var/lib/adguardhome-podman";
   port = config.homefree.allocPort "adguard";

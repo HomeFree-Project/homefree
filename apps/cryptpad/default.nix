@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "version-2026.2.0";
+  version = "version-2026.5.1";
   containerDataPath = "/var/lib/cryptpad-podman";
   secretsDir = "/var/lib/homefree-secrets/cryptpad";
 

@@ -20,7 +20,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "v2.7.5";
-  version-redis = "8.6-alpine";
+  version-redis = "8.8.0";
   containerDataPath = "/var/lib/immich";
   # Seems to be hard coded in docker container, so can't override
   uploadLocation = "/usr/src/app/upload";

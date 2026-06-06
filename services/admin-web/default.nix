@@ -55,6 +55,19 @@ let
     exec ${pythonEnv}/bin/python drive_temp_sampler.py
   '';
 
+  # App-versions refresher. Walks the container catalog and queries
+  # each container image's upstream registry for the latest semver
+  # tag. Backs the Advanced -> App Versions page. Outbound-network
+  # only (no privileged operations), so the systemd unit is sandboxed
+  # but still runs as root to share write access to
+  # /var/lib/homefree-admin/app-versions-cache.json with the admin-api
+  # (which is the manual-refresh writer for the same file).
+  app-versions-refresher = pkgs.writeShellScriptBin "homefree-app-versions-refresher" ''
+    #!/usr/bin/env bash
+    cd ${installerWebPath}/backend
+    exec ${pythonEnv}/bin/python app_versions_refresh.py
+  '';
+
   # SQLite DB shared by the sampler (writer) and admin-api (reader).
   dashboardDbDir = "/var/lib/homefree-dashboard";
   dashboardDbPath = "${dashboardDbDir}/history.db";
@@ -114,6 +127,19 @@ let
   # Merge: prefer service-config metadata, fall back to defaults
   all-service-metadata = default-service-metadata // service-config-map;
   service-metadata-json = (pkgs.formats.json {}).generate "service-metadata.json" all-service-metadata;
+
+  # Container catalog for the Advanced -> App Versions page. Iterates
+  # every container declared via virtualisation.oci-containers and
+  # emits its name + image string. Image-string parsing (registry /
+  # repo / tag split) is done in Python — keeping this aggregator dumb
+  # avoids brittle Nix string surgery and lets the resolver evolve
+  # without a rebuild.
+  container-images-list = lib.mapAttrsToList (name: c: {
+    inherit name;
+    image = c.image;
+  }) (config.virtualisation.oci-containers.containers or {});
+  container-images-json = (pkgs.formats.json {})
+    .generate "container-images.json" container-images-list;
 
   # Generate secrets schema for all services
   # This extracts secrets options from service-options for each service
@@ -482,6 +508,7 @@ let
     ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
     ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
+    ${pkgs.coreutils}/bin/cp ${container-images-json} /run/homefree/admin/container-images.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
     ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
 
@@ -1074,6 +1101,55 @@ in
     ## oauth2-proxy). The flip's pointer files are unchanged:
     ## /var/lib/homefree-admin/{active-color,active-closure,
     ## admin-api-flip-failed.json}.
+
+    ## App-versions refresher — periodic outbound fetch of each
+    ## container image's latest semver tag from its upstream registry.
+    ## Backs the Advanced -> App Versions page. Oneshot (no daemon);
+    ## the timer runs it daily + the admin-api can kick the same
+    ## refresh in-process via POST /api/apps/versions/refresh.
+    ##
+    ## Runs as root to share write access with the admin-api (also
+    ## root) for /var/lib/homefree-admin/app-versions-cache.json. The
+    ## work itself is purely network + file write, so the unit is
+    ## otherwise locked down via the systemd sandbox directives below.
+    systemd.services.homefree-app-versions-refresh = {
+      description = "Refresh upstream container image versions";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = "root";
+        Group = "root";
+        StateDirectory = "homefree-admin";
+        WorkingDirectory = "/var/lib/homefree-admin";
+        ExecStart = "${app-versions-refresher}/bin/homefree-app-versions-refresher";
+        ## Sandbox — outbound network + writing one file in
+        ## /var/lib/homefree-admin is all this needs.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        SystemCallFilter = [ "@system-service" ];
+      };
+    };
+
+    systemd.timers.homefree-app-versions-refresh = {
+      description = "Daily refresh of upstream container image versions";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        ## First run shortly after boot so the page has data the first
+        ## time it's opened on a freshly-installed box; recur daily.
+        OnBootSec = "10min";
+        OnUnitActiveSec = "24h";
+        Persistent = true;
+        RandomizedDelaySec = "30m";
+      };
+    };
   }
   ];
 }

@@ -2,7 +2,7 @@
 let
   containerDataPath = "/var/lib/azuracast";
 
-  version = "0.23.2";
+  version = "0.23.6";
 
   image = "ghcr.io/azuracast/azuracast:${version}";
 

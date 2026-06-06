@@ -495,6 +495,15 @@ in
       (lib.listToAttrs (lib.flatten (lib.map (service-config:
       let
         reverse-proxy-config = service-config.reverse-proxy;
+        ## Extra origins an operator allowed for THIS vhost only
+        ## (reverse-proxy.extra-csp-sources). Appended to the CSP fetch
+        ## directives in BOTH the reverse-proxy and static-path header
+        ## blocks below, so the widening applies whichever surface a
+        ## service uses. Empty (leading space omitted) for every vhost
+        ## that doesn't set it — HomeFree-authored pages stay same-origin.
+        cspExtra = lib.optionalString
+          ((reverse-proxy-config.extra-csp-sources or []) != [])
+          (" " + lib.concatStringsSep " " (reverse-proxy-config.extra-csp-sources or []));
         http-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "http://${subdomain}.${domain}") reverse-proxy-config.http-domains)) reverse-proxy-config.subdomains);
         https-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "https://${subdomain}.${domain}") reverse-proxy-config.https-domains)) reverse-proxy-config.subdomains);
         ## Literal site addresses appended verbatim — no subdomain cross-
@@ -620,7 +629,7 @@ in
               # overrides via extraCaddyConfig where a tighter policy
               # is feasible. See
               # docs/agent-notes/security-audit-phase-5.md M3.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
           '' else "")
@@ -782,7 +791,7 @@ in
               # policy uniform across surfaces. Apps that need a
               # tighter or different policy override via
               # extraCaddyConfig.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
             ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''
@@ -979,6 +988,23 @@ in
               then "                transport http {\n${body}                }\n"
               else ""
           )
+          + (if reverse-proxy-config.strip-cookies or false then ''
+                ## Drop the inbound Cookie header before forwarding to a
+                ## buffer-constrained upstream. Tiny embedded HTTP servers
+                ## (OpenSprinkler and similar appliances — same class the
+                ## disable-keepalive option targets) have a small fixed
+                ## request buffer (~2 KB). The SSO session cookie is scoped
+                ## to the parent domain (OAUTH2_PROXY_COOKIE_DOMAINS is set
+                ## to .<domain>), so the browser attaches the multi-KB,
+                ## chunked oauth2 cookie to EVERY <sub>.<domain> request —
+                ## including these non-SSO external proxies — and it
+                ## overflows the upstream's buffer, which then answers
+                ## "The request was too large". These appliances do not use
+                ## cookies (OpenSprinkler authenticates via a pw query
+                ## param), so removing the header is the root-cause fix, not
+                ## a workaround.
+                header_up -Cookie
+          '' else "")
           + (if reverse-proxy-config.oauth2 == true then ''
                 header_up Host {host}
                 header_up X-Real-IP {remote}

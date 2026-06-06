@@ -587,6 +587,8 @@ in
         ssl       = e.ssl or false;
         ssl-no-verify = e.ssl-no-verify or false;
         disable-keepalive = e.disable-keepalive or false;
+        strip-cookies = e.strip-cookies or false;
+        extra-csp-sources = e.extra-csp-sources or [];
         public    = e.public or false;
         oauth2    = e.oauth2 or false;
         basic-auth = e.basic-auth or false;

@@ -496,6 +496,14 @@ export const updateFirmware = (deviceIds) =>
   post('/api/firmware/update', { device_ids: deviceIds });
 export const getFirmwareUpdateStatus = () => get('/api/firmware/update-status');
 
+// App versions — backs the Advanced -> App Versions page. The GET is
+// read-only and always fast (served from the on-disk cache); the POST
+// kicks an asynchronous refresh against upstream registries and
+// returns immediately, so the UI re-polls the GET until last_checked
+// advances.
+export const getAppVersions = () => get('/api/apps/versions');
+export const refreshAppVersions = () => post('/api/apps/versions/refresh', {});
+
 // Power off — confirmation-gated by the caller (see confirmDialog).
 // rebootSystem is already exported above in the "System Control"
 // section (used by the installer's "reboot after install" button).

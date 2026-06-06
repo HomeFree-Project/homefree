@@ -14,7 +14,7 @@ let
     };
   };
 
-  version = "v1.0.0";
+  version = "v1.2.0";
   containerDataPath = "/var/lib/unifi-os-podman";
   port = config.homefree.allocPort "unifi";
 

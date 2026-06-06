@@ -40,6 +40,10 @@ const PATHS = {
   'speed-test': svg`<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>`,
   'json-config': svg`<path d="M16 18 22 12 16 6"/><path d="M8 6 2 12 8 18"/>`,
   'build-logs': svg`<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>`,
+  // Lucide `package-check` — a closed box with a small check on the
+  // upper-right face. Reads as "container, status known", matching the
+  // page's per-container current-vs-latest comparison.
+  'app-versions': svg`<path d="m16 16 2 2 4-4"/><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>`,
   updates: svg`<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>`,
   // Lucide `bell-ring` — bell with motion lines flanking it. Reads
   // unambiguously as notifications/alerts at the small nav size; sits

@@ -2687,6 +2687,54 @@
               '';
             };
 
+            strip-cookies = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy removes the inbound Cookie header
+                (`header_up -Cookie`) before forwarding to this
+                upstream. Default is off (cookies pass through).
+
+                Set this for buffer-constrained embedded HTTP servers
+                — the same class of appliance as `disable-keepalive`
+                (OpenSprinkler, some smart-home gear, older NAS admin
+                pages). HomeFree's SSO session cookie is scoped to the
+                parent domain (oauth2-proxy's COOKIE_DOMAINS), so the
+                browser attaches the large, chunked oauth2 cookie to
+                every `<sub>.<domain>` request — including non-SSO
+                external proxies. A tiny appliance with a ~2 KB request
+                buffer overflows on it and returns "The request was too
+                large". These appliances do not use cookies, so dropping
+                the header is safe. Leave off for normal apps, which
+                need their cookies.
+              '';
+            };
+
+            extra-csp-sources = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = [ "https://ui.opensprinkler.com" ];
+              description = ''
+                Extra origins appended to THIS vhost's Content-Security-
+                Policy fetch directives (script-src, style-src, img-src,
+                font-src, connect-src), on top of the same-origin +
+                `*.<domain>` baseline.
+
+                Almost always leave empty — HomeFree's own pages must
+                never load third-party assets (see AGENTS.md rule 8).
+                The escape hatch exists for proxied THIRD-PARTY
+                appliances whose own UI bootstraps from a vendor CDN —
+                e.g. OpenSprinkler firmware serves a tiny HTML shell that
+                pulls its JavaScript from https://ui.opensprinkler.com.
+                Listing that origin here lets the device's UI load.
+
+                This necessarily loosens this one vhost's CSP and makes
+                the page issue off-box requests, so prefer self-hosting
+                the asset where the device supports repointing it. Only
+                affects external-proxy / non-static vhosts.
+              '';
+            };
+
             basic-auth = lib.mkOption {
               type = lib.types.bool;
               default = false;

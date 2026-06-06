@@ -1,6 +1,6 @@
 { config, lib, ... }:
 let
-  version = "3.6.1";
+  version = "3.7.1";
   port = config.homefree.allocPort "joplin";
   database-name = "joplin";
   database-user = "joplin";

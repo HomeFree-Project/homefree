@@ -32,7 +32,7 @@ let
   '';
 
   port = config.homefree.allocPort "jellyfin";
-  version = "10.11.8";
+  version = "10.11.10";
 
   userOptions = {
     enable = lib.mkOption {

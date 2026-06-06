@@ -28,6 +28,7 @@ import './modules/alerts-module.js';
 import './modules/abuse-blocking-module.js';
 import './modules/speed-test-module.js';
 import './modules/developers-module.js';
+import './modules/app-versions-module.js';
 import './modules/privacy-module.js';
 import '../shared/progress-modal.js';
 import '../shared/toast-notification.js';
@@ -1005,6 +1006,14 @@ class AdminApp extends LitElement {
         id: 'updates',
         title: 'Updates',
         section: 'System'
+      },
+      {
+        // Per-container view of which image versions are deployed vs
+        // available upstream. Read-only; refresh runs daily in the
+        // background plus on-demand.
+        id: 'app-versions',
+        title: 'App Versions',
+        section: 'Advanced'
       },
       {
         // Build status + rebuild log viewer + the pending-changes list.
@@ -3073,6 +3082,11 @@ class AdminApp extends LitElement {
             .pendingChanges=${this.pendingChanges()}
             .hasUnappliedChanges=${this.hasUnappliedChanges}
           ></status-module>
+        `;
+
+      case 'app-versions':
+        return html`
+          <app-versions-module></app-versions-module>
         `;
 
       case 'updates':
