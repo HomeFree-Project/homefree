@@ -511,6 +511,16 @@ export const refreshAppVersions = () => post('/api/apps/versions/refresh', {});
 // /nix/store tree can't take effect.
 export const upgradeApps = (opts = {}) => post('/api/apps/versions/upgrade', opts);
 
+// Source Code page — Publish ISO image.
+// GET returns { build: {state, source, started_at, finished_at, ...},
+//               latest: {name, size, sha256, modified}, alt_base: {...},
+//               log_tail: "..." }
+// POST { source: 'alt'|'main' } kicks a background build. Polls GET to
+// see progress; while build.state === 'running', re-poll every few
+// seconds until it flips to 'done' or 'error'.
+export const getIsoStatus = () => get('/api/source/iso/status');
+export const buildIso = (opts = {}) => post('/api/source/iso/build', opts);
+
 // Power off — confirmation-gated by the caller (see confirmDialog).
 // rebootSystem is already exported above in the "System Control"
 // section (used by the installer's "reboot after install" button).

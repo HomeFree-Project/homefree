@@ -44,6 +44,7 @@ from resolvers.backups import router as backups_router
 from resolvers.storage import router as storage_router
 from resolvers.alerts import router as alerts_router
 from resolvers.app_versions import router as app_versions_router
+from resolvers.source_iso import router as source_iso_router
 
 # Configure logging
 logging.basicConfig(
@@ -518,6 +519,7 @@ app.include_router(backups_router)
 app.include_router(storage_router)
 app.include_router(alerts_router)
 app.include_router(app_versions_router)
+app.include_router(source_iso_router)
 
 # Startup event handler
 @app.on_event("startup")

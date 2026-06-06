@@ -6,6 +6,8 @@ import {
   getHomefreeBase,
   saveHomefreeBase,
   validateHomefreeBase,
+  getIsoStatus,
+  buildIso,
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
 
@@ -65,6 +67,15 @@ class AppVersionsModule extends LitElement {
     upgrading: { type: Boolean, state: true },
     upgradeResult: { type: Object, state: true },
     upgradeError: { type: String, state: true },
+    // Publish ISO image panel state.
+    isoLoading: { type: Boolean, state: true },
+    isoBuild: { type: Object, state: true },
+    isoLatest: { type: Object, state: true },
+    isoLogTail: { type: String, state: true },
+    isoError: { type: String, state: true },
+    // Source-picker modal — only used when an alternate base is enabled
+    // (otherwise the click goes straight to a default-source build).
+    sourcePickerOpen: { type: Boolean, state: true },
   };
 
   static styles = css`
@@ -420,6 +431,146 @@ class AppVersionsModule extends LitElement {
       font-size: 12px;
       color: var(--hf-text);
     }
+
+    /* Publish ISO image panel — sits below the Update Apps bar. Shows
+       both the most recently published installer image (name/size/hash)
+       and the live build state when one is running. */
+    .iso-panel {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .iso-panel h3 { margin: 0 0 12px; }
+    .iso-meta {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 16px;
+      row-gap: 4px;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+    .iso-meta dt { color: var(--hf-text-muted); }
+    .iso-meta dd {
+      margin: 0;
+      color: var(--hf-text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .iso-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .iso-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--hf-text-muted);
+    }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--hf-border-2);
+      border-top-color: var(--hf-warn);
+      border-radius: 50%;
+      animation: iso-spin 0.9s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes iso-spin { to { transform: rotate(360deg); } }
+
+    /* Collapsible build log — closed by default so the panel stays
+       compact. The HTML details toggle is browser-native, accessible
+       by default, and survives re-renders because the open-state is a
+       DOM attribute (not Lit-managed state). */
+    .iso-log-toggle {
+      margin-top: 12px;
+    }
+    .iso-log-toggle > summary {
+      list-style: none;
+      cursor: pointer;
+      color: var(--hf-text-muted);
+      font-size: 12px;
+      padding: 4px 0;
+      user-select: none;
+    }
+    .iso-log-toggle > summary::-webkit-details-marker { display: none; }
+    .iso-log-toggle > summary::before {
+      content: "▸ ";
+      display: inline-block;
+      transition: transform 0.15s ease;
+    }
+    .iso-log-toggle[open] > summary::before { transform: rotate(90deg); }
+    .iso-log {
+      margin-top: 8px;
+      padding: 10px 12px;
+      background: var(--hf-surface-2);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: var(--hf-text-muted);
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 280px;
+      overflow: auto;
+    }
+
+    /* Source-picker overlay. A bare-bones modal — only used when alt
+       is enabled, to ask which tree to build from. Built inline rather
+       than via confirmDialog because it's tri-state (cancel + two
+       choices) and confirmDialog only supports yes/no. */
+    .source-picker-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+    .source-picker-card {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 10px;
+      padding: 20px 22px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+    }
+    .source-picker-card h3 { margin: 0 0 8px; }
+    .source-picker-card p {
+      margin: 0 0 18px;
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .source-picker-card .options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .source-picker-card .options button {
+      text-align: left;
+      padding: 12px 14px;
+    }
+    .source-picker-card .options button .opt-title {
+      display: block;
+      color: var(--hf-text);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .source-picker-card .options button .opt-sub {
+      display: block;
+      color: var(--hf-text-muted);
+      font-size: 12px;
+      font-weight: 400;
+    }
+    .source-picker-card .footer {
+      display: flex;
+      justify-content: flex-end;
+    }
   `;
 
   constructor() {
@@ -447,12 +598,20 @@ class AppVersionsModule extends LitElement {
     this.upgrading = false;
     this.upgradeResult = null;
     this.upgradeError = '';
+    this.isoLoading = true;
+    this.isoBuild = { state: 'idle' };
+    this.isoLatest = null;
+    this.isoLogTail = '';
+    this.isoError = '';
+    this.sourcePickerOpen = false;
+    this._isoPollTimer = null;
   }
 
   connectedCallback() {
     super.connectedCallback();
     this.load();
     this.loadBaseOverride();
+    this.loadIsoStatus();
   }
 
   disconnectedCallback() {
@@ -460,6 +619,10 @@ class AppVersionsModule extends LitElement {
     if (this._pollTimer) {
       clearTimeout(this._pollTimer);
       this._pollTimer = null;
+    }
+    if (this._isoPollTimer) {
+      clearTimeout(this._isoPollTimer);
+      this._isoPollTimer = null;
     }
   }
 
@@ -657,6 +820,68 @@ class AppVersionsModule extends LitElement {
       this.upgradeError = e.message || 'Update Apps failed.';
     } finally {
       this.upgrading = false;
+    }
+  }
+
+  // ---- Publish ISO image ----------------------------------------------
+  //
+  // GET /api/source/iso/status returns the latest published artifact +
+  // the current build state. While build.state === 'running' we poll
+  // every 3s (cheap — backend just reads its in-memory state and tails
+  // a small log file). Once running flips to done/error we stop.
+
+  async loadIsoStatus() {
+    this.isoLoading = true;
+    try {
+      const data = await getIsoStatus();
+      this.isoBuild = data?.build || { state: 'idle' };
+      this.isoLatest = data?.latest || null;
+      this.isoLogTail = data?.log_tail || '';
+      this.isoError = '';
+      // If the backend says a build is live (e.g. we navigated back to
+      // the page while one is running), resume polling.
+      if (this.isoBuild.state === 'running' && !this._isoPollTimer) {
+        this._scheduleIsoPoll();
+      }
+    } catch (e) {
+      this.isoError = e.message || 'Failed to read ISO status.';
+    } finally {
+      this.isoLoading = false;
+    }
+  }
+
+  _scheduleIsoPoll() {
+    if (this._isoPollTimer) return;
+    this._isoPollTimer = setTimeout(async () => {
+      this._isoPollTimer = null;
+      await this.loadIsoStatus();
+      if (this.isoBuild?.state === 'running') {
+        this._scheduleIsoPoll();
+      }
+    }, 3000);
+  }
+
+  // Click handler. If alt-base is enabled+local, open the source picker
+  // (alt vs official). Otherwise default to the official-public path
+  // (the only build option when there is no local checkout).
+  _onPublishClick() {
+    if (this.isoBuild?.state === 'running') return;
+    if (this._canUpgradeApps) {
+      this.sourcePickerOpen = true;
+      return;
+    }
+    this._kickBuild('main');
+  }
+
+  async _kickBuild(source) {
+    this.sourcePickerOpen = false;
+    this.isoError = '';
+    try {
+      const data = await buildIso({ source });
+      this.isoBuild = data?.build || { state: 'running', source };
+      this._scheduleIsoPoll();
+    } catch (e) {
+      this.isoError = e.body?.detail || e.message || 'Failed to start build.';
     }
   }
 
@@ -980,10 +1205,145 @@ class AppVersionsModule extends LitElement {
     `;
   }
 
+  _formatBytes(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '';
+    const mb = n / (1024 * 1024);
+    if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
+    return mb.toFixed(1) + ' MB';
+  }
+
+  _formatRelative(epochSec) {
+    if (!epochSec) return '';
+    const ageSec = Math.max(0, Math.floor(Date.now() / 1000 - epochSec));
+    if (ageSec < 90) return ageSec + 's ago';
+    if (ageSec < 5400) return Math.floor(ageSec / 60) + 'm ago';
+    if (ageSec < 172800) return Math.floor(ageSec / 3600) + 'h ago';
+    return Math.floor(ageSec / 86400) + 'd ago';
+  }
+
+  _renderIsoPanel() {
+    const b = this.isoBuild || { state: 'idle' };
+    const running = b.state === 'running';
+    const startedAgo = running && b.started_at
+      ? Math.max(0, Math.floor(Date.now() / 1000 - b.started_at)) + 's'
+      : '';
+    const finishedAgo = b.state === 'done' || b.state === 'error'
+      ? this._formatRelative(b.finished_at)
+      : '';
+    const sourceLabel = b.source === 'main'
+      ? 'official upstream' : (b.source === 'alt' ? 'alternate base' : '');
+    const latest = this.isoLatest;
+    return html`
+      <div class="iso-panel">
+        <h3>Installer ISO</h3>
+        ${latest && latest.name ? html`
+          <dl class="iso-meta">
+            <dt>Published</dt><dd>${latest.name}</dd>
+            <dt>Size</dt><dd>${this._formatBytes(latest.size)}</dd>
+            ${latest.sha256 ? html`
+              <dt>sha256</dt><dd>${latest.sha256}</dd>
+            ` : ''}
+            ${latest.modified ? html`
+              <dt>Built</dt><dd>${this._formatRelative(latest.modified)}</dd>
+            ` : ''}
+          </dl>
+        ` : html`
+          <p class="muted" style="margin-top:0">
+            No installer ISO has been published yet from this box.
+          </p>
+        `}
+
+        ${this.isoError ? html`<div class="error">${this.isoError}</div>` : ''}
+
+        ${b.state === 'error' ? html`
+          <div class="error" style="margin-bottom:12px">
+            <strong>Build failed${sourceLabel ? ' (' + sourceLabel + ')' : ''}.</strong>
+            ${b.error || ''}
+            ${finishedAgo ? ' — ' + finishedAgo : ''}
+          </div>
+        ` : ''}
+        ${b.state === 'done' ? html`
+          <div class="notice" style="margin-bottom:12px">
+            <strong>Build succeeded${sourceLabel ? ' (' + sourceLabel + ')' : ''}.</strong>
+            ${finishedAgo}
+          </div>
+        ` : ''}
+
+        <div class="iso-actions">
+          <button
+            class="btn primary"
+            ?disabled=${running || this.isoLoading}
+            @click=${this._onPublishClick}
+          >${running ? 'Building…' : 'Build & publish ISO'}</button>
+          ${running ? html`
+            <span class="iso-status">
+              <span class="spinner" role="status" aria-label="building"></span>
+              <span>
+                Building${sourceLabel ? ' from ' + sourceLabel : ''}${startedAgo ? ' · ' + startedAgo : ''}
+              </span>
+            </span>
+          ` : ''}
+        </div>
+
+        ${this.isoLogTail ? html`
+          <details class="iso-log-toggle">
+            <summary>Build log</summary>
+            <div class="iso-log">${this.isoLogTail}</div>
+          </details>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  _renderSourcePicker() {
+    if (!this.sourcePickerOpen) return '';
+    const altPath = this.baseLocalUrl || 'the alternate base';
+    return html`
+      <div class="source-picker-overlay" @click=${(e) => {
+        if (e.target.classList.contains('source-picker-overlay')) {
+          this.sourcePickerOpen = false;
+        }
+      }}>
+        <div class="source-picker-card">
+          <h3>Build installer ISO from…</h3>
+          <p>
+            An alternate HomeFree repository is active. Pick which source
+            tree the resulting installer should install:
+          </p>
+          <div class="options">
+            <button class="btn" @click=${() => this._kickBuild('alt')}>
+              <span class="opt-title">Alternate repository</span>
+              <span class="opt-sub">
+                Builds from <code>${altPath}</code>. The ISO installs YOUR
+                HomeFree, including any local source modifications.
+              </span>
+            </button>
+            <button class="btn" @click=${() => this._kickBuild('main')}>
+              <span class="opt-title">Official public repository</span>
+              <span class="opt-sub">
+                Clones the upstream HomeFree to a temporary directory and
+                builds the standard public release.
+              </span>
+            </button>
+          </div>
+          <div class="footer">
+            <button class="btn" @click=${() => { this.sourcePickerOpen = false; }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   render() {
     return html`
       <div class="module-container">
         ${this._renderBasePanel()}
+
+        ${this._renderIsoPanel()}
+
+        ${this._renderSourcePicker()}
 
         ${this._renderUpgradeBar()}
 
