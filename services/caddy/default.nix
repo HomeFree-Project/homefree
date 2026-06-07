@@ -1121,6 +1121,40 @@ in
           };
         }
       ) processedProxiedDomains))
+
+      ## ── Unmatched-host catch-all on the public HTTPS listener ──────────
+      ## Any host not served on the `*:443` (public/WAN) listener gets an
+      ## honest `421 Misdirected Request` instead of Caddy's default empty
+      ## `200`. That empty 200 silently broke WebSocket/streaming clients: a
+      ## `public = false` name resolved to the box's WAN IP via an off-box
+      ## resolver lands here (the vhost binds only the LAN addresses), the
+      ## client read a 200 where it expected a 101, and looped forever (the
+      ## ntfy "works until the app is restarted" bug).
+      ##
+      ## Safe + correct by construction (verified with `caddy adapt`):
+      ##  - Host-specific sites are MORE specific and still win; only a
+      ##    genuinely unmatched host reaches this route.
+      ##  - TLS terminates with the requested host's existing cert; an
+      ##    unknown SNI has no cert and fails the handshake BEFORE HTTP, so
+      ##    scanners / OS HTTPS probes never reach this (captive-portal and
+      ##    OS-probe handling live on the separate `:80` block).
+      ##  - It lands ONLY on the `*:443` server. The LAN-bound listeners
+      ##    (lan-address / lan-address-v6) are a separate server and are
+      ##    intentionally not covered: split-horizon DNS never hands a
+      ##    public host the LAN IP/ULA, and every `public = false` vhost
+      ##    shares the LAN bind, so an unmatched *served* host can't arrive
+      ##    there — `*:443` covers every real case.
+      ##  - ACME is DNS-01, so a `:443` catch-all cannot affect issuance.
+      {
+        ":443" = {
+          logFormat = ''
+            output file ${config.services.caddy.logDir}/access-fallback-443.log
+          '';
+          extraConfig = ''
+            respond "Misdirected request: this host is not served on this interface." 421
+          '';
+        };
+      }
     ];
   };
 

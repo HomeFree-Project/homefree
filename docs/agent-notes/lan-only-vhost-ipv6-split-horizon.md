@@ -116,16 +116,25 @@ and unbound returns that ULA as the `AAAA` for non-public names
 (previously NODATA). So IPv6-preferring clients *on the box's resolver*
 get a working LAN path instead of being forced back to IPv4. This does
 **not** help off-box resolvers — those still get the public AAAA → the WAN
-listener → an empty 200; that is why a service that must work off-Wi-Fi is
-made `public`. See the `bind ${lan-address} ${lan-address-v6}` lines in
+listener → a `421` (see (b) below); that is why a service that must work
+off-Wi-Fi is made `public`. See the `bind ${lan-address} ${lan-address-v6}` lines in
 `services/caddy/default.nix` and the `nonPublicProxyFqdns` AAAA records in
 `services/unbound/default.nix`.
 
-**(b) Misleading catch-all 200 — still open.** Make the unmatched-host
-catch-all reject/close upgrade requests instead of returning an empty 200,
-so a misrouted client fails loudly instead of looping forever. Touches a
-global Caddy default (health checks, HTTP→HTTPS redirects, ACME) — a
-maintainer decision, not yet done.
+**(b) Honest error for unmatched hosts — DONE.** A `:443` catch-all
+(`services.caddy.virtualHosts.":443"`, the final element of caddy's
+`virtualHosts` mkMerge) now returns `421 Misdirected Request` for any host
+not served on the public listener, instead of Caddy's default empty `200`.
+So a `public = false` host reached on the WAN listener (off-box DNS) fails
+honestly instead of returning a blank 200 that a WebSocket/streaming client
+mistakes for success and loops on. Verified safe with `caddy adapt`: it
+lands only on the `*:443` server; TLS still terminates with the requested
+host's existing cert; an unknown SNI has no cert and fails the handshake
+*before* HTTP (so scanners / OS HTTPS probes never reach it); ACME is DNS-01
+so issuance is unaffected; and the `:80` block keeps its intentional
+captive-portal `200`/`204` behaviour. The LAN-bound listeners aren't covered
+and don't need to be — split-horizon DNS can't deliver an unmatched *served*
+host there.
 
 ## Key files
 
