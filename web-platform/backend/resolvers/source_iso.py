@@ -46,7 +46,7 @@ def _build_env() -> Dict[str, str]:
 
 from fastapi import APIRouter, HTTPException
 
-from services.developers import DevelopersService, OFFICIAL_HOMEFREE_URL
+from services.plugins import PluginsService, OFFICIAL_HOMEFREE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ async def get_iso_status() -> Dict[str, Any]:
     return {
         "build": _serialize_state(),
         "latest": _read_latest_info(),
-        "alt_base": DevelopersService.get_base_override(),
+        "alt_base": PluginsService.get_base_override(),
         # Only ship the log tail while a build is live or has just
         # finished — at idle the log is the stale tail of a previous run
         # and is more confusing than useful.
@@ -157,7 +157,7 @@ async def post_iso_build(payload: Optional[Dict[str, Any]] = None) -> Dict[str, 
 
         flake_path: Optional[Path] = None
         if source == "alt":
-            base = DevelopersService.get_base_override()
+            base = PluginsService.get_base_override()
             if not base.get("enabled") or (base.get("type") or "") != "local":
                 raise HTTPException(
                     400,

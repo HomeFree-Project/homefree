@@ -1,10 +1,18 @@
 """
-Developers service - register custom Nix flakes that extend the system.
+Plugins service - register Nix flakes that extend HomeFree, AND manage
+the alternate-HomeFree-base override scaffolding.
 
-A HomeFree install normally tracks the upstream `homefree-base` flake and
-pulls releases via the update mechanism. This service lets an admin ALSO
-compose their own flakes' `nixosModules` into the build, so they can run
-custom apps/modules without forking and without losing upstream updates.
+The bulk of this file deals with PLUGIN FLAKES — the list of registered
+`nixosModules` flakes the build composes on top of the in-tree apps.
+That list lives in homefree-config.json under `plugins.flakes` (legacy
+key: `developers.flakes`; tolerant reader + startup migration in
+simple_main.py move existing configs forward).
+
+The smaller half deals with the ALTERNATE HOMEFREE BASE — pointing the
+build at a fork of homefree-base. It stays under `developers.homefree-base`
+in the JSON (it's genuinely a developer feature; only the flakes list
+got renamed). Both halves rewrite /etc/nixos/flake.nix via the same
+scaffolding helpers, which is why they share a service class.
 
 The mechanism (see web-platform/backend/services/install.py FLAKE_TEMPLATE):
 
@@ -92,7 +100,7 @@ _SCP_SSH_RE = re.compile(r"^(?P<user>[^@/]+)@(?P<host>[^:/]+):(?P<path>.+)$")
 _INPUT_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
 
-class DevelopersService:
+class PluginsService:
     """Register/unregister custom flakes and keep /etc/nixos in sync."""
 
     FLAKE_DIR = Path("/etc/nixos")
@@ -104,11 +112,36 @@ class DevelopersService:
 
     @staticmethod
     def list_flakes() -> List[Dict[str, Any]]:
-        """Return the registered custom flakes (empty list if none)."""
+        """Return the registered plugin flakes (empty list if none).
+
+        Reads from `plugins.flakes`, falling back to the legacy
+        `developers.flakes` key for boxes that haven't been migrated yet.
+        The simple_main.py startup migration moves the list forward on
+        first boot after upgrade, but this fallback covers the brief
+        pre-migration window AND any read that races startup.
+        TODO(homefree-next): remove developers fallback.
+        """
         config = ConfigReader.read_config()
-        developers = config.get("developers") or {}
-        flakes = developers.get("flakes")
+        plugins = config.get("plugins") or {}
+        flakes = plugins.get("flakes")
+        if not isinstance(flakes, list):
+            developers = config.get("developers") or {}
+            flakes = developers.get("flakes")
         return flakes if isinstance(flakes, list) else []
+
+    @staticmethod
+    def find_by_url(url: str) -> Optional[Dict[str, Any]]:
+        """Return the registered flake whose `url` field matches, or None.
+
+        Used by plugin_directory.py to mark catalog entries as installed.
+        """
+        u = (url or "").strip()
+        if not u:
+            return None
+        for f in PluginsService.list_flakes():
+            if isinstance(f, dict) and (f.get("url") or "").strip() == u:
+                return f
+        return None
 
     @staticmethod
     def get_base_override() -> Dict[str, Any]:
@@ -200,7 +233,7 @@ class DevelopersService:
         if not url:
             errors.append("A flake path or URL is required.")
         elif ftype == "local":
-            errors.extend(DevelopersService._validate_local_url(url))
+            errors.extend(PluginsService._validate_local_url(url))
         elif ftype == "remote":
             if not url.startswith(_REMOTE_PREFIXES):
                 errors.append(
@@ -315,7 +348,7 @@ class DevelopersService:
         # applied here: probe must not mutate the developer's .git before
         # they've committed to registering the flake.
         if url.startswith("git+file://"):
-            DevelopersService._register_safe_directories(
+            PluginsService._register_safe_directories(
                 [{"type": "local", "url": url, "enabled": True}]
             )
 
@@ -392,7 +425,7 @@ class DevelopersService:
         if not url:
             errors.append("A repository path or URL is required when enabled.")
         elif ftype == "local":
-            errors.extend(DevelopersService._validate_local_url(url))
+            errors.extend(PluginsService._validate_local_url(url))
         elif ftype == "remote":
             if not url.startswith(_REMOTE_PREFIXES):
                 errors.append(
@@ -409,7 +442,7 @@ class DevelopersService:
         reachable and exposes `nixosModules.homefree` (the attribute the
         build composes). Best-effort — network failure yields warnings.
         """
-        return DevelopersService.probe_flake(url, module_attr="homefree")
+        return PluginsService.probe_flake(url, module_attr="homefree")
 
     # ---- text generators (pure) -------------------------------------
 
@@ -421,7 +454,7 @@ class DevelopersService:
     def _render_inputs_region(flakes: List[Dict[str, Any]]) -> str:
         """The text between (and including) the two sentinel lines."""
         lines = [INPUTS_BEGIN]
-        for f in DevelopersService._enabled(flakes):
+        for f in PluginsService._enabled(flakes):
             lines.append(f'    {f["inputName"]}.url = "{f["url"]}";')
         lines.append(INPUTS_END)
         return "\n".join(lines)
@@ -430,12 +463,12 @@ class DevelopersService:
     def _render_custom_flakes_nix(flakes: List[Dict[str, Any]]) -> str:
         """Full content of /etc/nixos/custom-flakes.nix."""
         body = []
-        for f in DevelopersService._enabled(flakes):
+        for f in PluginsService._enabled(flakes):
             attr = f.get("moduleAttr") or "default"
             body.append(f'  (inputs.{f["inputName"]}.nixosModules.{attr})')
         return (
             "# GENERATED by HomeFree admin panel - do not edit by hand.\n"
-            "# Regenerated from homefree-config.json `developers.flakes`.\n"
+            "# Regenerated from homefree-config.json `plugins.flakes`.\n"
             "{ inputs }:\n"
             "[\n"
             + ("\n".join(body) + "\n" if body else "")
@@ -507,7 +540,7 @@ class DevelopersService:
             if not m:
                 raise ValueError("Could not locate the `inputs = { ... }` block.")
             open_idx = text.index("{", m.start())
-            close_idx = DevelopersService._find_block_end(text, open_idx)
+            close_idx = PluginsService._find_block_end(text, open_idx)
             # Insert the region as whole lines, just before the line that
             # carries the inputs block's closing brace, so the sentinels
             # keep their own (4-space) indentation and the `};` stays put.
@@ -543,7 +576,7 @@ class DevelopersService:
             if not mm:
                 raise ValueError("Could not locate the `modules = [ ... ]` list.")
             list_open = text.index("[", mm.start())
-            list_close = DevelopersService._find_block_end(text, list_open)
+            list_close = PluginsService._find_block_end(text, list_open)
             # Skip past the closing ']' and any trailing ';'.
             insert_at = list_close + 1
             text = text[:insert_at] + " ++ customFlakeModules" + text[insert_at:]
@@ -557,7 +590,7 @@ class DevelopersService:
             if not m:
                 raise ValueError("Could not locate the `inputs = { ... }` block.")
             open_idx = text.index("{", m.start())
-            close_idx = DevelopersService._find_block_end(text, open_idx)
+            close_idx = PluginsService._find_block_end(text, open_idx)
             line_start = text.rfind("\n", 0, close_idx) + 1
             region = f"{BASE_OVERRIDE_BEGIN}\n{BASE_OVERRIDE_END}\n"
             text = text[:line_start] + region + text[line_start:]
@@ -598,7 +631,7 @@ class DevelopersService:
             # `homefree-base`; write_base_override later splices the real
             # selection in. Built via the shared renderer (which carries
             # its own 4-space indentation) so it stays consistent.
-            region = DevelopersService._render_base_binding(
+            region = PluginsService._render_base_binding(
                 {"enabled": False}
             )
             # Insert the region at the end of the let-block, just before
@@ -622,11 +655,11 @@ class DevelopersService:
     def _backup_flake() -> None:
         """Timestamped backup of flake.nix before the first mutation."""
         try:
-            DevelopersService.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            PluginsService.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             shutil.copy2(
-                DevelopersService.FLAKE_FILE,
-                DevelopersService.BACKUP_DIR / f"flake.nix.{ts}",
+                PluginsService.FLAKE_FILE,
+                PluginsService.BACKUP_DIR / f"flake.nix.{ts}",
             )
         except Exception as e:
             logger.warning(f"Could not back up flake.nix: {e}")
@@ -638,15 +671,15 @@ class DevelopersService:
         that custom-flakes.nix exists. Safe to call before every write.
         Returns (ok, error_message).
         """
-        if not DevelopersService.FLAKE_FILE.exists():
+        if not PluginsService.FLAKE_FILE.exists():
             return False, "/etc/nixos/flake.nix not found."
 
         try:
-            original = DevelopersService.FLAKE_FILE.read_text()
-            scaffolded = DevelopersService._scaffold_text(original)
+            original = PluginsService.FLAKE_FILE.read_text()
+            scaffolded = PluginsService._scaffold_text(original)
             if scaffolded != original:
-                DevelopersService._backup_flake()
-                DevelopersService.FLAKE_FILE.write_text(scaffolded)
+                PluginsService._backup_flake()
+                PluginsService.FLAKE_FILE.write_text(scaffolded)
                 logger.info("Added developers scaffolding to /etc/nixos/flake.nix")
         except ValueError as e:
             return False, (
@@ -657,10 +690,10 @@ class DevelopersService:
         except Exception as e:
             return False, f"Failed to scaffold flake.nix: {e}"
 
-        if not DevelopersService.CUSTOM_FLAKES_FILE.exists():
+        if not PluginsService.CUSTOM_FLAKES_FILE.exists():
             try:
-                DevelopersService.CUSTOM_FLAKES_FILE.write_text(
-                    DevelopersService._render_custom_flakes_nix([])
+                PluginsService.CUSTOM_FLAKES_FILE.write_text(
+                    PluginsService._render_custom_flakes_nix([])
                 )
             except Exception as e:
                 return False, f"Failed to create custom-flakes.nix: {e}"
@@ -672,11 +705,11 @@ class DevelopersService:
     @staticmethod
     def _splice_inputs_region(flakes: List[Dict[str, Any]]) -> None:
         """Rewrite the managed region in flake.nix from `flakes`."""
-        text = DevelopersService.FLAKE_FILE.read_text()
+        text = PluginsService.FLAKE_FILE.read_text()
         begin = text.index(INPUTS_BEGIN)
         end = text.index(INPUTS_END) + len(INPUTS_END)
-        region = DevelopersService._render_inputs_region(flakes)
-        DevelopersService.FLAKE_FILE.write_text(text[:begin] + region + text[end:])
+        region = PluginsService._render_inputs_region(flakes)
+        PluginsService.FLAKE_FILE.write_text(text[:begin] + region + text[end:])
 
     @staticmethod
     def _splice_base_override(entry: Dict[str, Any]) -> None:
@@ -685,13 +718,13 @@ class DevelopersService:
         `homefree-base-override` input region and the `homefree-base-binding`
         line, from a single `{enabled, type, url}` entry.
         """
-        text = DevelopersService.FLAKE_FILE.read_text()
+        text = PluginsService.FLAKE_FILE.read_text()
 
         begin = text.index(BASE_OVERRIDE_BEGIN)
         end = text.index(BASE_OVERRIDE_END) + len(BASE_OVERRIDE_END)
         text = (
             text[:begin]
-            + DevelopersService._render_base_override_region(entry)
+            + PluginsService._render_base_override_region(entry)
             + text[end:]
         )
 
@@ -699,18 +732,18 @@ class DevelopersService:
         end = text.index(BASE_BINDING_END) + len(BASE_BINDING_END)
         text = (
             text[:begin]
-            + DevelopersService._render_base_binding(entry)
+            + PluginsService._render_base_binding(entry)
             + text[end:]
         )
 
-        DevelopersService.FLAKE_FILE.write_text(text)
+        PluginsService.FLAKE_FILE.write_text(text)
 
     @staticmethod
     def _git_add() -> None:
         """Best-effort `git add` so a committed flake build sees the files."""
         try:
             subprocess.run(
-                ["git", "-C", str(DevelopersService.FLAKE_DIR), "add",
+                ["git", "-C", str(PluginsService.FLAKE_DIR), "add",
                  "flake.nix", "custom-flakes.nix"],
                 capture_output=True, text=True, timeout=30,
             )
@@ -733,7 +766,7 @@ class DevelopersService:
         admin-api runs as root, so this writes root's global git config.
         Idempotent — git's `--add` de-duplicates identical values.
         """
-        for f in DevelopersService._enabled(flakes):
+        for f in PluginsService._enabled(flakes):
             if f.get("type") != "local":
                 continue
             url = f.get("url", "")
@@ -795,7 +828,7 @@ class DevelopersService:
             return
 
         current_uid = os.getuid()
-        for f in DevelopersService._enabled(flakes):
+        for f in PluginsService._enabled(flakes):
             if f.get("type") != "local":
                 continue
             url = f.get("url", "")
@@ -849,37 +882,43 @@ class DevelopersService:
                 )
 
     @staticmethod
-    def _persist_developers(updates: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _persist_section(
+        section: str, updates: Dict[str, Any]
+    ) -> Tuple[bool, Optional[str]]:
         """
-        Merge `updates` into the `developers` section of homefree-config.json.
+        Merge `updates` into the named top-level section of
+        homefree-config.json (`plugins` for the flakes list, `developers`
+        for the homefree-base override).
 
         `updates` carries only the keys to change (e.g. {"flakes": [...]} or
-        {"homefree-base": {...}}); other keys of the `developers` section are
-        preserved. This matters because `flakes` and `homefree-base` are
-        written by separate code paths and must not clobber each other.
+        {"homefree-base": {...}}); other keys of the target section are
+        preserved. This matters because the plugin flakes list and the
+        homefree-base override are written by separate code paths and live
+        in different sections; the section is kept as a parameter so the
+        same helper drives both writes.
 
-        DevelopersService owns the `developers` section outright — it does
-        NOT route through ConfigWriter.write_config, because that path is
-        also fed the frontend's whole-config blob by /api/config/apply and
-        would clobber this section with a stale snapshot. We read the file
-        fresh, merge only the given keys, and write it back, so a concurrent
-        edit to any other section is preserved.
+        PluginsService owns BOTH of those sections outright — it does NOT
+        route through ConfigWriter.write_config, because that path is also
+        fed the frontend's whole-config blob by /api/config/apply and would
+        clobber the section with a stale snapshot. We read the file fresh,
+        merge only the given keys, and write it back, so a concurrent edit
+        to any other section is preserved.
         """
         try:
             ConfigWriter._backup_config()
             current = json.loads(ConfigWriter.CONFIG_FILE.read_text())
-            developers = current.get("developers")
-            if not isinstance(developers, dict):
-                developers = {}
-            developers.update(updates)
-            current["developers"] = developers
+            target = current.get(section)
+            if not isinstance(target, dict):
+                target = {}
+            target.update(updates)
+            current[section] = target
             ConfigWriter.CONFIG_FILE.write_text(
                 json.dumps(current, indent=2, sort_keys=False) + "\n"
             )
             return True, None
         except Exception as e:
-            logger.error(f"Failed to persist developers section: {e}")
-            return False, f"Failed to persist the developers section: {e}"
+            logger.error(f"Failed to persist {section} section: {e}")
+            return False, f"Failed to persist the {section} section: {e}"
 
     @staticmethod
     def write_flakes(flakes: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
@@ -887,20 +926,20 @@ class DevelopersService:
         Persist `flakes`: scaffold, rewrite flake.nix inputs region and
         custom-flakes.nix, store the list in homefree-config.json.
         """
-        ok, err = DevelopersService.ensure_scaffold()
+        ok, err = PluginsService.ensure_scaffold()
         if not ok:
             return False, err
 
         try:
-            DevelopersService._splice_inputs_region(flakes)
-            DevelopersService.CUSTOM_FLAKES_FILE.write_text(
-                DevelopersService._render_custom_flakes_nix(flakes)
+            PluginsService._splice_inputs_region(flakes)
+            PluginsService.CUSTOM_FLAKES_FILE.write_text(
+                PluginsService._render_custom_flakes_nix(flakes)
             )
         except Exception as e:
             logger.error(f"Failed to write flake files: {e}")
             return False, f"Failed to write flake files: {e}"
 
-        ok, err = DevelopersService._persist_developers({"flakes": flakes})
+        ok, err = PluginsService._persist_section("plugins", {"flakes": flakes})
         if not ok:
             return False, err
 
@@ -908,9 +947,9 @@ class DevelopersService:
         # allow-list them so the root-run rebuild can open the repo, and
         # ACL them so root's writes from the rebuild don't lock the owner
         # out of their own .git later.
-        DevelopersService._register_safe_directories(flakes)
-        DevelopersService._ensure_writable_for_owner(flakes)
-        DevelopersService._git_add()
+        PluginsService._register_safe_directories(flakes)
+        PluginsService._ensure_writable_for_owner(flakes)
+        PluginsService._git_add()
         return True, None
 
     @staticmethod
@@ -934,17 +973,17 @@ class DevelopersService:
         `effective`, stores `stored` in homefree-config.json, and
         allow-lists a local repo for the root-run rebuild.
         """
-        ok, err = DevelopersService.ensure_scaffold()
+        ok, err = PluginsService.ensure_scaffold()
         if not ok:
             return False, err
 
         try:
-            DevelopersService._splice_base_override(effective)
+            PluginsService._splice_base_override(effective)
         except Exception as e:
             logger.error(f"Failed to write the alternate-base flake regions: {e}")
             return False, f"Failed to write flake.nix: {e}"
 
-        ok, err = DevelopersService._persist_developers({"homefree-base": stored})
+        ok, err = PluginsService._persist_section("developers", {"homefree-base": stored})
         if not ok:
             return False, err
 
@@ -953,9 +992,9 @@ class DevelopersService:
         # it, and ACL its .git so root's writes from the rebuild stay
         # writable for the owner. Only the effective (actually-applied)
         # override needs this. Both helpers read only type/url/enabled.
-        DevelopersService._register_safe_directories([effective])
-        DevelopersService._ensure_writable_for_owner([effective])
-        DevelopersService._git_add()
+        PluginsService._register_safe_directories([effective])
+        PluginsService._ensure_writable_for_owner([effective])
+        PluginsService._git_add()
         return True, None
 
     # ---- high-level operations --------------------------------------
@@ -994,7 +1033,7 @@ class DevelopersService:
         if local_url and not local_url.startswith("git+file://"):
             local_url = "git+file://" + local_url
         if remote_url:
-            remote_url = DevelopersService._normalize_remote_url(remote_url)
+            remote_url = PluginsService._normalize_remote_url(remote_url)
 
         # The active type selects which URL is validated and applied.
         active_url = remote_url if ftype == "remote" else local_url
@@ -1009,7 +1048,7 @@ class DevelopersService:
         }
 
         # Validate the active URL. Failures become warnings, not blockers.
-        ok, problems = DevelopersService.validate_base_override(
+        ok, problems = PluginsService.validate_base_override(
             {"enabled": stored["enabled"], "type": ftype, "url": active_url}
         )
 
@@ -1022,7 +1061,7 @@ class DevelopersService:
         else:
             effective = {"enabled": stored["enabled"], "type": ftype, "url": active_url}
 
-        write_ok, err = DevelopersService.write_base_override(stored, effective)
+        write_ok, err = PluginsService.write_base_override(stored, effective)
         if not write_ok:
             return {"success": False, "message": err, "errors": [err]}
 
@@ -1052,7 +1091,7 @@ class DevelopersService:
         Create (no `id`) or update (with `id`) a custom-flake registration.
         Returns { success, message, flake?, errors? }.
         """
-        flakes = DevelopersService.list_flakes()
+        flakes = PluginsService.list_flakes()
 
         name = (entry.get("name") or "").strip()
         ftype = entry.get("type")
@@ -1063,11 +1102,11 @@ class DevelopersService:
         if ftype == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
         elif ftype == "remote" and url:
-            url = DevelopersService._normalize_remote_url(url)
+            url = PluginsService._normalize_remote_url(url)
 
         input_name = (entry.get("inputName") or "").strip()
         if not input_name and name:
-            input_name = DevelopersService._slugify_input_name(name)
+            input_name = PluginsService._slugify_input_name(name)
 
         normalized = {
             "id": entry.get("id") or uuid.uuid4().hex[:8],
@@ -1079,7 +1118,7 @@ class DevelopersService:
             "enabled": bool(entry.get("enabled", True)),
         }
 
-        ok, errors = DevelopersService.validate_flake(normalized, flakes)
+        ok, errors = PluginsService.validate_flake(normalized, flakes)
         if not ok:
             return {"success": False, "message": "Validation failed.", "errors": errors}
 
@@ -1096,7 +1135,7 @@ class DevelopersService:
             normalized["addedAt"] = datetime.now(timezone.utc).isoformat()
             flakes.append(normalized)
 
-        ok, err = DevelopersService.write_flakes(flakes)
+        ok, err = PluginsService.write_flakes(flakes)
         if not ok:
             return {"success": False, "message": err, "errors": [err]}
 
@@ -1109,12 +1148,12 @@ class DevelopersService:
     @staticmethod
     def delete_flake(flake_id: str) -> Dict[str, Any]:
         """Remove a registered flake by id."""
-        flakes = DevelopersService.list_flakes()
+        flakes = PluginsService.list_flakes()
         remaining = [f for f in flakes if f.get("id") != flake_id]
         if len(remaining) == len(flakes):
             return {"success": False, "message": f"No flake with id {flake_id}."}
 
-        ok, err = DevelopersService.write_flakes(remaining)
+        ok, err = PluginsService.write_flakes(remaining)
         if not ok:
             return {"success": False, "message": err}
         return {
@@ -1136,7 +1175,7 @@ class DevelopersService:
         (list). Either way it resolves to a node whose `locked` carries the
         pinned rev / lastModified for that input.
         """
-        lock_path = DevelopersService.FLAKE_DIR / "flake.lock"
+        lock_path = PluginsService.FLAKE_DIR / "flake.lock"
         if not lock_path.is_file():
             return None
         try:
@@ -1178,7 +1217,7 @@ class DevelopersService:
         or
           {success: False, message: <error>}.
         """
-        flakes = DevelopersService.list_flakes()
+        flakes = PluginsService.list_flakes()
         entry = next((f for f in flakes if f.get("id") == flake_id), None)
         if not entry:
             return {"success": False, "message": f"No flake with id {flake_id}."}
@@ -1198,7 +1237,7 @@ class DevelopersService:
                 "message": "Flake entry is missing an inputName or url.",
             }
 
-        locked = DevelopersService._read_locked_input(input_name) or {}
+        locked = PluginsService._read_locked_input(input_name) or {}
         locked_rev = locked.get("rev")
         locked_last_modified = locked.get("lastModified")
 
@@ -1261,7 +1300,7 @@ class DevelopersService:
         standard "build inputs changed" Apply reason, and the operator
         deploys via the sidebar Apply pill.
         """
-        flakes = DevelopersService.list_flakes()
+        flakes = PluginsService.list_flakes()
         entry = next((f for f in flakes if f.get("id") == flake_id), None)
         if not entry:
             return {"success": False, "message": f"No flake with id {flake_id}."}
@@ -1277,14 +1316,14 @@ class DevelopersService:
         if not input_name:
             return {"success": False, "message": "Flake entry is missing an inputName."}
 
-        old_locked = DevelopersService._read_locked_input(input_name) or {}
+        old_locked = PluginsService._read_locked_input(input_name) or {}
         old_rev = old_locked.get("rev")
 
         try:
             result = subprocess.run(
                 ["nix", "--extra-experimental-features", "nix-command flakes",
                  "flake", "update", input_name,
-                 "--flake", str(DevelopersService.FLAKE_DIR),
+                 "--flake", str(PluginsService.FLAKE_DIR),
                  "--allow-dirty", "--allow-dirty-locks"],
                 capture_output=True, text=True, timeout=180,
             )
@@ -1303,7 +1342,7 @@ class DevelopersService:
                 "message": err.splitlines()[-1] if err else "unknown error",
             }
 
-        new_locked = DevelopersService._read_locked_input(input_name) or {}
+        new_locked = PluginsService._read_locked_input(input_name) or {}
         new_rev = new_locked.get("rev")
 
         if old_rev and new_rev and old_rev == new_rev:

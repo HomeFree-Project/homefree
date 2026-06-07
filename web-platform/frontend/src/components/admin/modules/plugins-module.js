@@ -1,11 +1,12 @@
 import { LitElement, html, css } from 'lit';
 import {
-  getDeveloperFlakes,
-  saveDeveloperFlake,
-  deleteDeveloperFlake,
-  validateDeveloperFlake,
-  checkDeveloperFlakeUpdate,
-  updateDeveloperFlake,
+  getPluginFlakes,
+  savePluginFlake,
+  deletePluginFlake,
+  validatePluginFlake,
+  checkPluginFlakeUpdate,
+  updatePluginFlake,
+  getPluginDirectory,
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
@@ -21,19 +22,20 @@ function emitSaveStatus(el, status, error = '') {
 }
 
 /**
- * Developers module — register custom Nix flakes.
+ * Plugins module — install plugin flakes that extend HomeFree.
  *
- * A production HomeFree install tracks the upstream `homefree-base` flake
- * and pulls releases via the Updates page. This module lets an admin ALSO
- * compose their own flakes' nixosModules into the build, so they can run
- * custom apps/modules without forking and without losing upstream updates.
+ * Two ways to add a plugin: pick one from the Plugin Directory (curated
+ * Forgejo org at git.homefree.host/homefree-plugins) or register an
+ * arbitrary Nix flake by URL/path for third-party / self-hosted plugins.
+ * Both paths flow through /api/plugins/flakes; the directory just
+ * prefills the form.
  *
  * Registering a flake rewrites /etc/nixos/flake.nix and custom-flakes.nix
  * but does NOT rebuild — that lands the change in homefree-config.json too,
- * so the shell's dirty detection fires and the sidebar "Apply"
- * button activates. The admin rebuilds from there.
+ * so the shell's dirty detection fires and the sidebar "Apply" button
+ * activates. The admin rebuilds from there.
  */
-class DevelopersModule extends LitElement {
+class PluginsModule extends LitElement {
   static properties = {
     undeployedPaths: { attribute: false },  // Set<dotted-path> not yet deployed
     appliedConfig: { attribute: false },    // deployed baseline (per-flake diff)
@@ -41,6 +43,14 @@ class DevelopersModule extends LitElement {
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
     notice: { type: String, state: true },
+    // Plugin Directory state (curated catalog from
+    // git.homefree.host/homefree-plugins, fetched via the backend proxy).
+    directory: { type: Array, state: true },
+    directoryLoading: { type: Boolean, state: true },
+    directoryError: { type: String, state: true },
+    directorySourceUrl: { type: String, state: true },
+    directoryCacheStale: { type: Boolean, state: true },
+    installingSlug: { type: String, state: true },
     // Add-flake form state.
     formType: { type: String, state: true },
     formName: { type: String, state: true },
@@ -270,7 +280,7 @@ class DevelopersModule extends LitElement {
        (--hf-warn / --hf-warn-soft): an edit not yet applied. The base-repo
        toggle/URL ALSO rewrite flake.nix; that side is flagged separately by
        the backend build-inputs check, so here we mirror only the
-       homefree-config.json developers.* diff. */
+       homefree-config.json plugins.* diff. */
     .toggle-switch.changed {
       background: var(--hf-warn-soft);
       border: 1px solid var(--hf-warn);
@@ -292,6 +302,101 @@ class DevelopersModule extends LitElement {
       background: var(--hf-warn-soft);
       border-color: var(--hf-warn);
     }
+    .flake-row.flash-row {
+      animation: hf-flash 1.4s ease-out;
+    }
+    @keyframes hf-flash {
+      0%   { box-shadow: 0 0 0 2px var(--hf-accent); }
+      100% { box-shadow: 0 0 0 0  transparent; }
+    }
+
+    /* Plugin Directory grid. Cards reuse the same surface/border tokens
+       as flake-row so the page reads as one design system. Single column
+       at phone width per the UI-consistency-and-mobile rule. */
+    .directory-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .directory-card {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .directory-card.installed { border-color: var(--hf-accent); }
+    .directory-card .name {
+      color: var(--hf-text);
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .directory-card .description {
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      line-height: 1.4;
+      flex: 1;
+      min-height: 36px;
+    }
+    .directory-card .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .directory-card .footer a {
+      color: var(--hf-text-muted);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .directory-card .footer a:hover { color: var(--hf-text); }
+    .directory-card .card-error {
+      color: var(--hf-err);
+      font-size: 12px;
+    }
+    .badge.installed {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+    }
+    .directory-empty {
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+    .directory-stale-note {
+      color: var(--hf-warn);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .directory-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 24px 0 12px;
+    }
+    .directory-header h3 { margin: 0; }
+    .directory-header .refresh {
+      background: none;
+      border: none;
+      color: var(--hf-accent);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 0;
+    }
+    .directory-header .refresh:disabled { opacity: 0.5; cursor: default; }
+    @media (max-width: 600px) {
+      .directory-grid { grid-template-columns: 1fr; }
+    }
   `;
 
   constructor() {
@@ -302,6 +407,12 @@ class DevelopersModule extends LitElement {
     this.notice = '';
     this.undeployedPaths = new Set();
     this.appliedConfig = null;
+    this.directory = [];
+    this.directoryLoading = true;
+    this.directoryError = '';
+    this.directorySourceUrl = '';
+    this.directoryCacheStale = false;
+    this.installingSlug = '';
     // Transient per-row update state for remote flakes, keyed by flake id.
     // Shape: { state, latestRev, oldRev, newRev, error, message }. Not a
     // Lit reactive property — the Map identity never changes and Lit can't
@@ -313,6 +424,7 @@ class DevelopersModule extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.loadFlakes();
+    this.loadDirectory();
   }
 
   _resetForm() {
@@ -335,13 +447,77 @@ class DevelopersModule extends LitElement {
     this.loading = true;
     this.error = '';
     try {
-      const data = await getDeveloperFlakes();
+      const data = await getPluginFlakes();
       this.flakes = data.flakes || [];
     } catch (e) {
       this.error = e.message || 'Failed to load registered flakes.';
     } finally {
       this.loading = false;
     }
+  }
+
+  // Plugin Directory — curated catalog from git.homefree.host. Backend
+  // caches the upstream Forgejo response and tags each entry with
+  // installed=true if its flakeUrl matches a registered plugin's url.
+  async loadDirectory(forceRefresh = false) {
+    this.directoryLoading = true;
+    this.directoryError = '';
+    try {
+      const data = await getPluginDirectory({ forceRefresh });
+      this.directory = Array.isArray(data?.plugins) ? data.plugins : [];
+      this.directorySourceUrl = data?.sourceUrl || '';
+      this.directoryCacheStale = !!data?.cacheStale;
+      if (data?.error) this.directoryError = data.error;
+    } catch (e) {
+      this.directoryError = e.message || 'Failed to load plugin directory.';
+      this.directory = [];
+    } finally {
+      this.directoryLoading = false;
+    }
+  }
+
+  async _installFromDirectory(entry) {
+    this.installingSlug = entry.slug;
+    this.error = '';
+    this.notice = '';
+    emitSaveStatus(this, 'saving');
+    try {
+      const result = await savePluginFlake({
+        name: entry.displayName,
+        type: 'remote',
+        url: entry.flakeUrl,
+        // Repo slugs in the homefree-plugins org are pre-namespaced
+        // (homefree-ai, homefree-navidrome, …) so they're safe to use
+        // directly as the Nix input name — uniquely identify the plugin
+        // AND don't collide with reserved names.
+        inputName: entry.slug,
+        moduleAttr: 'default',
+        enabled: true,
+      });
+      this.notice = result.message
+        || `Installed ${entry.displayName}. Click Apply to rebuild.`;
+      await this.loadFlakes();
+      await this.loadDirectory();
+      this._notifyDirty();
+      emitSaveStatus(this, 'saved');
+    } catch (e) {
+      const msg = (e.body && e.body.errors && e.body.errors.join(' '))
+        || e.message
+        || `Could not install ${entry.displayName}.`;
+      this.error = msg;
+      emitSaveStatus(this, 'error', msg);
+    } finally {
+      this.installingSlug = '';
+    }
+  }
+
+  _scrollToFlake(id) {
+    if (!id) return;
+    const row = this.renderRoot.querySelector(`[data-flake-id="${id}"]`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('flash-row');
+    setTimeout(() => row.classList.remove('flash-row'), 1500);
   }
 
   // Mirror the backend's _slugify_input_name so the suggested input name
@@ -388,7 +564,7 @@ class DevelopersModule extends LitElement {
     this.probeResult = null;
     this.formErrors = [];
     try {
-      this.probeResult = await validateDeveloperFlake({
+      this.probeResult = await validatePluginFlake({
         type: this.formType,
         url: this.formUrl,
         moduleAttr: this.formModuleAttr || 'default',
@@ -407,7 +583,7 @@ class DevelopersModule extends LitElement {
     this.notice = '';
     emitSaveStatus(this, 'saving');
     try {
-      const result = await saveDeveloperFlake({
+      const result = await savePluginFlake({
         id: this.editingId || undefined,
         name: this.formName,
         type: this.formType,
@@ -451,7 +627,7 @@ class DevelopersModule extends LitElement {
     this.error = '';
     emitSaveStatus(this, 'saving');
     try {
-      await saveDeveloperFlake({ ...flake, enabled: !flake.enabled });
+      await savePluginFlake({ ...flake, enabled: !flake.enabled });
       await this.loadFlakes();
       this._notifyDirty();
       emitSaveStatus(this, 'saved');
@@ -464,8 +640,8 @@ class DevelopersModule extends LitElement {
 
   async _delete(flake) {
     const ok = await confirmDialog({
-      title: 'Remove custom flake?',
-      message: `Remove the custom flake "${flake.name}"? Its apps and modules will no longer be composed into the system after the next rebuild.`,
+      title: 'Remove plugin?',
+      message: `Remove the plugin "${flake.name}"? Its apps and modules will no longer be composed into the system after the next rebuild.`,
       confirmText: 'Remove',
       variant: 'danger',
     });
@@ -474,9 +650,13 @@ class DevelopersModule extends LitElement {
     this.notice = '';
     emitSaveStatus(this, 'saving');
     try {
-      await deleteDeveloperFlake(flake.id);
+      await deletePluginFlake(flake.id);
       // No success notice — the top-bar "Saved" pill is the feedback.
       await this.loadFlakes();
+      // Refresh the directory so an uninstalled plugin flips back to
+      // showing an Install button. Skip the upstream fetch (the
+      // installed-state is recomputed against the cached result).
+      this.loadDirectory();
       this._notifyDirty();
       emitSaveStatus(this, 'saved');
     } catch (e) {
@@ -516,7 +696,7 @@ class DevelopersModule extends LitElement {
   async _checkUpdate(flake) {
     this._bumpUpdateState(flake.id, { state: 'checking', error: '' });
     try {
-      const result = await checkDeveloperFlakeUpdate(flake.id);
+      const result = await checkPluginFlakeUpdate(flake.id);
       if (result.updateAvailable) {
         this._bumpUpdateState(flake.id, {
           state: 'available',
@@ -546,7 +726,7 @@ class DevelopersModule extends LitElement {
     this._bumpUpdateState(flake.id, { state: 'updating', error: '' });
     emitSaveStatus(this, 'saving');
     try {
-      const result = await updateDeveloperFlake(flake.id);
+      const result = await updatePluginFlake(flake.id);
       this._bumpUpdateState(flake.id, {
         state: 'updated',
         oldRev: result.oldRev,
@@ -566,6 +746,71 @@ class DevelopersModule extends LitElement {
       this._bumpUpdateState(flake.id, { state: 'error', error: msg });
       emitSaveStatus(this, 'error', msg);
     }
+  }
+
+  _renderDirectory() {
+    if (this.directoryLoading && this.directory.length === 0) {
+      return html`<p class="muted">Loading plugin directory…</p>`;
+    }
+    if (this.directoryError && this.directory.length === 0) {
+      return html`
+        <div class="directory-empty">
+          Could not load the plugin directory: ${this.directoryError}
+        </div>
+      `;
+    }
+    if (this.directory.length === 0) {
+      return html`
+        <div class="directory-empty">
+          No plugins are available in the directory yet.
+        </div>
+      `;
+    }
+    return html`
+      ${this.directoryCacheStale ? html`
+        <div class="directory-stale-note">
+          Showing cached results — could not reach the directory.
+        </div>
+      ` : ''}
+      <div class="directory-grid">
+        ${this.directory.map((entry) => this._renderDirectoryCard(entry))}
+      </div>
+    `;
+  }
+
+  _renderDirectoryCard(entry) {
+    const installing = this.installingSlug === entry.slug;
+    const desc = entry.description || 'No description provided.';
+    return html`
+      <div class="directory-card ${entry.installed ? 'installed' : ''}">
+        <div class="name">
+          <span>${entry.displayName}</span>
+          ${entry.installed
+            ? html`<span class="badge installed">Installed</span>`
+            : ''}
+        </div>
+        <div class="description">${desc}</div>
+        <div class="footer">
+          ${entry.installed ? html`
+            <button class="btn"
+              @click=${() => this._scrollToFlake(entry.installedFlakeId)}>
+              Manage
+            </button>
+          ` : html`
+            <button class="btn"
+              ?disabled=${installing || !entry.flakeUrl}
+              @click=${() => this._installFromDirectory(entry)}>
+              ${installing ? 'Installing…' : 'Install'}
+            </button>
+          `}
+          ${entry.htmlUrl ? html`
+            <a href=${entry.htmlUrl} target="_blank" rel="noopener noreferrer">
+              Source ↗
+            </a>
+          ` : ''}
+        </div>
+      </div>
+    `;
   }
 
   _renderProbe() {
@@ -698,15 +943,15 @@ class DevelopersModule extends LitElement {
   }
 
   _renderList() {
-    if (this.loading) return html`<p class="muted">Loading registered flakes…</p>`;
+    if (this.loading) return html`<p class="muted">Loading registered plugins…</p>`;
     if (this.flakes.length === 0) {
-      return html`<p class="muted">No custom flakes registered yet.</p>`;
+      return html`<p class="muted">No plugins registered yet.</p>`;
     }
     return html`
       ${this.flakes.map((f) => {
         const upd = this._getUpdateState(f.id);
         return html`
-        <div class="flake-row ${this._flakeChanged(f) ? 'changed' : ''}">
+        <div class="flake-row ${this._flakeChanged(f) ? 'changed' : ''}" data-flake-id=${f.id}>
           <div class="meta">
             <div class="name">
               ${f.name}
@@ -782,27 +1027,34 @@ class DevelopersModule extends LitElement {
     `;
   }
 
-  // Coarse "undeployed" flag for the Custom Flakes section: true when the
-  // developers section of the on-disk config differs from the deployed one.
-  // The backend reports the flakes array / base-override as whole-value paths
-  // under "developers", so this is section-level, not per-row.
-  _developersUndeployed() {
+  // Coarse "undeployed" flag for the plugins section: true when the
+  // plugins section of the on-disk config differs from the deployed one.
+  // The backend reports the flakes array as a whole-value path under
+  // "plugins", so this is section-level, not per-row. Legacy boxes still
+  // running pre-migration may surface paths under "developers" — accept
+  // either until the next-release cleanup drops the legacy alias.
+  _pluginsUndeployed() {
     if (!this.undeployedPaths) return false;
     for (const p of this.undeployedPaths) {
-      if (p === 'developers' || p.startsWith('developers.')) return true;
+      if (p === 'plugins' || p.startsWith('plugins.')) return true;
+      if (p === 'developers.flakes') return true;
     }
     return false;
   }
 
   // True when a registered flake differs from its deployed entry (newly added
   // or modified), matched by stable id. list_flakes() returns the rows verbatim
-  // from developers.flakes, so the applied snapshot is the identical shape and a
+  // from plugins.flakes, so the applied snapshot is the identical shape and a
   // JSON compare is exact. Falls back to the section-level flag when there's no
-  // deployed baseline (fresh box).
+  // deployed baseline (fresh box). Reads either applied key during the
+  // legacy-alias window.
   _flakeChanged(flake) {
-    const appliedFlakes = this.appliedConfig?.developers?.flakes;
+    const appliedFlakes = this.appliedConfig?.plugins?.flakes
+      ?? this.appliedConfig?.developers?.flakes;
     if (!Array.isArray(appliedFlakes)) {
-      return this.undeployedPaths?.has('developers.flakes') || false;
+      return this.undeployedPaths?.has('plugins.flakes')
+        || this.undeployedPaths?.has('developers.flakes')
+        || false;
     }
     const prior = appliedFlakes.find((f) => f && f.id === flake.id);
     if (!prior) return true;
@@ -812,7 +1064,7 @@ class DevelopersModule extends LitElement {
   render() {
     return html`
       <div class="module-container">
-        ${this._developersUndeployed() ? html`
+        ${this._pluginsUndeployed() ? html`
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:var(--hf-warn-soft);border:1px solid var(--hf-warn);color:var(--hf-warn);font-size:13px;font-weight:500;">
             <span style="width:8px;height:8px;border-radius:50%;background:var(--hf-warn);flex-shrink:0;"></span>
             <span>Undeployed plugin changes — click Apply in the sidebar to deploy.</span>
@@ -821,17 +1073,28 @@ class DevelopersModule extends LitElement {
 
         <div class="info-box">
           <strong>Plugins</strong>
-          Register Nix flakes that extend HomeFree with custom apps and modules.
-          Each registered flake's <code>nixosModules</code> are composed into the
-          system build, so you can run your own code while still receiving
-          upstream updates. Registering a plugin does not rebuild; click
-          <strong>Apply</strong> in the sidebar afterwards.
+          Extend HomeFree with extra apps and modules. Install one from the
+          Plugin Directory below, or register your own Nix flake at the
+          bottom of the page. Each plugin's <code>nixosModules</code> are
+          composed into the system build; installing one does not rebuild —
+          click <strong>Apply</strong> in the sidebar afterwards.
         </div>
 
         ${this.notice ? html`<div class="notice"><strong>Done.</strong> ${this.notice}</div>` : ''}
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
 
-        <h3>Registered flakes</h3>
+        <div class="directory-header">
+          <h3>Plugin Directory</h3>
+          <button
+            class="refresh"
+            ?disabled=${this.directoryLoading}
+            @click=${() => this.loadDirectory(true)}
+            title="Re-fetch the catalog from git.homefree.host"
+          >${this.directoryLoading ? 'Refreshing…' : 'Refresh'}</button>
+        </div>
+        ${this._renderDirectory()}
+
+        <h3>Registered plugins</h3>
         ${this._renderList()}
 
         ${this._renderForm()}
@@ -840,4 +1103,4 @@ class DevelopersModule extends LitElement {
   }
 }
 
-customElements.define('developers-module', DevelopersModule);
+customElements.define('plugins-module', PluginsModule);

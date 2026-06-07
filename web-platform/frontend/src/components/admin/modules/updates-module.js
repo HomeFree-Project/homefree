@@ -261,7 +261,7 @@ class UpdatesModule extends LitElement {
           <span class="ref">${info.baseOverrideUrl || 'unknown'}</span>
           <p>Updates here won't apply unless the official repository is
             re-enabled:</p>
-          <a class="btn-link" href="#/developers">Custom Flakes</a>
+          <a class="btn-link" href="#/app-versions">Source Code</a>
         </div>
       ` : ''}
 

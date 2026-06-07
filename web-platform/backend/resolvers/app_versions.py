@@ -912,9 +912,9 @@ async def post_app_versions_upgrade() -> Dict[str, Any]:
 
     # Lazy import — keep the resolver's import chain clean for the
     # daily timer entrypoint that doesn't need developers/.
-    from services.developers import DevelopersService
+    from services.plugins import PluginsService
 
-    base = DevelopersService.get_base_override()
+    base = PluginsService.get_base_override()
     if not base.get("enabled"):
         raise HTTPException(
             status_code=400,

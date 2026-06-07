@@ -413,24 +413,38 @@ export const applySystemUpdate = () => post('/api/system/updates/apply', {});
 export const getRebuildStatusWithHistory = () =>
   get('/api/config/rebuild-status?include_history=1');
 
-// Developers — register custom Nix flakes that extend the system. Writing
-// a flake rewrites /etc/nixos/flake.nix; the user then clicks Apply.
-export const getDeveloperFlakes = () => get('/api/developers/flakes');
-export const saveDeveloperFlake = (entry) => post('/api/developers/flakes', entry);
-export const deleteDeveloperFlake = (id) =>
-  fetchAPI(`/api/developers/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
-export const validateDeveloperFlake = (probe) =>
-  post('/api/developers/flakes/validate', probe);
+// Plugins — register Nix flakes that extend the system. Writing a flake
+// rewrites /etc/nixos/flake.nix; the user then clicks Apply.
+export const getPluginFlakes = () => get('/api/plugins/flakes');
+export const savePluginFlake = (entry) => post('/api/plugins/flakes', entry);
+export const deletePluginFlake = (id) =>
+  fetchAPI(`/api/plugins/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const validatePluginFlake = (probe) =>
+  post('/api/plugins/flakes/validate', probe);
 // Probe a registered remote flake's upstream and compare to the rev pinned
 // in flake.lock. Read-only; nothing is written. Local flakes auto-refresh
 // on every Apply, so the UI hides these for them.
-export const checkDeveloperFlakeUpdate = (id) =>
-  get(`/api/developers/flakes/${encodeURIComponent(id)}/check-update`);
+export const checkPluginFlakeUpdate = (id) =>
+  get(`/api/plugins/flakes/${encodeURIComponent(id)}/check-update`);
 // Re-lock a single remote flake input. Stages a change — the operator
 // applies via the sidebar Apply pill, which sees the new "build inputs
 // changed" reason.
-export const updateDeveloperFlake = (id) =>
-  post(`/api/developers/flakes/${encodeURIComponent(id)}/update`, {});
+export const updatePluginFlake = (id) =>
+  post(`/api/plugins/flakes/${encodeURIComponent(id)}/update`, {});
+// Plugin Directory — fetch the curated catalog from
+// git.homefree.host/homefree-plugins (proxied + cached by the backend).
+export const getPluginDirectory = (opts = {}) =>
+  get(`/api/plugin-directory${opts.forceRefresh ? '?refresh=1' : ''}`);
+
+// Back-compat aliases for the old export names. The Plugins page used to
+// be called Developers and the surface was named accordingly. Removable
+// next release. TODO(homefree-next): drop these.
+export const getDeveloperFlakes = getPluginFlakes;
+export const saveDeveloperFlake = savePluginFlake;
+export const deleteDeveloperFlake = deletePluginFlake;
+export const validateDeveloperFlake = validatePluginFlake;
+export const checkDeveloperFlakeUpdate = checkPluginFlakeUpdate;
+export const updateDeveloperFlake = updatePluginFlake;
 
 // Alternate HomeFree base repo — build this system from a fork or a local
 // working copy instead of the official homefree-base. Saving rewrites

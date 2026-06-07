@@ -342,7 +342,7 @@ class TableEditor extends LitElement {
     }
 
     /* Path-type column: text input + Browse button side-by-side. Matches the
-       pattern used in developers-module's local-path picker. */
+       pattern used in plugins-module's local-path picker. */
     .modal-field .input-with-browse {
       display: flex;
       gap: 8px;

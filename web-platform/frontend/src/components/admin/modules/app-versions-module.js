@@ -14,7 +14,7 @@ import '../../shared/file-browser.js';
 // Drives the admin top-bar Saving/Saved pill from this module's
 // out-of-band persistence (the alt-base panel saves via its own
 // endpoint, not the merged-config auto-save). Same shape as the
-// helper in developers-module.js.
+// helper in plugins-module.js.
 function emitSaveStatus(el, status, error = '') {
   el.dispatchEvent(new CustomEvent('save-status', {
     detail: { status, error },

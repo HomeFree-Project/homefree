@@ -27,7 +27,7 @@ import './modules/updates-module.js';
 import './modules/alerts-module.js';
 import './modules/abuse-blocking-module.js';
 import './modules/speed-test-module.js';
-import './modules/developers-module.js';
+import './modules/plugins-module.js';
 import './modules/app-versions-module.js';
 import './modules/privacy-module.js';
 import '../shared/progress-modal.js';
@@ -1016,11 +1016,12 @@ class AdminApp extends LitElement {
         section: 'Advanced'
       },
       {
-        // Register custom Nix flakes that extend the system with the
-        // user's own apps/modules. Surfaces as "Plugins" — the same
-        // user-visible name as the marketplace concept; the underlying
-        // module id stays `developers` for API/route compat.
-        id: 'developers',
+        // Plugin Directory + manual flake registration. Curated catalog
+        // at git.homefree.host/homefree-plugins shows up first, then a
+        // manual "add a custom flake" form for third-party / self-hosted
+        // plugins. Module id is `plugins` (was `developers` historically;
+        // see the alias horizon notes in services/plugins.py).
+        id: 'plugins',
         title: 'Plugins',
         section: 'Advanced'
       },
@@ -2150,12 +2151,15 @@ class AdminApp extends LitElement {
     // Merge other sections as they're added
     // TODO: Add other config sections as modules are migrated
 
-    // The `developers` section (registered custom flakes) is owned
-    // solely by the Developers module via its own /api/developers/*
-    // endpoints — it is NOT part of the config blob the global Apply
-    // submits. Strip it so a stale page-load snapshot can't resurrect
-    // a flake the user removed on the Custom Flakes page. The backend
-    // also ignores `developers` on this path; this is defence in depth.
+    // The `plugins` section (registered plugin flakes) and the
+    // `developers` section (alternate-base override) are both owned
+    // solely by PluginsService via its own /api/plugins/* and
+    // /api/developers/homefree-base endpoints — neither is part of the
+    // config blob the global Apply submits. Strip both so a stale
+    // page-load snapshot can't resurrect a plugin the user removed on
+    // the Plugins page. The backend also ignores them on this path;
+    // this is defence in depth.
+    delete merged.plugins;
     delete merged.developers;
 
     return merged;
@@ -2190,7 +2194,7 @@ class AdminApp extends LitElement {
   // own endpoint, not the merged-config auto-save). Mirrors autoSave's
   // pill behaviour, including the 1800ms "Saved" fade. The emitting side
   // is a small inline `emitSaveStatus` in each such module (e.g.
-  // developers-module, users-module) that dispatches a bubbling,
+  // plugins-module, users-module) that dispatches a bubbling,
   // composed `save-status` event.
   // A failed auto-save is shown as a dismissable modal (the canonical
   // single-button alert), not in the top-bar pill. The pending in-memory
@@ -2366,15 +2370,19 @@ class AdminApp extends LitElement {
   // before the debounced save + next poll catch up. Both mean "not deployed".
   recomputeUndeployedPaths() {
     const merged = this.getMergedConfig() || {};
-    // `developers` (custom flakes + alternate-base repo) is stripped from the
-    // merged/save config on purpose — the Custom Flakes page owns it via its
-    // own /api/developers/* endpoints, so the global Apply must never submit a
-    // stale page-load snapshot. But its ON-DISK value still differs from the
-    // deployed snapshot until the next rebuild, and we DO want to flag that
-    // (per-control amber, nav badge, pending-changes list). Re-add it for
+    // `plugins` (registered plugin flakes) and `developers` (alternate-base
+    // repo) are stripped from the merged/save config on purpose — the Plugins
+    // page owns both via its own /api/plugins/* and /api/developers/homefree-
+    // base endpoints, so the global Apply must never submit a stale page-load
+    // snapshot. But their ON-DISK values still differ from the deployed
+    // snapshot until the next rebuild, and we DO want to flag that (per-
+    // control amber, nav badge, pending-changes list). Re-add both for
     // INDICATION ONLY, sourced from serverConfig (the live disk value the 5s
     // poll refreshes) — never the stale pending snapshot.
     const current = { ...merged };
+    if (this.serverConfig && this.serverConfig.plugins !== undefined) {
+      current.plugins = this.serverConfig.plugins;
+    }
     if (this.serverConfig && this.serverConfig.developers !== undefined) {
       current.developers = this.serverConfig.developers;
     }
@@ -2501,7 +2509,12 @@ class AdminApp extends LitElement {
       case 'backups': return 'backups';
       case 'alerts': return 'alerts';
       case 'sso': return 'sso';
-      case 'developers': return 'developers';
+      case 'plugins': return 'plugins';
+      // Legacy: a box still serving the pre-rename `developers.flakes` path
+      // (boot before the startup migration) reports its dirty path under
+      // `developers`. Route to the renamed module so it still lights up.
+      // TODO(homefree-next): drop the developers case.
+      case 'developers': return 'plugins';
       case 'network':
         if (seg[1] === 'static-ips') return 'lan-clients';
         if (seg[1] === 'abuseBlockCidrs') return 'abuse-blocking';
@@ -2521,11 +2534,11 @@ class AdminApp extends LitElement {
       if (id) ids.add(id);
     }
     // Flake-source / build-input divergence isn't a config path; attribute it
-    // to the Custom Flakes page.
+    // to the Plugins page (which owns the registered flakes list).
     if (this.dirtyReason === 'flake source changed' ||
         this.dirtyReason === 'build inputs changed' ||
         this.dirtyReason === 'local code changed') {
-      ids.add('developers');
+      ids.add('plugins');
     }
     return ids;
   }
@@ -2545,7 +2558,7 @@ class AdminApp extends LitElement {
     const r = this.dirtyReason;
     if (r === 'flake source changed' || r === 'build inputs changed'
         || r === 'local code changed') {
-      items.push({ page: titleOf('developers'), detail: this._dirtyReasonLabel() });
+      items.push({ page: titleOf('plugins'), detail: this._dirtyReasonLabel() });
     } else if (r === 'system update pending') {
       items.push({ page: titleOf('updates'), detail: 'System update pending' });
     } else if (r === 'last rebuild failed') {
@@ -3105,13 +3118,13 @@ class AdminApp extends LitElement {
           ></updates-module>
         `;
 
-      case 'developers':
+      case 'plugins':
         return html`
-          <developers-module
+          <plugins-module
             .undeployedPaths=${this.undeployedPaths}
             .appliedConfig=${this.appliedConfig}
             @updates-applied=${this.checkConfigDirty}
-          ></developers-module>
+          ></plugins-module>
         `;
 
       case 'abuse-blocking':
