@@ -10,6 +10,7 @@ import {
 } from '../../../api/client.js';
 import '../../shared/file-browser.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
+import { actionIcon } from '../../../shared/icons.js';
 // Drives the admin top-bar "Saving…/Saved" pill from this out-of-band
 // module (it persists via its own endpoints, not the merged-config
 // auto-save). admin-app listens for the bubbling, composed `save-status`
@@ -51,6 +52,17 @@ class PluginsModule extends LitElement {
     directorySourceUrl: { type: String, state: true },
     directoryCacheStale: { type: Boolean, state: true },
     installingSlug: { type: String, state: true },
+    // Plugin Store modal state.
+    storeOpen: { type: Boolean, state: true },
+    storeQuery: { type: String, state: true },
+    storeSort: { type: String, state: true }, // 'name' | 'updated' | 'created'
+    // Modal containing the custom-flake form. Open by:
+    //   - clicking [Add Custom Plugin] in the header (no editingId);
+    //   - clicking Edit on an installed row (prefilled);
+    //   - clicking Manage on an installed entry in the Plugin Store.
+    editPluginOpen: { type: Boolean, state: true },
+    // Substring filter for the installed-plugins list (debounced).
+    installedQuery: { type: String, state: true },
     // Add-flake form state.
     formType: { type: String, state: true },
     formName: { type: String, state: true },
@@ -328,7 +340,9 @@ class PluginsModule extends LitElement {
       flex-direction: column;
       gap: 8px;
     }
-    .directory-card.installed { border-color: var(--hf-accent); }
+    /* No installed-state border: the Installed pill in the card
+       header is the legible signal (the green border was too subtle
+       and overlapped with hover/focus rings). */
     .directory-card .name {
       color: var(--hf-text);
       font-weight: 600;
@@ -394,8 +408,217 @@ class PluginsModule extends LitElement {
       padding: 0;
     }
     .directory-header .refresh:disabled { opacity: 0.5; cursor: default; }
+
+    /* Store pill on the installed list — marks rows whose flake url
+       matches a current directory entry. Subtle accent tint so it sits
+       next to the local/remote type pill without competing. */
+    .badge.store {
+      background: rgba(96, 165, 250, 0.15);
+      color: var(--hf-accent);
+    }
+
+    /* Plugin Store modal. Backdrop is the click/Escape capture surface;
+       the inner .hf-modal is sized + bordered. Sticky filter bar over a
+       scrolling body so the search/sort controls stay reachable. */
+    .hf-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 100;
+    }
+    .hf-modal {
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 10px;
+      width: min(900px, 100%);
+      height: min(700px, 100%);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+    }
+    .hf-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--hf-border-2);
+      flex-shrink: 0;
+    }
+    .hf-modal-header h3 {
+      margin: 0;
+      color: var(--hf-text);
+      font-size: 16px;
+    }
+    .hf-modal-close {
+      background: none;
+      border: none;
+      color: var(--hf-text-muted);
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    .hf-modal-close:hover {
+      background: var(--hf-surface-3);
+      color: var(--hf-text);
+    }
+    .hf-modal-filter-bar {
+      position: sticky;
+      top: 0;
+      background: var(--hf-surface);
+      border-bottom: 1px solid var(--hf-border-2);
+      padding: 12px 18px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    .hf-modal-filter-bar input[type=search] {
+      flex: 1 1 240px;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    .hf-modal-filter-bar .sort-group {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .sort-btn {
+      padding: 7px 12px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text-muted);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+    }
+    .sort-btn.active {
+      background: var(--hf-accent);
+      color: #06281c;
+      border-color: var(--hf-accent);
+      font-weight: 600;
+    }
+    .hf-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px;
+    }
+    .hf-modal-body .directory-grid { margin-bottom: 0; }
+    .hf-modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      border-top: 1px solid var(--hf-border-2);
+      color: var(--hf-text-muted);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .hf-modal-footer .refresh {
+      background: none;
+      border: none;
+      color: var(--hf-accent);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 0;
+    }
+    .hf-modal-footer .refresh:disabled { opacity: 0.5; cursor: default; }
+    .hf-modal-empty {
+      color: var(--hf-text-muted);
+      font-size: 13px;
+      padding: 12px 0;
+    }
+    /* Edit-plugin modal: footer is a right-aligned action row
+       (Validate · Cancel · Save). Distinct from the store modal's
+       count/refresh footer. */
+    .hf-modal-footer-actions {
+      justify-content: flex-end;
+      gap: 8px;
+      color: var(--hf-text);
+    }
+    /* The edit modal sizes a little smaller than the store — the
+       form rarely needs 700px of vertical space. */
+    .hf-modal-form { height: min(620px, 100%); }
+
+    /* Installed-plugins header: title + Add Custom Plugin + Plugin
+       Store buttons. The button group can wrap to its own row on
+       narrow widths. */
+    .installed-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 8px 0 12px;
+      flex-wrap: wrap;
+    }
+    .installed-header h3 { margin: 0; }
+    .installed-header .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Inline filter bar above the installed-plugins list. Same input
+       styling as the modal's filter bar so the page reads consistently;
+       no sort pills here because the order is fixed (store-first, then
+       alphabetical). */
+    .installed-filter-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .installed-filter-bar input[type=search] {
+      flex: 1 1 auto;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    /* Icon + label buttons. The inline svg is sized 16x16 and inherits
+       the button's text colour via stroke=currentColor. */
+    .btn-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-icon svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
     @media (max-width: 600px) {
       .directory-grid { grid-template-columns: 1fr; }
+      .hf-modal-backdrop { padding: 0; }
+      .hf-modal {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+        border: none;
+      }
+      .hf-modal-filter-bar { padding: 10px 12px; }
+      .hf-modal-body { padding: 12px; }
     }
   `;
 
@@ -413,6 +636,16 @@ class PluginsModule extends LitElement {
     this.directorySourceUrl = '';
     this.directoryCacheStale = false;
     this.installingSlug = '';
+    this.storeOpen = false;
+    this.storeQuery = '';
+    this.storeSort = 'name';
+    this.editPluginOpen = false;
+    this.installedQuery = '';
+    // Debounced search-input handlers, created once so the timers
+    // survive re-renders.
+    this._storeQueryTimer = 0;
+    this._installedQueryTimer = 0;
+    this._onEscape = this._onEscape.bind(this);
     // Transient per-row update state for remote flakes, keyed by flake id.
     // Shape: { state, latestRev, oldRev, newRev, error, message }. Not a
     // Lit reactive property — the Map identity never changes and Lit can't
@@ -425,6 +658,16 @@ class PluginsModule extends LitElement {
     super.connectedCallback();
     this.loadFlakes();
     this.loadDirectory();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    // Defensive: if the user navigates away with a modal open, restore
+    // body scroll and drop the Escape listener — neither would survive
+    // a SPA re-mount cleanly otherwise. Use the same closes so the
+    // chrome is rolled back atomically.
+    if (this.storeOpen) this._closeStore();
+    if (this.editPluginOpen) this._closeEditPlugin();
   }
 
   _resetForm() {
@@ -520,6 +763,165 @@ class PluginsModule extends LitElement {
     setTimeout(() => row.classList.remove('flash-row'), 1500);
   }
 
+  // ---- Plugin Store modal -----------------------------------------
+
+  _openStore() {
+    this.storeOpen = true;
+    this._updateModalChrome();
+    // Refresh the directory in the background on open, so a stale
+    // cache doesn't show old installed-state if the user added a
+    // plugin via the manual form between opens. Non-forced so the
+    // backend cache TTL still applies.
+    this.loadDirectory();
+  }
+
+  _closeStore() {
+    this.storeOpen = false;
+    this._updateModalChrome();
+  }
+
+  _openAddPlugin() {
+    this._resetForm();
+    this.editPluginOpen = true;
+    this._updateModalChrome();
+  }
+
+  _openEditPlugin(flake) {
+    // _editFlake fills the form fields from the row data; we then
+    // open the modal. Order matters — opening first would briefly
+    // flash the modal with the previous edit's state.
+    this._editFlake(flake);
+    this.editPluginOpen = true;
+    this._updateModalChrome();
+  }
+
+  _closeEditPlugin() {
+    this.editPluginOpen = false;
+    this._resetForm();
+    this._updateModalChrome();
+  }
+
+  // Centralised body-scroll lock + Escape listener wiring. Locks while
+  // either modal is open, restores when both are closed. Called from
+  // every open/close path so the bookkeeping never drifts.
+  _updateModalChrome() {
+    const anyOpen = this.storeOpen || this.editPluginOpen;
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    if (anyOpen) {
+      document.addEventListener('keydown', this._onEscape);
+    } else {
+      document.removeEventListener('keydown', this._onEscape);
+    }
+  }
+
+  _onEscape(e) {
+    if (e.key !== 'Escape') return;
+    // Edit modal stacks on top of the store, so close it first.
+    if (this.editPluginOpen) this._closeEditPlugin();
+    else if (this.storeOpen) this._closeStore();
+  }
+
+  _onBackdropClick(e) {
+    // Only the bare backdrop triggers a close — clicks inside the
+    // .hf-modal box bubble up but should not close the modal.
+    if (e.target === e.currentTarget) this._closeStore();
+  }
+
+  _onEditBackdropClick(e) {
+    if (e.target === e.currentTarget) this._closeEditPlugin();
+  }
+
+  _onStoreQueryInput(e) {
+    const value = e.target.value;
+    if (this._storeQueryTimer) clearTimeout(this._storeQueryTimer);
+    this._storeQueryTimer = setTimeout(() => {
+      this.storeQuery = value;
+    }, 200);
+  }
+
+  _onInstalledQueryInput(e) {
+    const value = e.target.value;
+    if (this._installedQueryTimer) clearTimeout(this._installedQueryTimer);
+    this._installedQueryTimer = setTimeout(() => {
+      this.installedQuery = value;
+    }, 200);
+  }
+
+  // Filter + sort the registered flakes for the installed-plugins list.
+  // Sort tiers (each ranked by name within the tier):
+  //   0 — Store-installed (curated set up top, easiest to scan).
+  //   1 — Remote flakes (custom URLs).
+  //   2 — Local working-tree flakes.
+  // Substring filter matches name + url, case-insensitive.
+  _installedEntries() {
+    const q = (this.installedQuery || '').trim().toLowerCase();
+    const matches = (f) => {
+      if (!q) return true;
+      const hay = `${f.name || ''} ${f.url || ''}`.toLowerCase();
+      return hay.includes(q);
+    };
+    const rank = (f) => {
+      if (this._isFromDirectory(f)) return 0;
+      if (f.type === 'remote') return 1;
+      return 2;
+    };
+    const list = (this.flakes || []).filter(matches);
+    const cmp = (a, b) => {
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    };
+    return list.slice().sort(cmp);
+  }
+
+  _setStoreSort(key) {
+    this.storeSort = key;
+  }
+
+  // Filtered + sorted view of `this.directory` for the modal body.
+  _storeEntries() {
+    const q = (this.storeQuery || '').trim().toLowerCase();
+    const matches = (e) => {
+      if (!q) return true;
+      const hay = `${e.displayName || ''} ${e.description || ''}`.toLowerCase();
+      return hay.includes(q);
+    };
+    const filtered = (this.directory || []).filter(matches);
+    const sorted = filtered.slice();
+    if (this.storeSort === 'updated') {
+      // Forgejo ISO timestamps lex-sort the same as date-sort.
+      sorted.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    } else if (this.storeSort === 'created') {
+      sorted.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    } else {
+      sorted.sort((a, b) =>
+        (a.displayName || a.slug || '').localeCompare(b.displayName || b.slug || ''));
+    }
+    return sorted;
+  }
+
+  _manageInstalled(entry) {
+    // Find the actual flake by the id the directory entry was tagged
+    // with — that's the same object the row's Edit button would pass
+    // to _openEditPlugin. Close the store FIRST so opening the edit
+    // modal on top of it doesn't double-lock body scroll.
+    const id = entry?.installedFlakeId;
+    const flake = (this.flakes || []).find((f) => f.id === id);
+    this._closeStore();
+    if (flake) {
+      this._openEditPlugin(flake);
+    }
+  }
+
+  // True if a registered flake's url matches a directory entry's
+  // flakeUrl — drives the "Store" pill on installed rows. Returns
+  // false when the directory hasn't loaded yet; Lit re-renders the
+  // row once it does, so the pill appears then.
+  _isFromDirectory(flake) {
+    if (!flake || !flake.url) return false;
+    return (this.directory || []).some((e) => e.flakeUrl === flake.url);
+  }
+
   // Mirror the backend's _slugify_input_name so the suggested input name
   // matches what the server would derive.
   _slugify(name) {
@@ -593,7 +995,9 @@ class PluginsModule extends LitElement {
         enabled: true,
       });
       this.notice = result.message || 'Flake registered. Click Apply to rebuild.';
-      this._resetForm();
+      // Close the modal on a successful save. _closeEditPlugin runs
+      // _resetForm so the form is empty next time it opens.
+      this._closeEditPlugin();
       await this.loadFlakes();
       this._notifyDirty();
       emitSaveStatus(this, 'saved');
@@ -748,21 +1152,33 @@ class PluginsModule extends LitElement {
     }
   }
 
-  _renderDirectory() {
+  // Modal body: search/sort applied to the cached directory entries.
+  // Empty / loading / error states render here, not on the page proper,
+  // so the page never carries an "empty directory" message while the
+  // modal is closed.
+  _renderStoreBody() {
     if (this.directoryLoading && this.directory.length === 0) {
       return html`<p class="muted">Loading plugin directory…</p>`;
     }
     if (this.directoryError && this.directory.length === 0) {
       return html`
-        <div class="directory-empty">
+        <div class="hf-modal-empty">
           Could not load the plugin directory: ${this.directoryError}
         </div>
       `;
     }
     if (this.directory.length === 0) {
       return html`
-        <div class="directory-empty">
+        <div class="hf-modal-empty">
           No plugins are available in the directory yet.
+        </div>
+      `;
+    }
+    const entries = this._storeEntries();
+    if (entries.length === 0) {
+      return html`
+        <div class="hf-modal-empty">
+          No plugins match your search.
         </div>
       `;
     }
@@ -773,7 +1189,7 @@ class PluginsModule extends LitElement {
         </div>
       ` : ''}
       <div class="directory-grid">
-        ${this.directory.map((entry) => this._renderDirectoryCard(entry))}
+        ${entries.map((entry) => this._renderDirectoryCard(entry))}
       </div>
     `;
   }
@@ -782,7 +1198,7 @@ class PluginsModule extends LitElement {
     const installing = this.installingSlug === entry.slug;
     const desc = entry.description || 'No description provided.';
     return html`
-      <div class="directory-card ${entry.installed ? 'installed' : ''}">
+      <div class="directory-card">
         <div class="name">
           <span>${entry.displayName}</span>
           ${entry.installed
@@ -793,7 +1209,7 @@ class PluginsModule extends LitElement {
         <div class="footer">
           ${entry.installed ? html`
             <button class="btn"
-              @click=${() => this._scrollToFlake(entry.installedFlakeId)}>
+              @click=${() => this._manageInstalled(entry)}>
               Manage
             </button>
           ` : html`
@@ -808,6 +1224,88 @@ class PluginsModule extends LitElement {
               Source ↗
             </a>
           ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderEditPluginModal() {
+    if (!this.editPluginOpen) return '';
+    const editing = !!this.editingId;
+    const title = editing ? 'Edit Custom Plugin' : 'Add Custom Plugin';
+    const saveLabel = this.saving
+      ? 'Saving…'
+      : (editing ? 'Save changes' : 'Add plugin');
+    return html`
+      <div class="hf-modal-backdrop" @click=${(e) => this._onEditBackdropClick(e)}>
+        <div class="hf-modal hf-modal-form" role="dialog" aria-modal="true" aria-label=${title}>
+          <div class="hf-modal-header">
+            <h3>${title}</h3>
+            <button class="hf-modal-close"
+              aria-label="Close"
+              @click=${() => this._closeEditPlugin()}>✕</button>
+          </div>
+          <div class="hf-modal-body">
+            ${this._renderForm()}
+          </div>
+          <div class="hf-modal-footer hf-modal-footer-actions">
+            <button class="btn"
+              ?disabled=${this.probing || !this.formUrl}
+              @click=${this._probe}
+            >${this.probing ? 'Validating…' : 'Validate'}</button>
+            <button class="btn"
+              @click=${() => this._closeEditPlugin()}
+            >Cancel</button>
+            <button class="btn primary"
+              ?disabled=${this.saving || !this.formName || !this.formUrl}
+              @click=${this._save}
+            >${saveLabel}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderStoreModal() {
+    if (!this.storeOpen) return '';
+    const sortBtn = (key, label) => html`
+      <button
+        class="sort-btn ${this.storeSort === key ? 'active' : ''}"
+        @click=${() => this._setStoreSort(key)}
+      >${label}</button>
+    `;
+    return html`
+      <div class="hf-modal-backdrop" @click=${(e) => this._onBackdropClick(e)}>
+        <div class="hf-modal" role="dialog" aria-modal="true" aria-label="Plugin Store">
+          <div class="hf-modal-header">
+            <h3>Plugin Store</h3>
+            <button class="hf-modal-close"
+              aria-label="Close"
+              @click=${() => this._closeStore()}>✕</button>
+          </div>
+          <div class="hf-modal-filter-bar">
+            <input
+              type="search"
+              placeholder="Search plugins…"
+              .value=${this.storeQuery}
+              @input=${(e) => this._onStoreQueryInput(e)}
+            />
+            <div class="sort-group">
+              ${sortBtn('name', 'Name')}
+              ${sortBtn('updated', 'Recently updated')}
+              ${sortBtn('created', 'Recently added')}
+            </div>
+          </div>
+          <div class="hf-modal-body">
+            ${this._renderStoreBody()}
+          </div>
+          <div class="hf-modal-footer">
+            <span>${this.directory.length} plugin${this.directory.length === 1 ? '' : 's'} in the directory</span>
+            <button class="refresh"
+              ?disabled=${this.directoryLoading}
+              @click=${() => this.loadDirectory(true)}
+            >${this.directoryLoading ? 'Refreshing…' : 'Refresh'}</button>
+          </div>
         </div>
       </div>
     `;
@@ -831,105 +1329,89 @@ class PluginsModule extends LitElement {
     `;
   }
 
+  // Form body rendered inside the Edit-plugin modal. The modal header
+  // carries the "Add / Edit" title; the modal footer wraps Save +
+  // Validate + Cancel. So this body returns ONLY the field stack and
+  // the probe/error feedback — no h3, no card wrapper, no buttons.
   _renderForm() {
-    const editing = !!this.editingId;
     return html`
-      <h3>${editing ? 'Edit custom flake' : 'Add a custom flake'}</h3>
-      <div class="card">
-        <div class="type-toggle">
-          <button
-            class=${this.formType === 'local' ? 'active' : ''}
-            @click=${() => this._setType('local')}
-          >Local repository</button>
-          <button
-            class=${this.formType === 'remote' ? 'active' : ''}
-            @click=${() => this._setType('remote')}
-          >Remote URL</button>
-        </div>
+      <div class="type-toggle">
+        <button
+          class=${this.formType === 'local' ? 'active' : ''}
+          @click=${() => this._setType('local')}
+        >Local repository</button>
+        <button
+          class=${this.formType === 'remote' ? 'active' : ''}
+          @click=${() => this._setType('remote')}
+        >Remote URL</button>
+      </div>
 
-        <label class="field">
-          <span class="lbl">Name</span>
+      <label class="field">
+        <span class="lbl">Name</span>
+        <input
+          type="text"
+          .value=${this.formName}
+          placeholder="My custom apps"
+          @input=${this._onNameInput}
+        />
+      </label>
+
+      <label class="field">
+        <span class="lbl">${this.formType === 'local' ? 'Local flake repository' : 'Flake URL'}</span>
+        <div class="input-with-browse">
           <input
             type="text"
-            .value=${this.formName}
-            placeholder="My custom apps"
-            @input=${this._onNameInput}
+            .value=${this.formUrl}
+            placeholder=${this.formType === 'local' ? '/home/you/my-flake' : 'github:owner/repo'}
+            @input=${(e) => { this.formUrl = e.target.value; }}
           />
-        </label>
-
-        <label class="field">
-          <span class="lbl">${this.formType === 'local' ? 'Local flake repository' : 'Flake URL'}</span>
-          <div class="input-with-browse">
-            <input
-              type="text"
-              .value=${this.formUrl}
-              placeholder=${this.formType === 'local' ? '/home/you/my-flake' : 'github:owner/repo'}
-              @input=${(e) => { this.formUrl = e.target.value; }}
-            />
-            ${this.formType === 'local' ? html`
-              <button class="btn" @click=${() => { this.fileBrowserOpen = true; }}>
-                📁 Browse
-              </button>
-            ` : ''}
-          </div>
-          <span class="hint">
-            ${this.formType === 'local'
-              ? 'A git repository on this machine containing a flake.nix. Stored as a git+file:// flake reference.'
-              : 'A flake reference, e.g. github:owner/repo, gitlab:owner/repo or git+https://example.com/repo.git'}
-          </span>
-        </label>
-
-        <button class="advanced-toggle" @click=${() => { this.showAdvanced = !this.showAdvanced; }}>
-          ${this.showAdvanced ? '▾ Hide advanced' : '▸ Advanced'}
-        </button>
-
-        ${this.showAdvanced ? html`
-          <label class="field">
-            <span class="lbl">Flake input name</span>
-            <input
-              type="text"
-              .value=${this.formInputName}
-              @input=${this._onInputNameInput}
-            />
-            <span class="hint">
-              The identifier this flake gets in /etc/nixos/flake.nix.
-              Must be unique. Auto-derived from the name.
-            </span>
-          </label>
-          <label class="field">
-            <span class="lbl">Module attribute</span>
-            <input
-              type="text"
-              .value=${this.formModuleAttr}
-              placeholder="default"
-              @input=${(e) => { this.formModuleAttr = e.target.value; }}
-            />
-            <span class="hint">
-              Which nixosModules.&lt;attr&gt; of the flake to compose into
-              the system. Usually "default".
-            </span>
-          </label>
-        ` : ''}
-
-        ${this.formErrors.map((m) => html`<div class="error">${m}</div>`)}
-        ${this._renderProbe()}
-
-        <div class="actions">
-          <button
-            class="btn"
-            ?disabled=${this.saving || !this.formName || !this.formUrl}
-            @click=${this._save}
-          >${this.saving ? 'Saving…' : (editing ? 'Save changes' : 'Register flake')}</button>
-          <button
-            class="btn"
-            ?disabled=${this.probing || !this.formUrl}
-            @click=${this._probe}
-          >${this.probing ? 'Validating…' : 'Validate'}</button>
-          ${editing ? html`
-            <button class="btn" @click=${() => { this._resetForm(); }}>Cancel</button>
+          ${this.formType === 'local' ? html`
+            <button class="btn" @click=${() => { this.fileBrowserOpen = true; }}>
+              📁 Browse
+            </button>
           ` : ''}
         </div>
-      </div>
+        <span class="hint">
+          ${this.formType === 'local'
+            ? 'A git repository on this machine containing a flake.nix. Stored as a git+file:// flake reference.'
+            : 'A flake reference, e.g. github:owner/repo, gitlab:owner/repo or git+https://example.com/repo.git'}
+        </span>
+      </label>
+
+      <button class="advanced-toggle" @click=${() => { this.showAdvanced = !this.showAdvanced; }}>
+        ${this.showAdvanced ? '▾ Hide advanced' : '▸ Advanced'}
+      </button>
+
+      ${this.showAdvanced ? html`
+        <label class="field">
+          <span class="lbl">Flake input name</span>
+          <input
+            type="text"
+            .value=${this.formInputName}
+            @input=${this._onInputNameInput}
+          />
+          <span class="hint">
+            The identifier this flake gets in /etc/nixos/flake.nix.
+            Must be unique. Auto-derived from the name.
+          </span>
+        </label>
+        <label class="field">
+          <span class="lbl">Module attribute</span>
+          <input
+            type="text"
+            .value=${this.formModuleAttr}
+            placeholder="default"
+            @input=${(e) => { this.formModuleAttr = e.target.value; }}
+          />
+          <span class="hint">
+            Which nixosModules.&lt;attr&gt; of the flake to compose into
+            the system. Usually "default".
+          </span>
+        </label>
+      ` : ''}
+
+      ${this.formErrors.map((m) => html`<div class="error">${m}</div>`)}
+      ${this._renderProbe()}
 
       ${this.fileBrowserOpen ? html`
         <file-browser
@@ -947,15 +1429,29 @@ class PluginsModule extends LitElement {
     if (this.flakes.length === 0) {
       return html`<p class="muted">No plugins registered yet.</p>`;
     }
+    const entries = this._installedEntries();
     return html`
-      ${this.flakes.map((f) => {
+      <div class="installed-filter-bar">
+        <input
+          type="search"
+          placeholder="Search installed plugins…"
+          .value=${this.installedQuery}
+          @input=${(e) => this._onInstalledQueryInput(e)}
+        />
+      </div>
+      ${entries.length === 0 ? html`
+        <p class="muted">No plugins match your search.</p>
+      ` : ''}
+      ${entries.map((f) => {
         const upd = this._getUpdateState(f.id);
         return html`
         <div class="flake-row ${this._flakeChanged(f) ? 'changed' : ''}" data-flake-id=${f.id}>
           <div class="meta">
             <div class="name">
               ${f.name}
-              <span class="badge ${f.type}">${f.type}</span>
+              ${this._isFromDirectory(f)
+                ? html`<span class="badge store" title="Installed from the Plugin Store">Store</span>`
+                : html`<span class="badge ${f.type}">${f.type}</span>`}
               ${upd.state === 'available' ? html`
                 <span class="badge update-available">update available</span>
               ` : ''}
@@ -982,7 +1478,7 @@ class PluginsModule extends LitElement {
             <span class="sub">Enabled</span>
           </label>
           ${this._renderUpdateControl(f, upd)}
-          <button class="btn" @click=${() => this._editFlake(f)}>Edit</button>
+          <button class="btn" @click=${() => this._openEditPlugin(f)}>Edit</button>
           <button class="btn danger" @click=${() => this._delete(f)}>Remove</button>
         </div>
       `;
@@ -1071,33 +1567,26 @@ class PluginsModule extends LitElement {
           </div>
         ` : ''}
 
-        <div class="info-box">
-          <strong>Plugins</strong>
-          Extend HomeFree with extra apps and modules. Install one from the
-          Plugin Directory below, or register your own Nix flake at the
-          bottom of the page. Each plugin's <code>nixosModules</code> are
-          composed into the system build; installing one does not rebuild —
-          click <strong>Apply</strong> in the sidebar afterwards.
-        </div>
-
         ${this.notice ? html`<div class="notice"><strong>Done.</strong> ${this.notice}</div>` : ''}
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
 
-        <div class="directory-header">
-          <h3>Plugin Directory</h3>
-          <button
-            class="refresh"
-            ?disabled=${this.directoryLoading}
-            @click=${() => this.loadDirectory(true)}
-            title="Re-fetch the catalog from git.homefree.host"
-          >${this.directoryLoading ? 'Refreshing…' : 'Refresh'}</button>
+        <div class="installed-header">
+          <h3>Installed plugins</h3>
+          <div class="actions">
+            <button class="btn btn-icon"
+              @click=${() => this._openAddPlugin()}
+              title="Register a flake by URL or path"
+            >${actionIcon('plus')}<span>Add Custom Plugin</span></button>
+            <button class="btn primary btn-icon"
+              @click=${() => this._openStore()}
+              title="Browse the curated catalog at git.homefree.host/homefree-plugins"
+            >${actionIcon('developers')}<span>Plugin Store</span></button>
+          </div>
         </div>
-        ${this._renderDirectory()}
-
-        <h3>Registered plugins</h3>
         ${this._renderList()}
 
-        ${this._renderForm()}
+        ${this._renderStoreModal()}
+        ${this._renderEditPluginModal()}
       </div>
     `;
   }

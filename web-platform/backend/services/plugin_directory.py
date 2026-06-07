@@ -82,7 +82,12 @@ def _flake_url_for(clone_url: str) -> str:
 
 
 def _shape_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
-    """Forgejo repo dict -> catalog entry dict."""
+    """Forgejo repo dict -> catalog entry dict.
+
+    `updatedAt` / `createdAt` carry the Forgejo ISO 8601 timestamps
+    verbatim — the frontend uses them for the modal's "Recently
+    updated" / "Recently added" sort options.
+    """
     slug = repo.get("name") or ""
     clone_url = repo.get("clone_url") or ""
     return {
@@ -93,6 +98,8 @@ def _shape_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
         "cloneUrl": clone_url,
         "defaultBranch": repo.get("default_branch") or "main",
         "flakeUrl": _flake_url_for(clone_url),
+        "updatedAt": repo.get("updated_at") or "",
+        "createdAt": repo.get("created_at") or "",
     }
 
 
