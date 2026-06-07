@@ -271,6 +271,18 @@ Situational knowledge — read the linked note when working in that area:
 - **`dns-ready` ordering** — the DNS-readiness gate must re-arm when
   unbound/adguard restart, or container image pulls race a stale gate.
   → `docs/agent-notes/dns-ready-ordering.md`
+- **LAN-only vhost breaks over IPv6 / off-box DNS** — a `public = false`
+  Caddy vhost binds only the box's LAN addresses (IPv4 + inside ULA via
+  `lan-address-v6`), NOT the WAN IPv6; unbound's split-horizon hands
+  on-box-resolver clients the LAN `A`+`AAAA`. But the domain's wildcard
+  public AAAA points at the box WAN, so a client on a non-box resolver
+  (cellular/VPN/Private-DNS) gets that AAAA, hits the box WAN IPv6 `:443`
+  where the vhost isn't served, and a catch-all returns an empty `200` —
+  silently breaking WebSocket/streaming clients (`Expected HTTP 101 … was
+  '200 OK'`), classically "works until the app is restarted." Fix: make
+  the service `public`, or keep it LAN-only and point the client's
+  resolver at the box.
+  → `docs/agent-notes/lan-only-vhost-ipv6-split-horizon.md`
 - **systemd unit patterns** — restart policy applied to all catalog
   services (a disabled app must set `service-config.enable` or it leaks
   a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap

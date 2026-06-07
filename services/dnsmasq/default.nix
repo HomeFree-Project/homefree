@@ -105,7 +105,7 @@ in
 
       ## Additional DHCP options
       dhcp-option = [
-        "option6:dns-server,[fd01::1]"  # Points to AdGuard on fd01::1 (which forwards to Unbound)
+        "option6:dns-server,[${config.homefree.network.lan-address-v6}]"  # Points to AdGuard on the LAN ULA (which forwards to Unbound)
         "option:dns-server,${lan-address}"
       ] ++ lib.optionals config.homefree.services.unifi.enable [
         ## UniFi L3 adoption hint. APs broadcast UDP 10001 to find a

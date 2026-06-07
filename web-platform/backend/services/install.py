@@ -198,6 +198,10 @@ class InstallationService:
     "allowUserRegistration": false,
     "per-service": {}
   },
+  "alerts": {
+    "enable": true,
+    "channels": { "ntfy": { "enable": true } }
+  },
   "services": {},
   "service-config": [],
   "proxied-domains": [],

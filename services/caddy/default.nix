@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   lan-address = config.homefree.network.lan-address;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
@@ -638,7 +639,7 @@ in
           ## over plain HTTP on the LAN. See certRedirectConfig above.
           + certRedirectConfig
           + (if reverse-proxy-config.public == false && !config.homefree.development then ''
-            bind ${lan-address}
+            bind ${lan-address} ${lan-address-v6}
           '' else "")
           + (if reverse-proxy-config.subdir != null then ''
             rewrite / ${trimTrailingSlash reverse-proxy-config.subdir}{uri}
@@ -1081,7 +1082,7 @@ in
               output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
             '';
             extraConfig = ''
-              ${if !entry.public then "bind ${lan-address}" else ""}
+              ${if !entry.public then "bind ${lan-address} ${lan-address-v6}" else ""}
 
               ${if entry.frontend-tls && lib.hasInfix "*" entry.domain then ''
               # Use DNS-01 challenge for wildcard domains

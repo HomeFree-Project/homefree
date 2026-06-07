@@ -385,9 +385,13 @@ in
         };
       });
 
-    ## Alerts framework. Off by default; `or`-defaults preserve
-    ## backwards compat with older homefree-config.json files (rule 11)
-    ## and mirror the option defaults in module.nix.
+    ## Alerts framework. Fresh installs seed `alerts.enable: true` plus
+    ## the ntfy push channel via install.py's HOMEFREE_JSON_TEMPLATE, so
+    ## new boxes default ON. The `or false` defaults below only apply to
+    ## older configs that predate the alerts block (no `alerts` key) —
+    ## those stay OFF so upgrading boxes aren't silently flipped on
+    ## (rule 11). The remaining `or`-defaults backfill every sub-key and
+    ## mirror module.nix.
     alerts =
       let
         a = jsonData.alerts or {};

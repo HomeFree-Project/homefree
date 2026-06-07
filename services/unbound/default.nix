@@ -1,6 +1,7 @@
 { homefree-inputs, config, lib, pkgs, ... }:
 let
   lan-address = config.homefree.network.lan-address;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
   proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
@@ -29,6 +30,26 @@ let
     in
       lib.concatStringsSep "." cleanParts
   ) nonPublicProxiedDomains);
+
+  # Flattened "<subdomain>.<domain>" FQDNs for every NON-public
+  # reverse-proxy service. Shared by the split-horizon local-data so the
+  # same name set gets both a LAN A (IPv4) and a LAN AAAA (ULA) record.
+  # The `public == false` filter mirrors caddy's `bind <lan-address>
+  # <lan-address-v6>` gate (see the caddy.community thread referenced in
+  # the local-data block below).
+  nonPublicProxyFqdns = lib.flatten (lib.map
+    (service-config:
+      lib.flatten (lib.map
+        (subdomain:
+          lib.map
+            (domain: "${subdomain}.${domain}")
+            (service-config.reverse-proxy.http-domains ++ service-config.reverse-proxy.https-domains)
+        )
+        service-config.reverse-proxy.subdomains
+      )
+    )
+    (lib.filter (service-config: service-config.reverse-proxy.public == false) proxiedHostConfig)
+  );
 
   preStart = ''
     touch /run/unbound/include.conf
@@ -316,49 +337,27 @@ in
           ) config.homefree.dns.local.overrides
         )
         ++
-        # Point proxy URLs to internal IP when on LAN
-        (lib.map
-          (fqn: "\"${fqn} IN A ${lan-address}\"")
-          ## Flatten to single list
-          ## e.g. [ "hij.lmnop" "hij.xyz" "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ]
-          (lib.flatten
-            ## Map across all proxy configs
-            ## creating list of lists
-            ## e.g. [ [ "hij.lmnop" "hij.xyz" ] [ "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ] ]
-            (lib.map
-              (service-config:
-                ## Flatten subdomain-domain combinations for individual proxy into single list
-                ## e.g. [ "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ]
-                lib.flatten
-                ## Create all subdomain-domain combinations, grouped by subdomain
-                ## e.g. [ [ "abc.lmnop" "abc.xyz" ] [ "def.lmnop" "def.xyz" ]]
-                (lib.map
-                  (subdomain:
-                    # Create <subdomain>.<domain> fqn string
-                    (lib.map
-                      (domain: "${subdomain}.${domain}")
-                      (service-config.reverse-proxy.http-domains ++ service-config.reverse-proxy.https-domains)
-                    )
-                  )
-                  service-config.reverse-proxy.subdomains
-                )
-              )
-              ## @TODO: Get rid of this filter
-              ## See: https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
-              # (lib.filter (proxy-config: proxy-config.public == false) proxiedHostConfig)
-
-              ## For services that always need a public IP, e.g. headscale, filter out those with public set to true
-              (lib.filter (service-config: service-config.reverse-proxy.public == false) proxiedHostConfig)
-              # proxiedHostConfig
-            )
-          )
-        )
+        # Point proxy URLs to the internal LAN IPs when on LAN
+        # (split-horizon). A -> LAN IPv4, AAAA -> LAN ULA, over the SAME
+        # non-public FQDN set (nonPublicProxyFqdns, built above). The AAAA
+        # is what lets IPv6-preferring clients on the box's resolver get a
+        # working LAN path instead of NODATA — paired with caddy binding
+        # the ULA on these vhosts. See the caddy.community thread:
+        # https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
+        (lib.map (fqn: "\"${fqn} IN A ${lan-address}\"") nonPublicProxyFqdns)
+        ++
+        (lib.map (fqn: "\"${fqn} IN AAAA ${lan-address-v6}\"") nonPublicProxyFqdns)
         ++
         # Point non-public proxied domains to internal IP
         # For redirect zones, only the base domain is needed (wildcards handled automatically)
         # For transparent zones (domains also in additionalDomains), we need explicit entries
         (lib.map
           (domain: "\"${domain} IN A ${lan-address}\"")
+          nonPublicBaseDomains
+        )
+        ++
+        (lib.map
+          (domain: "\"${domain} IN AAAA ${lan-address-v6}\"")
           nonPublicBaseDomains
         )
         # @TODO: Headscale subdomains need internal DNS for DERP connectivity

@@ -3004,6 +3004,7 @@ class AdminApp extends LitElement {
             .undeployedPaths=${this.undeployedPaths}
             .subRoute=${this.currentSubRoute}
             @config-change=${this.handleConfigChange}
+            @service-public-toggle=${this.handleServicePublicToggle}
             @sub-route-change=${this.handleSubRouteChange}
           ></alerts-module>
         `;

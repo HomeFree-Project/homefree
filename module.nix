@@ -331,6 +331,19 @@
         description = "IP address of the LAN gateway (router address)";
       };
 
+      lan-address-v6 = lib.mkOption {
+        type = lib.types.str;
+        default = "fd01::1";
+        description = ''
+          Inside (LAN) ULA IPv6 address of the router. Used for the IPv6
+          half of split-horizon: LAN-only vhosts (reverse-proxy.public ==
+          false) bind this address and unbound returns it as the AAAA for
+          those non-public names, so IPv6-preferring clients on the box's
+          resolver get a working LAN path instead of NODATA. Must match the
+          ULA assigned to the LAN interface in profiles/router.nix.
+        '';
+      };
+
       lan-subnet = lib.mkOption {
         type = lib.types.str;
         default = "10.0.0.0/24";
@@ -1397,10 +1410,14 @@
         type = lib.types.bool;
         default = false;
         description = ''
-          Master toggle for the alerts engine. Off by default so a
-          fresh HomeFree box does not poll, write state, or surface a
-          notification surface unless the user has explicitly opted in
-          (typically from the admin UI Alerts page).
+          Master toggle for the alerts engine. Fresh installs seed
+          `alerts.enable: true` (plus the ntfy push channel) in
+          homefree-config.json (see install.py's HOMEFREE_JSON_TEMPLATE),
+          so new boxes default ON. This option
+          default (false) — and the loader's matching `or false` — applies
+          only to older configs that predate the alerts block, so
+          upgrading boxes are not silently flipped on. Toggle it from the
+          admin UI Alerts page.
         '';
       };
 

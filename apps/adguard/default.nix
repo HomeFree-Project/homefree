@@ -36,7 +36,7 @@ let
       ## See that file for rationale (Tailscale-IP isn't known at Nix
       ## eval time; --bind-dynamic + --interface=tailscale0 binds at
       ## runtime to whatever IP tailscaled assigns).
-      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "fd01::1" ];
+      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "${config.homefree.network.lan-address-v6}" ];
       port = 53;
       anonymize_client_ip = false;
       ratelimit = 0;
@@ -404,10 +404,10 @@ in
     ## 3600` it will keep serving a stale answer for up to 12h. When a
     ## service is toggled public<->private, unbound's local-zone /
     ## local-data records change (e.g. a private service's AAAA flips
-    ## from a WAN address to NODATA) — but AdGuard would go on handing
-    ## clients the old record, so the service appears unreachable
-    ## (IPv6-preferring browsers connect over WAN to a LAN-only vhost
-    ## and get a blank page). Restarting AdGuard whenever unbound's
+    ## between the inside LAN ULA and the public WAN address) — but
+    ## AdGuard would go on handing clients the old record, so the service
+    ## appears unreachable (IPv6-preferring clients connect to the wrong
+    ## address and get a blank page). Restarting AdGuard whenever unbound's
     ## config changes flushes its cache so the new records take effect
     ## immediately.
     restartTriggers = [

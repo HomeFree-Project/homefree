@@ -5,6 +5,7 @@ let
   wan-interface = config.homefree.network.wan-interface;
   lan-interface = config.homefree.network.lan-interface;
   lan-address = config.homefree.network.lan-address;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
@@ -211,7 +212,7 @@ in
         vlan = map (gn: gn.id) guest-networks;
         networkConfig = {
           Description = "LAN link";
-          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
+          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "${lan-address-v6}/64" ];
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.
