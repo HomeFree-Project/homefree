@@ -228,6 +228,29 @@ it, record the pointers. `migrateRollback` decides what happens if blue
 fails to come up — `"restart-legacy"` (admin-api) brings the old unit
 back; `"leave-down"` (oauth2-proxy) leaves it down for a CLI re-apply.
 
+### Readiness gate — async-provisioned prerequisites
+
+Optional `readinessGate` (a shell command returning 0 when ready). It
+exists for services whose prerequisites are provisioned **asynchronously
+after** activation, so they cannot exist at flip time on a first install.
+oauth2-proxy is the case: its OIDC client-id/secret and cookie secret are
+written by Zitadel's post-activation provisioning job. Without the gate,
+the first-deploy flip and the supervisor (which defaults to blue when no
+pointer exists) start the colour, its `ExecStartPre` secrets check fails,
+the supervisor retries every few seconds, systemd trips
+`start-limit-hit`, and that **failed unit makes the whole rebuild exit
+non-zero** — which on a fresh box leaves finish-setup permanently stuck
+(the wizard only writes `.setup-complete` after a successful finishing
+rebuild).
+
+When set, both the flip and the supervisor consult it: the first-deploy
+flip **commits the pointers but defers the start** (no failure marker —
+it is not an error), and the supervisor starts the colour the instant the
+gate passes. So provisioning writing the secrets brings the service up
+within one poll interval — a clean single-pass install, no re-apply.
+admin-api and any self-contained service simply omit it (defaults to
+always-ready).
+
 ## Using it for a new service
 
 From a service module with `lib` and `pkgs` in scope:
@@ -245,6 +268,8 @@ bg = (import ../../lib/blue-green.nix { inherit lib pkgs; }) {
   migrateFrom     = "my-service.service";
   migrateRollback = "restart-legacy";
   failureMarker   = "my-service-flip-failed.json";
+  # optional: defer start until async-provisioned prerequisites exist
+  # readinessGate = "${mySecretsCheckScript}";
   # order this flip after every OTHER blue/green service's snippet writer
   snippetActivationDeps = [ "admin-api-bg-snippet" "oauth2-proxy-bg-snippet" ];
 };

@@ -55,8 +55,24 @@ in
   ## For a proper authoritative DNS, look at NSD.
 
   systemd.services.unbound = {
-    after = [ "nftables.service" ];
-    wants = [ "nftables.service" ];
+    ## Order unbound after the network is actually ONLINE — not merely
+    ## after `network.target` (interfaces configured). unbound forwards
+    ## all recursion to its DoT upstreams (Quad9 / Cloudflare on :853)
+    ## and, with DNSSEC validation enabled (`auto-trust-anchor-file`
+    ## below), it must fetch the root `. DNSKEY` rrset from one of them to
+    ## PRIME the validator before it will answer ANY recursive query. The
+    ## upstream NixOS module orders unbound only after `network.target`,
+    ## so on a fresh box it started ~5s BEFORE `network-online.target` was
+    ## reached, tried to prime while the WAN/DoT path was still
+    ## unreachable, and logged "failed to prime trust anchor -- could not
+    ## fetch DNSKEY rrset . DNSKEY IN" — SERVFAILing every recursive query
+    ## until a later retry happened to land after the network came up
+    ## ("DNS wasn't working for a while" right after first boot). Gating
+    ## on `network-online.target` makes the first prime attempt land once
+    ## upstream is reachable. No dependency cycle: network-online does not
+    ## depend on DNS (wait-online only needs an interface with an IP).
+    after = [ "nftables.service" "network-online.target" ];
+    wants = [ "nftables.service" "network-online.target" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "unbound-prestart" preStart}" ];
       # Allow Unbound to use configured outgoing-range (8192 ports)

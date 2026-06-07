@@ -52,6 +52,23 @@ it to come up) but is **deliberately not** in `partOf` — see below.
   warming up. `podman-adguardhome` uses 30×600s; pick similar for any
   new app whose first start needs to fetch an image from the network.
 
+## unbound itself must start after `network-online.target`
+
+Separate from the `dns-ready` gate above (which protects *consumers* of
+DNS): unbound, the resolver, must not start before the network is
+online. unbound forwards all recursion to DoT upstreams (Quad9 /
+Cloudflare on :853) and, with DNSSEC validation on
+(`auto-trust-anchor-file`), must fetch the root `. DNSKEY` rrset from one
+of them to **prime** the validator before it answers ANY recursive
+query. The upstream NixOS module orders unbound only after
+`network.target`, so on a fresh box it started ~5 s *before*
+`network-online.target` and logged "failed to prime trust anchor --
+could not fetch DNSKEY rrset . DNSKEY IN", SERVFAILing everything until a
+retry happened to land after the WAN came up ("DNS wasn't working for a
+while" right after first boot). `services/unbound/default.nix` adds
+`network-online.target` to unbound's `after`/`wants`. No cycle:
+network-online (wait-online for an interface IP) does not depend on DNS.
+
 ## When adding a container app
 
 Just `after`/`requires` `dns-ready.service` — the re-arming is handled

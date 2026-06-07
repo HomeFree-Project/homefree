@@ -1131,6 +1131,19 @@ class AdminApp extends LitElement {
       this.currentModule = 'finish-setup';
     }
 
+    // Inverse correction: if setup is COMPLETE but the route still points
+    // at the wizard, do NOT re-open the finished wizard. This happens when
+    // a reload preserves the #/finish-setup fragment (the wizard renders
+    // purely off currentModule, restored from the hash) or from a stale
+    // bookmark/back button. Send the user to the dashboard and clean the
+    // fragment so a later manual reload doesn't bring the wizard back.
+    if (!this.setupIncomplete && this.currentModule === 'finish-setup') {
+      this.currentModule = 'dashboard';
+      this.currentSubRoute = '';
+      history.replaceState(null, '',
+        window.location.pathname + window.location.search + '#/');
+    }
+
     // The rebuild-status poller ALWAYS runs — including during finish-setup.
     // The Status page must show the wizard's rebuild just as it shows a
     // normal Apply: same backend path (/api/config/apply ->

@@ -210,6 +210,17 @@ let
     migrateFrom = "podman-oauth2-proxy.service";
     migrateRollback = "leave-down";
     failureMarker = "oauth2-proxy-flip-failed.json";
+    ## Readiness gate (see lib/blue-green.nix). oauth2-proxy's OIDC
+    ## secrets (client-id, client-secret, cookie secret) are written by
+    ## Zitadel's post-activation provisioning job, so on a FIRST install
+    ## they do not exist when this flip runs during activation. Without
+    ## this gate the flip + supervisor start blue, its ExecStartPre
+    ## secrets check fails, and the supervisor crash-loops it into
+    ## `start-limit-hit` — a failed unit that makes the finishing rebuild
+    ## exit non-zero and leaves the box stuck in finish-setup. The gate
+    ## defers bring-up to the supervisor, which starts blue the moment the
+    ## secrets land. Same three-file check the colour's ExecStartPre uses.
+    readinessGate = "${oauth2ProxySecretsCheck}";
     ## Order this flip after admin-api's snippet writer, so admin-api's
     ## file-scope Caddy `import` target exists before this flip reloads
     ## Caddy. The name is the static `${name}-bg-snippet` of

@@ -274,6 +274,9 @@ class FinishSetupWizard extends LitElement {
     // navigates away from and back to the Finish-setup page. admin-app
     // holds the last step in `initialStep` so we can resume there instead
     // of snapping back to step 0.
+    //
+    // Synchronous best-guess from the props we already have, so the first
+    // paint isn't step 0 (refined below once saved state has loaded).
     if (this.initialStep >= 0) {
       this.step = this.initialStep;
     } else if (!this.pendingItems.includes('ssh-key')) {
@@ -284,6 +287,17 @@ class FinishSetupWizard extends LitElement {
     }
     await this.refreshSecretsStatus();
     await this.seedZonesFromConfig();
+    // Now that saved state is loaded (secret presence + seeded zones),
+    // resume at the first step that still needs attention — landing on the
+    // Apply step when SSH, DNS-01 and ddclient are all already saved.
+    // Without this, reloading a fully-entered-but-not-yet-applied setup
+    // always dumped the user back on the DNS step (and, with the ddclient
+    // Continue fix, still forced a needless click through each step).
+    // Only on a fresh mount — never override an explicit nav-restored
+    // initialStep, and never override a rebuild recovery (handled below).
+    if (this.initialStep < 0) {
+      this.step = this.computeResumeStep();
+    }
     // Recover an in-flight (or just-finished) rebuild. The finish-setup
     // rebuild restarts admin-api, so the user may have reloaded — or the
     // poll lost contact — while it was still running. The backend tracks
@@ -374,6 +388,27 @@ class FinishSetupWizard extends LitElement {
 
   secretExists(label, key) {
     return !!((this.secretsStatus[label] || {})[key]);
+  }
+
+  // Decide which step to open on a fresh mount, from what is already saved.
+  // Returns the first step still needing attention, or the Apply step (3)
+  // when SSH, DNS-01 and ddclient are all satisfied. Each clause mirrors
+  // that step's own Continue gate so "resume" and "can advance" agree.
+  // Apply never auto-runs — the user still clicks Finish setup — so landing
+  // there on an already-complete setup is safe.
+  computeResumeStep() {
+    // Step 0 — SSH authorized key.
+    if (this.pendingItems.includes('ssh-key')) return 0;
+    this.sshKeySaved = true;
+    // Step 1 — DNS-01: provider saved in config AND the API token secret
+    // present (pendingItems carries 'dns-01' only until the provider is
+    // saved; the token is a secret, tracked separately).
+    const dnsReady = !this.pendingItems.includes('dns-01') && this.dnsTokenSet;
+    if (!dnsReady) return 1;
+    // Step 2 — ddclient: at least one zone with a saved password secret.
+    if (!this.ddnsStepReady()) return 2;
+    // Step 3 — everything saved, open on Apply.
+    return 3;
   }
 
   // --- Step 1: SSH authorized key ------------------------------------------
@@ -480,11 +515,18 @@ class FinishSetupWizard extends LitElement {
     }
   }
 
-  // True when the ddclient step has enough to save: at least one zone whose
-  // required fields and password are filled in. Used to enable Continue.
+  // True when the ddclient step has enough to save: at least one zone with
+  // a name and a password — EITHER typed now OR already saved as a secret
+  // on a previous visit. Used to enable Continue. The saved-secret check
+  // mirrors the DNS step's tokenAlreadySet: passwords are never sent back
+  // to the frontend, so after a reload the field is empty even though the
+  // secret exists on disk — without this, Continue stayed permanently
+  // disabled on a returning, already-configured setup.
   ddnsStepReady() {
     return this.ddnsZones.some(
-      (z) => z.zone.trim() && (z.password || '').trim());
+      (z) => z.zone.trim()
+        && ((z.password || '').trim()
+            || this.secretExists(DDNS_SECRET_LABEL, (z.key || 'password').trim())));
   }
 
   // --- Step 4: Apply -------------------------------------------------------
@@ -590,7 +632,13 @@ class FinishSetupWizard extends LitElement {
   }
 
   finishWizard() {
-    // Reload so admin-app re-fetches /api/mode and drops the overlay.
+    // Drop the #/finish-setup fragment BEFORE reloading. The wizard is
+    // rendered purely off currentModule === 'finish-setup', which the
+    // router restores from the hash on load — so a plain reload that kept
+    // #/finish-setup would re-open the (now finished) wizard. Clearing the
+    // hash lands the post-reload router on the dashboard; the reload also
+    // re-fetches /api/mode (now setup-complete).
+    window.location.hash = '#/';
     window.location.reload();
   }
 

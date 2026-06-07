@@ -96,6 +96,38 @@ let
 
   marker = "${stateDir}/${failureMarker}";
 
+  ## ── Optional readiness gate ───────────────────────────────────────
+  ## A shell command (typically a script path) that returns 0 when the
+  ## workload's EXTERNAL prerequisites are present, non-zero otherwise.
+  ##
+  ## Some services depend on secrets that are provisioned ASYNCHRONOUSLY
+  ## *after* this activation runs — oauth2-proxy is the case: its OIDC
+  ## client-id/secret and cookie secret are written by Zitadel's
+  ## post-activation provisioning job, so on a first install they cannot
+  ## exist when the flip runs during `switch-to-configuration`. Without a
+  ## gate, the flip (and the supervisor, which defaults to blue when no
+  ## pointer exists) start the colour anyway; its ExecStartPre secrets
+  ## check fails, the supervisor retries every few seconds, systemd trips
+  ## `start-limit-hit`, and that FAILED unit makes the whole rebuild exit
+  ## non-zero — which on a fresh box leaves finish-setup permanently
+  ## stuck (the wizard only writes `.setup-complete` after a successful
+  ## finishing rebuild).
+  ##
+  ## When set, BOTH the flip and the supervisor consult this gate and
+  ## refuse to start a colour until it passes. The first-deploy flip then
+  ## commits the pointers but defers the actual start to the supervisor,
+  ## which brings the colour up the instant the prerequisites land — a
+  ## clean single-pass install. Default (null): always ready (admin-api
+  ## and any future self-contained service set nothing).
+  readinessGate = descriptor.readinessGate or null;
+  readinessCheckFn = ''
+    readiness_ready() {
+      ${if readinessGate == null
+        then "return 0"
+        else "${readinessGate} >/dev/null 2>&1"}
+    }
+  '';
+
   ## ── The active-colour anchor ──────────────────────────────────────
   ## `<name>-active.service` is a polling SUPERVISOR (defined below).
   ##
@@ -153,6 +185,7 @@ let
   ## transient probe failures on the just-promoted colour don't count
   ## against the new colour.
   activeSupervisorScript = ''
+    ${readinessCheckFn}
     sysctl=${pkgs.systemd}/bin/systemctl
     last_color=""
     unhealthy_streak=0
@@ -173,8 +206,15 @@ let
       fi
 
       if [ "$($sysctl is-active "$want" 2>/dev/null)" != "active" ]; then
-        echo "${name}-active: $want (active colour) not running — starting it"
-        $sysctl start "$want" 2>/dev/null || true
+        # Readiness gate: don't start the colour before its external
+        # prerequisites exist (e.g. oauth2-proxy's OIDC secrets, written
+        # later by Zitadel provisioning). Starting early just crash-loops
+        # the unit into start-limit-hit. Skip this tick; the next one
+        # retries, so the colour comes up the moment the gate passes.
+        if readiness_ready; then
+          echo "${name}-active: $want (active colour) not running — starting it"
+          $sysctl start "$want" 2>/dev/null || true
+        fi
         unhealthy_streak=0
       elif ${healthProbe}; then
         unhealthy_streak=0
@@ -272,6 +312,7 @@ let
   flipScript = ''
     ${writeUpstreamSnippet}
     ${healthGateFn}
+    ${readinessCheckFn}
 
     ${name}_flip() {
       local sysctl=${pkgs.systemd}/bin/systemctl
@@ -332,6 +373,24 @@ let
         echo "${name}-flip: first deploy — migrating to blue"
         write_upstream_snippet "$blue_port" || true
         $sysctl stop ${migrateFrom} 2>/dev/null || true
+        # Readiness gate not satisfied → the workload's external
+        # prerequisites (e.g. SSO secrets provisioned asynchronously by
+        # Zitadel AFTER this activation) aren't present yet. Starting blue
+        # now would fail its ExecStartPre and the supervisor would
+        # crash-loop it into start-limit-hit — a failed unit that fails
+        # the whole rebuild and blocks finish-setup. Defer cleanly:
+        # commit the intended pointers (so the supervisor knows the target
+        # colour and Caddy routes to it) but do NOT start blue and do NOT
+        # write a failure marker. The supervisor brings blue up the instant
+        # the prerequisites land — a clean single-pass install. This is a
+        # legitimate "waiting on provisioning" state, not an error.
+        if ! readiness_ready; then
+          echo blue > "$statedir/active-color"
+          echo "$desired_closure" > "$statedir/active-closure"
+          ${pkgs.coreutils}/bin/rm -f "${marker}"
+          echo "${name}-flip: deferred — readiness gate not satisfied; supervisor will start blue once ready"
+          return 0
+        fi
         if $sysctl start ${unitName "blue"} && health_gate ${unitName "blue"} "$blue_port"; then
           # active-color is the single source of truth — the supervisor
           # and the `${name}-snippet` oneshot both derive from it.
@@ -347,6 +406,16 @@ let
           ''}
           mark_failed blue "blue failed to come up on first deploy"
         fi
+        return 0
+      fi
+
+      # Readiness gate for the steady-state path too: if a rebuild
+      # changes the service while its external prerequisites are
+      # (transiently) absent, don't start the standby — it would
+      # crash-loop. Skip the flip cleanly; the current colour keeps
+      # serving and a later rebuild retries once ready. Not a failure.
+      if ! readiness_ready; then
+        echo "${name}-flip: readiness gate not satisfied — skipping flip, current colour keeps serving"
         return 0
       fi
 
