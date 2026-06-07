@@ -151,6 +151,49 @@ class ServiceOptionInput extends LitElement {
       justify-content: space-between;
     }
 
+    /* Compact horizontal layout used for bool toggles and short-int
+       inputs: label + description on the left, control right-justified
+       on the same row, wrapping to the next line on phone-width
+       screens. Strings / paths / lists keep the full-width vertical
+       layout (a 'flex' chip on the right would clip on small screens
+       and a Browse button beside a label is awkward). */
+    .compact-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      column-gap: 16px;
+      row-gap: 8px;
+    }
+    .compact-row .compact-text {
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+    .compact-row .compact-text .field-label {
+      margin-bottom: 4px;
+    }
+    .compact-row .compact-text .field-description {
+      margin-bottom: 0;
+    }
+    .compact-row .compact-input {
+      flex: 0 0 auto;
+      margin-left: auto;
+    }
+    /* Cap the int input width so a 2-digit seconds field doesn't
+       stretch across the modal. Override the global
+       input[type=number] { width: 100% } only inside .compact-input
+       so the standard-layout int path (none currently, but kept
+       general) still works.
+
+       Text is left-justified: right-justified put the digits flush
+       against the browser's spinner arrows on the right edge,
+       leaving no visible padding between the number and the spinner.
+       The existing 12px horizontal padding from the input base
+       style now gives the spinner its own breathing room. */
+    .compact-row .compact-input input[type="number"] {
+      width: 96px;
+      text-align: left;
+    }
+
     .toggle-switch {
       position: relative;
       display: inline-block;
@@ -535,18 +578,37 @@ class ServiceOptionInput extends LitElement {
   render() {
     const currentPath = this.currentValue || this.defaultValue || '/';
 
+    // Strip nullOr prefix to detect the underlying type — nullOr bool /
+    // nullOr int should get the same compact layout as plain bool / int.
+    const baseType = (this.type || '').replace(/^nullOr /, '');
+    const isCompact = baseType === 'bool' || baseType === 'int';
+
     return html`
       <div class="option-field ${this.disabled ? 'disabled' : ''}">
-        <div class="field-header">
-          <div class="field-label">${this.label}</div>
-          <div class="field-type">${this.type}</div>
-        </div>
+        ${isCompact ? html`
+          <div class="compact-row">
+            <div class="compact-text">
+              <div class="field-label">${this.label}</div>
+              ${this.description ? html`
+                <div class="field-description">${this.description}</div>
+              ` : ''}
+            </div>
+            <div class="compact-input">
+              ${this.renderInput()}
+            </div>
+          </div>
+        ` : html`
+          <div class="field-header">
+            <div class="field-label">${this.label}</div>
+            <div class="field-type">${this.type}</div>
+          </div>
 
-        ${this.description ? html`
-          <div class="field-description">${this.description}</div>
-        ` : ''}
+          ${this.description ? html`
+            <div class="field-description">${this.description}</div>
+          ` : ''}
 
-        ${this.renderInput()}
+          ${this.renderInput()}
+        `}
       </div>
 
       ${this.fileBrowserOpen ? html`
