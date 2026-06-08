@@ -117,6 +117,7 @@ class AppVersionsModule extends LitElement {
     .summary .local    { color: #a78bfa; }
     .summary .unknown { color: var(--hf-text-muted); }
     .summary .ok { color: var(--hf-ok); }
+    .summary .disabled { color: var(--hf-text-muted); }
 
     .toolbar .spacer { flex: 1; }
 
@@ -176,6 +177,23 @@ class AppVersionsModule extends LitElement {
       font-size: 12px;
       color: var(--hf-text-muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    /* Marks a row whose app/image is declared in the source but not
+       currently deployed (a disabled app, or an optional sidecar image
+       that isn't running). Distinct from the status pill — an app can
+       be both disabled and outdated. */
+    .name .disabled-tag {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--hf-surface-3);
+      color: var(--hf-text-muted);
+      vertical-align: middle;
     }
     .registry {
       color: var(--hf-text-muted);
@@ -891,6 +909,7 @@ class AppVersionsModule extends LitElement {
     const floating = this.apps.filter((a) => a.status === 'floating').length;
     const local = this.apps.filter((a) => a.status === 'local').length;
     const unknown = this.apps.filter((a) => a.status === 'unknown').length;
+    const disabled = this.apps.filter((a) => a.enabled === false).length;
     return html`
       <span class="summary">
         <span class="count outdated">${outdated}</span> updates available
@@ -907,6 +926,10 @@ class AppVersionsModule extends LitElement {
         ${unknown > 0 ? html`
           <span class="sep">·</span>
           <span class="count unknown">${unknown}</span> unknown
+        ` : ''}
+        ${disabled > 0 ? html`
+          <span class="sep">·</span>
+          <span class="count disabled">${disabled}</span> not enabled
         ` : ''}
       </span>
     `;
@@ -955,10 +978,15 @@ class AppVersionsModule extends LitElement {
     const sev = app.advisory_max_severity;
     if (sev === 'critical') rowClasses.push('has-critical-advisory');
     else if (sev === 'high') rowClasses.push('has-high-advisory');
+    if (app.enabled === false) rowClasses.push('is-disabled');
     return html`
       <tr class=${rowClasses.join(' ')}>
         <td class="name">
           ${projectLabel}
+          ${app.enabled === false
+            ? html`<span class="disabled-tag"
+                         title="Declared in the source but not currently deployed on this box.">Disabled</span>`
+            : ''}
           ${projectLabel !== app.name
             ? html`<span class="container">${app.name}</span>`
             : ''}
@@ -1349,10 +1377,11 @@ class AppVersionsModule extends LitElement {
 
         <div class="info-box">
           <strong>App versions</strong>
-          Every container declared on this box, with the version that is
-          currently deployed and the latest version available from each
-          image's upstream registry. Latest-version lookups run once a
-          day in the background; click Refresh to fetch fresh data on
+          Every app declared in the source — including ones that aren't
+          currently enabled (marked <strong>Disabled</strong>) — with the
+          version it is pinned to and the latest version available from
+          each image's upstream registry. Latest-version lookups run once
+          a day in the background; click Refresh to fetch fresh data on
           demand. Images on unsupported registries show
           <strong>Unknown</strong> with a short reason.
         </div>

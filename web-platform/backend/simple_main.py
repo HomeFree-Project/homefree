@@ -2065,6 +2065,36 @@ async def _resolve_user_id_by_name(cx, base: str, username: str) -> str:
     return users[0]["id"]
 
 
+async def _wait_user_searchable(cx, base, username, *,
+                                timeout=3.0, interval=0.2):
+    """Block until a just-created user is visible to users/_search.
+
+    Zitadel's command API (users/human/_import) returns before the read
+    projection that list_users() queries catches up, so without this the
+    admin UI's immediate re-fetch shows a stale list until a manual
+    reload. Best-effort: returns False on timeout rather than failing
+    the create."""
+    import asyncio
+    import time
+    deadline = time.monotonic() + timeout
+    while True:
+        r = await cx.post(
+            f"{base}/management/v1/users/_search",
+            headers=_zitadel_headers(),
+            json={"queries": [{
+                "userNameQuery": {
+                    "userName": username,
+                    "method": "TEXT_QUERY_METHOD_EQUALS",
+                },
+            }]},
+        )
+        if r.status_code < 400 and (r.json().get("result") or []):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+
+
 @app.get("/api/users/me")
 async def get_current_user(request: Request):
     """Return the currently-authenticated user's record. Auth comes
@@ -2172,6 +2202,12 @@ async def create_user(req: CreateUserRequest):
                 await _set_admin_role(cx, base, user_id, True)
             except HTTPException as e:
                 err = f"User created but admin grant failed: {e.detail}"
+
+        # Wait for the read projection to catch up so the admin UI's
+        # immediate re-fetch includes the new user (Zitadel command vs.
+        # query eventual consistency).
+        if user_id:
+            await _wait_user_searchable(cx, base, req.username)
 
     payload = {"id": user_id, "username": req.username}
     if err:

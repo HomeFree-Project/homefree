@@ -141,6 +141,20 @@ let
   container-images-json = (pkgs.formats.json {})
     .generate "container-images.json" container-images-list;
 
+  # Full app-image catalog for the App Versions page, INCLUDING apps
+  # that are currently disabled — those never declare an oci-container,
+  # so container-images-json (above) can't see them. Built at BUILD time
+  # by scanning every apps/<x>/ and services/<x>/ default.nix for its
+  # image pin, using the same parser scripts/upgrade-apps.py relies on
+  # (shared in resolvers/app_source_index.py). Emitting it here keeps the
+  # /api/apps/versions endpoint a fast, no-filesystem-scan read at
+  # request time. Output shape: [{app, image}].
+  all-app-images-json = pkgs.runCommand "all-app-images.json" {} ''
+    ${pythonEnv}/bin/python \
+      ${installerWebPath}/backend/resolvers/app_source_index.py \
+      scan ${../../apps} ${../../services} > $out
+  '';
+
   # Generate secrets schema for all services
   # This extracts secrets options from service-options for each service
   secrets-schema = builtins.listToAttrs (
@@ -509,6 +523,7 @@ let
     ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
     ${pkgs.coreutils}/bin/cp ${container-images-json} /run/homefree/admin/container-images.json
+    ${pkgs.coreutils}/bin/cp ${all-app-images-json} /run/homefree/admin/all-app-images.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
     ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
 

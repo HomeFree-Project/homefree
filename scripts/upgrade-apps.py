@@ -40,7 +40,12 @@ import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Type-only; the real runtime import happens in main() once the repo
+    # root (and thus web-platform/backend) is on sys.path.
+    from resolvers.app_source_index import SourceEntry
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -102,135 +107,14 @@ def find_repo_root(cli_arg: Optional[str]) -> Path:
 
 
 # ─── Nix source parsing ──────────────────────────────────────────────
-
-LET_BIND_RE = re.compile(r'^(\s+)([A-Za-z][\w-]*)\s*=\s*"([^"]*)"\s*;')
-IMAGE_LINE_RE = re.compile(r'^(\s+)image\s*=\s*"([^"]+)"\s*;')
-INTERP_RE = re.compile(r'\$\{([A-Za-z][\w-]*)\}')
-
-
-def resolve_template(template: str, bindings: dict[str, str], depth: int = 4) -> Optional[str]:
-    """Substitute ${var} references. Returns None if any var is unknown."""
-    seen = 0
-    text = template
-    while seen < depth and "${" in text:
-        new_text = text
-        for ref in INTERP_RE.findall(text):
-            if ref not in bindings:
-                return None
-            new_text = new_text.replace("${" + ref + "}", bindings[ref])
-        if new_text == text:
-            break
-        text = new_text
-        seen += 1
-    return text
-
-
-@dataclass
-class SourceEntry:
-    file: Path
-    binding: str
-    line_idx: int
-    current_value: str
-    tag_prefix: str
-    tag_suffix: str
-
-
-def parse_source_file(path: Path) -> list[tuple[str, SourceEntry]]:
-    """
-    Return list of (resolved_image_string, SourceEntry) for every
-    `image = "...${VAR}...";` literal in the file. Scans raw lines —
-    no let-block detection, no heredoc masking. Justification:
-
-      * `name = "value";` and `image = "...";` with semicolon are Nix
-        syntax. Heredocs in HomeFree contain YAML/shell/JSON, none of
-        which use `key = "value";` shape — false positives are
-        essentially impossible in practice.
-      * The full-Nix grammar (heredoc escapes `''${`, `'''`, `''\n`;
-        nested `''` blocks) is too tangled for a regex masker to track
-        reliably across all apps. The pragmatic scan is simpler and
-        more robust.
-
-    Bindings are collected with first-wins semantics so a top-level
-    `version = "X"` shadows any same-name binding redeclared deeper in
-    the file.
-    """
-    try:
-        raw = path.read_text()
-    except OSError:
-        return []
-    lines = raw.split("\n")
-
-    bindings: dict[str, tuple[int, str]] = {}
-    image_lines: list[tuple[int, str]] = []
-    for i, raw_line in enumerate(lines):
-        stripped = raw_line.lstrip()
-        if stripped.startswith("#") or stripped.startswith("##"):
-            continue
-        m = IMAGE_LINE_RE.match(raw_line)
-        if m:
-            _, template = m.groups()
-            image_lines.append((i, template))
-        m = LET_BIND_RE.match(raw_line)
-        if m:
-            _, name, value = m.groups()
-            bindings.setdefault(name, (i, value))
-
-    binding_values = {n: v for n, (_, v) in bindings.items()}
-
-    results: list[tuple[str, SourceEntry]] = []
-    for line_idx, template in image_lines:
-        if "@sha256:" in template:
-            continue
-        if ":" not in template:
-            continue
-
-        tag_template = template.rsplit(":", 1)[1]
-        tag_refs = INTERP_RE.findall(tag_template)
-        if not tag_refs:
-            continue
-        var_name = tag_refs[0]
-        if var_name not in bindings:
-            continue
-
-        resolved = resolve_template(template, binding_values)
-        if resolved is None:
-            continue
-
-        placeholder = "${" + var_name + "}"
-        before, _, after = tag_template.partition(placeholder)
-        if "${" in before or "${" in after:
-            continue
-
-        var_line, var_value = bindings[var_name]
-        results.append((resolved, SourceEntry(
-            file=path,
-            binding=var_name,
-            line_idx=var_line,
-            current_value=var_value,
-            tag_prefix=before,
-            tag_suffix=after,
-        )))
-    return results
-
-
-def build_source_index(repo_root: Path) -> dict[str, SourceEntry]:
-    """
-    Walk apps/*/default.nix and services/*/default.nix; return a map
-    from resolved-image-string to its SourceEntry. The container
-    catalog's image string is what we'll look up.
-    """
-    index: dict[str, SourceEntry] = {}
-    for sub in ("apps", "services"):
-        root = repo_root / sub
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            f = child / "default.nix"
-            if not f.is_file():
-                continue
-            for image_str, entry in parse_source_file(f):
-                index.setdefault(image_str, entry)
-    return index
+#
+# The image-pin parser (regexes, resolve_template, SourceEntry,
+# parse_source_file, build_source_index) lives in
+# web-platform/backend/resolvers/app_source_index.py so this bumper and
+# the App Versions page resolver share ONE implementation and can't
+# drift. It's imported in main() once the repo root is known (the script
+# may run from /nix/store via `nix run`, so the path isn't importable at
+# module load time).
 
 
 # ─── bump planning ────────────────────────────────────────────────────
@@ -502,10 +386,11 @@ def main() -> int:
         log_error(str(e))
         return 1
 
-    # Pull the resolver into scope.
+    # Pull the resolver + shared source parser into scope.
     sys.path.insert(0, str(repo_root / "web-platform" / "backend"))
     try:
         from resolvers import app_versions as av
+        from resolvers.app_source_index import build_source_index
     except ImportError as e:
         log_error(f"Failed to import app_versions resolver: {e}")
         return 1

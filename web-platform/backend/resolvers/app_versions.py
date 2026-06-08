@@ -1,15 +1,26 @@
 """
 App-Versions resolver — backs the Advanced -> App Versions page.
 
-Shows every container declared on the box (via
-virtualisation.oci-containers.containers) alongside its currently-
-deployed image tag and the latest tag available from its upstream
-registry. Two artifacts feed the merged view:
+Shows every app/service declared in the source tree — NOT just the
+ones currently enabled — alongside its currently-pinned image tag and
+the latest tag available from its upstream registry. A disabled app
+never declares a virtualisation.oci-containers.containers entry, so it
+would otherwise be invisible here; we fill it in from a source scan.
+Three artifacts feed the merged view:
 
   * Container catalog (eval-time, immutable between rebuilds):
       /run/homefree/admin/container-images.json
       Emitted by services/admin-web/default.nix from
-      config.virtualisation.oci-containers.containers.
+      config.virtualisation.oci-containers.containers. Authoritative
+      for the ENABLED containers (exact names + the actually-deployed
+      image, which honours any alternate-base override).
+
+  * All-app-images catalog (eval-time, immutable between rebuilds):
+      /run/homefree/admin/all-app-images.json
+      Emitted by services/admin-web/default.nix, which runs
+      resolvers/app_source_index.py over apps/ + services/ at build
+      time. Lists EVERY image pin in the source, so apps that aren't
+      currently enabled still get a row.
 
   * Upstream cache (refreshed daily + on demand):
       /var/lib/homefree-admin/app-versions-cache.json
@@ -44,10 +55,18 @@ router = APIRouter(prefix="/api/apps", tags=["app-versions"])
 # Eval-time, immutable: list of {name, image} for every oci-container.
 CONTAINER_CATALOG = Path("/run/homefree/admin/container-images.json")
 
+# Eval-time, immutable: [{app, image}] for EVERY app/service image pin
+# in the source tree — including apps that are currently disabled and so
+# never appear in CONTAINER_CATALOG. Emitted by
+# services/admin-web/default.nix (which runs resolvers/app_source_index.py
+# over apps/ + services/ at build time).
+ALL_APP_IMAGES = Path("/run/homefree/admin/all-app-images.json")
+
 # Eval-time, immutable: maps service label -> {name, project-name}.
 SERVICE_METADATA = Path("/run/homefree/admin/service-metadata.json")
 
-# Mutable cache of upstream-tag lookups. Keyed by container name.
+# Mutable cache of upstream-tag lookups. Keyed by catalog entry key
+# (container name for enabled apps; a derived stable id for disabled).
 CACHE_FILE = Path("/var/lib/homefree-admin/app-versions-cache.json")
 
 # Per-registry timeouts. Generous on purpose — the refresher is
@@ -690,6 +709,87 @@ def _read_service_metadata() -> Dict[str, Dict[str, str]]:
     return {}
 
 
+def _read_all_app_images() -> List[Dict[str, str]]:
+    """Read the source-scanned [{app, image}] catalog. Returns [] when
+    the artifact is missing (older deploy that predates this feature) —
+    the resolver then falls back to the enabled-only container catalog,
+    so the page never regresses to empty."""
+    if not ALL_APP_IMAGES.exists():
+        return []
+    try:
+        data = json.loads(ALL_APP_IMAGES.read_text())
+        if isinstance(data, list):
+            return [
+                e for e in data
+                if isinstance(e, dict) and e.get("app") and e.get("image")
+            ]
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("all-app-images catalog unreadable: %s", e)
+    return []
+
+
+# ─── Merged catalog ───────────────────────────────────────────────────
+
+
+def _merged_catalog() -> List[Dict[str, Any]]:
+    """Unify the two eval-time catalogs into one list of rows to check.
+
+    Each entry: {key, name, image, enabled, app}.
+      * key   — stable, unique id used to key the upstream cache.
+      * name  — what the UI shows as the container/row name.
+      * app   — apps/<app>/ dir name (None for enabled containers,
+                whose project metadata is keyed on the container name
+                exactly as before).
+      * enabled — True for a currently-deployed container, False for an
+                  image pin that exists in source but isn't running.
+
+    Enabled containers come from CONTAINER_CATALOG and are authoritative
+    (exact names + the actually-deployed image). Every source image that
+    isn't already covered by an enabled container — deduped by image
+    string, so an app's redis/postgres sidecars shared with an enabled
+    app don't double up — is appended as a disabled row."""
+    enabled = _read_container_catalog()
+    enabled_images = {e["image"] for e in enabled}
+
+    out: List[Dict[str, Any]] = []
+    seen_keys: set = set()
+    for e in enabled:
+        out.append({
+            "key": e["name"], "name": e["name"], "image": e["image"],
+            "enabled": True, "app": None,
+        })
+        seen_keys.add(e["name"])
+
+    for entry in _read_all_app_images():
+        image = entry["image"]
+        app = entry["app"]
+        if image in enabled_images:
+            continue
+        # Derive a unique, stable key/name. The app dir name is the
+        # natural choice; when an app contributes several images (e.g.
+        # netbird's management/signal/relay/dashboard) or collides with
+        # an enabled container name, disambiguate with the image's repo
+        # basename, then a counter.
+        key = app
+        if key in seen_keys:
+            repo_seg = image.rsplit("/", 1)[-1].split("@", 1)[0].split(":", 1)[0]
+            # Avoid doubling when the repo basename already carries the
+            # app name (nextcloud + nextcloud-appapi-harp ->
+            # nextcloud-appapi-harp, not nextcloud-nextcloud-appapi-harp).
+            key = repo_seg if repo_seg.startswith(app) else f"{app}-{repo_seg}"
+            base_key = key
+            n = 2
+            while key in seen_keys:
+                key = f"{base_key}-{n}"
+                n += 1
+        seen_keys.add(key)
+        out.append({
+            "key": key, "name": key, "image": image,
+            "enabled": False, "app": app,
+        })
+    return out
+
+
 # ─── Refresh ──────────────────────────────────────────────────────────
 
 # Coalesce concurrent refreshes — the daily timer and an admin
@@ -700,19 +800,19 @@ _refresh_lock = asyncio.Lock()
 
 
 async def refresh_all() -> Dict[str, Dict[str, Any]]:
-    """Refresh upstream tags for every container in the catalog.
-    Returns the freshly-written cache. Drops cache entries for
-    containers no longer present (rule 11 — tolerate format drift /
-    container removal silently)."""
+    """Refresh upstream tags for every entry in the merged catalog —
+    enabled containers AND disabled-app image pins. Returns the freshly-
+    written cache. Drops cache entries for images no longer present
+    (rule 11 — tolerate format drift / removal silently)."""
     async with _refresh_lock:
-        catalog = _read_container_catalog()
+        catalog = _merged_catalog()
         cache: Dict[str, Dict[str, Any]] = {}
         now = int(time.time())
         for entry in catalog:
-            name = entry["name"]
+            key = entry["key"]
             parsed = _parse_image(entry["image"])
             if parsed is None:
-                cache[name] = {
+                cache[key] = {
                     "latest_tag": None,
                     "note": "image string unparseable",
                     "last_checked": now,
@@ -731,7 +831,7 @@ async def refresh_all() -> Dict[str, Dict[str, Any]]:
             advisories: List[Dict[str, Any]] = []
             if parsed["registry"] == "ghcr.io" and parsed["repo"]:
                 advisories = await _fetch_ghsa(parsed["repo"])
-            cache[name] = {
+            cache[key] = {
                 "latest_tag": latest,
                 "note": note,
                 "last_checked": now,
@@ -755,18 +855,25 @@ def _iso_z(epoch_s: Optional[int]) -> Optional[str]:
 
 
 def _build_payload() -> List[Dict[str, Any]]:
-    catalog = _read_container_catalog()
+    catalog = _merged_catalog()
     cache = _read_cache()
     metadata = _read_service_metadata()
 
     out: List[Dict[str, Any]] = []
     for entry in catalog:
+        key = entry["key"]
         name = entry["name"]
-        parsed = _parse_image(entry["image"]) or {
+        image = entry["image"]
+        enabled = entry.get("enabled", True)
+        app = entry.get("app")
+        parsed = _parse_image(image) or {
             "registry": "", "repo": "", "tag": "",
         }
-        meta = metadata.get(name) or {}
-        cache_entry = cache.get(name) or {}
+        # Service metadata is keyed on the service label, which for a
+        # disabled app equals its apps/<app>/ dir name; enabled rows
+        # keep the original container-name lookup.
+        meta = metadata.get(app or "") or metadata.get(name) or {}
+        cache_entry = cache.get(key) or {}
 
         current = parsed.get("tag") or None
         digest = parsed.get("digest") or ""
@@ -829,7 +936,8 @@ def _build_payload() -> List[Dict[str, Any]]:
         out.append({
             "name": name,
             "project_name": meta.get("project-name") or meta.get("name") or name,
-            "image": entry["image"],
+            "image": image,
+            "enabled": enabled,
             "registry": parsed.get("registry") or None,
             "repo": parsed.get("repo") or None,
             "current": current,
@@ -847,7 +955,8 @@ def _build_payload() -> List[Dict[str, Any]]:
     # Stable sort: outdated first (the actionable rows), then unknown
     # (lookup failed — operator may want to investigate), then floating
     # (deliberate choice, informational), then up-to-date. Within each
-    # bucket, by project name.
+    # bucket, enabled apps before disabled (a running app's update is the
+    # more urgent), then by project name.
     status_order = {
         "outdated": 0,
         "unknown": 1,
@@ -857,6 +966,7 @@ def _build_payload() -> List[Dict[str, Any]]:
     }
     out.sort(key=lambda r: (
         status_order.get(r["status"], 5),
+        0 if r.get("enabled", True) else 1,
         (r["project_name"] or "").lower(),
     ))
     return out
