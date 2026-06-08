@@ -99,6 +99,15 @@ _SCP_SSH_RE = re.compile(r"^(?P<user>[^@/]+)@(?P<host>[^:/]+):(?P<path>.+)$")
 
 _INPUT_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
+# A pinned git ref: branch, tag, or commit SHA. The charset is deliberately
+# narrow — the value is interpolated into a double-quoted Nix string in
+# flake.nix (`...url = "...?ref=<ref>";`), so quotes, '$' or whitespace must
+# never appear (a stray `${` would trigger Nix string interpolation).
+_FLAKE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]*$")
+# A full 40-char commit SHA — pinned via `?rev=` (a bare `?ref=` cannot name
+# a commit) rather than `?ref=`.
+_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
 
 class PluginsService:
     """Register/unregister custom flakes and keep /etc/nixos in sync."""
@@ -240,6 +249,13 @@ class PluginsService:
                     "Remote flake URL must be a flake reference "
                     "(e.g. github:owner/repo, git+https://..., gitlab:...)."
                 )
+
+        ref = (entry.get("ref") or "").strip()
+        if ref and not _FLAKE_REF_RE.match(ref):
+            errors.append(
+                "Branch / tag / commit may contain only letters, digits and "
+                "'. _ / + -' (a git branch/tag name or commit SHA)."
+            )
 
         return (len(errors) == 0, errors)
 
@@ -451,11 +467,40 @@ class PluginsService:
         return [f for f in flakes if f.get("enabled", True)]
 
     @staticmethod
+    def _compose_flake_ref(url: str, ref: Optional[str]) -> str:
+        """Pin a flake reference to a branch, tag, or commit. The pin syntax
+        depends on the flake-ref scheme:
+
+          - github:/gitlab:/sourcehut: take the ref as a trailing path
+            segment (`owner/repo/<ref>`), which accepts a branch, tag OR
+            commit.
+          - git+http(s)/ssh/file take query params: `?ref=<branch-or-tag>`,
+            or for a full commit SHA `?rev=<sha>&allRefs=1` — a bare `?ref=`
+            cannot name a commit.
+
+        An empty ref returns the url unchanged; path:/flake:/tarball refs
+        have no ref concept and are returned as-is. Assumes the base url
+        carries no ref already (the UI stores ref separately)."""
+        url = (url or "").strip()
+        ref = (ref or "").strip()
+        if not ref:
+            return url
+        if url.startswith(("github:", "gitlab:", "sourcehut:")):
+            return url.rstrip("/") + "/" + ref
+        if url.startswith(("git+https://", "git+ssh://", "git+http://", "git+file://")):
+            sep = "&" if "?" in url else "?"
+            if _FULL_SHA_RE.match(ref):
+                return f"{url}{sep}rev={ref}&allRefs=1"
+            return f"{url}{sep}ref={ref}"
+        return url
+
+    @staticmethod
     def _render_inputs_region(flakes: List[Dict[str, Any]]) -> str:
         """The text between (and including) the two sentinel lines."""
         lines = [INPUTS_BEGIN]
         for f in PluginsService._enabled(flakes):
-            lines.append(f'    {f["inputName"]}.url = "{f["url"]}";')
+            ref_url = PluginsService._compose_flake_ref(f["url"], f.get("ref"))
+            lines.append(f'    {f["inputName"]}.url = "{ref_url}";')
         lines.append(INPUTS_END)
         return "\n".join(lines)
 
@@ -1108,11 +1153,16 @@ class PluginsService:
         if not input_name and name:
             input_name = PluginsService._slugify_input_name(name)
 
+        # A pinned ref (branch/tag/commit) only applies to remote flakes;
+        # local git+file:// inputs always track their working tree.
+        ref = (entry.get("ref") or "").strip() if ftype == "remote" else ""
+
         normalized = {
             "id": entry.get("id") or uuid.uuid4().hex[:8],
             "name": name,
             "type": ftype,
             "url": url,
+            "ref": ref,
             "inputName": input_name,
             "moduleAttr": (entry.get("moduleAttr") or "default").strip() or "default",
             "enabled": bool(entry.get("enabled", True)),
@@ -1236,6 +1286,8 @@ class PluginsService:
                 "success": False,
                 "message": "Flake entry is missing an inputName or url.",
             }
+        # Follow the pinned ref (branch/tag/commit) when probing upstream.
+        url = PluginsService._compose_flake_ref(url, entry.get("ref"))
 
         locked = PluginsService._read_locked_input(input_name) or {}
         locked_rev = locked.get("rev")

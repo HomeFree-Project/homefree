@@ -969,7 +969,7 @@ class ServicesModule extends LitElement {
     this.loading = true;
     this.error = null;
     this.searchQuery = '';
-    this.sortKey = 'name';
+    this.sortKey = 'status';
     this.sortDir = 'asc';
     this.apiUnavailable = false;
     this.pollInterval = null;
@@ -1570,13 +1570,16 @@ class ServicesModule extends LitElement {
     const childServices = this.getChildServices(service.label);
     const hasChildren = childServices.length > 0;
 
-    // An "external service" is an enabled top-level entry with no systemd
-    // units and no child instances — a reverse-proxy / static-path vhost
-    // configured on the External Proxies page, pointing off-box. It has
-    // no local run-state (systemd reports unknown), so instead of a
-    // meaningless "Unknown" pill we label it "External".
-    const hasUnitsLive = service.systemd_services && service.systemd_services.length > 0;
-    const isExternal = isEnabled && !service.parent && !hasUnitsLive && !hasChildren;
+    // An "external service" is a top-level catalog entry with no systemd
+    // units — a reverse-proxy / static-path vhost configured on the
+    // External Proxies page, pointing off-box. Classifying it is the
+    // backend's job (service.external): the resolver knows each entry's
+    // reverse-proxy host, so it can tell a genuine off-box proxy from an
+    // on-box app whose flake merely omitted systemd-service-names. Trust
+    // that flag instead of re-deriving "external" from "has no live units"
+    // here — the local recompute mislabeled on-box apps (e.g. mosaic) that
+    // forgot to declare their units as "External".
+    const isExternal = service.external === true && isEnabled && !hasChildren;
 
     const statusClass = isExternal
       ? 'external'

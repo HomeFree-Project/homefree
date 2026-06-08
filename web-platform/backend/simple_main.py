@@ -3537,6 +3537,7 @@ class PluginFlakeRequest(BaseModel):
     name: str
     type: str  # "local" | "remote"
     url: str
+    ref: Optional[str] = None  # pin to a branch / tag / commit (remote only)
     inputName: Optional[str] = None
     moduleAttr: Optional[str] = None
     id: Optional[str] = None
@@ -3547,6 +3548,7 @@ class PluginFlakeProbeRequest(BaseModel):
     """Deep-probe a flake URL before registering it."""
     type: str
     url: str
+    ref: Optional[str] = None  # pin to a branch / tag / commit
     moduleAttr: Optional[str] = None
 
 
@@ -3694,6 +3696,9 @@ async def validate_plugin_flake(req: PluginFlakeProbeRequest):
             url = "git+file://" + url
         elif req.type == "remote" and url:
             url = PluginsService._normalize_remote_url(url)
+        # Probe the exact ref the user pinned, so "Validate" verifies the
+        # branch/tag/commit actually exists — not just the default branch.
+        url = PluginsService._compose_flake_ref(url, req.ref)
 
         result = PluginsService.probe_flake(url, req.moduleAttr or "default")
         # Surface the canonical form so the UI can show "interpreted as".

@@ -63,6 +63,9 @@ class PluginsModule extends LitElement {
     editPluginOpen: { type: Boolean, state: true },
     // Substring filter for the installed-plugins list (debounced).
     installedQuery: { type: String, state: true },
+    // True while the "Update All" batch is checking/re-locking every
+    // remote flake — disables the button and flips its label.
+    updatingAll: { type: Boolean, state: true },
     // Add-flake form state.
     formType: { type: String, state: true },
     formName: { type: String, state: true },
@@ -70,6 +73,7 @@ class PluginsModule extends LitElement {
     formInputName: { type: String, state: true },
     formInputNameTouched: { type: Boolean, state: true },
     formModuleAttr: { type: String, state: true },
+    formRef: { type: String, state: true },
     showAdvanced: { type: Boolean, state: true },
     formErrors: { type: Array, state: true },
     saving: { type: Boolean, state: true },
@@ -641,6 +645,7 @@ class PluginsModule extends LitElement {
     this.storeSort = 'name';
     this.editPluginOpen = false;
     this.installedQuery = '';
+    this.updatingAll = false;
     // Debounced search-input handlers, created once so the timers
     // survive re-renders.
     this._storeQueryTimer = 0;
@@ -677,6 +682,7 @@ class PluginsModule extends LitElement {
     this.formInputName = '';
     this.formInputNameTouched = false;
     this.formModuleAttr = 'default';
+    this.formRef = '';
     this.showAdvanced = false;
     this.formErrors = [];
     this.saving = false;
@@ -969,6 +975,7 @@ class PluginsModule extends LitElement {
       this.probeResult = await validatePluginFlake({
         type: this.formType,
         url: this.formUrl,
+        ref: this.formType === 'remote' ? (this.formRef || undefined) : undefined,
         moduleAttr: this.formModuleAttr || 'default',
       });
     } catch (e) {
@@ -990,6 +997,7 @@ class PluginsModule extends LitElement {
         name: this.formName,
         type: this.formType,
         url: this.formUrl,
+        ref: this.formType === 'remote' ? (this.formRef || undefined) : undefined,
         inputName: this.formInputName,
         moduleAttr: this.formModuleAttr || 'default',
         enabled: true,
@@ -1022,6 +1030,7 @@ class PluginsModule extends LitElement {
     this.formInputName = flake.inputName;
     this.formInputNameTouched = true;
     this.formModuleAttr = flake.moduleAttr || 'default';
+    this.formRef = flake.ref || '';
     this.showAdvanced = true;
     this.probeResult = null;
     this.formErrors = [];
@@ -1150,6 +1159,107 @@ class PluginsModule extends LitElement {
       this._bumpUpdateState(flake.id, { state: 'error', error: msg });
       emitSaveStatus(this, 'error', msg);
     }
+  }
+
+  // ---- "Update All" batch -----------------------------------------
+  //
+  // Only ENABLED REMOTE flakes are updatable: local working-tree inputs
+  // auto-re-lock on every Apply, and a disabled remote isn't rendered into
+  // flake.nix's inputs region (so `nix flake update <input>` would fail).
+  _remoteUpdatable() {
+    return (this.flakes || []).filter(
+      (f) => f.type === 'remote' && f.enabled,
+    );
+  }
+
+  // Check every updatable remote flake and re-lock the ones with an update
+  // pending. Reuses the same per-row update-state so each row reflects its
+  // own checking/updating/up-to-date/error step live, then summarises the
+  // batch in the page notice. One re-lock = one flake.lock drift, all of
+  // which surface together under the sidebar Apply's "build inputs changed"
+  // reason — so the operator deploys the whole batch with a single Apply.
+  async _updateAll() {
+    const remotes = this._remoteUpdatable();
+    this.error = '';
+    this.notice = '';
+    if (remotes.length === 0) {
+      this.notice = 'No remote plugins to update — local plugins refresh '
+        + 'automatically on Apply.';
+      return;
+    }
+    this.updatingAll = true;
+    emitSaveStatus(this, 'saving');
+    let updated = 0;
+    let upToDate = 0;
+    let failed = 0;
+    try {
+      for (const f of remotes) {
+        this._bumpUpdateState(f.id, { state: 'checking', error: '' });
+        let check;
+        try {
+          check = await checkPluginFlakeUpdate(f.id);
+        } catch (e) {
+          failed += 1;
+          this._bumpUpdateState(f.id, {
+            state: 'error',
+            error: this._updateErrorMessage(e, 'Could not check for updates.'),
+          });
+          continue;
+        }
+        if (!check.updateAvailable) {
+          upToDate += 1;
+          this._bumpUpdateState(f.id, { state: 'up-to-date' });
+          continue;
+        }
+        this._bumpUpdateState(f.id, { state: 'updating', error: '' });
+        try {
+          const result = await updatePluginFlake(f.id);
+          updated += 1;
+          this._bumpUpdateState(f.id, {
+            state: 'updated',
+            oldRev: result.oldRev,
+            newRev: result.newRev,
+            message: result.message || 'Updated — click Apply to deploy.',
+          });
+        } catch (e) {
+          failed += 1;
+          this._bumpUpdateState(f.id, {
+            state: 'error',
+            error: this._updateErrorMessage(e, 'Failed to update flake.'),
+          });
+        }
+      }
+    } finally {
+      this.updatingAll = false;
+    }
+
+    const parts = [];
+    if (updated > 0) parts.push(`updated ${updated} plugin${updated === 1 ? '' : 's'}`);
+    if (upToDate > 0) parts.push(`${upToDate} already up to date`);
+    if (failed > 0) parts.push(`${failed} failed`);
+    const summary = parts.join(', ');
+    if (updated > 0) {
+      this.notice = `${summary}. Click Apply in the sidebar to deploy.`;
+      // The flake.lock drift surfaces as 'build inputs changed' — nudge the
+      // shell so the sidebar Apply button enables immediately.
+      this._notifyDirty();
+      emitSaveStatus(this, 'saved');
+    } else if (failed > 0) {
+      this.error = `Update All: ${summary}.`;
+      emitSaveStatus(this, 'error', this.error);
+    } else {
+      this.notice = 'All remote plugins are already up to date.';
+      emitSaveStatus(this, 'idle');
+    }
+  }
+
+  // Pull the most specific message out of a fetchAPI error (the backend
+  // returns { message } / { detail } on 400/404), falling back to a default.
+  _updateErrorMessage(e, fallback) {
+    return (e.body && e.body.message)
+      || (e.body && e.body.detail)
+      || e.message
+      || fallback;
   }
 
   // Modal body: search/sort applied to the cached directory entries.
@@ -1378,6 +1488,23 @@ class PluginsModule extends LitElement {
         </span>
       </label>
 
+      ${this.formType === 'remote' ? html`
+        <label class="field">
+          <span class="lbl">Branch / tag / commit (optional)</span>
+          <input
+            type="text"
+            .value=${this.formRef}
+            placeholder="e.g. main, v1.2.3, fix/my-branch, or a commit SHA"
+            @input=${(e) => { this.formRef = e.target.value; }}
+          />
+          <span class="hint">
+            Pin the flake to a specific branch, tag, or commit — handy for
+            testing a PR branch before it is merged. Leave blank to track the
+            repository default branch.
+          </span>
+        </label>
+      ` : ''}
+
       <button class="advanced-toggle" @click=${() => { this.showAdvanced = !this.showAdvanced; }}>
         ${this.showAdvanced ? '▾ Hide advanced' : '▸ Advanced'}
       </button>
@@ -1466,7 +1593,7 @@ class PluginsModule extends LitElement {
               ` : ''}
               ${f.enabled ? '' : html`<span class="sub">— disabled</span>`}
             </div>
-            <div class="url">${f.url}</div>
+            <div class="url">${f.url}${f.ref ? ' @ ' + f.ref : ''}</div>
             <div class="sub">input: ${f.inputName} · module: ${f.moduleAttr || 'default'}</div>
           </div>
           <label class="toggle-switch">
@@ -1573,6 +1700,13 @@ class PluginsModule extends LitElement {
         <div class="installed-header">
           <h3>Installed plugins</h3>
           <div class="actions">
+            ${this._remoteUpdatable().length > 0 ? html`
+              <button class="btn btn-icon"
+                ?disabled=${this.updatingAll}
+                @click=${() => this._updateAll()}
+                title="Check every remote plugin for updates and re-lock the ones that have one"
+              >${actionIcon('updates')}<span>${this.updatingAll ? 'Updating…' : 'Update All'}</span></button>
+            ` : ''}
             <button class="btn btn-icon"
               @click=${() => this._openAddPlugin()}
               title="Register a flake by URL or path"

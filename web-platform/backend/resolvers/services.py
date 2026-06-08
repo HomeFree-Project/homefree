@@ -503,6 +503,8 @@ class ServicesResolver:
         Aggregate semantics (the part that drives the colored dot —
         computed over the collapsed list):
         - All units active+running  -> ("active", "running")     -> green "Running"
+          (a successful Type=oneshot RemainAfterExit unit reports
+          "active/exited" and counts as healthy here, same as "active/running")
         - Some active, some not     -> ("active", "degraded")    -> yellow "Degraded"
         - All units failed          -> ("failed", "failed")      -> red "Failed"
         - All units inactive/dead   -> ("inactive", "dead")      -> grey "Stopped"
@@ -564,7 +566,12 @@ class ServicesResolver:
         # permanent "degraded". Standalone units pass through unchanged.
         agg_input = _collapse_blue_green(unit_states)
 
-        running = [u for u in agg_input if u.active_state == "active" and u.sub_state == "running"]
+        # "active/exited" is a *successful* Type=oneshot + RemainAfterExit unit
+        # (e.g. an SSO-provisioning oneshot). It has done its job and is healthy
+        # — count it as running so a finished oneshot doesn't drag an otherwise-up
+        # app to "degraded". A *failed* oneshot reports active_state="failed", not
+        # "active/exited", so this stays correct.
+        running = [u for u in agg_input if u.active_state == "active" and u.sub_state in ("running", "exited")]
         failed = [u for u in agg_input if u.active_state == "failed"]
         starting = [u for u in agg_input if u.active_state in ("activating", "reloading") or u.sub_state == "start"]
         # "Not running" = anything that isn't healthy: inactive, failed, unknown, etc.
