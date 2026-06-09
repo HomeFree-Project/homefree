@@ -270,6 +270,21 @@ in
   };
 
   config = {
+    homefree.sso.clients = [
+      {
+        svc = "forgejo";
+        internal_name = "homefree-forgejo";
+        app_type = "OIDC_APP_TYPE_WEB";
+        auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+        response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+        grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+        redirect_uris = [ "https://git.${domain}/user/oauth2/Zitadel/callback" ];
+        post_logout_uris = [ "https://git.${domain}/" ];
+        needs_pat = false;
+        post_restart_units = [ "podman-forgejo.service" ];
+      }
+    ];
+
     environment.systemPackages = [
       ## Installs "forgejo" executable
       pkgs.forgejo
