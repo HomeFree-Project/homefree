@@ -220,119 +220,126 @@ in
     ];
   };
 
+  ## Two containers via the app-platform primitive (modules/app-platform.nix):
+  ## dns-ready units are generated; meilisearch is ordered before linkwarden
+  ## via dependsOn. Both run as root (no stable uid in either upstream image).
+  ## Both share the same preStart body (preStartInit) — the shared script
+  ## handles mkdirs, CA-bundle synthesis, secret anchoring, and env files for
+  ## both containers. caBundle=false because the CA bundle synthesis and the
+  ## NODE_EXTRA_CA_CERTS env/volume are declared explicitly here (the
+  ## meilisearch container has no CA bundle at all).
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
-    linkwarden = {
-      image = "ghcr.io/linkwarden/linkwarden:${version}";
+  homefree.containers.linkwarden = lib.mkIf config.homefree.service-options.linkwarden.enable {
+    image = "ghcr.io/linkwarden/linkwarden:${version}";
 
-      dependsOn = [
-        "meilisearch"
-      ];
+    ## SKIPPED Phase 3 non-root pass: the Next.js image runs as root with
+    ## no stable uid; the container's user management is internal to Next.js.
+    runAs = { mode = "root"; reason = "upstream image has no stable uid for rootless pinning"; };
 
-      autoStart = true;
+    ## dataDir=null + caBundle=false: all mkdir/CA-bundle/anchor logic lives
+    ## in preStartInit (shared with meilisearch). The CA bundle is synthesized
+    ## to containerDataPath/ca-bundle.crt and mounted below; NODE_EXTRA_CA_CERTS
+    ## env is set explicitly (not via the caBundle generated path).
+    dataDir = null;
+    caBundle = false;
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    dependsOn = [ "meilisearch" ];
 
-      ports = [
-        "0.0.0.0:${toString port}:3000"
-      ];
+    ports = [
+      "0.0.0.0:${toString port}:3000"
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/linkwarden:/data/data"
-        "/run/postgresql:/run/postgresql"
-        ## Mount the synthesized CA bundle (Caddy local CA + system
-        ## roots) so Node's HTTP client trusts sso.<domain>.
-        "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/linkwarden:/data/data"
+      "/run/postgresql:/run/postgresql"
+      ## Mount the synthesized CA bundle (Caddy local CA + system
+      ## roots) so Node's HTTP client trusts sso.<domain>.
+      "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        ## DATABASE_URL is synthesised into runtime.env by preStart so
-        ## the anchored db-password can be embedded at runtime.
-        ## NextAuth needs its absolute base URL to construct the
-        ## redirect_uri it registers with Zitadel. /api/v1/auth is
-        ## Linkwarden's NextAuth mount point — same for all providers.
-        NEXTAUTH_URL = "https://linkwarden.${domain}/api/v1/auth";
-        ## Caddy terminates TLS upstream of Linkwarden — the actual
-        ## request to the container is plain HTTP. Without
-        ## AUTH_TRUST_HOST=true, NextAuth ignores the
-        ## X-Forwarded-Proto/Host headers Caddy sets and treats the
-        ## incoming request as http://10.1.2.1:3005. That mismatch
-        ## between what NextAuth thinks the origin is on the initial
-        ## redirect (http) and what it thinks on the callback (also
-        ## http but the browser is on https) breaks the __Secure-
-        ## prefixed state cookie — the symptom is "State cookie was
-        ## missing" + error=OAuthCallback on every SSO attempt.
-        AUTH_TRUST_HOST = "true";
-        ## Node honors NODE_EXTRA_CA_CERTS to append CAs to its
-        ## bundled root store — required so OIDC discovery against
-        ## Caddy's local-CA-issued sso.<domain> cert validates.
-        NODE_EXTRA_CA_CERTS = "/etc/ssl/homefree-ca-bundle.crt";
-        ## Full-text search backend. Linkwarden reaches the meilisearch
-        ## sidecar by container name over the shared podman network
-        ## (aardvark-dns resolves 'meilisearch'), the same sibling-by-name
-        ## pattern immich uses (REDIS_HOSTNAME=immich-redis). dependsOn
-        ## below guarantees the engine is up first. The matching
-        ## MEILI_MASTER_KEY is carried in runtime.env (anchored).
-        MEILI_HOST = "http://meilisearch:7700";
-      };
-
-      ## runtime.env carries the persistent NEXTAUTH_SECRET; sso.env
-      ## carries the Zitadel client + feature flags (empty until
-      ## zitadel-provision lands the secrets).
-      environmentFiles = [ baseEnvFile ssoEnvFile ]
-        ++ lib.optional
-          (config.homefree.service-options.linkwarden.secrets.environment or null != null)
-          config.homefree.service-options.linkwarden.secrets.environment;
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      ## DATABASE_URL is synthesised into runtime.env by preStart so
+      ## the anchored db-password can be embedded at runtime.
+      ## NextAuth needs its absolute base URL to construct the
+      ## redirect_uri it registers with Zitadel. /api/v1/auth is
+      ## Linkwarden's NextAuth mount point — same for all providers.
+      NEXTAUTH_URL = "https://linkwarden.${domain}/api/v1/auth";
+      ## Caddy terminates TLS upstream of Linkwarden — the actual
+      ## request to the container is plain HTTP. Without
+      ## AUTH_TRUST_HOST=true, NextAuth ignores the
+      ## X-Forwarded-Proto/Host headers Caddy sets and treats the
+      ## incoming request as http://10.1.2.1:3005. That mismatch
+      ## between what NextAuth thinks the origin is on the initial
+      ## redirect (http) and what it thinks on the callback (also
+      ## http but the browser is on https) breaks the __Secure-
+      ## prefixed state cookie — the symptom is "State cookie was
+      ## missing" + error=OAuthCallback on every SSO attempt.
+      AUTH_TRUST_HOST = "true";
+      ## Node honors NODE_EXTRA_CA_CERTS to append CAs to its
+      ## bundled root store — required so OIDC discovery against
+      ## Caddy's local-CA-issued sso.<domain> cert validates.
+      NODE_EXTRA_CA_CERTS = "/etc/ssl/homefree-ca-bundle.crt";
+      ## Full-text search backend. Linkwarden reaches the meilisearch
+      ## sidecar by container name over the shared podman network
+      ## (aardvark-dns resolves 'meilisearch'), the same sibling-by-name
+      ## pattern immich uses (REDIS_HOSTNAME=immich-redis). dependsOn
+      ## above guarantees the engine is up first. The matching
+      ## MEILI_MASTER_KEY is carried in runtime.env (anchored).
+      MEILI_HOST = "http://meilisearch:7700";
     };
 
-    meilisearch = {
-      image = "getmeili/meilisearch:${version-meili}";
+    ## runtime.env carries the persistent NEXTAUTH_SECRET; sso.env
+    ## carries the Zitadel client + feature flags (empty until
+    ## zitadel-provision lands the secrets).
+    environmentFiles = [ baseEnvFile ssoEnvFile ]
+      ++ lib.optional
+        (config.homefree.service-options.linkwarden.secrets.environment or null != null)
+        config.homefree.service-options.linkwarden.secrets.environment;
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/meili:/meili_data"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
-
-      ## MEILI_MASTER_KEY (anchored, shared with Linkwarden) is written
-      ## to meili.env by the shared preStart. Enables API-key auth so
-      ## the engine is not an open endpoint on the podman network.
-      environmentFiles = [ meiliEnvFile ];
-    };
-
+    ## Shared preStart: mkdirs, CA-bundle synthesis, secret anchoring,
+    ## and env-file synthesis for both linkwarden and meilisearch.
+    preStartInit = preStart;
   };
 
+  homefree.containers.meilisearch = lib.mkIf config.homefree.service-options.linkwarden.enable {
+    image = "getmeili/meilisearch:${version-meili}";
+
+    ## SKIPPED Phase 3 non-root pass: the meilisearch image's process runs
+    ## as root with no uid option exposed.
+    runAs = { mode = "root"; reason = "upstream image exposes no uid option for rootless pinning"; };
+
+    dataDir = null;
+    caBundle = false;
+
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/meili:/meili_data"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
+    };
+
+    ## MEILI_MASTER_KEY (anchored, shared with Linkwarden) is written
+    ## to meili.env by the shared preStart. Enables API-key auth so
+    ## the engine is not an open endpoint on the podman network.
+    environmentFiles = [ meiliEnvFile ];
+
+    ## Same preStart body as linkwarden: handles both containers' env files
+    ## (meili.env is written here alongside the linkwarden env files).
+    preStartInit = preStart;
+  };
+
+  ## PostgreSQL ordering for linkwarden — merges with the dns-ready
+  ## after/wants the app-platform generates.
   systemd.services.podman-linkwarden = lib.mkIf config.homefree.service-options.linkwarden.enable {
-    after = [ "dns-ready.service" "postgresql.service" ];
-    wants = [ "dns-ready.service" ];
     ## Re-bind /run/postgresql when postgres restarts — without
     ## partOf the container's existing mount is orphaned and DB
     ## queries fail with ENOENT. Same pattern as nextcloud/freshrss.
+    after = [ "postgresql.service" ];
     partOf = [ "postgresql.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "linkwarden-prestart" preStart}" ];
-    };
-  };
-
-  systemd.services.podman-meilisearch = lib.mkIf config.homefree.service-options.linkwarden.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "meili-prestart" preStart}" ];
-    };
   };
 
     homefree.service-config = [{
