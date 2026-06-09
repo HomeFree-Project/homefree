@@ -207,6 +207,35 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional, consumed by
+    ## apps/zitadel/provision.nix via homefree.sso.resolved-clients.
+    homefree.sso.clients = [{
+      svc = "linkwarden";
+      internal_name = "homefree-linkwarden";
+      ## Linkwarden is a Next.js + NextAuth app — confidential client
+      ## (authcode + secret), all OIDC handling server-side.
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Linkwarden v2.x has a known NextAuth basePath bug
+      ## (linkwarden/linkwarden#1422): NEXTAUTH_URL is
+      ## https://<host>/api/v1/auth but the SDK builds the outgoing
+      ## redirect_uri against the NextAuth default
+      ## /api/auth/callback/<provider> — ignoring the /v1 segment.
+      ## We register the URI Linkwarden actually sends so Zitadel
+      ## accepts the request; Caddy then rewrites the inbound callback
+      ## from /api/auth/... to /api/v1/auth/... so it reaches the real
+      ## NextAuth handler (the no-v1 path is a hard 404).
+      redirect_uris = [
+        "https://linkwarden.${domain}/api/auth/callback/zitadel"
+        "https://links.${domain}/api/auth/callback/zitadel"
+      ];
+      post_logout_uris = [ "https://links.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-linkwarden.service" ];
+    }];
+
   ## Copied from nixpkgs
   services.postgresql = lib.optionalAttrs config.homefree.service-options.linkwarden.enable {
     enable = true;
