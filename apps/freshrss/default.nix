@@ -307,69 +307,87 @@ in
   };
 
   config = {
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
-      freshrss = {
-        ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
-        ## entrypoint does extensive root-only setup on every start —
-        ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
-        ## ini files under /etc/php/, runs a2enmod for
-        ## mod_auth_openidc, drops a cron PID file under /var/run,
-        ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
-        ## every one of those fails and the container exits 1. The
-        ## image is fundamentally root-in-container; making it
-        ## non-root requires either a custom image build or
-        ## --userns=keep-id with a host-side UID matching the
-        ## image's expected www-data uid.
-        image = "${image}:${version}";
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit is generated. The CA bundle is mounted manually
+    ## (over the Debian system path /etc/ssl/certs/ca-certificates.crt, not the
+    ## default homefree path) so caBundle=false and the full preStart goes in
+    ## preStartInit. The ExecStartPost (SSO migration) and postgresql ordering
+    ## stay in a separate systemd.services.podman-freshrss merge below.
+    homefree.containers.freshrss = lib.mkIf config.homefree.service-options.freshrss.enable {
+      ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
+      ## entrypoint does extensive root-only setup on every start —
+      ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
+      ## ini files under /etc/php/, runs a2enmod for
+      ## mod_auth_openidc, drops a cron PID file under /var/run,
+      ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
+      ## every one of those fails and the container exits 1. The
+      ## image is fundamentally root-in-container; making it
+      ## non-root requires either a custom image build or
+      ## --userns=keep-id with a host-side UID matching the
+      ## image's expected www-data uid.
+      runAs = { mode = "root"; reason = "image entrypoint does root-only Apache/PHP setup and chowns /var/www/FreshRSS; non-root uid breaks startup"; };
+      image = "${image}:${version}";
 
-        autoStart = true;
+      ## dataDir=null + caBundle=false: the CA bundle is written into
+      ## containerDataPath/ca-bundle.crt by preStartInit and mounted over
+      ## /etc/ssl/certs/ca-certificates.crt (the Debian system bundle path
+      ## that mod_auth_openidc's libcurl reads). The standard homefree CA-bundle
+      ## path + SSL_CERT_FILE env would not reach libcurl.
+      dataDir = null;
+      caBundle = false;
 
-        extraOptions = [
-          # "--pull=always"
-        ];
+      ports = [
+        "0.0.0.0:${toString port}:80"
+      ];
 
-        ports = [
-          "0.0.0.0:${toString port}:80"
-        ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}/data:/var/www/FreshRSS/data"
+        "${containerDataPath}/extensions:/var/www/FreshRSS/extensions"
+        ## Bind-mount the host's postgres socket so FreshRSS can
+        ## connect as unix:/run/postgresql instead of TCP. Avoids
+        ## the missing pg_hba entry for the container's veth IP.
+        "/run/postgresql:/run/postgresql"
+        ## mod_auth_openidc uses libcurl, which on Debian honors
+        ## /etc/ssl/certs/ca-certificates.crt — mount our combined
+        ## bundle (system + Caddy local CA) on top so OIDC discovery
+        ## against sso.<domain> validates.
+        "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
+      ];
 
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}/data:/var/www/FreshRSS/data"
-          "${containerDataPath}/extensions:/var/www/FreshRSS/extensions"
-          ## Bind-mount the host's postgres socket so FreshRSS can
-          ## connect as unix:/run/postgresql instead of TCP. Avoids
-          ## the missing pg_hba entry for the container's veth IP.
-          "/run/postgresql:/run/postgresql"
-          ## mod_auth_openidc uses libcurl, which on Debian honors
-          ## /etc/ssl/certs/ca-certificates.crt — mount our combined
-          ## bundle (system + Caddy local CA) on top so OIDC discovery
-          ## against sso.<domain> validates.
-          "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
-        ];
-
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          FRESHRSS_ENV = "development";
-          SERVER_DNS = "freshrss.${domain}";
-          CRON_MIN = "1,31";
-          ## FRESHRSS_INSTALL and FRESHRSS_USER are synthesised into
-          ## runtime.env by preStart, carrying the anchored admin
-          ## password + Fever API password. They are consumed by the
-          ## FreshRSS image's first-install code path only (after
-          ## install, FreshRSS reads config.php and ignores them).
-          ## See the let-binding ADMIN_EMAIL above for how the email
-          ## comes from instance config.
-        };
-
-        ## runtime.env: FRESHRSS_INSTALL + FRESHRSS_USER (anchored
-        ## passwords). ssoEnvFile: OIDC_* synthesized when Zitadel
-        ## has provisioned the OIDC client. Pre-provisioning,
-        ## ssoEnvFile is empty so OIDC_ENABLED defaults to undefined
-        ## and the Apache <IfDefine OIDC_ENABLED> block is inert.
-        environmentFiles = [ runtimeEnvFile ssoEnvFile ];
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        FRESHRSS_ENV = "development";
+        SERVER_DNS = "freshrss.${domain}";
+        CRON_MIN = "1,31";
+        ## FRESHRSS_INSTALL and FRESHRSS_USER are synthesised into
+        ## runtime.env by preStart, carrying the anchored admin
+        ## password + Fever API password. They are consumed by the
+        ## FreshRSS image's first-install code path only (after
+        ## install, FreshRSS reads config.php and ignores them).
+        ## See the let-binding ADMIN_EMAIL above for how the email
+        ## comes from instance config.
       };
+
+      ## runtime.env: FRESHRSS_INSTALL + FRESHRSS_USER (anchored
+      ## passwords). ssoEnvFile: OIDC_* synthesized when Zitadel
+      ## has provisioned the OIDC client. Pre-provisioning,
+      ## ssoEnvFile is empty so OIDC_ENABLED defaults to undefined
+      ## and the Apache <IfDefine OIDC_ENABLED> block is inert.
+      environmentFiles = [ runtimeEnvFile ssoEnvFile ];
+
+      ## Full preStart body: mkdir, postgres bootstrap, CA-bundle synthesis,
+      ## secret anchoring, runtime.env + sso.env synthesis. All handled here
+      ## since caBundle=false (non-standard mount path) and dataDir=null.
+      preStartInit = preStart;
     };
 
+    ## PostgreSQL ordering + ExecStartPost (SSO migration). These MERGE
+    ## with the dns-ready after/wants the app-platform generates for
+    ## podman-freshrss. The ExecStartPost is NOT part of homefree.containers
+    ## (the platform only generates ExecStartPre); it stays here so the
+    ## service-restart-policy module and the platform-generated unit both see
+    ## it merged into the same podman-freshrss unit.
     systemd.services.podman-freshrss = lib.mkIf config.homefree.service-options.freshrss.enable {
       ## FreshRSS connects to PostgreSQL over the host's
       ## /run/postgresql socket, bind-mounted into the container. A
@@ -379,12 +397,10 @@ in
       ## fails with "No such file or directory". `partOf` makes a
       ## PostgreSQL restart cascade a FreshRSS restart, re-binding the
       ## current /run/postgresql.
-      after = [ "dns-ready.service" "postgresql.service" ];
+      after = [ "postgresql.service" ];
       requires = [ "postgresql.service" ];
-      wants = [ "dns-ready.service" ];
       partOf = [ "postgresql.service" ];
       serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "freshrss-prestart" preStart}" ];
         ExecStartPost = [ "!${pkgs.writeShellScript "freshrss-poststart" postStart}" ];
       };
     };
