@@ -275,8 +275,13 @@ in
       pkgs.forgejo
     ];
 
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.forgejo.enable {
-    forgejo = {
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit is generated. The CA bundle is mounted manually
+    ## over the Alpine system path /etc/ssl/certs/ca-certificates.crt (not the
+    ## default homefree path), so caBundle=false and the full preStart goes in
+    ## preStartInit. The ExecStartPost (Zitadel auth-source registration) stays
+    ## in a separate systemd.services.podman-forgejo merge below.
+    homefree.containers.forgejo = lib.mkIf config.homefree.service-options.forgejo.enable {
       ## SKIPPED Phase 3 non-root pass: this image uses s6-overlay
       ## as its init system, which requires root inside the
       ## container (it manages the `git` worker user, sockets,
@@ -299,13 +304,17 @@ in
       ## Today the forgejo *worker process* (where any RCE lands)
       ## already runs as UID 1000 inside the container; only the s6
       ## supervisor is root.
+      runAs = { mode = "root"; reason = "image uses s6-overlay init which requires root inside the container; worker process already runs as uid 1000"; };
       image = "codeberg.org/forgejo/forgejo:${version}";
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
+      ## dataDir=null + caBundle=false: the CA bundle is written into
+      ## containerDataPath/ca-bundle.crt by preStartInit and mounted over
+      ## /etc/ssl/certs/ca-certificates.crt (the Alpine system bundle path that
+      ## `forgejo admin auth add-oauth` + the OIDC discovery fetch read). The
+      ## standard homefree CA-bundle path + SSL_CERT_FILE env would not be
+      ## consulted by the Go x509 system-roots loader.
+      dataDir = null;
+      caBundle = false;
 
       ports = [
         "0.0.0.0:${toString port}:${toString port}"
@@ -454,17 +463,26 @@ in
         # FORGEJO__database__USER = "forgejo";
         # FORGEJO__database__PASSWD = "forgejo";
       };
-    };
-  };
 
-    systemd.services.podman-forgejo = lib.mkIf config.homefree.service-options.forgejo.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "forgejo-prestart" preStart}" ];
-      ExecStartPost = [ "!${postStart}" ];
+      ## Full preStart body: mkdir data+secrets dirs, anchor the three
+      ## install-wizard-bypass secrets, synthesise the CA bundle. All handled
+      ## here since caBundle=false (non-standard mount path) and dataDir=null
+      ## (the data dir is created by this script, no generated mkdir/chown).
+      preStartInit = preStart;
     };
-  };
+
+    ## ExecStartPost (Zitadel auth-source registration). This MERGES with the
+    ## dns-ready after/wants the app-platform generates for podman-forgejo. The
+    ## ExecStartPost is NOT part of homefree.containers (the platform only
+    ## generates ExecStartPre); it stays here so the service-restart-policy
+    ## module and the platform-generated unit both see it merged into the same
+    ## podman-forgejo unit. zitadel-provision.service restarts podman-forgejo
+    ## when it writes the OIDC secrets, which triggers first-time registration.
+    systemd.services.podman-forgejo = lib.mkIf config.homefree.service-options.forgejo.enable {
+      serviceConfig = {
+        ExecStartPost = [ "!${postStart}" ];
+      };
+    };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.forgejo) label name project-name;
