@@ -57,40 +57,43 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.joplin.enable {
-    joplin = {
-      image = "joplin/server:${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## Joplin has no preStart — no dataDir, no preStartInit. The dns-ready
+  ## podman unit ordering is generated; the postgresql ordering is added
+  ## via a separate systemd.services entry below.
+  homefree.containers.joplin = lib.mkIf config.homefree.service-options.joplin.enable {
+    ## joplin/server image runs as root internally (no non-root mode).
+    runAs = {
+      mode = "root";
+      reason = "joplin/server image runs as root internally; no non-root mode exposed";
+    };
+    image = "joplin/server:${version}";
 
-      autoStart = true;
+    ports = [
+      "0.0.0.0:${toString port}:22300"
+    ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "/run/postgresql:/run/postgresql"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:22300"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/postgresql:/run/postgresql"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        DB_CLIENT = "pg";
-        POSTGRES_DATABASE = database-name;
-        POSTGRES_USER = database-user;
-        POSTGRES_PORT = "5432";
-        POSTGRES_HOST = "/run/postgresql";
-        APP_BASE_URL = "https://joplin.${config.homefree.system.domain}";
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      DB_CLIENT = "pg";
+      POSTGRES_DATABASE = database-name;
+      POSTGRES_USER = database-user;
+      POSTGRES_PORT = "5432";
+      POSTGRES_HOST = "/run/postgresql";
+      APP_BASE_URL = "https://joplin.${config.homefree.system.domain}";
     };
   };
 
+  ## Extra ordering for the postgresql dependency, merged with the
+  ## generated dns-ready ordering from the primitive. The partOf
+  ## re-binds /run/postgresql when postgres restarts (socket orphan fix).
   systemd.services.podman-joplin = lib.mkIf config.homefree.service-options.joplin.enable {
-    after = [ "dns-ready.service" "postgresql.service" ];
-    wants = [ "dns-ready.service" ];
+    after = [ "postgresql.service" ];
     ## The container bind-mounts /run/postgresql into itself for
     ## socket DB access. /run/postgresql is owned by postgresql's
     ## RuntimeDirectory and gets a fresh inode every time postgresql
@@ -150,4 +153,3 @@ in
     }];
   };
 }
-
