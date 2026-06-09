@@ -152,6 +152,70 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
             cls._dev_mode_cache = os.environ.get("HOMEFREE_DEVELOPMENT") == "1"
         return cls._dev_mode_cache
 
+    ## Where Caddy's ACME storage keeps issued certs. Same path the
+    ## @sso_gate / certRedirect globs in services/caddy/default.nix peek
+    ## at. The `*` covers the ACME CA directory name (LE prod/staging,
+    ## ZeroSSL) — any of them.
+    CADDY_CERT_GLOB = (
+        "/var/lib/caddy/.local/share/caddy/certificates/*/{host}/{host}.crt"
+    )
+    ## System domain, read once from the on-disk config. Fixed for the
+    ## life of the process (changing it requires a rebuild → restart).
+    HOMEFREE_CONFIG_FILE = Path("/etc/nixos/homefree-config.json")
+    _domain_cache = None
+
+    @classmethod
+    def _domain(cls) -> str:
+        if cls._domain_cache is None:
+            try:
+                import json
+                cfg = json.loads(cls.HOMEFREE_CONFIG_FILE.read_text())
+                cls._domain_cache = cfg["system"]["domain"]
+            except Exception:
+                cls._domain_cache = ""
+        return cls._domain_cache
+
+    @classmethod
+    def _sso_gate_cert_present(cls, request: Request) -> bool:
+        """Mirror the cert clause of services/caddy/default.nix's
+        @sso_gate matcher.
+
+        Caddy only runs the SSO `forward_auth` (and thus only sets the
+        X-Auth-Request-* headers) once a TLS cert exists for the vhost's
+        canonical HTTPS host. Until then it serves the site open on plain
+        HTTP on the LAN — SSO over OIDC fundamentally needs a working
+        HTTPS auth.<domain>, so enforcing the gate before any cert lands
+        would just 502 and lock the operator out.
+
+        The backend MUST match that decision. If it didn't, then in the
+        no-cert window Caddy would forward an unauthenticated request
+        (no header) while this middleware rejected it with
+        "missing X-Auth-Request-User" — exactly the breakage this guards
+        against. We check the SAME glob, keyed on the SAME canonical host
+        Caddy uses, at request time (no caching) so enforcement flips on
+        the instant the cert lands, no restart.
+
+        admin-api backs two SSO-gated vhosts — admin.<domain> and
+        home.<domain> — and each Caddy gate keys on its OWN canonical
+        host's cert. A request to home.<domain> resolves to the home
+        cert; everything else (admin.<domain>, the bare LAN IP,
+        http.<localDomain>) is served by the admin vhost, whose gate
+        keys on admin.<domain>.
+
+        Returns True (cert present → enforce) when the domain can't be
+        determined, so a fully-provisioned box never silently opens — the
+        config file always exists post-setup.
+        """
+        import glob
+        domain = cls._domain()
+        if not domain:
+            return True
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        canonical = (
+            f"home.{domain}" if host == f"home.{domain}" else f"admin.{domain}"
+        )
+        return bool(glob.glob(cls.CADDY_CERT_GLOB.format(host=canonical)))
+
     ## Stale-claim recovery cache for _live_admin_lookup().
     ##
     ## Maps username → (is_admin: bool, expires_at: monotonic float).
@@ -294,6 +358,20 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         # mode, so this never relaxes a real deployment — and admin-api
         # listens on loopback only regardless.
         if self._is_dev_mode():
+            return await call_next(request)
+
+        # TLS-cert gate parity with Caddy's @sso_gate. Caddy skips its
+        # SSO forward_auth — and therefore never sets X-Auth-Request-* —
+        # until the canonical host's cert is issued, serving the site
+        # open on plain HTTP in the meantime (SSO over OIDC needs a
+        # working HTTPS auth.<domain>). Mirror that here: while the cert
+        # is absent the whole admin UI + API stays open, exactly as the
+        # gate intends. Without this the static shell loads but every
+        # /api/* call 401s with "missing X-Auth-Request-User", because
+        # Caddy forwarded it through unauthenticated. Checked per request
+        # (like Caddy's CEL file()), so enforcement turns on the instant
+        # the cert lands — no restart.
+        if not self._sso_gate_cert_present(request):
             return await call_next(request)
 
         user = request.headers.get(self.USER_HEADER) \

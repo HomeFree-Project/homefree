@@ -563,8 +563,17 @@ in
         ## has no canonical HTTPS host, which leaves the sentinel-only gate
         ## unchanged for HTTP-only services. AND-ed into the @sso_gate
         ## condition in BOTH the static-path and reverse-proxy branches below.
+        ## NOTE: `"root": "/"` is REQUIRED. Caddy's file() matcher joins
+        ## try_files against the matcher root (default is the site's
+        ## document root / cwd, NOT /), so without an explicit "/" root
+        ## the absolute cert path resolves relative to the wrong base and
+        ## NEVER matches — silently making @sso_gate false, skipping the
+        ## SSO forward_auth, and 401-ing every /api/* call with
+        ## "missing X-Auth-Request-User". The two sentinel file() checks
+        ## in the @sso_gate expression already set "root": "/"; this MUST
+        ## match them. (The `*` glob over the ACME CA dir works fine.)
         ssoGateCertClause = lib.optionalString (canonicalHttpsHost != "")
-          '' && file({"try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})'';
+          '' && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})'';
 
         ## HTTP-until-cert behaviour: while this service has no issued TLS
         ## cert, its http:// URLs serve the app directly (so a fresh box is
@@ -612,7 +621,7 @@ in
           ## gate. `file()` returns true if ANY listed path exists; we call
           ## it twice and AND the results, and the cert path uses a glob to
           ## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
-          @http_redirect_https expression {http.request.scheme} == "http" && file({"try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})
+          @http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})
           redir @http_redirect_https https://${canonicalHttpsHost}{uri} 301
         '';
 
@@ -902,7 +911,7 @@ in
             ## We can't use two `file` matchers in one set — repeated
             ## matchers of a type conflict — hence the expression.
             @sso_gate {
-              expression `file({"try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})${ssoGateCertClause}`
+              expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})${ssoGateCertClause}`
               ${if reverse-proxy-config.dav-bypass or false then ''
                 ## DAV bypass: skip the SSO gate for traffic that
                 ## clearly comes from a CalDAV/CardDAV client. Two
