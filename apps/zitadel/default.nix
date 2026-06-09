@@ -1,13 +1,13 @@
 { config, lib, pkgs, ... }:
 
-## Default username: <adminUsername> (no orgdomain suffix — the
+## Default username: <adminUsername> (no orgdomain suffix -- the
 ## zitadel-provision oneshot disables `userLoginMustBeDomain` on first run)
 ## Default password: pulled from /var/lib/homefree-secrets/zitadel/admin-password
 ## (written by the web installer in the same step that hashes the OS
 ## password for /etc/shadow).
 ##
 ## This module bundles Zitadel together with its companion oauth2-proxy.
-## The two are always deployed as a pair — oauth2-proxy is the OIDC bridge
+## The two are always deployed as a pair -- oauth2-proxy is the OIDC bridge
 ## that lets services that don't speak OIDC natively authenticate via
 ## Zitadel. Splitting them across files made cross-coupling (shared
 ## secrets, deploy-together gating) awkward, so they live together here.
@@ -18,7 +18,7 @@
 ##   - admin-password: written by the web installer
 ##   - oidc-client-id, oidc-client-secret: written by
 ##     zitadel-provision.service after Zitadel is healthy (these are
-##     for the homefree-oauth2proxy OIDC app — same naming convention
+##     for the homefree-oauth2proxy OIDC app -- same naming convention
 ##     as every other service's secrets dir)
 
 let
@@ -42,7 +42,7 @@ let
   zitadelPort = 3241;
 
   ## v4 split the login UI into a separate Next.js container
-  ## (ghcr.io/zitadel/zitadel-login) — the API container alone
+  ## (ghcr.io/zitadel/zitadel-login) -- the API container alone
   ## responds to /ui/v2/login/* with `{"code":5, "Not Found"}`.
   ## We deploy the login container alongside the API and route
   ## /ui/v2/login/* to it via Caddy.
@@ -58,7 +58,7 @@ let
 
   oauth2ProxyVersion = "v7.12.0";
   ## oauth2-proxy runs blue/green (lib/blue-green.nix) for zero-downtime
-  ## rebuilds — two colour containers on two ports. blue keeps the
+  ## rebuilds -- two colour containers on two ports. blue keeps the
   ## historical :4180; green is :4181.
   oauth2ProxyColours = { blue = 4180; green = 4181; };
   oauth2ProxyEnvFile = "/var/lib/oauth2-proxy/env";
@@ -69,7 +69,7 @@ let
   zitadelSecretsDir = "/var/lib/homefree-secrets/zitadel";
 
   # Anchors auto-generated secrets into the encrypted /etc/nixos/secrets
-  # store so they survive a restore — see lib/secrets-anchor.nix.
+  # store so they survive a restore -- see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
   # oauth2-proxy reads its three required secrets from per-secret files
@@ -112,7 +112,7 @@ let
 
   ## Factory for an oauth2-proxy colour container. Differs between
   ## colours ONLY by port (`ports` mapping + OAUTH2_PROXY_HTTP_ADDRESS)
-  ## — see the INVARIANT in lib/blue-green.nix. autoStart=false: only
+  ## -- see the INVARIANT in lib/blue-green.nix. autoStart=false: only
   ## the active colour is started, by oauth2-proxy-active.service.
   ## The shared env file holds only the three (port-independent)
   ## secrets, so both colours share it safely.
@@ -146,7 +146,7 @@ let
       OAUTH2_PROXY_EMAIL_DOMAINS = "*";
       OAUTH2_PROXY_COOKIE_DOMAINS = ".${config.homefree.system.domain}";
       OAUTH2_PROXY_WHITELIST_DOMAINS = ".${config.homefree.system.domain}";
-      ## Per-colour listen port — the one value that differs.
+      ## Per-colour listen port -- the one value that differs.
       OAUTH2_PROXY_HTTP_ADDRESS = "0.0.0.0:${toString port}";
       OAUTH2_PROXY_REVERSE_PROXY = "true";
       OAUTH2_PROXY_COOKIE_SECURE = "true";
@@ -164,7 +164,7 @@ let
       OAUTH2_PROXY_INSECURE_OIDC_SKIP_ISSUER_VERIFICATION = "false";
       OAUTH2_PROXY_PASS_USER_HEADERS = "true";
       OAUTH2_PROXY_SET_AUTHORIZATION_HEADER = "true";
-      ## SET_XAUTHREQUEST emits X-Auth-Request-* on /oauth2/auth — what
+      ## SET_XAUTHREQUEST emits X-Auth-Request-* on /oauth2/auth -- what
       ## Caddy's forward_auth copies. Without it the backend rejects
       ## with "missing X-Auth-Request-User".
       OAUTH2_PROXY_SET_XAUTHREQUEST = "true";
@@ -174,11 +174,11 @@ let
       OAUTH2_PROXY_USER_ID_CLAIM = "preferred_username";
     };
     # Env file synthesised by the prestart from the SOPS-managed
-    # secrets — colour-independent, both colours share it.
+    # secrets -- colour-independent, both colours share it.
     environmentFiles = [ oauth2ProxyEnvFile ];
   };
 
-  ## Blue/green machinery for oauth2-proxy. Pure call — only the
+  ## Blue/green machinery for oauth2-proxy. Pure call -- only the
   ## merged `oauth2ProxyBg.config` is gated on zitadelEnabled below.
   oauth2ProxyBg = (import ../../lib/blue-green.nix { inherit lib pkgs; }) {
     name = "oauth2-proxy";
@@ -189,7 +189,7 @@ let
       mkContainer = mkOauth2ProxyContainer;
       ## Merged into each generated podman-oauth2-proxy-<colour>.service.
       ## NOTE: lib/blue-green.nix forces `restartIfChanged = false` AND
-      ## `stopIfChanged = false` on every colour unit — the flip owns
+      ## `stopIfChanged = false` on every colour unit -- the flip owns
       ## the full lifecycle, so we do NOT set them here.
       extraUnitConfig = colour: {
         after = [ "dns-ready.service" "zitadel-prepare-secrets.service" ];
@@ -232,7 +232,7 @@ let
     ## they do not exist when this flip runs during activation. Without
     ## this gate the flip + supervisor start blue, its ExecStartPre
     ## secrets check fails, and the supervisor crash-loops it into
-    ## `start-limit-hit` — a failed unit that makes the finishing rebuild
+    ## `start-limit-hit` -- a failed unit that makes the finishing rebuild
     ## exit non-zero and leaves the box stuck in finish-setup. The gate
     ## defers bring-up to the supervisor, which starts blue the moment the
     ## secrets land. Same three-file check the colour's ExecStartPre uses.
@@ -255,7 +255,7 @@ let
   ## UID 1000, so the data directory needs to be owned/writable by
   ## that UID for the container to write /data/pat-bootstrap (and any
   ## other runtime files). Without this the FirstInstance migration
-  ## fails with "open /data/pat-bootstrap: permission denied" — but
+  ## fails with "open /data/pat-bootstrap: permission denied" -- but
   ## not before partially populating the eventstore, which then
   ## permanently breaks subsequent retries with
   ## Errors.Instance.Domain.AlreadyExists collisions (the failed
@@ -278,7 +278,7 @@ let
     ## db-user-password is anchored HERE (not in
     ## zitadel-prepare-secrets) because NixOS's switch-to-configuration
     ## does NOT reliably re-run oneshot+RemainAfterExit units when their
-    ## ExecStart hash or X-Restart-Triggers change — the unit is
+    ## ExecStart hash or X-Restart-Triggers change -- the unit is
     ## already "active (exited)" from a prior boot and stays that way.
     ## Container ExecStartPre, by contrast, re-runs every time the
     ## container restarts, and rebuilds always restart the container
@@ -308,7 +308,7 @@ let
       ## bridge so the value is sent-but-ignored; Phase 2's pg_hba
       ## swap makes it live.
       echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat ${zitadelSecretsDir}/db-user-password)"
-      ## Cluster superuser password — anchored + rotated by
+      ## Cluster superuser password -- anchored + rotated by
       ## services/postgres's postgres-anchor-superuser-password
       ## oneshot. Used by Zitadel's init container to CREATE ROLE
       ## zitadel / CREATE DATABASE zitadel. The systemd unit below
@@ -319,13 +319,13 @@ let
       fi
     } > ${zitadelEnvFile}
     ## env file is read by podman from the host (not the container),
-    ## so it stays root:root mode 600 — only the directory itself
+    ## so it stays root:root mode 600 -- only the directory itself
     ## needs to be writable by the container.
 
     ## Idempotent rotation of the "zitadel" Postgres role's password.
     ## On a fresh install the role doesn't exist yet (the Zitadel init
     ## container creates it on first boot via the ADMIN credentials),
-    ## so the ALTER is guarded behind an existence check — first-boot
+    ## so the ALTER is guarded behind an existence check -- first-boot
     ## skips, subsequent boots rotate from whatever the historical
     ## literal was to the current anchored value, and steady-state
     ## boots set it to itself.
@@ -343,12 +343,12 @@ PGEOF
 
   ## Body of zitadel-prepare-secrets.service. Extracted to a let-binding
   ## so it can be referenced by both `script` and `restartTriggers`
-  ## below — see the long comment on `restartTriggers` for why.
+  ## below -- see the long comment on `restartTriggers` for why.
   zitadelPrepareSecretsScript = ''
     ${anchor.preamble}
 
-    ## masterkey — must be exactly 32 bytes. `openssl rand -hex 16`
-    ## is 32 ASCII chars → 32 bytes, and avoids the base64 padding
+    ## masterkey -- must be exactly 32 bytes. `openssl rand -hex 16`
+    ## is 32 ASCII chars -> 32 bytes, and avoids the base64 padding
     ## `=` issue that breaks ZITADEL_MASTERKEY parsing in some shells.
     ${anchor.anchorSecret {
       service = "zitadel";
@@ -372,7 +372,7 @@ PGEOF
     ## prestart pattern is the same one used by snipe-it, nextcloud,
     ## linkwarden, screeenly and runs every time the container restarts.
 
-    ## admin-password — the initial Zitadel admin password. In the
+    ## admin-password -- the initial Zitadel admin password. In the
     ## normal install flow it's written by the web installer
     ## (web-platform/backend/services/install.py:1549) to match the OS
     ## admin user's password, so SSO + shell credentials are unified
@@ -380,7 +380,7 @@ PGEOF
     ## (apps/zitadel/pam-bridge.nix) keeps them in sync going forward
     ## by POSTing every later `passwd` change to Zitadel's API.
     ##
-    ## End users never log into Zitadel directly — orchestration is
+    ## End users never log into Zitadel directly -- orchestration is
     ## handled by install.py and the HomeFree admin-api backend.
     ##
     ## This auto-generate path is a SAFETY NET for the case where
@@ -397,7 +397,7 @@ PGEOF
     ## value goes stale the moment the OS admin first changes their
     ## password. Anchoring the file's value would persist a
     ## possibly-stale credential into the encrypted store. We anchor
-    ## only on fresh generation — branch (3) of secrets-anchor.nix —
+    ## only on fresh generation -- branch (3) of secrets-anchor.nix --
     ## and let install.py's write be the source of truth for the
     ## happy path. Base64-of-24-bytes minus /+= is mixed-case
     ## alphanumeric, satisfying Zitadel's default policy.
@@ -409,7 +409,7 @@ PGEOF
       generate = "${pkgs.openssl}/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24";
       onGenerate = ''
         ## Operator-facing journal warning. End users should never
-        ## reach this — install.py writes admin-password as part of
+        ## reach this -- install.py writes admin-password as part of
         ## the normal install flow, so a freshly-generated value
         ## here means the install flow was skipped or the file was
         ## wiped. The value is unknown to the OS user, so SSO
@@ -419,7 +419,7 @@ PGEOF
         ## Tagged with WARNING so it shows up at -p warning in
         ## journalctl.
         logger -t zitadel-prepare-secrets -p warning \
-          "Generated a fresh Zitadel admin password as a safety-net (install.py did not stash one). Run \`passwd\` as the OS admin to sync, or re-run the installer. The generated value is at ${zitadelSecretsDir}/admin-password — only readable by root."
+          "Generated a fresh Zitadel admin password as a safety-net (install.py did not stash one). Run \`passwd\` as the OS admin to sync, or re-run the installer. The generated value is at ${zitadelSecretsDir}/admin-password -- only readable by root."
       '';
     }}
   '';
@@ -480,11 +480,11 @@ in
 
   config = lib.mkMerge [
 
-  ## oauth2-proxy blue/green machinery — colour containers, boot
+  ## oauth2-proxy blue/green machinery -- colour containers, boot
   ## oneshots, flip script, Caddy snippet. Gated on zitadelEnabled
   ## (oauth2-proxy is meaningless without Zitadel).
   ##
-  ## `mkIf` (not `optionalAttrs`): mkIf is lazy — the module system
+  ## `mkIf` (not `optionalAttrs`): mkIf is lazy -- the module system
   ## defers the gated value, so the condition (a `config` lookup)
   ## doesn't have to be resolved while the `config` attrset's shape is
   ## being built. `optionalAttrs` forces the condition eagerly there,
@@ -492,241 +492,263 @@ in
   (lib.mkIf zitadelEnabled oauth2ProxyBg.config)
 
   ## Register oauth2-proxy's runtime snippet for Caddy file-scope
-  ## import (only when Zitadel — hence oauth2-proxy — is enabled).
+  ## import (only when Zitadel -- hence oauth2-proxy -- is enabled).
   (lib.mkIf zitadelEnabled {
     homefree.internal.caddy-file-scope-imports = [ oauth2ProxyBg.caddyImportLine ];
   })
 
   {
-    # ── Zitadel container ────────────────────────────────────────────────
-    virtualisation.oci-containers.containers =
-      (lib.optionalAttrs zitadelEnabled {
-        zitadel = {
-          image = "ghcr.io/zitadel/zitadel:${zitadelVersion}";
+    ## ── Zitadel containers via the app-platform primitive ────────────────
+    ## (modules/app-platform.nix). The dns-ready ordering and ExecStartPre
+    ## are generated; systemd unit overrides for extra ordering are in
+    ## the escape-hatch declarations below.
 
-          autoStart = true;
+    homefree.containers.zitadel = lib.mkIf zitadelEnabled {
+      image = "ghcr.io/zitadel/zitadel:${zitadelVersion}";
+      autoStart = true;
 
-          extraOptions = [
-            # "--pull=always"
-          ];
+      ## UID 1000 is the upstream "zitadel" user -- NOT a HomeFree-managed
+      ## 800-899 UID. The container runs rootful but does its own chown in
+      ## preStartInit; no system user is created (createUser irrelevant for
+      ## root mode).
+      runAs = {
+        mode = "root";
+        reason = "zitadel runs as upstream UID 1000 (not HomeFree 800-899 range); data dir chowned in preStartInit";
+      };
 
-          ports = [
-            "0.0.0.0:${toString zitadelPort}:8080"
-          ];
+      ## zitadel does its own mkdir + chown in preStartInit -- use
+      ## dataDir=null so no generated mkdir/chown runs.
+      dataDir = null;
 
-          volumes = [
-            "/etc/localtime:/etc/localtime:ro"
-            "${zitadelDataPath}:/data"
-          ];
+      ports = [
+        "0.0.0.0:${toString zitadelPort}:8080"
+      ];
 
-          cmd = [
-            "start-from-init"
-            "--masterkeyFromEnv"
-          ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${zitadelDataPath}:/data"
+      ];
 
-          environment = {
-            TZ = config.homefree.system.timeZone;
+      cmd = [
+        "start-from-init"
+        "--masterkeyFromEnv"
+      ];
 
-            ZITADEL_DATABASE_POSTGRES_HOST = config.homefree.network.lan-address;
-            ZITADEL_DATABASE_POSTGRES_PORT = "5432";
-            ZITADEL_DATABASE_POSTGRES_DATABASE = "zitadel";
-            ZITADEL_DATABASE_POSTGRES_USER_USERNAME = "zitadel";
-            ## ZITADEL_DATABASE_POSTGRES_USER_PASSWORD comes from the
-            ## synthesised env file (zitadelEnvFile), anchored value.
-            ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE = "disable";
-            ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME = "postgres";
-            ## ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD comes from the
-            ## synthesised env file (zitadelEnvFile), sourced from the
-            ## anchored value at
-            ## /var/lib/homefree-secrets/postgres/superuser-password
-            ## (anchored + rotated by
-            ## postgres-anchor-superuser-password.service in
-            ## services/postgres). Was previously a hardcoded literal
-            ## "postgres" — see commit history if it surfaces again.
-            ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE = "disable";
+      environment = {
+        TZ = config.homefree.system.timeZone;
 
-            ## Default-instance domain policy — applied to BOTH the
-            ## instance-default policy AND the FirstInstance org's
-            ## policy at bootstrap time. Disables the `<user>@<orgdomain>`
-            ## auto-suffix on usernames so the OS admin can log into
-            ## Zitadel as bare "<adminUsername>". The provision script
-            ## also re-asserts these via the Admin API for older
-            ## Zitadel versions where DEFAULTINSTANCE didn't propagate.
-            ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_USERLOGINMUSTBEDOMAIN = "false";
-            ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_VALIDATEORGDOMAINS = "false";
-            ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN = "false";
+        ZITADEL_DATABASE_POSTGRES_HOST = config.homefree.network.lan-address;
+        ZITADEL_DATABASE_POSTGRES_PORT = "5432";
+        ZITADEL_DATABASE_POSTGRES_DATABASE = "zitadel";
+        ZITADEL_DATABASE_POSTGRES_USER_USERNAME = "zitadel";
+        ## ZITADEL_DATABASE_POSTGRES_USER_PASSWORD comes from the
+        ## synthesised env file (zitadelEnvFile), anchored value.
+        ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE = "disable";
+        ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME = "postgres";
+        ## ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD comes from the
+        ## synthesised env file (zitadelEnvFile), sourced from the
+        ## anchored value at
+        ## /var/lib/homefree-secrets/postgres/superuser-password
+        ## (anchored + rotated by
+        ## postgres-anchor-superuser-password.service in
+        ## services/postgres). Was previously a hardcoded literal
+        ## "postgres" -- see commit history if it surfaces again.
+        ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE = "disable";
 
-            ## Name the FirstInstance org "homefree" instead of the
-            ## default "ZITADEL" — gives the org a primary domain of
-            ## "homefree.sso.<domain>", which reads better than
-            ## "zitadel.sso.<domain>" and is consistent with the rest
-            ## of the project's branding. Cosmetic; doesn't affect
-            ## login (since UserLoginMustBeDomain is false above).
-            ZITADEL_FIRSTINSTANCE_ORG_NAME = "homefree";
+        ## Default-instance domain policy -- applied to BOTH the
+        ## instance-default policy AND the FirstInstance org's
+        ## policy at bootstrap time. Disables the `<user>@<orgdomain>`
+        ## auto-suffix on usernames so the OS admin can log into
+        ## Zitadel as bare "<adminUsername>". The provision script
+        ## also re-asserts these via the Admin API for older
+        ## Zitadel versions where DEFAULTINSTANCE didn't propagate.
+        ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_USERLOGINMUSTBEDOMAIN = "false";
+        ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_VALIDATEORGDOMAINS = "false";
+        ZITADEL_DEFAULTINSTANCE_DOMAINPOLICY_SMTPSENDERADDRESSMATCHESINSTANCEDOMAIN = "false";
 
-            ## First-instance human user — bare username (the
-            ## DEFAULTINSTANCE_DOMAINPOLICY above ensures the loginName
-            ## isn't auto-suffixed with the org domain). Email is kept
-            ## distinct so password-reset etc. work. The actual password
-            ## is loaded from
-            ## /var/lib/homefree-secrets/zitadel/admin-password via
-            ## the env file synthesised in preStart.
-            ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME = config.homefree.system.adminUsername;
-            ## Prefer the explicit homefree.system.adminEmail when set
-            ## (the installer captures this in the "Email" field). Fall
-            ## back to the synthesized <user>@<domain> only when no
-            ## email is configured. Using a synthesized email always
-            ## was a bug — downstream services like Vaultwarden key on
-            ## the OIDC `email` claim, and a wrong email there causes
-            ## SSO logins to either fail to match the user's existing
-            ## data or to silently create a parallel empty account.
-            ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_ADDRESS =
-              if (config.homefree.system.adminEmail or "") != ""
-              then config.homefree.system.adminEmail
-              else "${config.homefree.system.adminUsername}@${config.homefree.system.domain}";
-            ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED = "false";
-            ## Pull the human's display name from the same place the
-            ## OS account uses (homefree.system.adminDescription, set
-            ## by the installer's "Full name" field). Split on the
-            ## first space — Zitadel requires both first and last
-            ## name to be non-empty. Single-word names get "Admin"
-            ## as the family name placeholder. Without this the user
-            ## ends up with Zitadel's bootstrap defaults ("ZITADEL
-            ## Admin") which then leaks through every OIDC client's
-            ## `name` claim into Nextcloud / Forgejo / etc.
-            ZITADEL_FIRSTINSTANCE_ORG_HUMAN_FIRSTNAME =
-              let
-                desc = config.homefree.system.adminDescription;
-                parts = lib.splitString " " desc;
-              in
-                if desc == "" then "Admin" else lib.head parts;
-            ZITADEL_FIRSTINSTANCE_ORG_HUMAN_LASTNAME =
-              let
-                desc = config.homefree.system.adminDescription;
-                parts = lib.splitString " " desc;
-              in
-                if (builtins.length parts) > 1
-                then lib.concatStringsSep " " (lib.tail parts)
-                else "Admin";
+        ## Name the FirstInstance org "homefree" instead of the
+        ## default "ZITADEL" -- gives the org a primary domain of
+        ## "homefree.sso.<domain>", which reads better than
+        ## "zitadel.sso.<domain>" and is consistent with the rest
+        ## of the project's branding. Cosmetic; doesn't affect
+        ## login (since UserLoginMustBeDomain is false above).
+        ZITADEL_FIRSTINSTANCE_ORG_NAME = "homefree";
 
-            ## First-instance machine user — long-lived PAT written to
-            ## /data/pat-bootstrap (i.e. ${zitadelDataPath}/pat-bootstrap
-            ## on the host). zitadel-provision.service reads this file to
-            ## drive all subsequent OIDC app + machine user creation.
-            ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME = "homefree-provisioner";
-            ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME = "HomeFree Provisioner";
-            ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE = "2099-12-31T23:59:59Z";
-            ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_SCOPES = "openid";
-            ZITADEL_FIRSTINSTANCE_PATPATH = "/data/pat-bootstrap";
+        ## First-instance human user -- bare username (the
+        ## DEFAULTINSTANCE_DOMAINPOLICY above ensures the loginName
+        ## isn't auto-suffixed with the org domain). Email is kept
+        ## distinct so password-reset etc. work. The actual password
+        ## is loaded from
+        ## /var/lib/homefree-secrets/zitadel/admin-password via
+        ## the env file synthesised in preStart.
+        ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME = config.homefree.system.adminUsername;
+        ## Prefer the explicit homefree.system.adminEmail when set
+        ## (the installer captures this in the "Email" field). Fall
+        ## back to the synthesized <user>@<domain> only when no
+        ## email is configured. Using a synthesized email always
+        ## was a bug -- downstream services like Vaultwarden key on
+        ## the OIDC `email` claim, and a wrong email there causes
+        ## SSO logins to either fail to match the user's existing
+        ## data or to silently create a parallel empty account.
+        ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_ADDRESS =
+          if (config.homefree.system.adminEmail or "") != ""
+          then config.homefree.system.adminEmail
+          else "${config.homefree.system.adminUsername}@${config.homefree.system.domain}";
+        ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED = "false";
+        ## Pull the human's display name from the same place the
+        ## OS account uses (homefree.system.adminDescription, set
+        ## by the installer's "Full name" field). Split on the
+        ## first space -- Zitadel requires both first and last
+        ## name to be non-empty. Single-word names get "Admin"
+        ## as the family name placeholder. Without this the user
+        ## ends up with Zitadel's bootstrap defaults ("ZITADEL
+        ## Admin") which then leaks through every OIDC client's
+        ## `name` claim into Nextcloud / Forgejo / etc.
+        ZITADEL_FIRSTINSTANCE_ORG_HUMAN_FIRSTNAME =
+          let
+            desc = config.homefree.system.adminDescription;
+            parts = lib.splitString " " desc;
+          in
+            if desc == "" then "Admin" else lib.head parts;
+        ZITADEL_FIRSTINSTANCE_ORG_HUMAN_LASTNAME =
+          let
+            desc = config.homefree.system.adminDescription;
+            parts = lib.splitString " " desc;
+          in
+            if (builtins.length parts) > 1
+            then lib.concatStringsSep " " (lib.tail parts)
+            else "Admin";
 
-            ## Login-client machine user — used by the zitadel-login
-            ## container (Next.js) to talk to the API. PAT written to
-            ## /data/bootstrap/login-client.pat on FirstInstance setup,
-            ## which is the same path the login container mounts and
-            ## reads as ZITADEL_SERVICE_USER_TOKEN_FILE. The role
-            ## IAM_LOGIN_CLIENT is auto-assigned by Zitadel when
-            ## ORG_LOGINCLIENT_* envs are set.
-            ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME = "login-client";
-            ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME = "HomeFree Login Client";
-            ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE = "2099-12-31T23:59:59Z";
-            ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH = "/data/bootstrap/login-client.pat";
+        ## First-instance machine user -- long-lived PAT written to
+        ## /data/pat-bootstrap (i.e. ${zitadelDataPath}/pat-bootstrap
+        ## on the host). zitadel-provision.service reads this file to
+        ## drive all subsequent OIDC app + machine user creation.
+        ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME = "homefree-provisioner";
+        ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME = "HomeFree Provisioner";
+        ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE = "2099-12-31T23:59:59Z";
+        ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_SCOPES = "openid";
+        ZITADEL_FIRSTINSTANCE_PATPATH = "/data/pat-bootstrap";
 
-            ## Force the new Login V2 UI (the only UI v4 actually
-            ## ships — there is no v1 fallback). BASEURI must be the
-            ## externally-visible URL of the login container, which is
-            ## /ui/v2/login/ behind Caddy on sso.<domain>.
-            ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED = "true";
-            ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI =
-              "https://sso.${config.homefree.system.domain}/ui/v2/login/";
-            ZITADEL_OIDC_DEFAULTLOGINURLV2 =
-              "https://sso.${config.homefree.system.domain}/ui/v2/login/login?authRequest=";
-            ZITADEL_OIDC_DEFAULTLOGOUTURLV2 =
-              "https://sso.${config.homefree.system.domain}/ui/v2/login/logout?post_logout_redirect=";
-            ZITADEL_SAML_DEFAULTLOGINURLV2 =
-              "https://sso.${config.homefree.system.domain}/ui/v2/login/login?samlRequest=";
+        ## Login-client machine user -- used by the zitadel-login
+        ## container (Next.js) to talk to the API. PAT written to
+        ## /data/bootstrap/login-client.pat on FirstInstance setup,
+        ## which is the same path the login container mounts and
+        ## reads as ZITADEL_SERVICE_USER_TOKEN_FILE. The role
+        ## IAM_LOGIN_CLIENT is auto-assigned by Zitadel when
+        ## ORG_LOGINCLIENT_* envs are set.
+        ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME = "login-client";
+        ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME = "HomeFree Login Client";
+        ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE = "2099-12-31T23:59:59Z";
+        ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH = "/data/bootstrap/login-client.pat";
 
-            ZITADEL_EXTERNALDOMAIN = "sso.${config.homefree.system.domain}";
-            ZITADEL_EXTERNALPORT = "443";
-            ZITADEL_EXTERNALSECURE = "true";
-            ZITADEL_TLS_ENABLED = "false";
-          };
+        ## Force the new Login V2 UI (the only UI v4 actually
+        ## ships -- there is no v1 fallback). BASEURI must be the
+        ## externally-visible URL of the login container, which is
+        ## /ui/v2/login/ behind Caddy on sso.<domain>.
+        ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED = "true";
+        ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI =
+          "https://sso.${config.homefree.system.domain}/ui/v2/login/";
+        ZITADEL_OIDC_DEFAULTLOGINURLV2 =
+          "https://sso.${config.homefree.system.domain}/ui/v2/login/login?authRequest=";
+        ZITADEL_OIDC_DEFAULTLOGOUTURLV2 =
+          "https://sso.${config.homefree.system.domain}/ui/v2/login/logout?post_logout_redirect=";
+        ZITADEL_SAML_DEFAULTLOGINURLV2 =
+          "https://sso.${config.homefree.system.domain}/ui/v2/login/login?samlRequest=";
 
-          ## The synthesised env file always exists (preStart creates it
-          ## with mode 600 even when it would be empty).
-          environmentFiles = [ zitadelEnvFile ];
-        };
+        ZITADEL_EXTERNALDOMAIN = "sso.${config.homefree.system.domain}";
+        ZITADEL_EXTERNALPORT = "443";
+        ZITADEL_EXTERNALSECURE = "true";
+        ZITADEL_TLS_ENABLED = "false";
+      };
 
-        # ── Zitadel Login UI container ────────────────────────────────
-        ## v4 split the login UI out of the Go binary into a separate
-        ## Next.js container. Without this, /ui/v2/login/* (the only
-        ## login URL v4's API redirects to) returns
-        ## `{"code":5, "message":"Not Found"}` and users can't log in.
-        ##
-        ## The login container talks to the API via the LAN address on
-        ## the host's port 3241 (since both bind to the host network
-        ## namespace through podman's default bridge → host gateway).
-        ## It authenticates as the "login-client" machine user using
-        ## the PAT the API wrote to /data/bootstrap/login-client.pat
-        ## during FirstInstance setup. We bind-mount that file into
-        ## the login container at the same path.
-        ##
-        ## CUSTOM_REQUEST_HEADERS forces the Host header to
-        ## "sso.<domain>" on every request the login UI makes back to
-        ## the API. Without it, Zitadel's per-instance lookup rejects
-        ## the request because the Host would be the LAN address.
-        zitadel-login = {
-          image = "ghcr.io/zitadel/zitadel-login:${zitadelVersion}";
-          autoStart = true;
-          ## The image's default USER is "nextjs" (uid 1001), but the
-          ## API container writes login-client.pat as uid 1000 (the
-          ## "zitadel" user) to a 0700 directory. Run the login
-          ## container as the same uid so the bind-mounted bootstrap
-          ## dir is readable. Both containers ignoring image-default
-          ## uids is fine — neither needs the original user's home or
-          ## env, just to read/write a single mounted file tree.
-          ##
-          ## --network=host is required because the login container
-          ## needs to call back to the API at the host's LAN address
-          ## (zitadel-api isn't reachable through podman's default
-          ## bridge — same reason oauth2-proxy uses host networking
-          ## further down this file).
-          extraOptions = [
-            "--user=${toString zitadelContainerUid}:${toString zitadelContainerGid}"
-            "--network=host"
-          ];
-          ## With --network=host, the `ports` mapping is ignored — the
-          ## container listens on host's port 3000 directly. Override
-          ## that to our chosen port via env so the listener binds
-          ## somewhere we control (avoiding collision with anything
-          ## else that wants 3000 on the host).
-          ports = [];
-          volumes = [
-            "/etc/localtime:/etc/localtime:ro"
-            ## Read-only — the login container only reads the PAT, the
-            ## API container writes it.
-            "${zitadelBootstrapPath}:/zitadel/bootstrap:ro"
-          ];
-          environment = {
-            TZ = config.homefree.system.timeZone;
-            ## API URL is the LAN-routable Zitadel API. We pass an HTTP
-            ## origin (no TLS) and rely on CUSTOM_REQUEST_HEADERS to
-            ## set the Host so Zitadel's instance routing works.
-            ZITADEL_API_URL = "http://${config.homefree.network.lan-address}:${toString zitadelPort}";
-            NEXT_PUBLIC_BASE_PATH = "/ui/v2/login";
-            ZITADEL_SERVICE_USER_TOKEN_FILE = "/zitadel/bootstrap/login-client.pat";
-            CUSTOM_REQUEST_HEADERS =
-              "Host:sso.${config.homefree.system.domain},X-Forwarded-Proto:https";
-            ## With --network=host the Next.js server binds the host
-            ## port directly. The image's default is 3000; override
-            ## via PORT env to avoid colliding with anything else
-            ## (AdGuard listens on 3000 in this deployment).
-            PORT = toString zitadelLoginPort;
-            HOSTNAME = "0.0.0.0";
-          };
-        };
-      });
+      ## The synthesised env file always exists (preStartInit creates it
+      ## with mode 600 even when it would be empty).
+      environmentFiles = [ zitadelEnvFile ];
 
-    # ── systemd unit overrides ───────────────────────────────────────────
+      ## Full zitadel preStart -- owns mkdir/chown/env-synthesis/psql.
+      ## dataDir=null so the generator does NOT prepend its own mkdir.
+      preStartInit = zitadelPreStart;
+    };
+
+    ## ── Zitadel Login UI container ────────────────────────────────
+    ## v4 split the login UI out of the Go binary into a separate
+    ## Next.js container. Without this, /ui/v2/login/* (the only
+    ## login URL v4's API redirects to) returns
+    ## `{"code":5, "message":"Not Found"}` and users can't log in.
+    ##
+    ## The login container talks to the API via the LAN address on
+    ## the host's port 3241 (since both bind to the host network
+    ## namespace through podman's default bridge -> host gateway).
+    ## It authenticates as the "login-client" machine user using
+    ## the PAT the API wrote to /data/bootstrap/login-client.pat
+    ## during FirstInstance setup. We bind-mount that file into
+    ## the login container at the same path.
+    ##
+    ## CUSTOM_REQUEST_HEADERS forces the Host header to
+    ## "sso.<domain>" on every request the login UI makes back to
+    ## the API. Without it, Zitadel's per-instance lookup rejects
+    ## the request because the Host would be the LAN address.
+    homefree.containers.zitadel-login = lib.mkIf zitadelEnabled {
+      image = "ghcr.io/zitadel/zitadel-login:${zitadelVersion}";
+      autoStart = true;
+
+      ## The image's default USER is "nextjs" (uid 1001), but the
+      ## API container writes login-client.pat as uid 1000 (the
+      ## "zitadel" user) to a 0700 directory. Pass --user= via
+      ## extraOptions so the bind-mounted bootstrap dir is readable.
+      ## Both containers ignoring image-default uids is fine -- neither
+      ## needs the original user's home or env, just to read/write a
+      ## single mounted file tree.
+      ## --network=host is required because the login container needs
+      ## to call back to the API at the host's LAN address.
+      runAs = {
+        mode = "root";
+        reason = "--user=1000:1000 is passed via extraOptions (matches API container uid); --network=host required for LAN API access";
+      };
+
+      ## No data dir to create -- the bootstrap dir is created by the
+      ## zitadel (API) container's preStartInit above.
+      dataDir = null;
+
+      ## With --network=host, the `ports` mapping is ignored -- the
+      ## container listens on host's port directly.
+      ports = [];
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        ## Read-only -- the login container only reads the PAT, the
+        ## API container writes it.
+        "${zitadelBootstrapPath}:/zitadel/bootstrap:ro"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        ## API URL is the LAN-routable Zitadel API. We pass an HTTP
+        ## origin (no TLS) and rely on CUSTOM_REQUEST_HEADERS to
+        ## set the Host so Zitadel's instance routing works.
+        ZITADEL_API_URL = "http://${config.homefree.network.lan-address}:${toString zitadelPort}";
+        NEXT_PUBLIC_BASE_PATH = "/ui/v2/login";
+        ZITADEL_SERVICE_USER_TOKEN_FILE = "/zitadel/bootstrap/login-client.pat";
+        CUSTOM_REQUEST_HEADERS =
+          "Host:sso.${config.homefree.system.domain},X-Forwarded-Proto:https";
+        ## With --network=host the Next.js server binds the host
+        ## port directly. The image's default is 3000; override
+        ## via PORT env to avoid colliding with anything else
+        ## (AdGuard listens on 3000 in this deployment).
+        PORT = toString zitadelLoginPort;
+        HOSTNAME = "0.0.0.0";
+      };
+
+      extraOptions = [
+        "--user=${toString zitadelContainerUid}:${toString zitadelContainerGid}"
+        "--network=host"
+      ];
+    };
+
+    # ── systemd unit overrides (escape hatches) ──────────────────────────
+    ## These merge with the generated podman-* units from the app-platform
+    ## primitive (modules/app-platform.nix) to add extra ordering that
+    ## the primitive doesn't know about.
 
     ## Auto-generate the masterkey + oauth2-proxy cookie secret if
     ## absent. Modeled after headplane-prepare-secrets in
@@ -751,7 +773,7 @@ in
       ## value must exist *before* podman-zitadel starts (e.g., the
       ## masterkey, which Zitadel needs at container init). For
       ## anything else, prefer zitadelPreStart (podman-zitadel's
-      ## ExecStartPre) — switch-to-configuration does NOT reliably
+      ## ExecStartPre) -- switch-to-configuration does NOT reliably
       ## re-run oneshot+RemainAfterExit units, so a new anchor added
       ## here may not materialise on existing instances even on a full
       ## rebuild. Container ExecStartPre always re-runs when the
@@ -759,9 +781,11 @@ in
       script = zitadelPrepareSecretsScript;
     };
 
+    ## Escape-hatch: extra ordering beyond dns-ready (generated by the
+    ## primitive). podman-zitadel must also wait for the secrets oneshot
+    ## and the postgres superuser password anchor.
     systemd.services.podman-zitadel = lib.mkIf zitadelEnabled {
       after = [
-        "dns-ready.service"
         "zitadel-prepare-secrets.service"
         ## Wait for the host postgres superuser password to be anchored
         ## + applied to the cluster (services/postgres). Zitadel's init
@@ -774,13 +798,9 @@ in
         "zitadel-prepare-secrets.service"
         "postgres-anchor-superuser-password.service"
       ];
-      wants = [ "dns-ready.service" ];
-      serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "zitadel-prestart" zitadelPreStart}" ];
-      };
     };
 
-    ## Login UI container — must start AFTER the API has run
+    ## Login UI container -- must start AFTER the API has run
     ## FirstInstance setup (so login-client.pat exists). The API is
     ## "active" as soon as the container starts but the PAT may not be
     ## written for several seconds while migrations run. We don't have
@@ -789,11 +809,11 @@ in
     ## behavior: it'll exit if the PAT file is empty/missing, systemd
     ## will retry, and once the PAT lands it succeeds.
     systemd.services.podman-zitadel-login = lib.mkIf zitadelEnabled {
-      after = [ "dns-ready.service" "podman-zitadel.service" ];
-      wants = [ "podman-zitadel.service" "dns-ready.service" ];
+      after = [ "podman-zitadel.service" ];
+      wants = [ "podman-zitadel.service" ];
     };
 
-    ## NOTE: oauth2-proxy now runs blue/green (lib/blue-green.nix —
+    ## NOTE: oauth2-proxy now runs blue/green (lib/blue-green.nix --
     ## the `oauth2ProxyBg` binding in the `let` above). Its two colour
     ## containers, the secrets-check + env-synthesis ExecStartPre, the
     ## boot oneshots and the flip activation script are all generated
@@ -804,7 +824,7 @@ in
     # ── service-config (admin UI surface) ────────────────────────────────
     # The SSO entry covers Zitadel API, Login UI, AND oauth2-proxy in
     # its systemd-service-names list. All three units are always
-    # rendered when Zitadel is enabled — oauth2-proxy refuses to
+    # rendered when Zitadel is enabled -- oauth2-proxy refuses to
     # start until its secrets are written by the provision script,
     # so it sits in `inactive` state pre-provisioning rather than
     # being absent. The admin UI's health check should treat
@@ -818,7 +838,7 @@ in
         systemd-service-names = [
           "podman-zitadel"
           "podman-zitadel-login"
-          # oauth2-proxy runs blue/green — both colour units listed;
+          # oauth2-proxy runs blue/green -- both colour units listed;
           # only the active one is running (standby shows inactive).
           "podman-oauth2-proxy-blue"
           "podman-oauth2-proxy-green"
@@ -827,11 +847,11 @@ in
         sso = {
           kind = "infra";
           ## Dev context (intentionally not surfaced in the admin UI):
-          ## Zitadel itself — this IS the SSO IdP.
+          ## Zitadel itself -- this IS the SSO IdP.
         };
         reverse-proxy = {
           enable = zitadelEnabled;
-          ## Drop the legacy "zitadel" subdomain — Zitadel v4 rejects
+          ## Drop the legacy "zitadel" subdomain -- Zitadel v4 rejects
           ## any Host: header that doesn't match ZITADEL_EXTERNALDOMAIN
           ## with a confusing "Instance not found" JSON 500. Only the
           ## canonical "sso" subdomain is supported.
@@ -875,7 +895,7 @@ in
         ];
       }
     ]) ++ (lib.optionals zitadelEnabled [
-      # Separate reverse-proxy entry for the auth.* subdomain — this is
+      # Separate reverse-proxy entry for the auth.* subdomain -- this is
       # plumbing, not a user-facing service row, so admin.show=false.
       # Always rendered when Zitadel is enabled. Pre-provisioning
       # this proxies to a stopped oauth2-proxy and 502s; the gating
@@ -893,14 +913,14 @@ in
         sso = {
           kind = "infra";
           ## Dev context (intentionally not surfaced in the admin UI):
-          ## OAuth2 Proxy — SSO gate sidecar, not a consumer.
+          ## OAuth2 Proxy -- SSO gate sidecar, not a consumer.
         };
         reverse-proxy = {
           enable = true;
           subdomains = [ "auth" ];
           http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
           https-domains = [ config.homefree.system.domain ];
-          ## No literal host:port — the upstream is the blue/green
+          ## No literal host:port -- the upstream is the blue/green
           ## runtime snippet, which points at the active oauth2-proxy
           ## colour and is rewritten at flip time (no nixos-rebuild
           ## needed to change the upstream). See lib/blue-green.nix.
