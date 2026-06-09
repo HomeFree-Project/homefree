@@ -88,7 +88,9 @@ let
         PUID = toString c.runAs.uid;
         PGID = toString c.runAs.gid;
       }
-      // lib.optionalAttrs c.caBundle { ${c.caBundleEnvVar} = c.caBundleContainerPath; };
+      // lib.optionalAttrs (c.caBundle && c.caBundleEnvVar != null) {
+        ${c.caBundleEnvVar} = c.caBundleContainerPath;
+      };
     volumes = c.volumes
       ++ lib.optional c.caBundle
         "${c.dataDir}/ca-bundle.crt:${c.caBundleContainerPath}:ro";
@@ -155,9 +157,9 @@ let
         description = "Synthesize a CA bundle (system roots + Caddy local CA), mount it, point the app at it.";
       };
       caBundleEnvVar = lib.mkOption {
-        type = lib.types.str;
+        type = lib.types.nullOr lib.types.str;
         default = "SSL_CERT_FILE";
-        description = "Env var the app reads its CA bundle from (e.g. NODE_EXTRA_CA_CERTS).";
+        description = "Env var the app reads its CA bundle from (e.g. NODE_EXTRA_CA_CERTS); null = mount only, no env (the bundle overwrites the in-container caBundleContainerPath, e.g. /etc/ssl/certs/ca-certificates.crt).";
       };
       caBundleContainerPath = lib.mkOption {
         type = lib.types.str;
