@@ -255,6 +255,17 @@ without being asked.
   declare both itself.
 - `homefree.service-config` entries drive the reverse proxy, backups,
   the admin UI catalog, and SSO metadata.
+- A container app declares its workload via the **app-platform primitive**:
+  one `homefree.containers.<container>` entry per container (the generator
+  emits the user/group, chown, CA-bundle, oci-container, and dns-ready unit).
+  → `docs/agent-notes/app-platform.md`
+- An SSO-gated app declares its OIDC client via the **SSO registry**: a
+  `homefree.sso.clients` push (consumed by `apps/zitadel/provision.nix`),
+  not a hardcoded entry in provision.nix.
+  → `docs/agent-notes/sso-client-registry.md`
+- Behaviour-preserving changes to apps / Caddy are gated by the **snapshot
+  test net** (`nix flake check`); during a refactor the goldens are FROZEN.
+  → `docs/agent-notes/snapshot-test-net.md`
 
 ## Gotchas
 
@@ -418,6 +429,21 @@ Situational knowledge — read the linked note when working in that area:
   migration) tagged `TODO(homefree-next)` to delete once every
   deployed box has booted on the renamed code.
   → `docs/agent-notes/developers-to-plugins-rename-cleanup.md`
+- **App-platform primitive** — `homefree.containers.<name>` registry +
+  generator that emits the per-container skeleton (user/group, marker
+  chown, CA-bundle, oci-container, dns-ready unit). How to add/migrate an
+  app, the `runAs` modes (rootless/linuxserver/root + `createUser`), the
+  escape hatch for bespoke postStart/ordering.
+  → `docs/agent-notes/app-platform.md`
+- **SSO client registry** — `homefree.sso.clients`: each SSO-gated app
+  pushes its own OIDC descriptor; `apps/zitadel/provision.nix` consumes the
+  deduped/sorted result instead of a hardcoded catalog.
+  → `docs/agent-notes/sso-client-registry.md`
+- **Snapshot test net** — the app-config / preStart / Caddyfile snapshots
+  + the `frontend-eval` Lit module-eval gate: what each catches, the
+  FROZEN-golden discipline, and how to regenerate a golden (incl. the live-VM
+  `vm-state` socket gotcha that breaks impure golden regen).
+  → `docs/agent-notes/snapshot-test-net.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.
