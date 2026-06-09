@@ -680,48 +680,68 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.home-assistant.enable {
-    homeassistant = {
-      image = "ghcr.io/home-assistant/home-assistant:${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## The dns-ready podman unit is generated. HA runs --network=host (+optional
+  ## --privileged for host hardware), does NOT chown its data dir, and writes
+  ## its CA bundle into /config/ca-bundle.crt (referenced by auth_oidc's
+  ## tls_ca_path, not mounted over the system bundle) — so caBundle=false and
+  ## the entire intricate preStart goes verbatim into preStartInit. The
+  ## zwave-js-ui ordering + ExecStartPost (onboarding) stay in a separate
+  ## systemd.services.podman-homeassistant merge below.
+  homefree.containers.homeassistant = lib.mkIf config.homefree.services.home-assistant.enable {
+    ## SKIPPED Phase 3 non-root: HA runs --privileged (gated) for host
+    ## hardware access (BLE/USB Z-Wave/Zigbee dongles, /dev) and writes
+    ## throughout /config as root. dataDir=null: the data dir is created
+    ## (mkdir) by the verbatim preStart, no generated mkdir/chown.
+    runAs = { mode = "root"; reason = "runs --privileged (gated) for host hardware (BLE/USB dongles, /dev); manages /config as root"; };
+    image = "ghcr.io/home-assistant/home-assistant:${version}";
 
-      autoStart = true;
+    dataDir = null;
+    caBundle = false;
 
-      extraOptions = [
-        # "--pull=always"
-        "--network=host"
-      ] ++ lib.optional config.homefree.services.home-assistant.privileged
-        "--privileged";
+    extraOptions = [
+      "--network=host"
+    ] ++ lib.optional config.homefree.services.home-assistant.privileged
+      "--privileged";
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/config:/config"
-        "/run/dbus:/run/dbus:ro"
-        ## auth_oidc is symlinked from /config/custom_components/auth_oidc
-        ## into the Nix store. Without /nix/store mounted, the symlink
-        ## target is unreachable inside the container and Python can't
-        ## import the module — `/auth/oidc/redirect` returns 404 and SSO
-        ## silently doesn't work. Read-only mount is fine; the container
-        ## just reads Python source files out of it.
-        "/nix/store:/nix/store:ro"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/config:/config"
+      "/run/dbus:/run/dbus:ro"
+      ## auth_oidc is symlinked from /config/custom_components/auth_oidc
+      ## into the Nix store. Without /nix/store mounted, the symlink
+      ## target is unreachable inside the container and Python can't
+      ## import the module — `/auth/oidc/redirect` returns 404 and SSO
+      ## silently doesn't work. Read-only mount is fine; the container
+      ## just reads Python source files out of it.
+      "/nix/store:/nix/store:ro"
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
+
+    ## Full preStart body: mkdir config dirs, symlink custom components,
+    ## render configuration.yaml from the template, merge defaults, anchor
+    ## the bootstrap admin password, synthesise secrets.yaml + the CA bundle.
+    ## All handled here (caBundle=false, dataDir=null).
+    preStartInit = preStart;
   };
 
+  ## zwave-js-ui ordering + ExecStartPost (onboarding). These MERGE with the
+  ## dns-ready after/wants the app-platform generates for podman-homeassistant.
+  ## The ExecStartPost is NOT part of homefree.containers (the platform only
+  ## generates ExecStartPre); it stays here so the service-restart-policy
+  ## module and the platform-generated unit both see it merged into the same
+  ## podman-homeassistant unit.
   systemd.services.podman-homeassistant = lib.mkIf config.homefree.services.home-assistant.enable {
     ## When Z-Wave JS UI is also enabled, prefer to start it first.
     ## `wants` (not `requires`) so HA still boots if Z-Wave is disabled
     ## or its container fails — HA's zwave_js config entry will retry
     ## once the WS server comes up.
-    after = [ "dns-ready.service" ]
-      ++ lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
-    wants = [ "dns-ready.service" ]
-      ++ lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
+    after = lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
+    wants = lib.optional (config.homefree.services.zwave-js-ui.enable or false) "podman-zwave-js-ui.service";
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "homeassistant-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];
     };
   };
