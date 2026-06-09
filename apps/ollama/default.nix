@@ -116,6 +116,26 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional, consumed by
+    ## apps/zitadel/provision.nix via homefree.sso.resolved-clients.
+    homefree.sso.clients = [{
+      svc = "ollama";
+      internal_name = "homefree-ollama";
+      ## Open WebUI is a Node.js server-side app using a confidential
+      ## OIDC client (authcode + secret). Not a SPA — secrets are
+      ## kept server-side in the container.
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Open WebUI's OIDC callback path is /oauth/oidc/callback
+      ## (see OPENID_REDIRECT_URI in services/ollama-podman.nix).
+      redirect_uris = [ "https://ollama.${domain}/oauth/oidc/callback" ];
+      post_logout_uris = [ "https://ollama.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-ollama-webui.service" ];
+    }];
+
   environment.systemPackages = lib.optionals config.homefree.service-options.ollama.enable [
     pkgs.ollama
   ];
