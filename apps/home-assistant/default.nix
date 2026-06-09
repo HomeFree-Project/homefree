@@ -680,6 +680,26 @@ in
   };
 
   config = {
+    homefree.sso.clients = [
+      {
+        svc = "home-assistant";
+        internal_name = "homefree-home-assistant";
+        app_type = "OIDC_APP_TYPE_WEB";
+        auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+        response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+        grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+        ## auth_oidc HA component callback path (see source:
+        ## custom_components/auth_oidc/endpoints/callback.py → PATH).
+        redirect_uris = [
+          "https://ha.${domain}/auth/oidc/callback"
+          "https://homeassistant.${domain}/auth/oidc/callback"
+        ];
+        post_logout_uris = [ "https://ha.${domain}/" ];
+        needs_pat = false;
+        post_restart_units = [ "podman-homeassistant.service" ];
+      }
+    ];
+
   ## Container via the app-platform primitive (modules/app-platform.nix).
   ## The dns-ready podman unit is generated. HA runs --network=host (+optional
   ## --privileged for host hardware), does NOT chown its data dir, and writes
