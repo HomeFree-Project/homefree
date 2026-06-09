@@ -11,6 +11,10 @@ let
   # only) and apps/ (merge-ha-yaml — needs pyyaml). The web-platform backend
   # tests (hw_buckets) live in the web-platform flake.
   homefreePyEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pyyaml ]);
+
+  ## App-platform behaviour-preservation snapshots (imported once so the
+  ## all-apps-enabled config is evaluated a single time, shared by both checks).
+  appSnapshot = import ./app-snapshot.nix { inherit self pkgs lib system; };
 in
 {
   ## Homefree pure-logic unit tests (pytest): the upgrade-apps bump-safety
@@ -93,10 +97,14 @@ in
       else ''echo "loader-mapping FAILURES: ${builtins.concatStringsSep ", " failures}" >&2; exit 1''
     );
 
-  ## App-config snapshot — behaviour-preservation safety net for the
-  ## app-platform refactor (collapsing the ~33 app skeletons). Pins the
-  ## evaluated oci-container / user / service-config output of every app, so
-  ## an extraction that churns drvPath can still be proven behaviour-preserving.
-  ## Golden: tests/app-config-snapshot.json. See checks/app-snapshot.nix.
-  app-config-snapshot = (import ./app-snapshot.nix { inherit self pkgs lib system; }).check;
+  ## App-platform behaviour-preservation safety net (collapsing the ~33 app
+  ## skeletons churns drvPath, so it can't be the oracle). Two snapshots:
+  ##  - structured oci-container / user / service-config output
+  ##    (golden tests/app-config-snapshot.json)
+  ##  - normalised podman-* preStart script bodies — the chown-marker /
+  ##    CA-bundle / OIDC-env logic the primitive rewrites
+  ##    (golden tests/app-prestart-snapshot.txt)
+  ## See checks/app-snapshot.nix.
+  app-config-snapshot = appSnapshot.check;
+  app-prestart-snapshot = appSnapshot.prestartCheck;
 }
