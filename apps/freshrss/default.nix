@@ -220,6 +220,23 @@ PGEOF
   ## DB not ready, user missing) is non-fatal.
   postStart = ''
     CFG=${containerDataPath}/data/config.php
+    ## FRESH-INSTALL RACE: on the very first start the in-container
+    ## entrypoint runs do-install.php (which writes config.php)
+    ## CONCURRENTLY with this ExecStartPost. Bailing the instant
+    ## config.php is absent means the first install never gets auth_type
+    ## flipped to 'http_auth', so SSO stays off and FreshRSS shows its
+    ## native form login until the container happens to restart (e.g. the
+    ## next rebuild) — which is exactly why a freshly-installed box looks
+    ## broken while an older one works. Poll for config.php so the SSO
+    ## migration runs on the first install too. Bounded (~60s) so an
+    ## uninstalled / failing container still exits cleanly; the unit's
+    ## TimeoutStartSec is infinity so blocking here is safe. On an
+    ## already-installed restart config.php exists immediately and the
+    ## loop breaks on the first iteration.
+    for _ in $(seq 1 60); do
+      [ -s "$CFG" ] && break
+      sleep 1
+    done
     if [ ! -s "$CFG" ]; then
       exit 0
     fi
