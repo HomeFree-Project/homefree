@@ -471,165 +471,182 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers =
-    (lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
-    nextcloud = {
-      image = "nextcloud:${version}-apache";
+  ## Four containers via the app-platform primitive (modules/app-platform.nix):
+  ## the podman dns-ready units are generated. All run as ROOT (the upstream
+  ## nextcloud/redis/appapi-harp images run as root / expose no rootless uid),
+  ## so no chown marker is emitted. The nextcloud container's bespoke preStart
+  ## (mkdirs, override.config.php copy, www-data chown, HaRP secret, secret
+  ## anchoring, runtime.env + host-postgres role/db init) is reproduced verbatim
+  ## via dataDir=null + caBundle=false + preStartInit (the radicle/linkwarden
+  ## fallback); its occ postStart and the postgres/cron/appapi ordering stay as
+  ## separate systemd.services merges below.
+  homefree.containers.nextcloud = lib.mkIf config.homefree.service-options.nextcloud.enable {
+    image = "nextcloud:${version}-apache";
+    runAs = { mode = "root"; reason = "upstream nextcloud-apache image runs as root; data is chowned to www-data (33) in preStart"; };
+    dataDir = null;
+    caBundle = false;
 
-      autoStart = true;
+    ports = [
+      "0.0.0.0:${toString port}:80"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:80"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "/run/postgresql:/run/postgresql"
+      "${containerDataPath}/html:/var/www/html"
+      "${containerDataPath}/config:/var/www/html/config"
+      "${containerDataPath}/data:/var/www/html/data"
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/postgresql:/run/postgresql"
-        "${containerDataPath}/html:/var/www/html"
-        "${containerDataPath}/config:/var/www/html/config"
-        "${containerDataPath}/data:/var/www/html/data"
-      ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
+      # Database configuration
+      POSTGRES_HOST = postgres-host;
+      POSTGRES_PORT = toString postgres-port;
+      POSTGRES_DB = database-name;
+      POSTGRES_USER = database-user;
 
-        # Database configuration
-        POSTGRES_HOST = postgres-host;
-        POSTGRES_PORT = toString postgres-port;
-        POSTGRES_DB = database-name;
-        POSTGRES_USER = database-user;
+      # Redis configuration
+      REDIS_HOST = "nextcloud-redis";
+      REDIS_HOST_PORT = toString port-redis;
 
-        # Redis configuration
-        REDIS_HOST = "nextcloud-redis";
-        REDIS_HOST_PORT = toString port-redis;
+      # Nextcloud configuration
+      NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
+      NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
+      NEXTCLOUD_UPDATE = "0"; # Disable auto-update
+      OVERWRITEPROTOCOL = "https";
+      OVERWRITEHOST = host;
+      OVERWRITE_CLI_URL = "https://${host}";
 
-        # Nextcloud configuration
-        NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
-        NEXTCLOUD_UPDATE = "0"; # Disable auto-update
-        OVERWRITEPROTOCOL = "https";
-        OVERWRITEHOST = host;
-        OVERWRITE_CLI_URL = "https://${host}";
+      # PHP configuration
+      PHP_MEMORY_LIMIT = "1024M";
+      PHP_UPLOAD_LIMIT = "1024M";
 
-        # PHP configuration
-        PHP_MEMORY_LIMIT = "1024M";
-        PHP_UPLOAD_LIMIT = "1024M";
-
-        # Apache configuration
-        APACHE_DISABLE_REWRITE_IP = "1";
-      };
-
-      ## runtime.env is synthesised by preStart from the on-disk
-      ## admin-password (auto-generated on first boot) plus the
-      ## hardcoded postgres password.
-      environmentFiles = [
-        "${containerDataPath}/runtime.env"
-      ];
+      # Apache configuration
+      APACHE_DISABLE_REWRITE_IP = "1";
     };
 
-    nextcloud-redis = {
-      image = "redis:${version-redis}";
+    ## runtime.env is synthesised by preStart from the on-disk
+    ## admin-password (auto-generated on first boot) plus the
+    ## hardcoded postgres password.
+    environmentFiles = [
+      "${containerDataPath}/runtime.env"
+    ];
 
-      autoStart = true;
+    ## Whole bespoke preStart, reproduced verbatim (mkdirs, override config
+    ## copy, www-data chown, HaRP secret, secret anchoring, runtime.env, and
+    ## the host-postgres role/database init).
+    preStartInit = preStart;
+  };
 
-      extraOptions = [
-        # "--pull=always"
-        "--health-cmd=redis-cli ping || exit 1"
-      ];
+  homefree.containers.nextcloud-redis = lib.mkIf config.homefree.service-options.nextcloud.enable {
+    image = "redis:${version-redis}";
+    runAs = { mode = "root"; reason = "redis image exposes no uid option for rootless pinning"; };
+    dataDir = null;
+    caBundle = false;
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-      ];
+    extraOptions = [
+      # "--pull=always"
+      "--health-cmd=redis-cli ping || exit 1"
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
+    };
+  };
+
+  # Cron container for background jobs
+  homefree.containers.nextcloud-cron = lib.mkIf config.homefree.service-options.nextcloud.enable {
+    image = "nextcloud:${version}-apache";
+    runAs = { mode = "root"; reason = "upstream nextcloud-apache image runs as root; shares the nextcloud data dirs"; };
+    dataDir = null;
+    caBundle = false;
+
+    cmd = [ "/cron.sh" ];
+
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "/run/postgresql:/run/postgresql"
+      "${containerDataPath}/html:/var/www/html"
+      "${containerDataPath}/config:/var/www/html/config"
+      "${containerDataPath}/data:/var/www/html/data"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
+
+      # Database configuration (same as main container)
+      POSTGRES_HOST = postgres-host;
+      POSTGRES_PORT = toString postgres-port;
+      POSTGRES_DB = database-name;
+      POSTGRES_USER = database-user;
+
+      # Redis configuration
+      REDIS_HOST = "nextcloud-redis";
+      REDIS_HOST_PORT = toString port-redis;
+
+      # Nextcloud configuration
+      NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
+      NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
+      NEXTCLOUD_UPDATE = "0"; # Disable auto-update
+      OVERWRITEPROTOCOL = "https";
+      OVERWRITEHOST = host;
+      OVERWRITE_CLI_URL = "https://${host}";
+
+      # PHP configuration
+      PHP_MEMORY_LIMIT = "1024M";
+      PHP_UPLOAD_LIMIT = "1024M";
     };
 
-    # Cron container for background jobs
-    nextcloud-cron = {
-      image = "nextcloud:${version}-apache";
+    ## Same runtime.env as the main container — POSTGRES_PASSWORD
+    ## is needed for the cron container's DB queries.
+    environmentFiles = [
+      "${containerDataPath}/runtime.env"
+    ];
+  };
 
-      autoStart = true;
-
-      cmd = [ "/cron.sh" ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/postgresql:/run/postgresql"
-        "${containerDataPath}/html:/var/www/html"
-        "${containerDataPath}/config:/var/www/html/config"
-        "${containerDataPath}/data:/var/www/html/data"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-
-        # Database configuration (same as main container)
-        POSTGRES_HOST = postgres-host;
-        POSTGRES_PORT = toString postgres-port;
-        POSTGRES_DB = database-name;
-        POSTGRES_USER = database-user;
-
-        # Redis configuration
-        REDIS_HOST = "nextcloud-redis";
-        REDIS_HOST_PORT = toString port-redis;
-
-        # Nextcloud configuration
-        NEXTCLOUD_ADMIN_USER = config.homefree.system.adminUsername;
-        NEXTCLOUD_TRUSTED_DOMAINS = "${host} ${config.homefree.network.lan-address}";
-        NEXTCLOUD_UPDATE = "0"; # Disable auto-update
-        OVERWRITEPROTOCOL = "https";
-        OVERWRITEHOST = host;
-        OVERWRITE_CLI_URL = "https://${host}";
-
-        # PHP configuration
-        PHP_MEMORY_LIMIT = "1024M";
-        PHP_UPLOAD_LIMIT = "1024M";
-      };
-
-      ## Same runtime.env as the main container — POSTGRES_PASSWORD
-      ## is needed for the cron container's DB queries.
-      environmentFiles = [
-        "${containerDataPath}/runtime.env"
-      ];
-    };
-  })
   ## AppAPI HaRP proxy — opt-in, gates the podman.sock bind-mount
   ## behind an explicit option. See the comment on the option in
-  ## userOptions for the security trade-off. The upgrade-shim default
-  ## (pathExists harp-pw.txt) preserves existing behaviour on boxes
-  ## that already ran this container.
-  // (lib.optionalAttrs (config.homefree.service-options.nextcloud.enable
-                         && config.homefree.service-options.nextcloud.appapi) {
-    nextcloud-appapi-harp = {
-      image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
+  ## userOptions for the security trade-off. Only emitted when
+  ## appapi=true, so it stays absent on default deployments.
+  homefree.containers.nextcloud-appapi-harp = lib.mkIf
+    (config.homefree.service-options.nextcloud.enable
+     && config.homefree.service-options.nextcloud.appapi) {
+    image = "ghcr.io/nextcloud/nextcloud-appapi-harp:${version-appapi-harp}";
+    runAs = { mode = "root"; reason = "HaRP proxy image runs as root and bind-mounts the podman socket"; };
+    dataDir = null;
+    caBundle = false;
 
-      autoStart = true;
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      ## Bind-mounts the host podman socket — this is the docker-
+      ## compatible API AppAPI uses to spawn sidecar apps. It is
+      ## also the container-escape surface that gates this whole
+      ## entry behind `homefree.services.nextcloud.appapi`.
+      "/run/podman/podman.sock:/var/run/docker.sock"
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        ## Bind-mounts the host podman socket — this is the docker-
-        ## compatible API AppAPI uses to spawn sidecar apps. It is
-        ## also the container-escape surface that gates this whole
-        ## entry behind `homefree.services.nextcloud.appapi`.
-        "/run/podman/podman.sock:/var/run/docker.sock"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        NC_INSTANCE_URL = "http://nextcloud";
-      };
-
-      environmentFiles = [
-        "${containerDataPath}/harp-env.txt"
-      ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      NC_INSTANCE_URL = "http://nextcloud";
     };
-  });
 
+    environmentFiles = [
+      "${containerDataPath}/harp-env.txt"
+    ];
+  };
+
+  ## nextcloud's bespoke occ postStart + the postgres ordering, merged onto the
+  ## app-platform-generated unit (the dns-ready after/wants and the ExecStartPre
+  ## come from the primitive).
   systemd.services.podman-nextcloud = lib.mkIf config.homefree.service-options.nextcloud.enable {
-    after = [ "dns-ready.service" "postgresql.service" ];
-    wants = [ "postgresql.service" "dns-ready.service" ];
+    after = [ "postgresql.service" ];
+    wants = [ "postgresql.service" ];
     ## The container bind-mounts the host's /run/postgresql (a per-boot
     ## tmpfs that postgresql.service owns via RuntimeDirectory). When
     ## Postgres restarts it recreates that directory with a fresh
@@ -639,7 +656,6 @@ in
     ## bind mount is re-established against the live directory.
     partOf = [ "postgresql.service" ];
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "nextcloud-prestart" preStart}" ];
       ExecStartPost = [ "!${pkgs.writeShellScript "nextcloud-poststart" postStart}" ];
       # Add restart delay to prevent rapid restart loops
       RestartSec = 30;
@@ -647,11 +663,6 @@ in
     # Limit restart attempts to prevent infinite loops
     startLimitBurst = 3;
     startLimitIntervalSec = 300;  # 5 minutes
-  };
-
-  systemd.services.podman-nextcloud-redis = lib.mkIf config.homefree.service-options.nextcloud.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
   };
 
   systemd.services.podman-nextcloud-appapi-harp = lib.mkIf
