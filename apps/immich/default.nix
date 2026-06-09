@@ -303,6 +303,39 @@ in
   };
 
   config = {
+    homefree.sso.clients = [
+      {
+        svc = "immich";
+        internal_name = "homefree-immich";
+        ## NATIVE + AUTH_METHOD_NONE (PKCE-only) is required so the
+        ## Android Immich app's custom-scheme redirect
+        ## `app.immich:///oauth-callback` is accepted by Zitadel —
+        ## OIDC_APP_TYPE_WEB rejects all non-http(s) redirects
+        ## regardless of `devMode`. NATIVE apps allow BOTH http(s) and
+        ## custom-scheme redirects, so the same client_id serves both
+        ## web (photos.<domain>) and Android. Since Zitadel forbids a
+        ## client_secret on AUTH_METHOD_NONE apps, immich-podman.nix's
+        ## post-hook also clears the secret from the Immich system-
+        ## config row in the DB.
+        app_type = "OIDC_APP_TYPE_NATIVE";
+        auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
+        response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+        grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+        redirect_uris = [
+          "https://photos.${domain}/auth/login"
+          "https://immich.${domain}/auth/login"
+          "app.immich:///oauth-callback"
+        ];
+        post_logout_uris = [ "https://photos.${domain}/" ];
+        needs_pat = false;
+        ## Immich applies OIDC config via its own admin REST API after the
+        ## OIDC app exists. Restarting the container is harmless but not
+        ## strictly required. The post-hook is invoked separately by
+        ## services/immich-podman.nix in Phase 5.3.
+        post_restart_units = [ "podman-immich-server.service" ];
+      }
+    ];
+
     ## @TODO: Move to scripts run from containers
     environment.systemPackages = lib.optionals config.homefree.service-options.immich.enable [
       pkgs.immich-cli
