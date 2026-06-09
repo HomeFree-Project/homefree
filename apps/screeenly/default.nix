@@ -31,49 +31,6 @@ let
   ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
-
-  preStart = ''
-    mkdir -p ${containerDataPath}
-    mkdir -p ${secretsDir}
-
-    if [ ! -e ${containerDataPath}/env.txt ]; then
-      APP_KEY=$(${pkgs.podman}/bin/podman run --rm ${containerImageName}@${containerHash} php artisan key:generate --show | tail -n 1 | tr -d '\r')
-      echo "APP_KEY=$APP_KEY" > "${containerDataPath}/env.txt"
-    fi
-
-    ${anchor.preamble}
-
-    ## mysql-password — Screeenly was previously created without a
-    ## password (CREATE USER without IDENTIFIED BY), so the MariaDB
-    ## user had no credentials and the container connected without
-    ## one. Phase 2 anchors a real password so MariaDB rejects
-    ## unauthorised access. Stripped to [A-Za-z0-9] via `tr -d '/+='`
-    ## so it survives unquoted in env-file values.
-    ${anchor.anchorSecret {
-      service = "screeenly";
-      key = "mysql-password";
-      dir = secretsDir;
-      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
-    }}
-
-    MYSQL_PASSWORD=$(cat ${secretsDir}/mysql-password)
-
-    ## CREATE-if-absent then unconditional ALTER USER ... IDENTIFIED
-    ## BY rotates passwordless boxes onto the anchored value and is a
-    ## no-op once converged. GRANT scope already correct (database
-    ## scoped, not *.*) — no Phase 4 fix needed for screeenly.
-    ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS '${database-user}'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "ALTER USER '${database-user}'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON ${database-name}.* TO '${database-user}'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS '${database-user}'@'%'"
-    ${pkgs.mariadb}/bin/mysql -e "ALTER USER '${database-user}'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON ${database-name}.* TO '${database-user}'@'%'"
-
-    ## runtime.env carries DB_PASSWORD for the container, anchored
-    ## value substituted at runtime.
-    install -m 600 /dev/null ${runtimeEnvFile}
-    printf 'DB_PASSWORD=%s\n' "$MYSQL_PASSWORD" > ${runtimeEnvFile}
-  '';
 in
 {
   options.homefree.services.screeenly = userOptions;
@@ -113,52 +70,103 @@ in
     ];
   };
 
-  ## Used by nextcloud for generating bookmark previews
-  virtualisation.oci-containers.containers = lib.optionalAttrs enabled {
-    screeenly = {
-      image = "${containerImageName}@${containerHash}";
-
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
-
-      ports = [
-        "0.0.0.0:${toString port}:80"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "/run/postgresql:/run/postgresql"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        DB_CONNECTION = database-type;
-        DB_HOST = database-host;
-        DB_PORT = toString database-port;
-        DB_DATABASE = database-name;
-        DB_USERNAME = database-user;
-
-        # REDIS_HOST = "";
-        # REDIS_PASSWORD = "null";
-        # REDIS_PORT = "6379";
-      };
-
-      environmentFiles = [
-        "${containerDataPath}/env.txt"
-        runtimeEnvFile
-      ];
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## SKIPPED non-root: the hadogenes/screeenly image runs as root internally
+  ## with no PUID/PGID mechanism; it bundles a full PHP + Laravel + Chrome
+  ## stack that starts as root. preStartInit carries the full anchor + MySQL
+  ## credential provisioning. Used by nextcloud for generating bookmark
+  ## previews (enabled when either screeenly.enable or nextcloud.enable).
+  ## Extra postgresql.service after dep from the original is preserved via
+  ## the escape-hatch systemd.services.podman-screeenly below.
+  homefree.containers.screeenly = lib.mkIf enabled {
+    image = "${containerImageName}@${containerHash}";
+    runAs = {
+      mode = "root";
+      reason = "hadogenes/screeenly image has no PUID/PGID mechanism; runs as root internally";
     };
+
+    extraOptions = [
+      # "--pull=always"
+    ];
+
+    ports = [
+      "0.0.0.0:${toString port}:80"
+    ];
+
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "/run/postgresql:/run/postgresql"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      DB_CONNECTION = database-type;
+      DB_HOST = database-host;
+      DB_PORT = toString database-port;
+      DB_DATABASE = database-name;
+      DB_USERNAME = database-user;
+
+      # REDIS_HOST = "";
+      # REDIS_PASSWORD = "null";
+      # REDIS_PORT = "6379";
+    };
+
+    environmentFiles = [
+      "${containerDataPath}/env.txt"
+      runtimeEnvFile
+    ];
+
+    ## Complex preStart: APP_KEY generation + anchor + MySQL provisioning.
+    ## Emit verbatim (no generated mkdir/chown — root mode, no single dataDir).
+    preStartInit = ''
+      mkdir -p ${containerDataPath}
+      mkdir -p ${secretsDir}
+
+      if [ ! -e ${containerDataPath}/env.txt ]; then
+        APP_KEY=$(${pkgs.podman}/bin/podman run --rm ${containerImageName}@${containerHash} php artisan key:generate --show | tail -n 1 | tr -d '\r')
+        echo "APP_KEY=$APP_KEY" > "${containerDataPath}/env.txt"
+      fi
+
+      ${anchor.preamble}
+
+      ## mysql-password — Screeenly was previously created without a
+      ## password (CREATE USER without IDENTIFIED BY), so the MariaDB
+      ## user had no credentials and the container connected without
+      ## one. Phase 2 anchors a real password so MariaDB rejects
+      ## unauthorised access. Stripped to [A-Za-z0-9] via `tr -d '/+='`
+      ## so it survives unquoted in env-file values.
+      ${anchor.anchorSecret {
+        service = "screeenly";
+        key = "mysql-password";
+        dir = secretsDir;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+      }}
+
+      MYSQL_PASSWORD=$(cat ${secretsDir}/mysql-password)
+
+      ## CREATE-if-absent then unconditional ALTER USER ... IDENTIFIED
+      ## BY rotates passwordless boxes onto the anchored value and is a
+      ## no-op once converged. GRANT scope already correct (database
+      ## scoped, not *.*) — no Phase 4 fix needed for screeenly.
+      ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS '${database-user}'@'localhost'"
+      ${pkgs.mariadb}/bin/mysql -e "ALTER USER '${database-user}'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'"
+      ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON ${database-name}.* TO '${database-user}'@'localhost'"
+      ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS '${database-user}'@'%'"
+      ${pkgs.mariadb}/bin/mysql -e "ALTER USER '${database-user}'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
+      ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON ${database-name}.* TO '${database-user}'@'%'"
+
+      ## runtime.env carries DB_PASSWORD for the container, anchored
+      ## value substituted at runtime.
+      install -m 600 /dev/null ${runtimeEnvFile}
+      printf 'DB_PASSWORD=%s\n' "$MYSQL_PASSWORD" > ${runtimeEnvFile}
+    '';
   };
 
+  ## Escape hatch: postgresql.service after dep from the original code preserved.
+  ## Merged onto the generated podman-screeenly unit (dns-ready after/wants come
+  ## from the generator).
   systemd.services.podman-screeenly = lib.mkIf enabled {
-    after = [ "dns-ready.service" "postgresql.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "screeenly-prestart" preStart}" ];
-    };
+    after = [ "postgresql.service" ];
   };
 
   homefree.service-config = lib.optionals enabled [
@@ -214,4 +222,3 @@ in
     }];
   };
 }
-
