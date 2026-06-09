@@ -244,6 +244,18 @@ in
       };
       image = image;
 
+      ## AdGuard IS the box's LAN resolver, so it must NOT order itself
+      ## after dns-ready — dns-ready is ordered after *it*
+      ## (services/unbound/default.nix `dnsUnits`). Leaving the
+      ## app-platform default (dnsReady = true) creates a systemd ordering
+      ## cycle (podman-adguardhome -> dns-ready -> podman-adguardhome) that
+      ## systemd breaks by deleting one job at random: on the boots where it
+      ## drops podman-adguardhome's start job, AdGuard never comes up and the
+      ## box has no DNS ("no internet"). AdGuard bootstraps its own image
+      ## pull via the temporary adguardhome-dns-proxy (preStartInit below),
+      ## so it doesn't need the dns-ready gate.
+      dnsReady = false;
+
       ## preStart anchors the admin password, splices the bcrypt hash
       ## into the config YAML, and manages a temporary DNS proxy for
       ## image pulls — all of which goes in preStartInit (dataDir = null).

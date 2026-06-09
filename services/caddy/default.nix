@@ -553,6 +553,19 @@ in
         canonicalHttpsUrl = if allHttpsUrls != [] then lib.head allHttpsUrls else "";
         canonicalHttpsHost = lib.removePrefix "https://" canonicalHttpsUrl;
 
+        ## Cert-existence clause for the SSO gate — mirrors certRedirectConfig's
+        ## glob (below) so SSO enforcement flips on at the same instant the
+        ## cert lands (and the HTTP->HTTPS redirect activates). Until then the
+        ## service stays reachable on plain HTTP on the LAN, because SSO over
+        ## OIDC fundamentally needs a working HTTPS auth.<domain> — enforcing
+        ## the gate before the cert exists just 502s (oauth2-proxy can't
+        ## function) and locks the operator out. Empty string when the service
+        ## has no canonical HTTPS host, which leaves the sentinel-only gate
+        ## unchanged for HTTP-only services. AND-ed into the @sso_gate
+        ## condition in BOTH the static-path and reverse-proxy branches below.
+        ssoGateCertClause = lib.optionalString (canonicalHttpsHost != "")
+          '' && file({"try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})'';
+
         ## HTTP-until-cert behaviour: while this service has no issued TLS
         ## cert, its http:// URLs serve the app directly (so a fresh box is
         ## reachable on the LAN before DNS-01 runs). Once Caddy has written
@@ -671,10 +684,18 @@ in
           '' else "")
           ## @TODO: throw an error if more than one host is using the same port
           + (if reverse-proxy-config.static-path != null then ''
-            ${if reverse-proxy-config.oauth2 == true then ''
+            ${if reverse-proxy-config.oauth2 == true && !config.homefree.development then ''
               ## SSO gate (static-served path). Every request inside
               ## this site goes through oauth2-proxy validation via
               ## forward_auth.
+              ##
+              ## Dev-mode bypass: this whole block is omitted at build
+              ## time on a dev box (see the `&& !config.homefree.development`
+              ## guard above), mirroring admin-api's middleware dev bypass
+              ## (web-platform/backend/simple_main.py) — a dev box can't
+              ## complete a real OIDC login (internal CA, port-forwarded
+              ## redirects), so enforcing the gate would just lock the
+              ## developer out. admin-api binds loopback-only regardless.
               ##
               ## CRITICAL: `forward_auth` is a TOP-LEVEL directive,
               ## not wrapped in `handle` or `route`. Caddy's
@@ -710,7 +731,17 @@ in
               ##    sentinel — which is also the SSO-bypass contract in
               ##    admin-api's middleware. Both files are checked at
               ##    REQUEST time via CEL file(), so no rebuild flips it.
-              @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})`
+              ##  - The gate ALSO requires the service's TLS cert to exist
+              ##    (ssoGateCertClause, when the service has a canonical
+              ##    HTTPS host). SSO over OIDC needs a working HTTPS
+              ##    auth.<domain>; before the cert lands the gate would just
+              ##    502 (oauth2-proxy non-functional) and lock the operator
+              ##    out, so the service stays open on plain HTTP on the LAN
+              ##    until the cert is provisioned — the same instant the
+              ##    HTTP->HTTPS redirect (certRedirectConfig) flips on. The
+              ##    cert glob is checked at REQUEST time too, so no rebuild
+              ##    flips it.
+              @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})${ssoGateCertClause}`
               ## SSO gate — forward_auth to the active oauth2-proxy
               ## colour. `oauth2_proxy_forward_auth` is the runtime
               ## blue/green snippet (lib/blue-green.nix); it carries the
@@ -853,22 +884,25 @@ in
               header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
             '' else ""}
           '' else (
-          (if reverse-proxy-config.oauth2 == true then ''
-            ## SSO gate (reverse-proxy site). Request-time `file`
-            ## matcher peeks at the sentinel: pre-provisioning the
-            ## gate is skipped, so the rendered config is correct
-            ## from day one of a fresh install (no double rebuild).
-            ## Post-provisioning every request runs through
-            ## oauth2-proxy /oauth2/auth via forward_auth; on 401
-            ## handle_response converts it into a 302 to
-            ## /oauth2/start. See the static-path branch above for
-            ## the full design rationale (same shape, same trade-
-            ## offs, same security properties).
+          (if reverse-proxy-config.oauth2 == true && !config.homefree.development then ''
+            ## SSO gate (reverse-proxy site). Request-time matchers peek
+            ## at the sentinel + cert: pre-provisioning the gate is
+            ## skipped, so the rendered config is correct from day one of
+            ## a fresh install (no double rebuild). Post-provisioning every
+            ## request runs through oauth2-proxy /oauth2/auth via
+            ## forward_auth; on 401 handle_response converts it into a 302
+            ## to /oauth2/start. See the static-path branch above for the
+            ## full design rationale (same shape, same trade-offs, same
+            ## security properties), including the dev-mode build-time
+            ## bypass and the cert-existence requirement.
+            ##
+            ## The sentinel + cert checks live in ONE `expression` matcher
+            ## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+            ## stay as sibling matchers in the same named set (also AND-ed).
+            ## We can't use two `file` matchers in one set — repeated
+            ## matchers of a type conflict — hence the expression.
             @sso_gate {
-              file {
-                root /
-                try_files /var/lib/homefree-secrets/.sso-provisioned
-              }
+              expression `file({"try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})${ssoGateCertClause}`
               ${if reverse-proxy-config.dav-bypass or false then ''
                 ## DAV bypass: skip the SSO gate for traffic that
                 ## clearly comes from a CalDAV/CardDAV client. Two

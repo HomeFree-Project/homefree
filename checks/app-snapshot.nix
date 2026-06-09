@@ -34,6 +34,14 @@
 #            lib = f.inputs.nixpkgs.legacyPackages.x86_64-linux.lib; \
 #            system = "x86_64-linux"; }).prestartText')" \
 #     tests/app-prestart-snapshot.txt
+#   # Caddy-config snapshot (same drv-build-and-copy as prestart, .caddyText):
+#   cp "$(nix build --impure --no-link --print-out-paths --expr \
+#       'let f = builtins.getFlake (toString ./.); \
+#        in (import ./checks/app-snapshot.nix { self = f; \
+#            pkgs = f.inputs.nixpkgs.legacyPackages.x86_64-linux; \
+#            lib = f.inputs.nixpkgs.legacyPackages.x86_64-linux.lib; \
+#            system = "x86_64-linux"; }).caddyText')" \
+#     tests/caddy-config-snapshot.txt
 
 { self, pkgs, lib, system }:
 
@@ -142,9 +150,23 @@ let
     { ${prestartBody} } > $out
   '';
   prestartGolden = ../tests/app-prestart-snapshot.txt;
+
+  ## ── Caddy-config snapshot ─────────────────────────────────────────
+  ## The generated, `caddy fmt`-canonicalised Caddyfile for the all-apps
+  ## config — the faithful oracle for any change to services/caddy (the
+  ## directive-ordering footgun file): a refactor that rewrites the gate /
+  ## vhost generation must keep this byte-identical. readFile forces the
+  ## Caddyfile to render; store hashes are stripped (logDir / package paths).
+  caddyRawFile = builtins.toFile "caddy-config-raw"
+    (builtins.readFile cfg.services.caddy.configFile);
+  caddyText = pkgs.runCommandLocal "caddy-config-text"
+    { nativeBuildInputs = [ pkgs.gnused ]; } ''
+    sed -E 's#/nix/store/[a-z0-9]{32}-#/nix/store/#g' ${caddyRawFile} > $out
+  '';
+  caddyGolden = ../tests/caddy-config-snapshot.txt;
 in
 {
-  inherit snapshot snapshotJson prestartText;
+  inherit snapshot snapshotJson prestartText caddyText;
 
   check = pkgs.runCommandLocal "app-config-snapshot"
     { nativeBuildInputs = [ pkgs.diffutils pkgs.jq ]; } ''
@@ -178,6 +200,23 @@ in
         echo "differs from tests/app-prestart-snapshot.txt. If INTENDED (an"
         echo "app-platform extraction or a deliberate preStart edit), review the"
         echo "diff above, then regenerate the golden per the header and re-run."
+      } >&2
+      exit 1
+    fi
+  '';
+
+  caddyCheck = pkgs.runCommandLocal "caddy-config-snapshot"
+    { nativeBuildInputs = [ pkgs.diffutils ]; } ''
+    if diff -u ${caddyGolden} ${caddyText}; then
+      echo "caddy-config-snapshot: generated Caddyfile matches the golden."
+      touch $out
+    else
+      {
+        echo ""
+        echo "caddy-config-snapshot DRIFT: the generated Caddyfile differs from"
+        echo "tests/caddy-config-snapshot.txt. If INTENDED (a deliberate Caddy/"
+        echo "ingress change), review the diff above, then regenerate the golden"
+        echo "per the header in checks/app-snapshot.nix and re-run."
       } >&2
       exit 1
     fi

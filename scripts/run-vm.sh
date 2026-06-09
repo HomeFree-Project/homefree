@@ -42,6 +42,13 @@ SWTPM_PID=""
 VIRTIOFSD_PID=""
 BRIDGE_NAME=""
 
+# Host's address on the LAN bridge (set by attach_host_to_bridge when --bridge
+# is used) so the installed box's LAN-only admin/finish-setup UI is reachable
+# natively from the host browser. The box is always .1; the host takes .2.
+# Script-scope so the cleanup trap and the launch summary can read them.
+HOST_LAN_IP=""
+BOX_LAN_IP=""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -105,17 +112,27 @@ Usage: $SCRIPT_NAME run [OPTIONS]
 
 Boot a HomeFree installer ISO in QEMU.
 
-Defaults: user-mode networking + virtiofs source share (so the wizard's
-"Development mode" works out of the box).
+Defaults: bridge networking (host joins the LAN) + virtiofs source share
+(so the wizard's "Development mode" works out of the box).
 
 Networking modes:
-  Default:        Two user-mode NICs with host port-forwards on
+  Default:        Bridge networking (router-style; ISO + 2 NICs on hfbr0).
+                  net0 is user-mode WAN with host port-forwards on
+                  2223/8000/8443/8080; net1 is the LAN, bridged on hfbr0.
+                  The host also gets a LAN address on hfbr0 (10.1.2.2 in
+                  dev mode, 10.0.0.2 otherwise) so the box's LAN-only
+                  admin/finish-setup UI is reachable natively at
+                  http://10.1.2.1 — no SOCKS proxy. With systemd-resolved
+                  active, *.<domain> SSO hostnames also resolve via the box
+                  (set HOMEFREE_DOMAIN for a non-default domain). Needs
+                  qemu-bridge-helper + 'allow hfbr0' in /etc/qemu/bridge.conf
+                  and sudo; if the helper is missing it falls back to
+                  user-mode with a warning.
+  --no-bridge:    Two user-mode NICs with host port-forwards on
                   2223/8000/8443/8080/9090. Lighter weight, no root needed
-                  for bridge setup. Use this when you only need to drive the
-                  web installer UI.
-  --bridge:       Bridge networking (router-style; ISO + 2 NICs on hfbr0).
-                  Required if you want to test the installed router or
-                  combine with --lan-client. Implied by --lan-client.
+                  for bridge setup, but the box's LAN-only UI (10.1.2.1) is
+                  NOT reachable from the host. Use when you only need to
+                  drive the web installer UI.
 
 Source-tree sharing (development mode):
   Default:        Source tree is mounted into the VM via virtiofs (tag
@@ -146,7 +163,10 @@ Options:
                             ignores them.
       --extra-disk-size SZ  Size for each extra disk (default: 8G).
       --tpm / --no-tpm      Emulated TPM2 on/off (default: on).
-      --bridge              Use bridge networking instead of user-mode.
+      --bridge              Bridge networking (the default; host joins the
+                            LAN bridge for native http://10.1.2.1 access).
+      --no-bridge           User-mode networking instead of bridge. Lighter,
+                            no root/ACL needed, but no native LAN-UI access.
       --no-dev              Disable the virtiofs source share.
   -v, --virtviewer          QXL/SPICE + remote-viewer (clipboard).
       --headless            SPICE server only, no viewer.
@@ -161,11 +181,11 @@ Environment variables: FLAKE_DIR, VM_MEMORY, VM_CORES, VM_DISK_SIZE,
 VM_DISKS, EXTRA_DISKS, EXTRA_DISK_SIZE, USE_TPM, BUILD_DIR, VM_STATE_DIR.
 
 Examples:
-  $SCRIPT_NAME run                        # 2 install + 5 extra + TPM2 + dev
+  $SCRIPT_NAME run                        # bridge + 2 install + 5 extra + TPM2 + dev
   $SCRIPT_NAME run -n 1                   # single-disk install test
   $SCRIPT_NAME run --no-tpm               # passphrase-at-boot path
   $SCRIPT_NAME run --no-dev               # no source share
-  $SCRIPT_NAME run --bridge               # router topology + dev share
+  $SCRIPT_NAME run --no-bridge            # user-mode networking (no native LAN UI)
   $SCRIPT_NAME run -l                     # bridge + lan-client VM
   $SCRIPT_NAME run --extra-disks 0        # skip the Storage-test scratch disks
 EOF
@@ -212,9 +232,60 @@ destroy_bridge() {
     local bridge_name="$1"
     if ip link show "$bridge_name" &> /dev/null; then
         log_info "Destroying bridge: $bridge_name"
+        # Drop any per-link resolved DNS we set in attach_host_to_bridge
+        # before deleting the link. No-op if resolved isn't present or we
+        # never set anything; deleting the link would clear it anyway, but
+        # reverting explicitly keeps stale config from lingering on a crash.
+        if command -v resolvectl &> /dev/null; then
+            sudo resolvectl revert "$bridge_name" 2> /dev/null || true
+        fi
         sudo ip link set "$bridge_name" down
         sudo ip link delete "$bridge_name"
         log_success "Bridge $bridge_name destroyed"
+    fi
+}
+
+# Put the host on the LAN bridge so the installed box's LAN-only
+# admin/finish-setup UI (Caddy binds it to <box-lan>:80, e.g.
+# http://10.1.2.1 — see services/admin-web/default.nix `extra-http-hosts`)
+# is reachable natively from the host browser, with no SOCKS proxy.
+#
+# The LAN subnet must match what the installer baked into the box's config:
+# a dev install uses 10.1.2.0/24, a non-dev router install 10.0.0.0/24 (see
+# web-platform/backend/services/install.py). The box is always .1; the host
+# takes .2 — clear of the box and of the .100-.200 DHCP pool dnsmasq serves.
+attach_host_to_bridge() {
+    local bridge_name="$1"
+    local use_dev="$2"
+
+    local lan_net
+    if [[ "$use_dev" == "true" ]]; then
+        lan_net="10.1.2"
+    else
+        lan_net="10.0.0"
+    fi
+    HOST_LAN_IP="$lan_net.2"
+    BOX_LAN_IP="$lan_net.1"
+
+    log_info "Assigning host $HOST_LAN_IP/24 on $bridge_name (LAN client of the box at $BOX_LAN_IP)"
+    # `addr replace` is idempotent: adds if missing, replaces a stale copy.
+    sudo ip addr replace "$HOST_LAN_IP/24" dev "$bridge_name"
+
+    # Point DNS for the HomeFree domain at the box's resolver, scoped to the
+    # bridge link so the host's normal DNS is untouched — this is what makes
+    # the post-setup *.<domain> SSO vhosts (auth./admin.) resolve to the box.
+    # Best-effort: only when systemd-resolved is the host's active resolver.
+    # The domain defaults to the installer default; override with
+    # HOMEFREE_DOMAIN=<your-domain> for a custom domain.
+    local hf_domain="${HOMEFREE_DOMAIN:-homefree.host}"
+    if command -v resolvectl &> /dev/null && systemctl is-active --quiet systemd-resolved; then
+        log_info "Routing *.$hf_domain DNS to the box ($BOX_LAN_IP) via $bridge_name (systemd-resolved)"
+        sudo resolvectl dns "$bridge_name" "$BOX_LAN_IP" 2> /dev/null || true
+        sudo resolvectl domain "$bridge_name" "~$hf_domain" 2> /dev/null || true
+    else
+        log_warning "systemd-resolved not active on the host — *.$hf_domain won't auto-resolve."
+        log_warning "To reach SSO hostnames, add e.g. '$BOX_LAN_IP auth.$hf_domain' to /etc/hosts,"
+        log_warning "or point your resolver at $BOX_LAN_IP. (http://$BOX_LAN_IP works regardless.)"
     fi
 }
 
@@ -265,13 +336,14 @@ cmd_clean() {
 }
 
 cmd_run() {
-    # Parse command line arguments. Defaults: user-mode networking + virtiofs
-    # source share. Pass --bridge to opt into router topology and --no-dev to
-    # disable the source share.
+    # Parse command line arguments. Defaults: bridge networking (host joins
+    # the LAN so http://10.1.2.1 works natively) + virtiofs source share.
+    # Pass --no-bridge for user-mode networking and --no-dev to disable the
+    # source share.
     local ISO_PATH=""
     local USE_KVM=""
     local LAUNCH_LAN_CLIENT=false
-    local USE_BRIDGE=false
+    local USE_BRIDGE=true
     local USE_DEV=true
 
     while [[ $# -gt 0 ]]; do
@@ -318,6 +390,10 @@ cmd_run() {
                 ;;
             --bridge)
                 USE_BRIDGE=true
+                shift
+                ;;
+            --no-bridge)
+                USE_BRIDGE=false
                 shift
                 ;;
             --no-dev)
@@ -370,6 +446,14 @@ cmd_run() {
         esac
     done
 
+    # --lan-client can't work without the bridge it attaches to. Catch an
+    # explicit --no-bridge (or a --no-bridge that came after --lan-client on
+    # the command line) rather than silently launching a stranded client VM.
+    if [[ "$LAUNCH_LAN_CLIENT" == "true" && "$USE_BRIDGE" != "true" ]]; then
+        log_error "--lan-client requires bridge networking; do not combine it with --no-bridge."
+        exit 1
+    fi
+
     # Check for required commands
     for cmd in qemu-system-x86_64; do
         if ! command -v $cmd &> /dev/null; then
@@ -418,17 +502,33 @@ cmd_run() {
     mkdir -p "$BUILD_DIR"
     mkdir -p "$VM_STATE_DIR"
 
-    # User-mode networking is the default; --bridge opts into router topology
+    # Bridge networking is the default (host joins the LAN so http://10.1.2.1
+    # works natively); --no-bridge opts into user-mode. Bridge mode needs a
+    # usable qemu-bridge-helper (setuid root + 'allow hfbr0' in the helper's
+    # ACL). If it's missing we degrade to user-mode with a loud warning rather
+    # than hard-failing a bare `run` — except under --lan-client, which the
+    # validation above already requires bridge for.
     local QEMU_BRIDGE_HELPER=""
     if [[ "$USE_BRIDGE" == "true" ]]; then
-        BRIDGE_NAME="hfbr0"
         QEMU_BRIDGE_HELPER=$(which qemu-bridge-helper 2>/dev/null || echo "/usr/libexec/qemu-bridge-helper")
         if [[ ! -x "$QEMU_BRIDGE_HELPER" ]]; then
-            log_error "qemu-bridge-helper not found or not executable"
-            exit 1
+            if [[ "$LAUNCH_LAN_CLIENT" == "true" ]]; then
+                log_error "qemu-bridge-helper not found or not executable, but --lan-client needs bridge networking."
+                log_error "Install/enable qemu-bridge-helper and add 'allow hfbr0' to its ACL (e.g. /etc/qemu/bridge.conf)."
+                exit 1
+            fi
+            log_warning "qemu-bridge-helper not found or not executable — falling back to user-mode networking."
+            log_warning "The box's LAN-only UI (http://10.1.2.1) will NOT be reachable from the host in this mode."
+            log_warning "To use bridge mode, enable qemu-bridge-helper and add 'allow hfbr0' to its ACL"
+            log_warning "(e.g. /etc/qemu/bridge.conf), then re-run. Pass --no-bridge to silence this."
+            USE_BRIDGE=false
         fi
+    fi
+    if [[ "$USE_BRIDGE" == "true" ]]; then
+        BRIDGE_NAME="hfbr0"
         destroy_bridge "$BRIDGE_NAME"
         create_bridge "$BRIDGE_NAME"
+        attach_host_to_bridge "$BRIDGE_NAME" "$USE_DEV"
     fi
 
     # Trap to cleanup on exit. Uses socket-path matching rather than PID
@@ -791,9 +891,9 @@ cmd_run() {
         )
     fi
 
-    # Networking: user-mode (default, 2 NICs) or bridge (router topology)
+    # Networking: bridge (default, router topology) or user-mode (--no-bridge)
     if [[ "$USE_BRIDGE" == "true" ]]; then
-        log_info "Networking: bridge ($BRIDGE_NAME) + user (host port-forwards 2223/8000/8443/8080)"
+        log_info "Networking: bridge ($BRIDGE_NAME; host $HOST_LAN_IP) + user (host port-forwards 2223/8000/8443/8080)"
         ROUTER_QEMU_CMD+=(
             -netdev user,id=net0,hostfwd=tcp::2223-:22,hostfwd=tcp::8443-:443,hostfwd=tcp::8080-:80,hostfwd=tcp::8000-:8000
             -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56
@@ -886,6 +986,9 @@ cmd_run() {
     log_info "  TPM2: $USE_TPM"
     log_info "  Memory: ${VM_MEMORY}MB"
     log_info "  Cores: $VM_CORES"
+    if [[ "$USE_BRIDGE" == "true" && -n "$BOX_LAN_IP" ]]; then
+        log_info "  Box LAN UI (native): http://$BOX_LAN_IP  (finish-setup; ready once the install has booted)"
+    fi
 
     local ROUTER_PID
     if [[ "$USE_VIRTVIEWER" == "true" ]] || [[ "$USE_HEADLESS" == "true" ]]; then

@@ -107,4 +107,9 @@ in
   ## See checks/app-snapshot.nix.
   app-config-snapshot = appSnapshot.check;
   app-prestart-snapshot = appSnapshot.prestartCheck;
+
+  ## Generated-Caddyfile snapshot — the byte-identical oracle for changes to
+  ## services/caddy (the directive-ordering footgun). Golden:
+  ## tests/caddy-config-snapshot.txt. See checks/app-snapshot.nix.
+  caddy-config-snapshot = appSnapshot.caddyCheck;
 }
