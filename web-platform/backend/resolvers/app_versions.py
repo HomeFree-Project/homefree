@@ -42,9 +42,10 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Body
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,11 @@ async def _fetch_latest(
         # release tags at all (open-webui is the canonical example).
         # That's qualitatively different from "we didn't find a
         # comparable version"; surface it as a rolling release.
+        #
+        # For ghcr.io this is ALSO where the page-cap case lands (zitadel,
+        # home-assistant and other repos with more tags than the n=1000
+        # window returns). refresh_all retries those against the source
+        # repo's GitHub Releases — see _ghcr_github_release_fallback.
         if all(_is_floating(t) or t.startswith(("git-", "sha-")) for t in tags):
             return None, "rolling release — upstream publishes no version tags"
         return None, "no parseable semver tags"
@@ -646,6 +652,168 @@ async def _fetch_ghsa(repo: str) -> List[Dict[str, Any]]:
             "html_url": a.get("html_url"),
         })
     return out
+
+
+# Pulls the tag out of each <link .../releases/tag/TAG"/> in a releases
+# atom feed. The char class stops at the closing quote / angle bracket.
+_GITHUB_RELEASE_TAG_RE = re.compile(r"/releases/tag/([^\"'<>]+)")
+
+
+async def _fetch_github_release_tags(repo: str) -> List[str]:
+    """Recent GitHub Release tags for github.com/<repo>, newest first,
+    via the releases.atom feed. Returns [] on 404 / error.
+
+    Deliberately uses the github.com WEB feed, NOT api.github.com: the
+    anonymous REST API is only 60 requests/hour per IP, which a full
+    refresh (advisories for every ghcr image + this version fallback)
+    blows through in a couple of runs — after which every github-derived
+    version reverts to Unknown. The atom feed is served like an ordinary
+    page under a far more generous limit. It lists releases newest-first
+    INCLUDING pre-releases; we return them all and let _pick_latest's
+    shape guard drop betas (a `2026.6.0b4`-shaped tag won't match a
+    `2026.4` pin)."""
+    url = f"https://github.com/{repo}/releases.atom"
+    try:
+        async with httpx.AsyncClient(
+            timeout=_HTTP_TIMEOUT_S, follow_redirects=True
+        ) as cx:
+            r = await cx.get(url)
+            if r.status_code == 404:
+                return []
+            r.raise_for_status()
+            body = r.text
+    except httpx.HTTPError:
+        return []
+    seen: set = set()
+    tags: List[str] = []
+    for raw in _GITHUB_RELEASE_TAG_RE.findall(body):
+        tag = unquote(raw)
+        if tag and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+    return tags
+
+
+def _github_repo_from_url(url: str) -> Optional[str]:
+    """Extract 'owner/name' from a github.com URL, else None. Tolerates a
+    trailing '.git', '/', or deeper path."""
+    if not url:
+        return None
+    m = re.match(r"https?://github\.com/([^/\s]+)/([^/\s#?]+)", url.strip())
+    if not m:
+        return None
+    owner, name = m.group(1), m.group(2)
+    if name.endswith(".git"):
+        name = name[:-4]
+    return f"{owner}/{name}" if owner and name else None
+
+
+# Accept header advertising every manifest media type ghcr serves, so a
+# single GET resolves whether the ref is a single-arch image or a
+# multi-arch index.
+_OCI_MANIFEST_ACCEPT = ",".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+])
+
+
+async def _ghcr_source_repo(repo: str, ref: str) -> Optional[str]:
+    """Best-effort: resolve a ghcr.io image to its GitHub source repo
+    ('owner/name') via the org.opencontainers.image.source label on the
+    image config. A ghcr image name frequently differs from its source
+    repo — ghcr.io/home-assistant/home-assistant is built from
+    github.com/home-assistant/core; immich-server from immich-app/immich
+    — so the bare ghcr path can't be assumed to be the GitHub repo.
+
+    Returns None on any failure; the caller falls back to the ghcr path."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=_HTTP_TIMEOUT_S, follow_redirects=True
+        ) as cx:
+            tr = await cx.get(
+                f"https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull"
+            )
+            tr.raise_for_status()
+            token = tr.json().get("token")
+            if not token:
+                return None
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": _OCI_MANIFEST_ACCEPT,
+            }
+            r = await cx.get(
+                f"https://ghcr.io/v2/{repo}/manifests/{ref}", headers=headers
+            )
+            r.raise_for_status()
+            man = r.json()
+            # Multi-arch index -> drill into a concrete linux image manifest
+            # (prefer amd64; skip attestation entries whose architecture is
+            # 'unknown') to reach an actual config blob.
+            sub = man.get("manifests")
+            if isinstance(sub, list):
+                digest = None
+                for entry in sub:
+                    plat = entry.get("platform") or {}
+                    arch = plat.get("architecture")
+                    if arch in (None, "unknown"):
+                        continue
+                    if plat.get("os") == "linux" and arch == "amd64":
+                        digest = entry.get("digest")
+                        break
+                    if digest is None:
+                        digest = entry.get("digest")
+                if not digest:
+                    return None
+                r = await cx.get(
+                    f"https://ghcr.io/v2/{repo}/manifests/{digest}",
+                    headers=headers,
+                )
+                r.raise_for_status()
+                man = r.json()
+            cfg_digest = (man.get("config") or {}).get("digest")
+            if not cfg_digest:
+                return None
+            b = await cx.get(
+                f"https://ghcr.io/v2/{repo}/blobs/{cfg_digest}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            b.raise_for_status()
+            labels = ((b.json().get("config") or {}).get("Labels")) or {}
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
+    return _github_repo_from_url(labels.get("org.opencontainers.image.source") or "")
+
+
+async def _ghcr_github_release_fallback(
+    repo: str, current_tag: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """For a ghcr.io image whose registry tag listing couldn't yield a
+    comparable version, try the GitHub Releases of its source repo.
+    Returns (latest_tag, github_source_repo), or (None, None).
+
+    Tries the org.opencontainers.image.source-derived repo first (so
+    ghcr.io/home-assistant/home-assistant -> home-assistant/core resolves),
+    then the ghcr repo path itself (covers zitadel/zitadel, where the names
+    match and the label lookup is unnecessary). The candidate GH release
+    tag is run through _pick_latest so the same shape/major/no-downgrade
+    guards apply — e.g. frigate's `v0.17.1` release won't be recommended
+    over a `0.17.1` pin (different prefix stream)."""
+    candidates: List[str] = []
+    src = await _ghcr_source_repo(repo, current_tag)
+    if src:
+        candidates.append(src)
+    if repo not in candidates:
+        candidates.append(repo)
+    for gh_repo in candidates:
+        gh_tags = await _fetch_github_release_tags(gh_repo)
+        if not gh_tags:
+            continue
+        picked = _pick_latest(gh_tags, current_tag)
+        if picked:
+            return picked, gh_repo
+    return None, None
 
 
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "": 0}
@@ -824,18 +992,42 @@ async def refresh_all() -> Dict[str, Dict[str, Any]]:
                 parsed["tag"],
                 parsed.get("digest", ""),
             )
-            # GitHub Security Advisories — only for ghcr.io images,
-            # since the API is /repos/<org>/<repo>/ and only the
-            # ghcr.io repo path maps cleanly onto a github.com one.
-            # Skipped silently for everything else.
+
+            # GitHub Releases fallback for ghcr.io images the registry tag
+            # listing couldn't resolve — repos with more tags than GHCR's
+            # page cap returns (zitadel, home-assistant, immich). Resolves
+            # via the image's source repo, which often differs from the
+            # ghcr path. `source_repo` is the github.com 'owner/name' we
+            # ended up trusting; we reuse it below for advisories and (in
+            # _build_payload) the changelog/advisory links so they point at
+            # the real repo, not the ghcr path.
+            source_repo: Optional[str] = None
+            if (
+                latest is None
+                and parsed["registry"] == "ghcr.io"
+                and parsed["tag"]
+                and not _is_floating(parsed["tag"])
+            ):
+                fb_latest, fb_repo = await _ghcr_github_release_fallback(
+                    parsed["repo"], parsed["tag"]
+                )
+                if fb_latest:
+                    latest, note, source_repo = fb_latest, None, fb_repo
+
+            # GitHub Security Advisories — only for ghcr.io images, against
+            # the source repo when we resolved one (so home-assistant's
+            # advisories come from home-assistant/core, not the ghcr path),
+            # else the ghcr path. Skipped silently for everything else.
             advisories: List[Dict[str, Any]] = []
-            if parsed["registry"] == "ghcr.io" and parsed["repo"]:
-                advisories = await _fetch_ghsa(parsed["repo"])
+            adv_repo = source_repo or parsed["repo"]
+            if parsed["registry"] == "ghcr.io" and adv_repo:
+                advisories = await _fetch_ghsa(adv_repo)
             cache[key] = {
                 "latest_tag": latest,
                 "note": note,
                 "last_checked": now,
                 "advisories": advisories,
+                "source_repo": source_repo,
             }
         _write_cache(cache)
         return cache
@@ -909,14 +1101,24 @@ def _build_payload() -> List[Dict[str, Any]]:
         if not isinstance(advisories, list):
             advisories = []
 
+        # When the version was resolved via a ghcr.io -> GitHub Releases
+        # fallback, refresh_all recorded the real source repo (e.g.
+        # home-assistant/core for ghcr.io/home-assistant/home-assistant).
+        # Prefer it for the changelog + advisory links so they don't 404
+        # on the ghcr path; fall back to the parsed repo otherwise.
+        source_repo = cache_entry.get("source_repo")
+        link_repo = source_repo or parsed.get("repo") or ""
+
         # Release-notes URL — best-effort link to where the operator
         # can see what's in the latest version. Only attached when
         # there IS a latest version to point at; floating/local/
-        # up-to-date rows don't need it.
+        # up-to-date rows don't need it. A resolved source_repo means the
+        # latest came from GitHub Releases, so point the link at github.com
+        # regardless of the (ghcr) registry.
         if status in ("outdated",) and latest:
             changelog_url = _changelog_url(
-                parsed.get("registry") or "",
-                parsed.get("repo") or "",
+                "ghcr.io" if source_repo else (parsed.get("registry") or ""),
+                link_repo,
                 latest,
             )
         else:
@@ -927,9 +1129,9 @@ def _build_payload() -> List[Dict[str, Any]]:
         # whether there are any open advisories, so the operator can
         # click through to confirm "still nothing here" if curious.
         advisories_url = None
-        if parsed.get("registry") == "ghcr.io" and parsed.get("repo"):
+        if parsed.get("registry") == "ghcr.io" and link_repo:
             advisories_url = (
-                f"https://github.com/{parsed['repo']}/security/advisories"
+                f"https://github.com/{link_repo}/security/advisories"
                 "?state=published"
             )
 
@@ -950,6 +1152,11 @@ def _build_payload() -> List[Dict[str, Any]]:
             "advisory_count": len(advisories),
             "advisory_max_severity": _max_severity(advisories),
             "advisories_url": advisories_url,
+            # Set by _apply_pending_overlay() when the live source pin
+            # differs from the deployed image (a staged-but-unbuilt bump).
+            "pending": False,
+            "pending_version": None,
+            "deployed_version": None,
         })
 
     # Stable sort: outdated first (the actionable rows), then unknown
@@ -972,14 +1179,92 @@ def _build_payload() -> List[Dict[str, Any]]:
     return out
 
 
+# ─── Pending-rebuild overlay ──────────────────────────────────────────
+#
+# "Update apps" (and the per-row Update button) rewrite the image-version
+# pin in the LIVE checkout's default.nix. The deployed image — and the
+# build-time catalogs this resolver reads — don't change until the box is
+# rebuilt. So between bump and rebuild there's a staged-but-unbuilt state,
+# which we surface the same way the rest of the admin UI flags undeployed
+# config: an amber row. The signal is purely disk-derived (live source pin
+# vs deployed image), so it survives a page reload and clears on rebuild —
+# no ephemeral client state.
+
+
+def _live_source_pins() -> Dict[str, str]:
+    """Map 'registry/repo' -> the tag pinned in the LIVE local-base
+    checkout's source (apps/ + services/). Empty unless an enabled LOCAL
+    alternate base is configured — only then is there a writable,
+    ahead-of-build source tree to compare against.
+
+    Keyed by repo (not the full image): a freshly-bumped pin has a new
+    tag, and we want to detect exactly that the same repo now resolves to
+    a different tag than what's deployed. (Caveat: a base image shared by
+    two apps that are bumped divergently keys to last-wins; harmless — at
+    worst a sibling row shows amber a bit early and clears on rebuild.)"""
+    try:
+        from services.plugins import PluginsService
+        base = PluginsService.get_base_override()
+        if not base.get("enabled") or (base.get("type") or "") != "local":
+            return {}
+        local = base.get("localUrl") or ""
+        if local.startswith("git+file://"):
+            local = local[len("git+file://"):]
+        local = local.strip()
+        if not local:
+            return {}
+        from resolvers.app_source_index import scan_all_app_images
+        root = Path(local)
+        pins: Dict[str, str] = {}
+        for entry in scan_all_app_images([root / "apps", root / "services"]):
+            p = _parse_image(entry["image"])
+            if p and p.get("repo") and p.get("tag"):
+                pins[f"{p['registry']}/{p['repo']}"] = p["tag"]
+        return pins
+    except Exception as e:  # noqa: BLE001
+        logger.warning("live source-pin scan failed: %s", e)
+        return {}
+
+
+def _apply_pending_overlay(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Flag rows whose live source pin differs from the deployed image as
+    pending-rebuild: show the staged version as `current`, recompute the
+    status against it, and set `pending` so the UI can amber the row."""
+    pins = _live_source_pins()
+    if not pins:
+        return rows
+    for row in rows:
+        parsed = _parse_image(row.get("image") or "")
+        if not parsed or not parsed.get("repo"):
+            continue
+        deployed_tag = parsed.get("tag")
+        if not deployed_tag:
+            continue
+        staged = pins.get(f"{parsed['registry']}/{parsed['repo']}")
+        if not staged or staged == deployed_tag:
+            continue
+        # Staged-but-unbuilt: the checkout pins a different tag than the
+        # running image. Surface the staged version as current + amber.
+        row["pending"] = True
+        row["pending_version"] = staged
+        row["deployed_version"] = deployed_tag
+        row["current"] = staged
+        latest = row.get("latest")
+        if latest and _same_release(staged, latest):
+            # Staged up to the latest — once built it'll be current.
+            row["status"] = "up-to-date"
+    return rows
+
+
 # ─── HTTP endpoints ───────────────────────────────────────────────────
 
 
 @router.get("/versions")
 async def get_app_versions() -> Dict[str, Any]:
-    """Read-only merged view of the eval-time container catalog and
-    the cached upstream-tag lookups. Always fast (no network)."""
-    return {"apps": _build_payload()}
+    """Read-only merged view of the eval-time container catalog and the
+    cached upstream-tag lookups, with a pending-rebuild overlay derived
+    from the live checkout source. Always fast (no network)."""
+    return {"apps": _apply_pending_overlay(_build_payload())}
 
 
 async def _refresh_in_background() -> None:
@@ -1002,9 +1287,15 @@ async def post_app_versions_refresh(
 
 
 @router.post("/versions/upgrade")
-async def post_app_versions_upgrade() -> Dict[str, Any]:
+async def post_app_versions_upgrade(
+    payload: Dict[str, Any] = Body(default={}),
+) -> Dict[str, Any]:
     """Run scripts/upgrade-apps.py against the alternate-base local
     checkout and return its JSON summary.
+
+    Body may carry `{"app": "<name>"}` to bump just one app (the row's
+    container name / apps-dir / project name — the script's --app filter
+    matches any of them); omit it to bump everything.
 
     Requires an alternate-base `local` repository to be configured —
     the upstream `/nix/store` tree the box would otherwise build from
@@ -1019,6 +1310,10 @@ async def post_app_versions_upgrade() -> Dict[str, Any]:
     import subprocess
     import sys as _sys
     from fastapi import HTTPException
+
+    app_filter = ""
+    if isinstance(payload, dict) and isinstance(payload.get("app"), str):
+        app_filter = payload["app"].strip()
 
     # Lazy import — keep the resolver's import chain clean for the
     # daily timer entrypoint that doesn't need developers/.
@@ -1061,12 +1356,15 @@ async def post_app_versions_upgrade() -> Dict[str, Any]:
     # Invoke with the SAME interpreter the admin-api is running under so
     # we don't pay a nix-shell spin-up. The interpreter already has
     # httpx + fastapi (it's serving us right now).
+    cmd = [_sys.executable, str(script),
+           "--json", "--no-color",
+           "--repo-root", str(repo_root)]
+    if app_filter:
+        cmd += ["--app", app_filter]
     try:
         proc = await asyncio.to_thread(
             subprocess.run,
-            [_sys.executable, str(script),
-             "--json", "--no-color",
-             "--repo-root", str(repo_root)],
+            cmd,
             capture_output=True,
             text=True,
             timeout=120,

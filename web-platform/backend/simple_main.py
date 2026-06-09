@@ -3847,6 +3847,249 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/developers/homefree-base/flake-update")
+async def update_homefree_base_flakes():
+    """
+    Run `nix flake update` in the local alternate-base checkout, bumping its
+    flake.lock inputs (nixpkgs and any other flake inputs) to their latest.
+    Requires an ENABLED, LOCAL alternate base — the official upstream tree
+    lives read-only in /nix/store, so its lock can't be rewritten. Does NOT
+    rebuild; the user applies via the global Apply flow afterwards.
+    """
+    import asyncio as _asyncio
+    import os as _os
+    import subprocess
+    from pathlib import Path as _Path
+    from services.mode import ModeService
+    from services.plugins import PluginsService
+
+    if not ModeService.is_admin():
+        raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+    base = PluginsService.get_base_override()
+    if not base.get("enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate HomeFree repository is not enabled. Configure a "
+                   "local checkout before running Update flakes.",
+        )
+    if (base.get("type") or "") != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Update flakes requires a LOCAL alternate base — a remote "
+                   "URL points at a read-only tree.",
+        )
+    local_url = base.get("localUrl") or ""
+    if local_url.startswith("git+file://"):
+        local_url = local_url[len("git+file://"):]
+    local_url = local_url.strip()
+    if not local_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate base is enabled but its local path is empty.",
+        )
+    repo_root = _Path(local_url)
+    if not (repo_root / "flake.nix").is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No flake.nix at {repo_root}. Is the alternate base a "
+                   "HomeFree checkout?",
+        )
+
+    # Give the subprocess a normal system PATH so `nix` and its git/curl
+    # fetchers resolve regardless of the admin-api unit's trimmed PATH.
+    env = dict(_os.environ)
+    env["PATH"] = env.get("PATH", "") + ":/run/current-system/sw/bin"
+
+    # IDLE timeout, not a wall-clock cap: a flake update can legitimately
+    # run for minutes (it fetches metadata + a NAR hash for every input),
+    # so we only abort if nix goes completely silent — i.e. stops emitting
+    # output for IDLE_SECS, which signals a stalled fetch rather than slow
+    # progress. nix streams its progress + "Updated input '...'" lines to
+    # stderr, so we merge stderr into stdout and reset the idle clock on
+    # any bytes. The whole process group is killed on idle so hung child
+    # fetchers (git/curl) die with it.
+    IDLE_SECS = 180
+
+    def _run_idle(cmd):
+        import os
+        import select
+        import signal as _signal
+        import time
+
+        proc = subprocess.Popen(
+            cmd, cwd=str(repo_root), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        fd = proc.stdout.fileno()
+        chunks = []
+        last = time.monotonic()
+        idle = False
+        try:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 1.0)
+                now = time.monotonic()
+                if ready:
+                    data = os.read(fd, 65536)
+                    if not data:
+                        break  # EOF — nix finished writing
+                    chunks.append(data)
+                    last = now
+                elif proc.poll() is not None:
+                    break  # exited, nothing more buffered
+                elif now - last > IDLE_SECS:
+                    idle = True
+                    break
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, _signal.SIGKILL)
+                except Exception:
+                    proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
+        try:
+            rest = os.read(fd, 1 << 20)
+            if rest:
+                chunks.append(rest)
+        except Exception:
+            pass
+        rc = proc.poll()
+        return rc, b"".join(chunks).decode("utf-8", "replace"), idle
+
+    try:
+        rc, out, idle = await _asyncio.to_thread(
+            _run_idle,
+            ["nix", "--extra-experimental-features", "nix-command flakes",
+             "flake", "update"],
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="`nix` was not found on the admin-api PATH.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to run nix flake update: {e}"
+        )
+
+    out = (out or "").strip()
+    if idle:
+        raise HTTPException(
+            status_code=504,
+            detail=f"nix flake update produced no output for {IDLE_SECS}s and "
+                   "was stopped — likely a stalled fetch. Last output: "
+                   f"{out[-600:] or 'none'}",
+        )
+    if rc != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"nix flake update failed (exit {rc}): "
+                   f"{out[-800:] or 'no output'}",
+        )
+    updated = [
+        ln.strip() for ln in out.splitlines()
+        if "Updated input" in ln or "Added input" in ln
+    ]
+    return JSONResponse(content={
+        "success": True,
+        "updated": updated,
+        "output": out[-2000:],
+    })
+
+
+@app.get("/api/developers/homefree-base/nixpkgs")
+async def get_homefree_base_nixpkgs():
+    """
+    Report the nixpkgs commit + commit date pinned in the relevant
+    flake.lock: the local-base checkout's lock when one is configured
+    (what Update flakes rewrites), else the instance lock at
+    /etc/nixos/flake.lock. Shape:
+      { rev, shortRev, date, lastModified, owner, repo, ref, commitUrl,
+        source: "checkout"|"instance" }  — or {} when nothing parseable.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+    from services.mode import ModeService
+    from services.plugins import PluginsService
+
+    if not ModeService.is_admin():
+        raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+    def _extract(lock_path: _Path):
+        try:
+            data = _json.loads(lock_path.read_text())
+        except (OSError, ValueError):
+            return None
+        nodes = data.get("nodes")
+        if not isinstance(nodes, dict):
+            return None
+        # Prefer a node literally named "nixpkgs"; otherwise any node whose
+        # locked source is the nixpkgs repo (covers `nixpkgs-unstable` etc.).
+        node = nodes.get("nixpkgs")
+        if not isinstance(node, dict):
+            node = next(
+                (n for n in nodes.values()
+                 if isinstance(n, dict)
+                 and (n.get("locked") or {}).get("repo") == "nixpkgs"),
+                None,
+            )
+        if not isinstance(node, dict):
+            return None
+        locked = node.get("locked") or {}
+        original = node.get("original") or {}
+        rev = locked.get("rev")
+        if not rev:
+            return None
+        lm = locked.get("lastModified")
+        date = None
+        if isinstance(lm, (int, float)):
+            date = (datetime.fromtimestamp(lm, tz=timezone.utc)
+                    .strftime("%Y-%m-%d %H:%M UTC"))
+        owner = locked.get("owner") or original.get("owner")
+        repo = locked.get("repo") or original.get("repo") or "nixpkgs"
+        commit_url = (
+            f"https://github.com/{owner}/{repo}/commit/{rev}"
+            if owner and (locked.get("type") or original.get("type")) == "github"
+            else None
+        )
+        return {
+            "rev": rev,
+            "shortRev": rev[:12],
+            "lastModified": lm,
+            "date": date,
+            "owner": owner,
+            "repo": repo,
+            "ref": original.get("ref"),
+            "commitUrl": commit_url,
+        }
+
+    candidates = []
+    try:
+        base = PluginsService.get_base_override()
+        if base.get("enabled") and (base.get("type") or "") == "local":
+            local = base.get("localUrl") or ""
+            if local.startswith("git+file://"):
+                local = local[len("git+file://"):]
+            local = local.strip()
+            if local:
+                candidates.append((_Path(local) / "flake.lock", "checkout"))
+    except Exception as e:
+        logger.warning(f"nixpkgs info: base override read failed: {e}")
+    candidates.append((_Path("/etc/nixos/flake.lock"), "instance"))
+
+    for lock_path, source in candidates:
+        info = _extract(lock_path)
+        if info:
+            info["source"] = source
+            return JSONResponse(content=info)
+    return JSONResponse(content={})
+
+
 @app.get("/api/plugin-directory")
 async def get_plugin_directory(refresh: int = 0):
     """

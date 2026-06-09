@@ -694,6 +694,36 @@ class PluginsService:
             )
             text = text.replace("homefree-base.inputs", "homefree.inputs")
 
+        # --- 5. system nixpkgs source (centralize on the homefree base) ---
+        # Build the system from the bound base's nixpkgs-unstable so the
+        # nixpkgs the box compiles against is controlled centrally by the
+        # homefree repo (and bumped via Update flakes / a homefree-base
+        # revision), instead of drifting on a per-instance flake.lock pin.
+        # Relies on the `homefree` binding ensured in step 4, so it runs
+        # last. Idempotent: a no-op once already converted (incl. flakes
+        # produced by the current installer template).
+        if (
+            "homefree.inputs.nixpkgs-unstable.lib.nixosSystem" not in text
+            and "nixpkgs.lib.nixosSystem" in text
+        ):
+            text = text.replace(
+                "nixpkgs.lib.nixosSystem",
+                "homefree.inputs.nixpkgs-unstable.lib.nixosSystem",
+            )
+        # Convert the now-unused top-level `nixpkgs` input to a follows so it
+        # stops pinning/fetching a separate per-instance nixpkgs. Match ONLY
+        # the exact 4-space-indented `nixpkgs.url = "...";` line; plugin
+        # inputs (e.g. homefree-navidrome.url) and a `nixpkgs-unstable.url`
+        # line are left untouched (the char after 'nixpkgs' there is '-').
+        if 'nixpkgs.follows = "homefree-base/nixpkgs-unstable"' not in text:
+            text = re.sub(
+                r'^([ \t]*)nixpkgs\.url = "[^"]*";[ \t]*$',
+                r'\1nixpkgs.follows = "homefree-base/nixpkgs-unstable";',
+                text,
+                count=1,
+                flags=re.M,
+            )
+
         return text
 
     @staticmethod

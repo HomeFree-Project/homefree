@@ -59,7 +59,13 @@ class InstallationService:
   description = "HomeFree NixOS Configuration";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The system nixpkgs is NOT pinned per-instance: it follows the
+    # HomeFree base flake's nixpkgs-unstable so every box shares the same
+    # nixpkgs the homefree repo controls (bumped via the admin UI's
+    # "Update flakes" button / a homefree-base revision bump), instead of
+    # drifting on a per-instance flake.lock. homefree-base is always
+    # declared below, so this follows resolves in both prod and dev mode.
+    nixpkgs.follows = "homefree-base/nixpkgs-unstable";
     homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git";@@lanzaboote_input@@
     # >>> homefree-base-override (managed - do not edit by hand) >>>@@base_override_region@@
     # <<< homefree-base-override <<<
@@ -98,7 +104,11 @@ class InstallationService:
     homefreeConfigJson = builtins.fromJSON (builtins.readFile ./homefree-config.json);
   in {
     nixosConfigurations = {
-      @@hostname@@ = nixpkgs.lib.nixosSystem {
+      # Build with the bound base's nixpkgs-unstable (homefree = the
+      # selected base input, official or local dev) so the system tracks
+      # the shared, centrally-controlled nixpkgs rather than a per-instance
+      # pin. This mirrors the homefree repo's own nixosConfigurations.
+      @@hostname@@ = homefree.inputs.nixpkgs-unstable.lib.nixosSystem {
         inherit system;
         modules = [
           homefree.nixosModules.homefree@@lanzaboote_module@@

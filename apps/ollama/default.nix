@@ -17,6 +17,11 @@ let
   containerDataPath = "/var/lib/ollama-webui";
   secretsDir = "/var/lib/homefree-secrets/ollama";
 
+  ## Open WebUI image tag. Kept in a `version` let-binding (like every
+  ## other app) so the App Versions page's "Update apps" bumper can
+  ## rewrite it — a literal inline tag is invisible to that parser.
+  version = "v0.9.5";
+
   port-internal = 8254;
   ## Host-side port — claimed via the central allocator. Pinned to
   ## 3014 (its historical value) so the migration is a behavioural
@@ -146,7 +151,7 @@ in
 
   virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.ollama.enable {
     ollama-webui = {
-      image = "ghcr.io/open-webui/open-webui:v0.9.5";
+      image = "ghcr.io/open-webui/open-webui:${version}";
 
       autoStart = true;
 

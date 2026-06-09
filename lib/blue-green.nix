@@ -367,6 +367,45 @@ let
         echo "${name}-flip: FAILED ($2) — still serving previous version" >&2
       }
 
+      # mark_deferred <colour> <reason>: a flip we INTENTIONALLY postpone —
+      # not a failure. Used when Caddy is mid-restart this rebuild, so a
+      # colour whose startup talks to SSO through Caddy can't health-gate
+      # yet. Same marker file (so the UI nudges a re-apply) but flagged
+      # `deferred` + `failed:false` so the reporter words it as "finishes
+      # on re-apply", not "failed". active-closure is left unchanged by the
+      # caller, so the next rebuild re-runs the flip once Caddy is back up.
+      mark_deferred() {
+        ${pkgs.coreutils}/bin/printf \
+          '{"failed": false, "deferred": true, "service": "%s", "attempted_color": "%s", "attempted_closure": "%s", "reason": "%s", "timestamp": "%s"}\n' \
+          "${name}" "$1" "$desired_closure" "$2" "$(${pkgs.coreutils}/bin/date -Is)" \
+          > "${marker}"
+        echo "${name}-flip: deferred ($2) — current colour keeps serving" >&2
+      }
+
+      # reload_caddy: a few attempts, covering the brief window where Caddy
+      # is active but :2019 hasn't rebound (e.g. just finished restarting).
+      reload_caddy() {
+        local i
+        for i in 1 2 3 4 5; do
+          if $sysctl reload caddy 2>/dev/null; then return 0; fi
+          ${pkgs.coreutils}/bin/sleep 1
+        done
+        return 1
+      }
+
+      # A rebuild that changes the Caddy PACKAGE stops caddy during the
+      # activation phase — exactly when this flip runs. Reloading it, or
+      # health-gating a colour that reaches SSO through it, then fails
+      # spuriously. Detect that once: when down we skip the (pointless)
+      # reload — Caddy reads the upstream snippet on its fresh post-
+      # activation start — and treat a health-gate timeout as a clean
+      # defer rather than a failure.
+      local caddy_down=0
+      if [ "$($sysctl is-active caddy.service 2>/dev/null)" != "active" ]; then
+        caddy_down=1
+        echo "${name}-flip: caddy not active (restarting this rebuild) — will skip its reload; a caddy-dependent colour defers"
+      fi
+
       # 2. Migration branch — first deploy of blue/green for this
       #    service. No pointer files yet; the legacy unit is retired.
       if [ ! -f "$statedir/active-color" ]; then
@@ -399,12 +438,16 @@ let
           ${pkgs.coreutils}/bin/rm -f "${marker}"
           echo "${name}-flip: migrated — now serving blue"
         else
-          echo "${name}-flip: blue failed on first deploy" >&2
           $sysctl stop ${unitName "blue"} 2>/dev/null || true
           ${lib.optionalString (migrateRollback == "restart-legacy") ''
             $sysctl start ${migrateFrom} 2>/dev/null || true
           ''}
-          mark_failed blue "blue failed to come up on first deploy"
+          if [ "$caddy_down" = 1 ]; then
+            mark_deferred blue "caddy was restarting this rebuild; re-apply to finish"
+          else
+            echo "${name}-flip: blue failed on first deploy" >&2
+            mark_failed blue "blue failed to come up on first deploy"
+          fi
         fi
         return 0
       fi
@@ -445,20 +488,32 @@ let
         return 0
       fi
 
-      # 5. Health-gate the standby.
+      # 5. Health-gate the standby. A timeout while Caddy is down is most
+      #    likely caused by Caddy being down (the colour can't reach SSO at
+      #    startup), so defer rather than fail — re-apply verifies properly
+      #    once Caddy is back up.
       if ! health_gate "$standby_unit" "$standby_port"; then
         $sysctl stop "$standby_unit" 2>/dev/null || true
-        mark_failed "$standby" "health check timeout"
+        if [ "$caddy_down" = 1 ]; then
+          mark_deferred "$standby" "caddy was restarting this rebuild; re-apply to finish"
+        else
+          mark_failed "$standby" "health check timeout"
+        fi
         return 0
       fi
 
-      # 6. Point Caddy at the standby colour and reload gracefully.
+      # 6. Point Caddy at the standby colour and reload gracefully. When
+      #    Caddy is down (being restarted this rebuild) the reload is both
+      #    impossible AND unnecessary: Caddy reads the freshly-written
+      #    upstream snippet on its post-activation start, so we skip it.
       if ! write_upstream_snippet "$standby_port"; then
         $sysctl stop "$standby_unit" 2>/dev/null || true
         mark_failed "$standby" "could not write upstream snippet"
         return 0
       fi
-      if ! $sysctl reload caddy; then
+      if [ "$caddy_down" = 1 ]; then
+        echo "${name}-flip: caddy down — skipping reload; it reads the new upstream snippet on its fresh start"
+      elif ! reload_caddy; then
         # Roll the snippet back; keep the old colour serving.
         write_upstream_snippet "$( [ "$current" = blue ] && echo "$blue_port" || echo "$green_port" )" || true
         $sysctl stop "$standby_unit" 2>/dev/null || true

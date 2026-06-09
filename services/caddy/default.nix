@@ -357,7 +357,27 @@ in
     wantedBy = [ "dns-ready.service" ];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile --force";
+      ## `after = caddy.service` only guarantees the unit is ACTIVE, not
+      ## that Caddy's admin API on :2019 has bound — on a rebuild that
+      ## restarts Caddy (e.g. its package changed via a nixpkgs bump),
+      ## this oneshot fires the instant caddy.service goes active and a
+      ## bare `caddy reload` races the bind, failing with "connection
+      ## refused" (a red, failed unit). Wait for :2019 to actually accept
+      ## a request first; if Caddy never comes up, skip cleanly (exit 0)
+      ## rather than fail — dns-ready re-firing will retry the reload.
+      ExecStart = pkgs.writeShellScript "caddy-acme-retry" ''
+        for _i in $(${pkgs.coreutils}/bin/seq 1 60); do
+          if ${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 \
+               http://127.0.0.1:2019/config/ 2>/dev/null; then
+            exec ${config.services.caddy.package}/bin/caddy reload \
+              --config /etc/caddy/caddy_config --adapter caddyfile --force
+          fi
+          ${pkgs.coreutils}/bin/sleep 0.5
+        done
+        echo "caddy-acme-retry: Caddy admin API (:2019) not reachable after" \
+             "30s — skipping ACME retry (dns-ready will re-run it)" >&2
+        exit 0
+      '';
     };
   };
 
@@ -938,7 +958,7 @@ in
                 # Pass the original host header
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-Proto is set by reverse_proxy by default.
               }
             }
 
@@ -947,7 +967,7 @@ in
               reverse_proxy ${lan-address}:8764 {
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-Proto is set by reverse_proxy by default.
               }
             }
           '' else "")
@@ -1107,8 +1127,11 @@ in
               reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
                 header_up Host {http.request.host}
                 header_up X-Real-IP {remote_host}
-                header_up X-Forwarded-For {remote_host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-For / X-Forwarded-Proto are set by
+                # reverse_proxy by default (and its default X-Forwarded-For
+                # is trusted_proxies-aware, which a manual {remote_host}
+                # override is not — so the default is also more correct
+                # behind the optional landing-page CDN front).
                 ${if entry.backend-tls then ''
                 transport http {
                   tls

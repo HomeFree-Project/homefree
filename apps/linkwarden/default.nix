@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "v2.14.1";
-  version-meili = "v1.45.2";
+  version-meili = "v1.46.0";
   containerDataPath = "/var/lib/linkwarden-podman";
   secretsDir = "/var/lib/homefree-secrets/linkwarden";
 
@@ -16,6 +16,7 @@ let
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
   baseEnvFile = "${containerDataPath}/runtime.env";
+  meiliEnvFile = "${containerDataPath}/meili.env";
 
   ## Linkwarden is a Next.js / NextAuth app. Its OIDC provider list
   ## is feature-flagged at build time via NEXT_PUBLIC_* env vars; the
@@ -73,6 +74,20 @@ let
       generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
     }}
 
+    ## meili-master-key — the shared secret between the meilisearch
+    ## engine (its MEILI_MASTER_KEY) and Linkwarden's meili client
+    ## (MEILI_MASTER_KEY). Meili requires a key of at least 16 bytes;
+    ## 32 alphanumeric chars satisfies that. Stripped of /+= (same as
+    ## db-password) so it needs no quoting inside the env files. Anchored
+    ## so a restore re-materializes the SAME key on both sides — a
+    ## mismatched key would 403 every search/index call.
+    ${anchor.anchorSecret {
+      service = "linkwarden";
+      key = "meili-master-key";
+      dir = secretsDir;
+      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+    }}
+
     LINKWARDEN_DB_PASSWORD=$(cat ${secretsDir}/db-password)
 
     ## Idempotent rotation: CREATE ROLE / ensureUsers handles role
@@ -94,6 +109,11 @@ PGEOF
     install -m 600 /dev/null ${baseEnvFile}
     {
       echo "NEXTAUTH_SECRET=$(cat ${secretsDir}/nextauth-secret)"
+      ## MEILI_MASTER_KEY pairs with MEILI_HOST (set in the static env
+      ## block) to authenticate Linkwarden's search/index calls against
+      ## the meilisearch sidecar. Same anchored value the engine loads
+      ## from meili.env.
+      echo "MEILI_MASTER_KEY=$(cat ${secretsDir}/meili-master-key)"
       ## DATABASE_URL synthesised here (not the static env block) so
       ## the anchored password can be substituted at runtime. Embeds
       ## the user + password + host + db; sslmode=disable because
@@ -103,6 +123,15 @@ PGEOF
         "${database-user}" "$LINKWARDEN_DB_PASSWORD" \
         "${config.homefree.network.lan-address}" "${database-name}"
     } > ${baseEnvFile}
+
+    ## meili.env carries the same MEILI_MASTER_KEY into the meilisearch
+    ## container. podman-meilisearch shares this preStart (its
+    ## ExecStartPre), so this file is written before the engine starts.
+    ## Without a master key the engine's API is unauthenticated on the
+    ## podman network; setting it makes meili require the key Linkwarden
+    ## sends.
+    install -m 600 /dev/null ${meiliEnvFile}
+    echo "MEILI_MASTER_KEY=$(cat ${secretsDir}/meili-master-key)" > ${meiliEnvFile}
 
     ## OIDC env synthesized from zitadel-provision secrets. Empty file
     ## pre-provisioning so the container boots cleanly with only the
@@ -242,6 +271,13 @@ in
         ## bundled root store — required so OIDC discovery against
         ## Caddy's local-CA-issued sso.<domain> cert validates.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/homefree-ca-bundle.crt";
+        ## Full-text search backend. Linkwarden reaches the meilisearch
+        ## sidecar by container name over the shared podman network
+        ## (aardvark-dns resolves 'meilisearch'), the same sibling-by-name
+        ## pattern immich uses (REDIS_HOSTNAME=immich-redis). dependsOn
+        ## below guarantees the engine is up first. The matching
+        ## MEILI_MASTER_KEY is carried in runtime.env (anchored).
+        MEILI_HOST = "http://meilisearch:7700";
       };
 
       ## runtime.env carries the persistent NEXTAUTH_SECRET; sso.env
@@ -270,6 +306,11 @@ in
       environment = {
         TZ = config.homefree.system.timeZone;
       };
+
+      ## MEILI_MASTER_KEY (anchored, shared with Linkwarden) is written
+      ## to meili.env by the shared preStart. Enables API-key auth so
+      ## the engine is not an open endpoint on the podman network.
+      environmentFiles = [ meiliEnvFile ];
     };
 
   };

@@ -6,6 +6,8 @@ import {
   getHomefreeBase,
   saveHomefreeBase,
   validateHomefreeBase,
+  updateHomefreeBaseFlakes,
+  getHomefreeBaseNixpkgs,
   getIsoStatus,
   buildIso,
 } from '../../../api/client.js';
@@ -67,6 +69,16 @@ class AppVersionsModule extends LitElement {
     upgrading: { type: Boolean, state: true },
     upgradeResult: { type: Object, state: true },
     upgradeError: { type: String, state: true },
+    // Name of the single app whose per-row Update button is running, or
+    // null. Only one per-row update runs at a time (the backend bump is
+    // serialized anyway).
+    updatingApp: { type: String, state: true },
+    // Update flakes (nix flake update on the local base checkout) state.
+    flakeUpdating: { type: Boolean, state: true },
+    flakeUpdateResult: { type: Object, state: true },
+    flakeUpdateError: { type: String, state: true },
+    // nixpkgs commit/date pinned in the relevant flake.lock.
+    nixpkgsInfo: { type: Object, state: true },
     // Publish ISO image panel state.
     isoLoading: { type: Boolean, state: true },
     isoBuild: { type: Object, state: true },
@@ -122,6 +134,10 @@ class AppVersionsModule extends LitElement {
     .toolbar .spacer { flex: 1; }
 
     button.btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
       padding: 9px 16px;
       background: var(--hf-surface-2);
       color: var(--hf-text);
@@ -137,6 +153,35 @@ class AppVersionsModule extends LitElement {
       border-color: var(--hf-text-subtle);
     }
     button.btn:disabled { opacity: 0.5; cursor: wait; }
+
+    /* Small spinner that lives inside a button while its action runs.
+       Inherits the button's text color via currentColor so it reads on
+       any button variant. Reuses the iso-spin keyframes defined below. */
+    .inline-spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid var(--hf-border-2);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: iso-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    /* Status cell: pill + per-row Update button laid out horizontally so
+       the button uses the spare width on desktop instead of doubling the
+       row height. flex-wrap lets the button drop below the pill only when
+       the column is genuinely too narrow (phones). */
+    .status-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button.btn.row-update {
+      padding: 4px 11px;
+      font-size: 11px;
+      font-weight: 600;
+    }
 
     .table-wrap {
       background: var(--hf-surface);
@@ -229,6 +274,7 @@ class AppVersionsModule extends LitElement {
     .pill.floating { background: rgba(96,165,250,0.12); color: #60a5fa; }
     .pill.local    { background: rgba(167,139,250,0.12); color: #a78bfa; }
     .pill.unknown  { background: rgba(148,163,184,0.12); color: var(--hf-text-muted); }
+    .pill.pending  { background: var(--hf-warn-soft); color: var(--hf-warn); }
 
     /* Advisory badge — severity-coloured, links to the project's
        GitHub advisories list. Smaller than the status pill so it
@@ -266,6 +312,13 @@ class AppVersionsModule extends LitElement {
     tr.unknown  td      { opacity: 0.85; }
     tr.floating td      { opacity: 0.95; }
     tr.local    td      { opacity: 0.95; }
+    /* Pending rebuild — the source pins a newer version than what's
+       deployed. Amber the whole row, the same undeployed-change signal
+       used elsewhere in the admin UI, and emphasise the staged version
+       in the Current column. */
+    tr.pending td { background: var(--hf-warn-soft); }
+    tr.pending .col-current,
+    tr.pending .current-inline { color: var(--hf-warn); font-weight: 600; }
     /* A row with critical or high advisories carries an extra signal —
        give the latest cell a faint red tint so the row stands out
        even at a glance, regardless of update status. */
@@ -412,26 +465,28 @@ class AppVersionsModule extends LitElement {
     }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 
-    /* Update Apps bar — bumper UI between the alt-base panel and the
-       version table. Disabled state communicates the prereq: a local
-       alternate base is required because that's the only writable
-       source tree on the box. */
-    .upgrade-bar {
+    /* Current nixpkgs commit + date, read from the relevant flake.lock.
+       Sits at the bottom of the alt-base card. */
+    .nixpkgs-line {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
       flex-wrap: wrap;
-      padding: 12px 14px;
-      background: var(--hf-surface);
-      border: 1px solid var(--hf-border-2);
-      border-radius: 8px;
-      margin-bottom: 20px;
-    }
-    .upgrade-bar .grow { flex: 1; }
-    .upgrade-bar .hint {
-      color: var(--hf-text-muted);
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--hf-border);
       font-size: 12px;
+      color: var(--hf-text-muted);
     }
+    .nixpkgs-line .lbl { color: var(--hf-text); font-weight: 600; }
+    .nixpkgs-line code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--hf-text);
+    }
+    .nixpkgs-line a { color: var(--hf-accent); text-decoration: none; }
+    .nixpkgs-line a:hover { text-decoration: underline; }
+
+    /* Result panel shown after Update apps / Update flakes runs. */
     .upgrade-result {
       padding: 12px 14px;
       background: var(--hf-surface);
@@ -616,6 +671,11 @@ class AppVersionsModule extends LitElement {
     this.upgrading = false;
     this.upgradeResult = null;
     this.upgradeError = '';
+    this.updatingApp = null;
+    this.flakeUpdating = false;
+    this.flakeUpdateResult = null;
+    this.flakeUpdateError = '';
+    this.nixpkgsInfo = null;
     this.isoLoading = true;
     this.isoBuild = { state: 'idle' };
     this.isoLatest = null;
@@ -629,7 +689,17 @@ class AppVersionsModule extends LitElement {
     super.connectedCallback();
     this.load();
     this.loadBaseOverride();
+    this.loadNixpkgsInfo();
     this.loadIsoStatus();
+  }
+
+  async loadNixpkgsInfo() {
+    try {
+      const info = await getHomefreeBaseNixpkgs();
+      this.nixpkgsInfo = info && info.rev ? info : null;
+    } catch (e) {
+      this.nixpkgsInfo = null;
+    }
   }
 
   disconnectedCallback() {
@@ -841,6 +911,44 @@ class AppVersionsModule extends LitElement {
     }
   }
 
+  // Bump a single app's pin via the same upgrade-apps.py machinery with an
+  // --app filter. The result panel (below the toolbar) shows the outcome;
+  // the row stays Outdated until a rebuild deploys the new pin, since the
+  // "current" column reflects the deployed image, not the source pin.
+  async runUpgradeApp(app) {
+    if (this.upgrading || this.updatingApp || !this._canUpgradeApps) return;
+    this.updatingApp = app.name;
+    this.upgradeError = '';
+    this.upgradeResult = null;
+    try {
+      this.upgradeResult = await upgradeApps({ app: app.name });
+      await this.load();
+    } catch (e) {
+      this.upgradeError = e.body?.detail || e.message || 'Update failed.';
+    } finally {
+      this.updatingApp = null;
+    }
+  }
+
+  // Runs `nix flake update` in the local base checkout (same writable-local
+  // prerequisite as Update apps). Bumps flake.lock inputs; the operator
+  // rebuilds afterwards to deploy.
+  async runUpdateFlakes() {
+    if (this.flakeUpdating || !this._canUpgradeApps) return;
+    this.flakeUpdating = true;
+    this.flakeUpdateError = '';
+    this.flakeUpdateResult = null;
+    try {
+      this.flakeUpdateResult = await updateHomefreeBaseFlakes();
+      // flake.lock changed — refresh the displayed nixpkgs commit/date.
+      await this.loadNixpkgsInfo();
+    } catch (e) {
+      this.flakeUpdateError = e.body?.detail || e.message || 'Update flakes failed.';
+    } finally {
+      this.flakeUpdating = false;
+    }
+  }
+
   // ---- Publish ISO image ----------------------------------------------
   //
   // GET /api/source/iso/status returns the latest published artifact +
@@ -979,6 +1087,7 @@ class AppVersionsModule extends LitElement {
     if (sev === 'critical') rowClasses.push('has-critical-advisory');
     else if (sev === 'high') rowClasses.push('has-high-advisory');
     if (app.enabled === false) rowClasses.push('is-disabled');
+    if (app.pending) rowClasses.push('pending');
     return html`
       <tr class=${rowClasses.join(' ')}>
         <td class="name">
@@ -1014,7 +1123,28 @@ class AppVersionsModule extends LitElement {
             ${this._renderAdvisoryBadge(app)}
           </div>
         </td>
-        <td>${this._renderPill(app.status)}</td>
+        <td class="col-status">
+          <div class="status-cell">
+            ${app.pending
+              ? html`<span class="pill pending"
+                           title="Updated to ${app.pending_version} in the source — rebuild to deploy (currently running ${app.deployed_version}).">Pending rebuild</span>`
+              : this._renderPill(app.status)}
+            ${app.status === 'outdated' && this._canUpgradeApps && !app.pending
+              ? html`
+                <button
+                  class="btn row-update"
+                  ?disabled=${this.upgrading
+                    || (this.updatingApp && this.updatingApp !== app.name)}
+                  title="Bump this app's pin to ${app.latest}. Rebuild after to deploy."
+                  @click=${() => this.runUpgradeApp(app)}
+                >
+                  ${this.updatingApp === app.name
+                    ? html`<span class="inline-spinner"></span>Updating…`
+                    : 'Update'}
+                </button>`
+              : ''}
+          </div>
+        </td>
       </tr>
     `;
   }
@@ -1147,12 +1277,32 @@ class AppVersionsModule extends LitElement {
                 ?disabled=${this.baseProbing || !this._activeBaseUrl}
                 @click=${this._probeBase}
               >${this.baseProbing ? 'Validating…' : 'Validate'}</button>
+              ${this._canUpgradeApps
+                ? html`
+                  <button
+                    class="btn"
+                    ?disabled=${this.flakeUpdating}
+                    title="Runs 'nix flake update' in the local checkout to bump its flake.lock inputs (nixpkgs, etc.). Rebuild after to deploy."
+                    @click=${this.runUpdateFlakes}
+                  >
+                    ${this.flakeUpdating
+                      ? html`<span class="inline-spinner"></span>Updating flakes…`
+                      : 'Update flakes'}
+                  </button>
+                `
+                : ''}
               ${this.baseSaving
                 ? html`<span class="muted" style="align-self:center">Saving…</span>`
                 : ''}
             </div>
+            ${this.flakeUpdateError
+              ? html`<div class="error" style="margin-top:12px">${this.flakeUpdateError}</div>`
+              : ''}
+            ${this._renderFlakeUpdateResult()}
           `
           : ''}
+
+        ${this._renderNixpkgsInfo()}
       </div>
 
       ${this.baseBrowserOpen ? html`
@@ -1166,22 +1316,43 @@ class AppVersionsModule extends LitElement {
     `;
   }
 
-  _renderUpgradeBar() {
-    const can = this._canUpgradeApps;
-    const hint = can
-      ? 'Bumps every safely-bumpable image pin in the local checkout. Rebuild after to deploy.'
-      : 'Enable an alternate HomeFree repository above with a local checkout to make pins editable.';
+  _renderNixpkgsInfo() {
+    const n = this.nixpkgsInfo;
+    if (!n || !n.rev) return '';
+    const ref = n.ref
+      ? (n.repo || 'nixpkgs') + '/' + n.ref
+      : (n.repo || 'nixpkgs');
     return html`
-      <div class="upgrade-bar">
-        <button
-          class="btn primary"
-          ?disabled=${!can || this.upgrading}
-          @click=${this.runUpgradeApps}
-        >${this.upgrading ? 'Updating apps…' : 'Update apps'}</button>
-        <span class="hint grow">${hint}</span>
+      <div class="nixpkgs-line">
+        <span class="lbl">nixpkgs</span>
+        <span>${ref}</span>
+        ${n.commitUrl
+          ? html`<a href=${n.commitUrl} target="_blank" rel="noopener noreferrer"
+                    title="View commit on GitHub"><code>${n.shortRev}</code></a>`
+          : html`<code>${n.shortRev}</code>`}
+        ${n.date ? html`<span>· ${n.date}</span>` : ''}
+        ${n.source === 'checkout' ? html`<span>· local checkout</span>` : ''}
       </div>
-      ${this.upgradeError ? html`<div class="error">${this.upgradeError}</div>` : ''}
-      ${this._renderUpgradeResult()}
+    `;
+  }
+
+  _renderFlakeUpdateResult() {
+    const r = this.flakeUpdateResult;
+    if (!r) return '';
+    const updated = Array.isArray(r.updated) ? r.updated : [];
+    if (updated.length === 0) {
+      return html`
+        <div class="upgrade-result" style="margin-top:12px">
+          <strong>Flakes updated.</strong> No inputs changed — already
+          current. Rebuild to deploy.
+        </div>`;
+    }
+    return html`
+      <div class="upgrade-result" style="margin-top:12px">
+        <div><strong>${updated.length} flake input(s) updated:</strong></div>
+        <ul>${updated.map((u) => html`<li><code>${u}</code></li>`)}</ul>
+        <div style="margin-top:8px">Rebuild to deploy the updated inputs.</div>
+      </div>
     `;
   }
 
@@ -1373,17 +1544,14 @@ class AppVersionsModule extends LitElement {
 
         ${this._renderSourcePicker()}
 
-        ${this._renderUpgradeBar()}
-
         <div class="info-box">
           <strong>App versions</strong>
-          Every app declared in the source — including ones that aren't
-          currently enabled (marked <strong>Disabled</strong>) — with the
-          version it is pinned to and the latest version available from
-          each image's upstream registry. Latest-version lookups run once
-          a day in the background; click Refresh to fetch fresh data on
-          demand. Images on unsupported registries show
-          <strong>Unknown</strong> with a short reason.
+          Every app declared in the source, with the version it is pinned
+          to and the latest version available from each image's upstream
+          registry. Latest-version lookups run once a day in the
+          background; click Refresh to fetch fresh data on demand. Images
+          on unsupported registries show <strong>Unknown</strong> with a
+          short reason.
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
@@ -1395,10 +1563,29 @@ class AppVersionsModule extends LitElement {
           <span class="spacer"></span>
           <button
             class="btn"
+            ?disabled=${!this._canUpgradeApps || this.upgrading || this.updatingApp}
+            title=${this._canUpgradeApps
+              ? 'Bumps every safely-bumpable image pin in the local checkout. Rebuild after to deploy.'
+              : 'Enable an alternate HomeFree repository above with a local checkout to make pins editable.'}
+            @click=${this.runUpgradeApps}
+          >
+            ${this.upgrading
+              ? html`<span class="inline-spinner"></span>Updating apps…`
+              : 'Update apps'}
+          </button>
+          <button
+            class="btn"
             @click=${this.refresh}
             ?disabled=${this.refreshing || this.loading}
-          >${this.refreshing ? 'Refreshing…' : 'Refresh'}</button>
+          >
+            ${this.refreshing
+              ? html`<span class="inline-spinner"></span>Refreshing…`
+              : 'Refresh'}
+          </button>
         </div>
+
+        ${this.upgradeError ? html`<div class="error">${this.upgradeError}</div>` : ''}
+        ${this._renderUpgradeResult()}
 
         ${this.loading && this.apps.length === 0
           ? html`<p class="muted">Loading container catalog…</p>`

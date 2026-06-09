@@ -18,13 +18,20 @@ const DEFAULT_TIMEOUT_MS = 8000;
  */
 async function fetchAPI(endpoint, options = {}) {
   try {
-    // Honour a caller-supplied signal if present; otherwise impose the
-    // default timeout. AbortSignal.any keeps both alive when both exist.
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs || DEFAULT_TIMEOUT_MS);
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, timeoutSignal])
-      : timeoutSignal;
     const { timeoutMs, ...fetchOptions } = options;
+    // `timeoutMs: 0` (or null) opts OUT of a client-side wall-clock
+    // ceiling — for endpoints whose own backend enforces an idle/no-output
+    // timeout and may legitimately run for minutes (e.g. `nix flake
+    // update`). Otherwise impose the default. AbortSignal.any keeps a
+    // caller-supplied signal alive alongside the timeout.
+    const effectiveTimeout = timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : timeoutMs;
+    let signal = options.signal || undefined;
+    if (effectiveTimeout) {
+      const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
+      signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : timeoutSignal;
+    }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       headers: {
@@ -32,7 +39,7 @@ async function fetchAPI(endpoint, options = {}) {
         ...options.headers,
       },
       ...fetchOptions,
-      signal,
+      ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {
@@ -80,12 +87,17 @@ async function get(endpoint, { retries = 2, retryDelayMs = 300 } = {}) {
 }
 
 /**
- * POST request helper
+ * POST request helper.
+ *
+ * `options` is forwarded to fetchAPI — notably `timeoutMs` for endpoints
+ * that legitimately run longer than the 8s default (e.g. `nix flake
+ * update`, which fetches input metadata and can take a minute).
  */
-async function post(endpoint, data) {
+async function post(endpoint, data, options = {}) {
   return fetchAPI(endpoint, {
     method: 'POST',
     body: JSON.stringify(data),
+    ...options,
   });
 }
 
@@ -453,6 +465,18 @@ export const getHomefreeBase = () => get('/api/developers/homefree-base');
 export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
 export const validateHomefreeBase = (probe) =>
   post('/api/developers/homefree-base/validate', probe);
+// Runs `nix flake update` in the local alternate-base checkout to bump its
+// flake.lock inputs. Requires an enabled local base; returns
+// { success, updated: [...], output }. No client-side ceiling
+// (timeoutMs: 0) — a flake update can legitimately run for minutes; the
+// backend enforces an IDLE timeout (abort only if nix stops producing
+// output), so a slow-but-progressing update is never cut off.
+export const updateHomefreeBaseFlakes = () =>
+  post('/api/developers/homefree-base/flake-update', {}, { timeoutMs: 0 });
+// Current nixpkgs commit + date from the relevant flake.lock (the local
+// checkout's if configured, else the instance lock).
+export const getHomefreeBaseNixpkgs = () =>
+  get('/api/developers/homefree-base/nixpkgs');
 
 // Secrets — used by the finish-setup wizard and the DNS module.
 export const getSecretsStatus = () => get('/api/secrets/status');
@@ -523,7 +547,8 @@ export const refreshAppVersions = () => post('/api/apps/versions/refresh', {});
 // unmapped). The endpoint refuses unless an alternate-base local
 // repository is configured — bumping pins in the read-only upstream
 // /nix/store tree can't take effect.
-export const upgradeApps = (opts = {}) => post('/api/apps/versions/upgrade', opts);
+export const upgradeApps = (opts = {}) =>
+  post('/api/apps/versions/upgrade', opts, { timeoutMs: 130000 });
 
 // Source Code page — Publish ISO image.
 // GET returns { build: {state, source, started_at, finished_at, ...},

@@ -59,18 +59,29 @@ NC = "\033[0m"
 
 USE_COLOR = sys.stdout.isatty()
 
+# When --json is set, stdout must carry ONLY the machine-readable JSON
+# summary — the admin-api Update Apps endpoint does json.loads(stdout).
+# Human-facing log lines then go to stderr so they can't corrupt it.
+# (Without this, a single `[INFO] ...` line ahead of the JSON makes the
+# parse fail at char 1 with "Expecting value".)
+JSON_MODE = False
+
 
 def _c(code: str, msg: str) -> str:
     return f"{code}{msg}{NC}" if USE_COLOR else msg
 
 
-def log_info(msg: str) -> None:    print(f"{_c(BLUE,    '[INFO]')}    {msg}")
-def log_bump(msg: str) -> None:    print(f"{_c(GREEN,   '[BUMP]')}    {msg}")
-def log_skip(msg: str) -> None:    print(f"{_c(YELLOW,  '[SKIP]')}    {msg}")
-def log_warn(msg: str) -> None:    print(f"{_c(YELLOW,  '[WARNING]')} {msg}")
-def log_success(msg: str) -> None: print(f"{_c(GREEN,   '[SUCCESS]')} {msg}")
+def _log_stream():
+    return sys.stderr if JSON_MODE else sys.stdout
+
+
+def log_info(msg: str) -> None:    print(f"{_c(BLUE,    '[INFO]')}    {msg}", file=_log_stream())
+def log_bump(msg: str) -> None:    print(f"{_c(GREEN,   '[BUMP]')}    {msg}", file=_log_stream())
+def log_skip(msg: str) -> None:    print(f"{_c(YELLOW,  '[SKIP]')}    {msg}", file=_log_stream())
+def log_warn(msg: str) -> None:    print(f"{_c(YELLOW,  '[WARNING]')} {msg}", file=_log_stream())
+def log_success(msg: str) -> None: print(f"{_c(GREEN,   '[SUCCESS]')} {msg}", file=_log_stream())
 def log_error(msg: str) -> None:   print(f"{_c(RED,     '[ERROR]')}   {msg}", file=sys.stderr)
-def log_dry(msg: str) -> None:     print(f"{_c(CYAN,    '[DRY]')}     {msg}")
+def log_dry(msg: str) -> None:     print(f"{_c(CYAN,    '[DRY]')}     {msg}", file=_log_stream())
 
 
 # ─── repo discovery ──────────────────────────────────────────────────
@@ -352,7 +363,7 @@ def _do_list(
 # ─── main ─────────────────────────────────────────────────────────────
 
 def main() -> int:
-    global USE_COLOR
+    global USE_COLOR, JSON_MODE
 
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -379,6 +390,8 @@ def main() -> int:
 
     if args.no_color or args.json:
         USE_COLOR = False
+    if args.json:
+        JSON_MODE = True
 
     try:
         repo_root = find_repo_root(args.repo_root)
