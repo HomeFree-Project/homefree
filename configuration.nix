@@ -44,6 +44,7 @@ in
     ./modules/snapshots.nix
     ./modules/service-restart-policy.nix
     ./modules/app-platform.nix
+    ./modules/sso-clients.nix
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix
     ./modules/setup-state.nix

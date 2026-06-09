@@ -77,6 +77,12 @@ let
     ## Sorted by label so the snapshot is robust to module list-merge order
     ## (which is behaviourally irrelevant — every consumer sorts/filters).
     serviceConfig = lib.sort (a: b: a.label < b.label) cfg.homefree.service-config;
+
+    ## The OIDC client set the zitadel-provision script registers (deduped by
+    ## internal_name + sorted). Guards the provision.nix -> per-app SSO
+    ## descriptor decomposition: moving a descriptor from provision.nix into
+    ## its app must leave this set byte-identical.
+    ssoClients = cfg.homefree.sso.resolved-clients;
   };
 
   snapshotJson = builtins.toJSON snapshot;

@@ -6507,5 +6507,352 @@
         "podman-zwave-js-ui"
       ]
     }
+  ],
+  "ssoClients": [
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-cryptpad",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://docs.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-cryptpad.service"
+      ],
+      "redirect_uris": [
+        "https://docs.homefree.host/ssoauth"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "cryptpad"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-forgejo",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://git.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-forgejo.service"
+      ],
+      "redirect_uris": [
+        "https://git.homefree.host/user/oauth2/Zitadel/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "forgejo"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-freshrss",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://freshrss.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-freshrss.service"
+      ],
+      "redirect_uris": [
+        "https://freshrss.homefree.host/i/oidc/"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "freshrss"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-grampsweb",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://grampsweb.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-grampsweb.service",
+        "podman-grampsweb-celery.service"
+      ],
+      "redirect_uris": [
+        "https://grampsweb.homefree.host/api/oidc/callback/custom"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "grampsweb"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-headplane",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://vpn.homefree.host/admin"
+      ],
+      "post_restart_units": [
+        "headplane.service"
+      ],
+      "redirect_uris": [
+        "https://vpn.homefree.host/admin/oidc/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "headscale"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-home-assistant",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://ha.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-homeassistant.service"
+      ],
+      "redirect_uris": [
+        "https://ha.homefree.host/auth/oidc/callback",
+        "https://homeassistant.homefree.host/auth/oidc/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "home-assistant"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-homebox",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://homebox.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-homebox.service"
+      ],
+      "redirect_uris": [
+        "https://homebox.homefree.host/api/v1/users/login/oidc/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "homebox"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_NATIVE",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_NONE",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-immich",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://photos.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-immich-server.service"
+      ],
+      "redirect_uris": [
+        "https://photos.homefree.host/auth/login",
+        "https://immich.homefree.host/auth/login",
+        "app.immich:///oauth-callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "immich"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-linkwarden",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://links.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-linkwarden.service"
+      ],
+      "redirect_uris": [
+        "https://linkwarden.homefree.host/api/auth/callback/zitadel",
+        "https://links.homefree.host/api/auth/callback/zitadel"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "linkwarden"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_NATIVE",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_NONE",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+        "OIDC_GRANT_TYPE_DEVICE_CODE"
+      ],
+      "internal_name": "homefree-netbird",
+      "needs_pat": true,
+      "post_logout_uris": [
+        "https://netbird.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-netbird-management.service",
+        "podman-netbird-dashboard.service"
+      ],
+      "redirect_uris": [
+        "https://netbird.homefree.host/auth",
+        "https://netbird.homefree.host/silent-auth",
+        "http://localhost:53000/"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "netbird"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-nextcloud",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://nextcloud.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-nextcloud.service"
+      ],
+      "redirect_uris": [
+        "https://nextcloud.homefree.host/apps/user_oidc/code"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "nextcloud"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-oauth2proxy",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://homefree.host/",
+        "https://auth.homefree.host/",
+        "https://zwave.homefree.host/",
+        "https://zwavejs.homefree.host/",
+        "https://webdav.homefree.host/",
+        "https://notes.homefree.host/",
+        "https://trilium.homefree.host/",
+        "https://screeenly.homefree.host/",
+        "https://nvr.homefree.host/",
+        "https://frigate.homefree.host/",
+        "https://baikal.homefree.host/",
+        "https://adguard.homefree.host/",
+        "https://admin.homefree.host/",
+        "https://home.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-oauth2-proxy-blue.service",
+        "podman-oauth2-proxy-green.service"
+      ],
+      "redirect_uris": [
+        "https://auth.homefree.host/oauth2/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "zitadel"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-ollama",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://ollama.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-ollama-webui.service"
+      ],
+      "redirect_uris": [
+        "https://ollama.homefree.host/oauth/oidc/callback"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "ollama"
+    },
+    {
+      "app_type": "OIDC_APP_TYPE_WEB",
+      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
+      "grant_types": [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+      ],
+      "internal_name": "homefree-vaultwarden",
+      "needs_pat": false,
+      "post_logout_uris": [
+        "https://vaultwarden.homefree.host/"
+      ],
+      "post_restart_units": [
+        "podman-vaultwarden.service"
+      ],
+      "redirect_uris": [
+        "https://vaultwarden.homefree.host/identity/connect/oidc-signin"
+      ],
+      "response_types": [
+        "OIDC_RESPONSE_TYPE_CODE"
+      ],
+      "svc": "vaultwarden"
+    }
   ]
 }

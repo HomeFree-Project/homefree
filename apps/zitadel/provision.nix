@@ -107,7 +107,7 @@ let
   ## new files. Using try-restart (not restart) means units that aren't
   ## currently running stay down — which is what we want when a service
   ## is disabled in the user's config.
-  services = [
+  baseClients = [
     {
       svc = "zitadel";
       internal_name = "homefree-oauth2proxy";
@@ -442,6 +442,10 @@ let
     (if s.needs_pat then "true" else "false")
     (joinUS s.post_restart_units)
   ];
+  ## Consume the deduped + sorted SSO client registry (modules/sso-clients.nix)
+  ## instead of a hardcoded list: baseClients (above) are pushed into it, and
+  ## each SSO-gated app pushes its own descriptor from its apps/<name> module.
+  services = config.homefree.sso.resolved-clients;
   serviceRecords = lib.concatStringsSep "\n" (map serviceRecord services);
 
   provisionScript = pkgs.writeShellApplication {
@@ -1426,6 +1430,12 @@ EOF
 
 in {
   config = lib.mkIf zitadelEnabled {
+    ## Push provision.nix's own base OIDC clients (oauth2-proxy with its derived
+    ## post-logout set, headplane, grampsweb, + any app not yet migrated to its
+    ## own module) into the shared SSO registry. Apps push the rest from their
+    ## apps/<name> modules; modules/sso-clients.nix dedups by internal_name.
+    homefree.sso.clients = baseClients;
+
     systemd.services.zitadel-provision = {
       description = "Provision OIDC apps + machine users in Zitadel for HomeFree services";
       after = [ "podman-zitadel.service" "network-online.target" ];
