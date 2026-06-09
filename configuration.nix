@@ -43,6 +43,7 @@ in
     ./modules/media-server.nix
     ./modules/snapshots.nix
     ./modules/service-restart-policy.nix
+    ./modules/app-platform.nix
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix
     ./modules/setup-state.nix

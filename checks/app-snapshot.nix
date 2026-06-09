@@ -117,9 +117,14 @@ let
     lib.sort (a: b: if a.unit != b.unit then a.unit < b.unit else a.idx < b.idx)
       (lib.flatten (lib.mapAttrsToList entriesOf units));
 
+  ## Normalisation, per line: de-indent; drop comment lines (## / # — but keep
+  ## the #! shebang) since comments never affect behaviour and would otherwise
+  ## make every reworded comment look like drift during the migration; drop
+  ## blank lines; strip store hashes. What remains is the actual COMMAND
+  ## sequence — a real logic change still diffs, comment churn does not.
   prestartBody = lib.concatMapStrings (e: ''
     echo "### ${e.unit} [${toString e.idx}]"
-    sed -E -e 's/^[[:space:]]+//' -e '/^[[:space:]]*$/d' \
+    sed -E -e 's/^[[:space:]]+//' -e '/^#!/!{/^#/d}' -e '/^[[:space:]]*$/d' \
       -e 's#/nix/store/[a-z0-9]{32}-#/nix/store/#g' ${e.path}
     echo ""
   '') prestartEntries;
