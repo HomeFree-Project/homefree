@@ -129,7 +129,14 @@ in
         service = "snipe-it";
         key = "app-key";
         dir = secretsDir;
-        generate = "sh -c 'printf \"base64:%s\" \"$(${pkgs.openssl}/bin/openssl rand -base64 32)\"'";
+        ## NO `sh -c` wrapper. anchorSecret runs `generate` inside the
+        ## prestart's bash, whose systemd PATH is minimal and does NOT
+        ## include `sh` — so `sh -c '...'` fails with "sh: command not
+        ## found", the command substitution yields empty, and APP_KEY ends
+        ## up blank (snipe-it then exits with "re-run with $APP_KEY" → 502).
+        ## `printf` is a bash builtin and openssl is a full store path, so
+        ## this form needs nothing on PATH.
+        generate = "printf 'base64:%s' \"$(${pkgs.openssl}/bin/openssl rand -base64 32)\"";
       }}
 
       ## Synthesize the env file the container reads. Carries the two

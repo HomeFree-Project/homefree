@@ -36,9 +36,11 @@ let
 
   ## /dev/serial/by-id/* is stable across reboots; the device id varies
   ## per stick (e.g. usb-0658_0200-if00 for an Aeotec Z-Stick Gen5).
-  ## Instance config sets this; with no default, enabling the service
-  ## without a deviceId fails Nix evaluation — surfaces the missing
-  ## config at build time instead of at container boot.
+  ## Instance config sets this. It is OPTIONAL: a missing deviceId must
+  ## not fail the build (Z-Wave is an optional peripheral, and the box may
+  ## be built before the stick is attached) — the container then starts
+  ## WITHOUT the USB bind and the UI loads with no controller, with a
+  ## build warning (see `warnings` below) instead of an assertion.
   rawDeviceId = config.homefree.service-options.zwave-js-ui.deviceId;
   ## Accept either the bare id ("usb-0658_0200-if00") or the full path
   ## ("/dev/serial/by-id/usb-0658_0200-if00"). The admin UI and the
@@ -101,16 +103,20 @@ in
   };
 
   config = {
-    assertions = lib.optional
+    ## Optional-peripheral degradation: enabling the service without a
+    ## deviceId WARNS (not fails). The container still builds and runs;
+    ## the web UI is reachable but has no controller bound until the stick
+    ## is attached and deviceId is set + rebuilt. See the conditional
+    ## `--device` bind below.
+    warnings = lib.optional
       (config.homefree.services.zwave-js-ui.enable && deviceId == "")
-      {
-        assertion = false;
-        message = ''
-          homefree.service-options.zwave-js-ui.deviceId must be set when
-          the service is enabled. Find it with:
-            ls /dev/serial/by-id/
-        '';
-      };
+      ''
+        homefree.service-options.zwave-js-ui is enabled but deviceId is
+        unset — Z-Wave JS UI will start WITHOUT a controller. The UI is
+        reachable but cannot manage a Z-Wave network until you attach the
+        USB controller, set deviceId (find it with `ls /dev/serial/by-id/`),
+        and rebuild.
+      '';
 
     ## Container via the app-platform primitive (modules/app-platform.nix).
     ## The dns-ready podman unit ordering and ExecStartPre are generated;
@@ -145,10 +151,13 @@ in
         fi
       '';
 
+      ## Only bind the USB controller when a deviceId is configured.
+      ## Without it the container runs deviceless (UI up, no Z-Wave net) —
+      ## podman would otherwise exit 125 trying to mount a nonexistent
+      ## /dev/serial/by-id/ path.
       extraOptions = [
         "--network=host"
-        "--device=${deviceArg}"
-      ];
+      ] ++ lib.optional (deviceId != "") "--device=${deviceArg}";
 
       volumes = [
         "/etc/localtime:/etc/localtime:ro"

@@ -980,6 +980,15 @@ class ServicesModule extends LitElement {
     this.hasAuthorizedKeys = false;
     this.undeployedPaths = new Set();
     this.appliedConfig = null;
+    // Frozen display order for the service list ("cards stay put while
+    // editing"). NON-reactive on purpose — set during render() and never
+    // declared as Lit properties, so updating them can't trigger a render
+    // loop. See the stable-order block in render(). _sortOrder is the
+    // label order last committed; _sortOrderSig is the signature of the
+    // inputs that are ALLOWED to resettle it (sort key/dir, the service
+    // set, and appliedConfig — i.e. an Apply).
+    this._sortOrder = [];
+    this._sortOrderSig = '';
     this.openModal = null;
     this.pendingActions = {};
     this.actionErrors = {};
@@ -2359,8 +2368,34 @@ class ServicesModule extends LitElement {
     };
     const sortedParents = [...parentServices].sort(cmp);
 
+    // Stable display order — "cards stay put while editing." `cmp` runs on
+    // EVERY render: the 5s status poll and every optimistic toggle both
+    // re-enter here. The appliedConfig freeze (above) keeps the `enabled`/
+    // `exposed` keys stable for catalog apps, but the `status` sort reads
+    // LIVE run-state (statusRank -> getStatusClass) and external-proxy
+    // enable/public live OUTSIDE appliedConfig — so for those a toggle or a
+    // status poll would yank a card to a new row. Freeze the ORDER itself:
+    // only resettle when the user changes the sort, the SET of services
+    // changes (add/remove), or a rebuild lands (appliedConfig changes).
+    // Between those, reuse the prior order so nothing moves mid-edit —
+    // exactly the contract documented above (resettle on Apply or reload).
+    const orderSig = [
+      this.sortKey,
+      this.sortDir,
+      sortedParents.map(s => s.label).slice().sort().join(','), // the SET, order-independent
+      JSON.stringify(appliedServices),                          // changes when an Apply lands
+    ].join('|');
+    if (orderSig !== this._sortOrderSig) {
+      this._sortOrderSig = orderSig;
+      this._sortOrder = sortedParents.map(s => s.label);
+    }
+    const orderIdx = new Map(this._sortOrder.map((l, i) => [l, i]));
+    const stableParents = [...sortedParents].sort(
+      (a, b) => (orderIdx.get(a.label) ?? Infinity) - (orderIdx.get(b.label) ?? Infinity)
+    );
+
     // Filter services based on search query
-    const filteredServices = sortedParents.filter(service => {
+    const filteredServices = stableParents.filter(service => {
       const searchLower = this.searchQuery.toLowerCase();
       return (
         service.name.toLowerCase().includes(searchLower) ||

@@ -122,8 +122,10 @@ in
     ## --- The canary web service -------------------------------------
     systemd.services.backup-canary = {
       description = "HomeFree backup canary web service";
-      after = [ "postgresql.service" "network.target" ];
-      wants = [ "postgresql.service" ];
+      ## See backup-canary-writer: the DB is created by postgresql-setup,
+      ## so wait for that unit too, not just the server.
+      after = [ "postgresql.service" "postgresql-setup.service" "network.target" ];
+      wants = [ "postgresql.service" "postgresql-setup.service" ];
       wantedBy = [ "multi-user.target" ];
       environment = canary-env;
       serviceConfig = {
@@ -146,8 +148,15 @@ in
     ## after enabling does not fail on an uninitialised canary.
     systemd.services.backup-canary-writer = {
       description = "Refresh the backup-canary marker";
-      after = [ "postgresql.service" ];
-      requires = [ "postgresql.service" ];
+      ## Wait for postgresql-setup.service, NOT just postgresql.service:
+      ## ensureDatabases (which creates `backup_canary`) runs in
+      ## postgresql-setup, which is itself ordered AFTER the server starts.
+      ## Ordering only on postgresql.service waits for the server but races
+      ## the DB creation, so the writer (a oneshot that fires during
+      ## activation) fails the rebuild with `database "backup_canary" does
+      ## not exist`.
+      after = [ "postgresql.service" "postgresql-setup.service" ];
+      requires = [ "postgresql.service" "postgresql-setup.service" ];
       wantedBy = [ "multi-user.target" ];
       environment = canary-env;
       serviceConfig = {
@@ -173,8 +182,9 @@ in
     ## "backup-canary" service.
     systemd.services.backup-canary-selftest = {
       description = "Verify the backup/restore pipeline via the canary";
-      after = [ "postgresql.service" ];
-      wants = [ "postgresql.service" ];
+      ## See backup-canary-writer: the DB is created by postgresql-setup.
+      after = [ "postgresql.service" "postgresql-setup.service" ];
+      wants = [ "postgresql.service" "postgresql-setup.service" ];
       environment = canary-env // {
         CANARY_SELFTEST_SOURCE = cfg.selftest-source;
       };

@@ -593,13 +593,18 @@ in
       IMMICH_PORT = toString port-machine-learning;
     };
 
-    ## Ensure the ML cache dir exists before podman tries to bind-mount it.
-    ## Otherwise statfs fails → podman exits 125 → cascade into a failed-
-    ## dependency for immich-server (which Requires= this unit), even though
-    ## immich-server's preStart is what otherwise creates /var/cache/immich.
-    ## Fresh installs and restored boxes hit this first-boot.
+    ## Ensure BOTH bind-mount sources exist before podman starts, or statfs
+    ## fails → podman exits 125 → start-limit-hit → failed rebuild. This
+    ## container is a separate unit that can start before immich-server's
+    ## preStart (which is what otherwise creates these dirs with all their
+    ## subdirs), so on a fresh / restored box it must create them itself:
+    ##   - /var/cache/immich        (mounted at /var/cache/immich)
+    ##   - ${containerDataPath}  (mounted at ${uploadLocation})
+    ## Top-level mkdir is enough for the bind mount; immich-server fills in
+    ## the subdirs (upload, thumbs, library, …).
     preStartInit = ''
       mkdir -p /var/cache/immich
+      mkdir -p ${containerDataPath}
     '';
   };
 
