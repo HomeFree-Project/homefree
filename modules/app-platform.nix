@@ -28,6 +28,12 @@ let
   cfg = config.homefree.containers;
   enabled = lib.filterAttrs (_: c: c.enable) cfg;
   rootless = lib.filterAttrs (_: c: c.runAs.mode == "rootless") enabled;
+  ## Both rootless and linuxserver run as a dedicated HomeFree-managed uid/gid
+  ## (rootless via podman user=, linuxserver via PUID/PGID); only `root`
+  ## documented-skips have no system user. The chown marker + user= field stay
+  ## rootless-only (s6 chowns /config itself for linuxserver images).
+  withUser = lib.filterAttrs
+    (_: c: c.runAs.mode == "rootless" || c.runAs.mode == "linuxserver") enabled;
 
   ## Caddy's internal-CA root, concatenated into each app's bundle so the
   ## container trusts sso.<domain> when fetching OIDC discovery.
@@ -181,9 +187,9 @@ in
       group = name;
       uid = c.runAs.uid;
       description = "${name} container runtime user";
-    }) rootless;
+    }) withUser;
 
-    users.groups = lib.mapAttrs (_: c: { gid = c.runAs.gid; }) rootless;
+    users.groups = lib.mapAttrs (_: c: { gid = c.runAs.gid; }) withUser;
 
     virtualisation.oci-containers.containers = lib.mapAttrs mkContainer enabled;
 
