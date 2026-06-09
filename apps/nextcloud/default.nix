@@ -2,7 +2,7 @@
 let
   version = "33.0.5";
   version-redis = "8.8.0";
-  version-appapi-harp = "v0.4.0";
+  version-appapi-harp = "v0.4.2";
   containerDataPath = "/var/lib/nextcloud-podman";
 
   ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets

@@ -340,7 +340,7 @@
         "--network=host",
         "--privileged"
       ],
-      "image": "ghcr.io/home-assistant/home-assistant:2026.4",
+      "image": "ghcr.io/home-assistant/home-assistant:2026.6.1",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -613,7 +613,7 @@
       },
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "matrixdotorg/synapse:v1.152.1",
+      "image": "matrixdotorg/synapse:v1.154.0",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9019:9019"
@@ -662,7 +662,7 @@
       "extraOptions": [
         "--network=host"
       ],
-      "image": "coturn/coturn:4.6.2",
+      "image": "coturn/coturn:4.12.0",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -694,7 +694,7 @@
         "/var/lib/netbird/dashboard.env"
       ],
       "extraOptions": [],
-      "image": "netbirdio/dashboard:v2.16.0",
+      "image": "netbirdio/dashboard:v2.39.0",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33000:80"
@@ -721,7 +721,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/management:0.70.5",
+      "image": "netbirdio/management:0.72.2",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33073:80"
@@ -749,7 +749,7 @@
         "/var/lib/netbird/relay.env"
       ],
       "extraOptions": [],
-      "image": "netbirdio/relay:0.70.5",
+      "image": "netbirdio/relay:0.72.2",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33080:33080"
@@ -771,7 +771,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/signal:0.70.5",
+      "image": "netbirdio/signal:0.72.2",
       "imageFile": null,
       "ports": [
         "0.0.0.0:10000:80"
