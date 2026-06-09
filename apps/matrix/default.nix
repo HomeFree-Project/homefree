@@ -311,46 +311,67 @@ in
   };
 
   config = {
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.matrix.enable {
-      matrix-synapse = {
-        image = "${image}:${version}";
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit is generated. Synapse has NO OIDC discovery
+    ## fetch, so no CA bundle (caBundle=false). dataDir=null: the preStart does
+    ## its own mkdir + chown to the image's uid 991 (not a HomeFree 800-899
+    ## uid), so it goes verbatim into preStartInit with no generated mkdir/chown.
+    ## The postgresql ordering/partOf + ExecStartPost (admin registration) stay
+    ## in a separate systemd.services.podman-matrix-synapse merge below.
+    homefree.containers.matrix-synapse = lib.mkIf config.homefree.service-options.matrix.enable {
+      ## SKIPPED Phase 3 non-root: synapse runs as the image's uid 991
+      ## (matrixdotorg/synapse default), chowned by preStart — not a
+      ## HomeFree-managed 800-899 uid. dataDir=null so no generated
+      ## mkdir/chown; the preStart owns both.
+      runAs = { mode = "root"; reason = "synapse runs as image-default uid 991 (chowned in preStart), not a HomeFree 800-899 uid"; };
+      image = "${image}:${version}";
 
-        autoStart = true;
+      dataDir = null;
+      caBundle = false;
 
-        ports = [
-          "0.0.0.0:${toString port}:${toString port}"
-        ];
+      ports = [
+        "0.0.0.0:${toString port}:${toString port}"
+      ];
 
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}:/data"
-          "${homeserverYaml}:/data/homeserver.yaml:ro"
-          ## Bind-mount host's postgres socket. Synapse uses
-          ## host=/run/postgresql in homeserver.yaml; this puts the
-          ## socket at the same path inside the container so peer
-          ## auth as the `matrix-synapse` role works.
-          "/run/postgresql:/run/postgresql"
-        ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}:/data"
+        "${homeserverYaml}:/data/homeserver.yaml:ro"
+        ## Bind-mount host's postgres socket. Synapse uses
+        ## host=/run/postgresql in homeserver.yaml; this puts the
+        ## socket at the same path inside the container so peer
+        ## auth as the `matrix-synapse` role works.
+        "/run/postgresql:/run/postgresql"
+      ];
 
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          SYNAPSE_CONFIG_DIR = "/data";
-          SYNAPSE_CONFIG_PATH = "/data/homeserver.yaml";
-          SYNAPSE_DATA_DIR = "/data";
-        };
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        SYNAPSE_CONFIG_DIR = "/data";
+        SYNAPSE_CONFIG_PATH = "/data/homeserver.yaml";
+        SYNAPSE_DATA_DIR = "/data";
       };
+
+      ## Full preStart body: mkdir media_store + secrets dir, anchor the
+      ## registration secret / admin password / signing key, chown the data
+      ## dir to uid 991, bootstrap the postgres role + DB. All handled here
+      ## (caBundle=false, dataDir=null).
+      preStartInit = preStart;
     };
 
+    ## PostgreSQL ordering/partOf + ExecStartPost (admin registration). These
+    ## MERGE with the dns-ready after/wants the app-platform generates for
+    ## podman-matrix-synapse. The ExecStartPost is NOT part of homefree.containers
+    ## (the platform only generates ExecStartPre); it stays here so the
+    ## service-restart-policy module and the platform-generated unit both see it
+    ## merged into the same podman-matrix-synapse unit.
     systemd.services.podman-matrix-synapse = lib.mkIf config.homefree.service-options.matrix.enable {
-      after = [ "dns-ready.service" "postgresql.service" ];
+      after = [ "postgresql.service" ];
       requires = [ "postgresql.service" ];
-      wants = [ "dns-ready.service" ];
       ## Re-bind /run/postgresql when postgres restarts — without
       ## partOf the container's existing mount is orphaned and DB
       ## queries fail with ENOENT. Same pattern as nextcloud/freshrss.
       partOf = [ "postgresql.service" ];
       serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "matrix-synapse-prestart" preStart}" ];
         ExecStartPost = [ "!${postStart}" ];
       };
     };
