@@ -62,6 +62,28 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional, consumed by
+    ## apps/zitadel/provision.nix via homefree.sso.resolved-clients.
+    homefree.sso.clients = [{
+      svc = "homebox";
+      internal_name = "homefree-homebox";
+      ## Homebox v0.25+ confidential OIDC client (server-side Go app).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Homebox hardcodes its OIDC callback path. Confirmed
+      ## empirically: clicking "Sign in" produces a redirect_uri of
+      ## /api/v1/users/login/oidc/callback (not the
+      ## /api/v1/users/oidc-callback I initially guessed from a
+      ## `homebox api --help` that doesn't expose a --redirect-url
+      ## option).
+      redirect_uris = [ "https://homebox.${domain}/api/v1/users/login/oidc/callback" ];
+      post_logout_uris = [ "https://homebox.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-homebox.service" ];
+    }];
+
     ## Container workload via the app-platform primitive
     ## (modules/app-platform.nix). The chown-marker, CA-bundle synthesis,
     ## podman dns-ready unit, and the dedicated system user/group are all
