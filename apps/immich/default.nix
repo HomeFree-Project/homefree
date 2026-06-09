@@ -429,167 +429,174 @@ in
   in
   lib.optionals config.homefree.service-options.immich.enable [ "!${postStartScript}" ];
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.immich.enable {
-    immich-server = {
-      image = "ghcr.io/immich-app/immich-server:${version}";
+  ## Three containers via the app-platform primitive (modules/app-platform.nix):
+  ## the podman dns-ready units are generated; immich-server's startup ordering
+  ## after its deps comes from dependsOn. All three run as ROOT (the upstream
+  ## immich/redis images have no stable uid for rootless pinning), so no chown
+  ## marker is emitted. immich-server's bespoke preStart (sentinels, secret
+  ## anchoring, runtime.env + CA-bundle synthesis) is reproduced verbatim via
+  ## dataDir=null + caBundle=false + the whole preStart in preStartInit (the
+  ## radicle/linkwarden fallback); its admin-signup/system_metadata postStart and
+  ## the postgres-vectorchord role/db ExecStartPost stay as separate systemd
+  ## merges below.
+  homefree.containers.immich-server = lib.mkIf config.homefree.service-options.immich.enable {
+    image = "ghcr.io/immich-app/immich-server:${version}";
+    runAs = { mode = "root"; reason = "upstream immich-server image has no stable uid for rootless pinning"; };
 
-      autoStart = true;
+    ## dataDir=null + caBundle=false: the mkdir/sentinel/anchor/runtime.env/
+    ## CA-bundle logic lives verbatim in preStartInit. The CA bundle is
+    ## synthesized to containerDataPath/ca-bundle.crt and mounted over the
+    ## container's /etc/ssl/certs/ca-certificates.crt below (NODE_EXTRA_CA_CERTS
+    ## points at it).
+    dataDir = null;
+    caBundle = false;
 
-      ## immich-server reaches its database, cache and ML service by
-      ## container name (DB_HOSTNAME=postgres-vectorchord,
-      ## REDIS_HOSTNAME=immich-redis, IMMICH_MACHINE_LEARNING_URL=
-      ## http://immich-machine-learning). Those names only resolve via
-      ## podman's internal DNS once the target container is running and
-      ## registered on the shared network. Without an ordering
-      ## dependency, immich-server starts first, Node crashes with
-      ## `getaddrinfo ENOTFOUND postgres-vectorchord`, and the unit then
-      ## limps through its 120s API-poll postStart before failing.
-      ##
-      ## dependsOn makes NixOS's oci-containers generate After=/Requires=
-      ## podman-<dep>.service on the unit, so immich-server only starts
-      ## once its dependencies' containers are up.
-      dependsOn = [
-        "postgres-vectorchord"
-        "immich-redis"
-        "immich-machine-learning"
-      ];
+    ## immich-server reaches its database, cache and ML service by
+    ## container name (DB_HOSTNAME=postgres-vectorchord,
+    ## REDIS_HOSTNAME=immich-redis, IMMICH_MACHINE_LEARNING_URL=
+    ## http://immich-machine-learning). Those names only resolve via
+    ## podman's internal DNS once the target container is running and
+    ## registered on the shared network. Without an ordering
+    ## dependency, immich-server starts first, Node crashes with
+    ## `getaddrinfo ENOTFOUND postgres-vectorchord`, and the unit then
+    ## limps through its 120s API-poll postStart before failing.
+    ##
+    ## dependsOn makes NixOS's oci-containers generate After=/Requires=
+    ## podman-<dep>.service on the unit, so immich-server only starts
+    ## once its dependencies' containers are up.
+    dependsOn = [
+      "postgres-vectorchord"
+      "immich-redis"
+      "immich-machine-learning"
+    ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    ports = [
+      "0.0.0.0:${toString port}:2283"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:2283"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}:${uploadLocation}"
+      "/run/postgresql:/run/postgresql"
+      ## Mount our combined CA bundle so the OIDC discovery fetch
+      ## from inside the Node runtime trusts Caddy's local cert.
+      "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:${uploadLocation}"
-        "/run/postgresql:/run/postgresql"
-        ## Mount our combined CA bundle so the OIDC discovery fetch
-        ## from inside the Node runtime trusts Caddy's local cert.
-        "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
-      ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
+      ## Node.js doesn't read /etc/ssl/certs by default — point
+      ## NODE_EXTRA_CA_CERTS at our bundle so the OIDC client's
+      ## TLS handshake against https://sso.<domain> validates.
+      NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
 
-        ## Node.js doesn't read /etc/ssl/certs by default — point
-        ## NODE_EXTRA_CA_CERTS at our bundle so the OIDC client's
-        ## TLS handshake against https://sso.<domain> validates.
-        NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
-
-        # IMMICH_LOG_LEVEL = "verbose";
-        UPLOAD_LOCATION = "${uploadLocation}";
-        THUMB_LOCATION = "${uploadLocation}/thumbs";
-        ENCODED_VIDEO_LOCATION = "${uploadLocation}/encoded-video";
-        PROFILE_LOCATION = "${uploadLocation}/profile";
-        BACKUP_LOCATION = "${uploadLocation}/backups";
-        # DB_HOSTNAME = "/run/postgresql";
-        # DB_PORT = "5432";
-        DB_HOSTNAME = "postgres-vectorchord";
-        DB_PORT = "6432";
-        DB_DATABASE_NAME = database-name;
-        DB_USERNAME = database-user;
-        ## DB_PASSWORD comes from runtime.env (synthesised in
-        ## preStart from the anchored value at
-        ## ${immichSecretsDir}/db-password).
-        REDIS_HOSTNAME = "immich-redis";
-        REDIS_PORT = toString port-redis;
-        IMMICH_MACHINE_LEARNING_URL = "http://immich-machine-learning:${toString port-machine-learning}";
-        PUBLIC_IMMICH_SERVER_URL = "https://photos.${config.homefree.system.domain}";
-        IMMICH_HOST = "0.0.0.0";
-        IMMICH_PORT = toString port;
-      };
-
-      ## runtime.env carries DB_PASSWORD (anchored, synthesised in
-      ## preStart). Without it, Phase 2's vectorchord pg_hba swap to
-      ## scram-sha-256 leaves the container unable to authenticate.
-      environmentFiles = [ "${containerDataPath}/runtime.env" ];
+      # IMMICH_LOG_LEVEL = "verbose";
+      UPLOAD_LOCATION = "${uploadLocation}";
+      THUMB_LOCATION = "${uploadLocation}/thumbs";
+      ENCODED_VIDEO_LOCATION = "${uploadLocation}/encoded-video";
+      PROFILE_LOCATION = "${uploadLocation}/profile";
+      BACKUP_LOCATION = "${uploadLocation}/backups";
+      # DB_HOSTNAME = "/run/postgresql";
+      # DB_PORT = "5432";
+      DB_HOSTNAME = "postgres-vectorchord";
+      DB_PORT = "6432";
+      DB_DATABASE_NAME = database-name;
+      DB_USERNAME = database-user;
+      ## DB_PASSWORD comes from runtime.env (synthesised in
+      ## preStart from the anchored value at
+      ## ${immichSecretsDir}/db-password).
+      REDIS_HOSTNAME = "immich-redis";
+      REDIS_PORT = toString port-redis;
+      IMMICH_MACHINE_LEARNING_URL = "http://immich-machine-learning:${toString port-machine-learning}";
+      PUBLIC_IMMICH_SERVER_URL = "https://photos.${config.homefree.system.domain}";
+      IMMICH_HOST = "0.0.0.0";
+      IMMICH_PORT = toString port;
     };
 
-    immich-machine-learning = {
-      image = "ghcr.io/immich-app/immich-machine-learning:${version}";
+    ## runtime.env carries DB_PASSWORD (anchored, synthesised in
+    ## preStart). Without it, Phase 2's vectorchord pg_hba swap to
+    ## scram-sha-256 leaves the container unable to authenticate.
+    environmentFiles = [ "${containerDataPath}/runtime.env" ];
 
-      autoStart = true;
+    ## Whole bespoke preStart, reproduced verbatim (mkdirs + sentinels +
+    ## secret anchoring + runtime.env + CA-bundle synthesis).
+    preStartInit = preStart;
+  };
 
-      extraOptions = [
-        # "--pull=always"
-        ## 1GB of memory, reduces SSD/SD Card wear
-        "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
-        "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
-        "--device=/dev/dri:/dev/dri" # For intel hwaccel, needs to be updated for your hardware
-        "--cap-add=CAP_PERFMON" # For GPU statistics
-        ## --privileged removed: GPU device, Coral TPU, and
-        ## CAP_PERFMON are already declared explicitly above. If a
-        ## particular hardware setup needs more, add the specific
-        ## --device=/--cap-add= rather than restoring --privileged.
-      ];
+  homefree.containers.immich-machine-learning = lib.mkIf config.homefree.service-options.immich.enable {
+    image = "ghcr.io/immich-app/immich-machine-learning:${version}";
+    runAs = { mode = "root"; reason = "upstream immich-machine-learning image has no stable uid for rootless pinning"; };
+    dataDir = null;
+    caBundle = false;
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:${uploadLocation}"
-        "/var/cache/immich:/var/cache/immich"
-      ];
+    ## GPU / Coral TPU device + cap passthrough — go on extraOptions verbatim.
+    extraOptions = [
+      # "--pull=always"
+      ## 1GB of memory, reduces SSD/SD Card wear
+      "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
+      "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
+      "--device=/dev/dri:/dev/dri" # For intel hwaccel, needs to be updated for your hardware
+      "--cap-add=CAP_PERFMON" # For GPU statistics
+      ## --privileged removed: GPU device, Coral TPU, and
+      ## CAP_PERFMON are already declared explicitly above. If a
+      ## particular hardware setup needs more, add the specific
+      ## --device=/--cap-add= rather than restoring --privileged.
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}:${uploadLocation}"
+      "/var/cache/immich:/var/cache/immich"
+    ];
 
-        MACHINE_LEARNING_WORKERS = "2";
-        MACHINE_LEARNING_WORKER_TIMEOUT = "120";
-        MACHINE_LEARNING_CACHE_FOLDER = "/var/cache/immich";
-        IMMICH_HOST = "0.0.0.0";
-        IMMICH_PORT = toString port-machine-learning;
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
+
+      MACHINE_LEARNING_WORKERS = "2";
+      MACHINE_LEARNING_WORKER_TIMEOUT = "120";
+      MACHINE_LEARNING_CACHE_FOLDER = "/var/cache/immich";
+      IMMICH_HOST = "0.0.0.0";
+      IMMICH_PORT = toString port-machine-learning;
     };
 
-    immich-redis = {
-      image = "redis:${version-redis}";
+    ## Ensure the ML cache dir exists before podman tries to bind-mount it.
+    ## Otherwise statfs fails → podman exits 125 → cascade into a failed-
+    ## dependency for immich-server (which Requires= this unit), even though
+    ## immich-server's preStart is what otherwise creates /var/cache/immich.
+    ## Fresh installs and restored boxes hit this first-boot.
+    preStartInit = ''
+      mkdir -p /var/cache/immich
+    '';
+  };
 
-      autoStart = true;
+  homefree.containers.immich-redis = lib.mkIf config.homefree.service-options.immich.enable {
+    image = "redis:${version-redis}";
+    runAs = { mode = "root"; reason = "redis image exposes no uid option for rootless pinning"; };
+    dataDir = null;
+    caBundle = false;
 
-      extraOptions = [
-        # "--pull=always"
-        "--health-cmd=redis-cli ping || exit 1"
-      ];
+    extraOptions = [
+      # "--pull=always"
+      "--health-cmd=redis-cli ping || exit 1"
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
   };
 
+  ## immich-server's bespoke admin-signup + system_metadata SSO postStart,
+  ## merged onto the app-platform-generated unit (the dns-ready after/wants and
+  ## the ExecStartPre come from the primitive).
   systemd.services.podman-immich-server = lib.mkIf config.homefree.service-options.immich.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
     serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "imimich-server-prestart" preStart}" ];
       ExecStartPost = [ "!${postStart}" ];
     };
-  };
-
-  systemd.services.podman-immich-machine-learning = lib.mkIf config.homefree.service-options.immich.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      # Ensure the ML cache dir exists before podman tries to bind-mount it.
-      # Otherwise statfs fails → podman exits 125 → cascade into a failed-
-      # dependency for immich-server (which Requires= this unit), even though
-      # immich-server's preStart is what otherwise creates /var/cache/immich.
-      # Fresh installs and restored boxes hit this first-boot.
-      ExecStartPre = [ "!${pkgs.writeShellScript "immich-ml-prestart" ''
-        mkdir -p /var/cache/immich
-      ''}" ];
-    };
-  };
-
-  systemd.services.podman-immich-redis = lib.mkIf config.homefree.service-options.immich.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
   };
 
     homefree.service-config = [{
