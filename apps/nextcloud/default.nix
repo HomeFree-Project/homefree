@@ -459,6 +459,21 @@ in
   };
 
   config = {
+    homefree.sso.clients = [
+      {
+        svc = "nextcloud";
+        internal_name = "homefree-nextcloud";
+        app_type = "OIDC_APP_TYPE_WEB";
+        auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+        response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+        grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+        redirect_uris = [ "https://nextcloud.${config.homefree.system.domain}/apps/user_oidc/code" ];
+        post_logout_uris = [ "https://nextcloud.${config.homefree.system.domain}/" ];
+        needs_pat = false;
+        post_restart_units = [ "podman-nextcloud.service" ];
+      }
+    ];
+
     # Database setup - only if using local postgres (not podman postgres)
     services.postgresql = lib.optionalAttrs config.homefree.service-options.nextcloud.enable {
     ensureDatabases = [ database-name ];
