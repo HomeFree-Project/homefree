@@ -20,36 +20,6 @@ let
     "${containerDataPath}/acme:/var/azuracast/storage/acme"
   ];
 
-  preStart = ''
-    mkdir -p ${containerDataPath}/station_data
-    mkdir -p ${containerDataPath}/backups
-    mkdir -p ${containerDataPath}/db_data
-    mkdir -p ${containerDataPath}/www_uploads
-    mkdir -p ${containerDataPath}/shoutcast2_install
-    mkdir -p ${containerDataPath}/stereo_tool_install
-    mkdir -p ${containerDataPath}/rsas_install
-    mkdir -p ${containerDataPath}/geolite_install
-    mkdir -p ${containerDataPath}/sftpgo_data
-    mkdir -p ${containerDataPath}/acme
-
-    # Get the UID/GID of the azuracast user from the container image
-    # Use --entrypoint to bypass the normal startup which tries to initialize the database
-    AZURACAST_UID=$(${config.virtualisation.podman.package}/bin/podman run --rm --entrypoint id ${image} -u azuracast)
-    AZURACAST_GID=$(${config.virtualisation.podman.package}/bin/podman run --rm --entrypoint id ${image} -g azuracast)
-
-    # Set ownership on directories that need to be writable by the container
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/station_data
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/backups
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/db_data
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/www_uploads
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/shoutcast2_install
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/stereo_tool_install
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/rsas_install
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/geolite_install
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/sftpgo_data
-    chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/acme
-  '';
-
   port = config.homefree.allocPort "azuracast";
   port-ssh = config.homefree.allocPort "azuracast-ssh";
 
@@ -100,12 +70,53 @@ in
   };
 
   config = {
-
-  virtualisation.oci-containers.containers = if config.homefree.services.azuracast.enable == true then {
-     azuracast = {
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated;
+    ## this declares only the azuracast-specific data.
+    homefree.containers.azuracast = lib.mkIf config.homefree.services.azuracast.enable {
+      ## AzuraCast manages its own internal user (the azuracast uid)
+      ## and requires root to perform chowns on startup. The UID is
+      ## queried dynamically from the image at preStart.
+      runAs = {
+        mode = "root";
+        reason = "image manages UID/GID internally; UID queried dynamically from image at preStart";
+      };
       inherit image;
 
-      autoStart = true;
+      ## preStart queries the azuracast UID from the container image at
+      ## runtime (podman run) and chowns all data dirs — no static uid.
+      ## dataDir is null; the full multi-dir mkdir + dynamic chown is in
+      ## preStartInit.
+      dataDir = null;
+      preStartInit = ''
+        mkdir -p ${containerDataPath}/station_data
+        mkdir -p ${containerDataPath}/backups
+        mkdir -p ${containerDataPath}/db_data
+        mkdir -p ${containerDataPath}/www_uploads
+        mkdir -p ${containerDataPath}/shoutcast2_install
+        mkdir -p ${containerDataPath}/stereo_tool_install
+        mkdir -p ${containerDataPath}/rsas_install
+        mkdir -p ${containerDataPath}/geolite_install
+        mkdir -p ${containerDataPath}/sftpgo_data
+        mkdir -p ${containerDataPath}/acme
+
+        # Get the UID/GID of the azuracast user from the container image
+        # Use --entrypoint to bypass the normal startup which tries to initialize the database
+        AZURACAST_UID=$(${config.virtualisation.podman.package}/bin/podman run --rm --entrypoint id ${image} -u azuracast)
+        AZURACAST_GID=$(${config.virtualisation.podman.package}/bin/podman run --rm --entrypoint id ${image} -g azuracast)
+
+        # Set ownership on directories that need to be writable by the container
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/station_data
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/backups
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/db_data
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/www_uploads
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/shoutcast2_install
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/stereo_tool_install
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/rsas_install
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/geolite_install
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/sftpgo_data
+        chown -R "$AZURACAST_UID:$AZURACAST_GID" ${containerDataPath}/acme
+      '';
 
       extraOptions = [
         "--add-host=host.docker.internal:host-gateway"
@@ -124,53 +135,42 @@ in
         MYSQL_RANDOM_ROOT_PASSWORD = "yes";
       };
     };
-  } else {};
 
-  systemd.services.podman-azuracast = {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [
-        "!${pkgs.writeShellScript "azuracast-prestart" preStart}"
-      ];
-    };
-  };
-
-  homefree.service-config = if config.homefree.services.azuracast.enable == true then [
-    {
-      label = "azuracast";
-      port-request = null;
-      name = "AzuraCast";
-      project-name = "AzuraCast";
-      ## @TODO: Why is this not a list?
-      systemd-service-names = [
-        "podman-azuracast"
-      ];
-      reverse-proxy = {
-        enable = true;
-        subdomains = [ "azuracast" ];
-        http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
-        https-domains = [ config.homefree.system.domain ];
-        host = config.homefree.network.lan-address;
-        port = port;
-        public = config.homefree.services.azuracast.public;
-      };
-      backup = {
-        paths = [
-          containerDataPath
+    homefree.service-config = if config.homefree.services.azuracast.enable == true then [
+      {
+        label = "azuracast";
+        port-request = null;
+        name = "AzuraCast";
+        project-name = "AzuraCast";
+        ## @TODO: Why is this not a list?
+        systemd-service-names = [
+          "podman-azuracast"
         ];
-      };
-    }
-    {
-      label = "azuracast-ssh";
-      port-request = 2033;
-      name = "AzuraCast SSH";
-      project-name = "AzuraCast";
-      enable = config.homefree.services.azuracast.enable;
-      reverse-proxy.enable = false;
-      admin.show = false;
-      systemd-service-names = [];
-    }
-  ] else [];
+        reverse-proxy = {
+          enable = true;
+          subdomains = [ "azuracast" ];
+          http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
+          https-domains = [ config.homefree.system.domain ];
+          host = config.homefree.network.lan-address;
+          port = port;
+          public = config.homefree.services.azuracast.public;
+        };
+        backup = {
+          paths = [
+            containerDataPath
+          ];
+        };
+      }
+      {
+        label = "azuracast-ssh";
+        port-request = 2033;
+        name = "AzuraCast SSH";
+        project-name = "AzuraCast";
+        enable = config.homefree.services.azuracast.enable;
+        reverse-proxy.enable = false;
+        admin.show = false;
+        systemd-service-names = [];
+      }
+    ] else [];
   };
 }
