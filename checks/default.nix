@@ -92,4 +92,11 @@ in
       then ''echo "loader-mapping: all ${toString total} assertions pass" >&2; touch $out''
       else ''echo "loader-mapping FAILURES: ${builtins.concatStringsSep ", " failures}" >&2; exit 1''
     );
+
+  ## App-config snapshot — behaviour-preservation safety net for the
+  ## app-platform refactor (collapsing the ~33 app skeletons). Pins the
+  ## evaluated oci-container / user / service-config output of every app, so
+  ## an extraction that churns drvPath can still be proven behaviour-preserving.
+  ## Golden: tests/app-config-snapshot.json. See checks/app-snapshot.nix.
+  app-config-snapshot = (import ./app-snapshot.nix { inherit self pkgs lib system; }).check;
 }
