@@ -6,11 +6,6 @@ let
 
   version = "0.10.1";
 
-  preStart = ''
-    mkdir -p ${containerDataPath}/config
-    mkdir -p ${containerDataPath}/Specific
-  '';
-
   userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -53,8 +48,10 @@ in
   };
 
   config = {
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.baikal.enable {
-    baikal = {
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated;
+    ## this declares only the baikal-specific data.
+    homefree.containers.baikal = lib.mkIf config.homefree.service-options.baikal.enable {
       ## SKIPPED Phase 3 non-root pass: the ckulka/baikal-nginx
       ## image's entrypoint does `chown -R www-data /var/www/baikal`
       ## on every start — including the image's own vendor PHP files
@@ -64,13 +61,20 @@ in
       ## becomes a priority: (a) build a custom image with --chown=
       ## baked in and the entrypoint chown removed, (b) switch to a
       ## different Baikal image (sabre/baikal-podman variants exist).
+      runAs = {
+        mode = "root";
+        reason = "image entrypoint chowns /var/www/baikal as root; non-root start fails with EPERM";
+      };
       image = "ckulka/baikal:${version}-nginx";
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
+      ## preStart creates two sub-directories (not just the top-level
+      ## containerDataPath), so dataDir is null and the mkdirs are
+      ## emitted verbatim via preStartInit.
+      dataDir = null;
+      preStartInit = ''
+        mkdir -p ${containerDataPath}/config
+        mkdir -p ${containerDataPath}/Specific
+      '';
 
       ports = [
         "0.0.0.0:${toString port}:80"
@@ -86,15 +90,6 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  };
-
-  systemd.services.podman-baikal = lib.mkIf config.homefree.service-options.baikal.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "baikal-prestart" preStart}" ];
-    };
-  };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.baikal) label name project-name;
@@ -153,4 +148,3 @@ in
     }];
   };
 }
-
