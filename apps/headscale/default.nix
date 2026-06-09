@@ -372,6 +372,20 @@ in
   };
 
   config = {
+  ## OIDC client descriptor for Headplane — unconditional per modules/sso-clients.nix.
+  homefree.sso.clients = [{
+    svc = "headscale";
+    internal_name = "homefree-headplane";
+    app_type = "OIDC_APP_TYPE_WEB";
+    auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+    response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+    grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+    redirect_uris = [ "https://vpn.${cfg.system.domain}/admin/oidc/callback" ];
+    post_logout_uris = [ "https://vpn.${cfg.system.domain}/admin" ];
+    needs_pat = false;
+    post_restart_units = [ "headplane.service" ];
+  }];
+
   ## Pull pkgs.headplane (and pkgs.headplane-agent) from the upstream
   ## flake — newer than nixpkgs. Applying unconditionally is harmless;
   ## the package is only referenced when headscale is enabled.
