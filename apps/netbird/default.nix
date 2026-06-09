@@ -296,6 +296,56 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional per modules/sso-clients.nix.
+    homefree.sso.clients = [{
+      svc = "netbird";
+      internal_name = "homefree-netbird";
+      ## NetBird needs to authenticate THREE clients with one OIDC app:
+      ##   1. Web dashboard SPA at https://netbird.<domain>/{auth,silent-auth}
+      ##   2. NetBird CLI / native client via loopback http://localhost:53000/
+      ##   3. Mobile clients via the same loopback flow
+      ## NATIVE app type is required for (2)/(3) — USER_AGENT rejects
+      ## non-https loopback redirect_uris. NATIVE + AUTH_METHOD_NONE +
+      ## PKCE accepts both https web callbacks and http loopback URIs.
+      ##
+      ## Even the web dashboard's "Sign in" button ends up redirecting
+      ## through http://localhost:53000/ because the dashboard reads
+      ## the PKCE config from /api/users/.../authorization — and that
+      ## endpoint serves the management.json PKCEAuthorizationFlow
+      ## (CLI-targeted). Registering localhost as a valid redirect on
+      ## the same app fixes the browser flow too.
+      app_type = "OIDC_APP_TYPE_NATIVE";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      ## DEVICE_CODE is required for the NetBird mobile/desktop app's
+      ## Device Authorization Flow — without it, Zitadel rejects the
+      ## /oauth/v2/device_authorization request and the app shows
+      ## "Authentication error — see logs for more info" before any
+      ## browser ever opens. AUTHORIZATION_CODE handles the loopback
+      ## CLI + web dashboard flows; REFRESH_TOKEN keeps sessions alive.
+      grant_types = [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE"
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+        "OIDC_GRANT_TYPE_DEVICE_CODE"
+      ];
+      redirect_uris = [
+        "https://netbird.${domain}/auth"
+        "https://netbird.${domain}/silent-auth"
+        "http://localhost:53000/"
+      ];
+      post_logout_uris = [ "https://netbird.${domain}/" ];
+      needs_pat = true;        # mgmt machine user for org/group reads
+      ## Both containers consume the client_id: management.json on
+      ## the management side, and dashboard.env on the dashboard SPA
+      ## side. Restart both when the secret rotates — otherwise the
+      ## dashboard keeps a stale client_id and login fails with
+      ## "Errors.App.NotFound".
+      post_restart_units = [
+        "podman-netbird-management.service"
+        "podman-netbird-dashboard.service"
+      ];
+    }];
+
     ## Reserve NetBird's host-published ports from the kernel's ephemeral
     ## range (32768–60999). Without this, an outbound TCP connection
     ## (most commonly tailscaled, but anything making outbound TCP) can
