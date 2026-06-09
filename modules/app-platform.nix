@@ -33,7 +33,8 @@ let
   ## documented-skips have no system user. The chown marker + user= field stay
   ## rootless-only (s6 chowns /config itself for linuxserver images).
   withUser = lib.filterAttrs
-    (_: c: c.runAs.mode == "rootless" || c.runAs.mode == "linuxserver") enabled;
+    (_: c: (c.runAs.mode == "rootless" || c.runAs.mode == "linuxserver")
+           && c.runAs.createUser) enabled;
 
   ## Caddy's internal-CA root, concatenated into each app's bundle so the
   ## container trusts sso.<domain> when fetching OIDC discovery.
@@ -47,15 +48,19 @@ let
   mkPreStart = c:
     let
       isRootless = c.runAs.mode == "rootless";
+      ## chown target defaults to dataDir, but an app whose data dir is a CHILD
+      ## of the dir it actually owns (e.g. webdav mkdir's .../data but chowns
+      ## the parent) sets chownDir explicitly.
+      chownTarget = if c.chownDir != null then c.chownDir else c.dataDir;
       caBundleHost = "${c.dataDir}/ca-bundle.crt";
     in
     lib.concatStringsSep "\n" (lib.filter (s: s != "") [
       (lib.optionalString (c.dataDir != null) "mkdir -p ${c.dataDir}")
       c.preStartInit
-      (lib.optionalString (isRootless && c.dataDir != null) ''
-        if [ ! -f ${c.dataDir}/.chowned-${toString c.runAs.uid} ]; then
-          chown -R ${toString c.runAs.uid}:${toString c.runAs.gid} ${c.dataDir}
-          touch ${c.dataDir}/.chowned-${toString c.runAs.uid}
+      (lib.optionalString (isRootless && chownTarget != null) ''
+        if [ ! -f ${chownTarget}/.chowned-${toString c.runAs.uid} ]; then
+          chown -R ${toString c.runAs.uid}:${toString c.runAs.gid} ${chownTarget}
+          touch ${chownTarget}/.chowned-${toString c.runAs.uid}
         fi'')
       (lib.optionalString c.caBundle ''
         {
@@ -120,13 +125,29 @@ let
             uid = lib.mkOption { type = lib.types.nullOr lib.types.int; default = null; };
             gid = lib.mkOption { type = lib.types.nullOr lib.types.int; default = null; };
             reason = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
+            createUser = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                Create a dedicated `users.users/groups.<name>` system user for
+                this container. Set false for a `linuxserver` app whose
+                PUID/PGID point at a GENERIC, pre-existing uid (e.g. 1000) that
+                must NOT get a new system user (would collide with the host
+                admin) — the PUID/PGID env is still emitted.
+              '';
+            };
           };
         };
       };
       dataDir = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Bind-mounted data dir to create + (rootless) chown once via a marker.";
+        description = "Bind-mounted data dir to create (mkdir -p) + (rootless) chown once via a marker.";
+      };
+      chownDir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Dir the rootless chown marker recurses over; defaults to dataDir. Set when the dir to own differs from the dir to create (e.g. dataDir is a child of it).";
       };
       caBundle = lib.mkOption {
         type = lib.types.bool;

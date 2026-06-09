@@ -74,41 +74,36 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.lidarr.enable {
-    lidarr = {
-      image = "lscr.io/linuxserver/lidarr:${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## LinuxServer image with a GENERIC PUID (1000): createUser = false so the
+  ## generator emits PUID/PGID but does NOT create a dedicated system user
+  ## (uid 1000 would collide with the host admin).
+  homefree.containers.lidarr = lib.mkIf config.homefree.service-options.lidarr.enable {
+    image = "lscr.io/linuxserver/lidarr:${version}";
+    runAs = { mode = "linuxserver"; uid = 1000; gid = 100; createUser = false; };
 
-      autoStart = true;
+    ports = [
+      "0.0.0.0:${toString port}:8686"
+    ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${configPath}:/config"
+      "${mediaPath}:/music"
+      "${downloadsPath}:/downloads"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:8686"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${configPath}:/config"
-        "${mediaPath}:/music"
-        "${downloadsPath}:/downloads"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        PUID = "1000";
-        PGID = "100";
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
-  };
 
-  systemd.services.podman-lidarr = lib.mkIf config.homefree.service-options.lidarr.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "lidarr-prestart" preStart}" ];
-    };
+    ## lidarr creates three independent dirs (config + media + downloads), not
+    ## a single dataDir — emit them verbatim (s6 chowns /config itself).
+    preStartInit = ''
+      mkdir -p ${configPath}
+      mkdir -p ${mediaPath}
+      mkdir -p ${downloadsPath}
+    '';
   };
 
     homefree.service-config = [{

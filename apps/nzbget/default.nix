@@ -64,42 +64,32 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.nzbget.enable {
-    nzbget = {
-      image = "lscr.io/linuxserver/nzbget:${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## LinuxServer image with a GENERIC PUID (1000): createUser = false so the
+  ## generator emits PUID/PGID but makes no dedicated system user (uid 1000 is
+  ## the host admin).
+  homefree.containers.nzbget = lib.mkIf config.homefree.service-options.nzbget.enable {
+    image = "lscr.io/linuxserver/nzbget:${version}";
+    runAs = { mode = "linuxserver"; uid = 1000; gid = 100; createUser = false; };
 
-      autoStart = true;
+    ports = [
+      "0.0.0.0:${toString port}:6789"
+    ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${configPath}:/config"
+      "${downloadsPath}:/downloads"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:6789"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${configPath}:/config"
-        "${downloadsPath}:/downloads"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        PUID = "1000";
-        PGID = "100";
-        # NZBGET_USER = "nzbget"; #optional
-        # NZBGET_PASS = "tegbzn6789"; #optional
-      };
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
-  };
 
-  systemd.services.podman-nzbget = lib.mkIf config.homefree.service-options.nzbget.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "nzbget-prestart" preStart}" ];
-    };
+    preStartInit = ''
+      mkdir -p ${configPath}
+      mkdir -p ${downloadsPath}
+    '';
   };
 
     homefree.service-config = [{

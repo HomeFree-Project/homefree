@@ -172,51 +172,28 @@ in
   };
 
   config = {
-    users.users.webdav = lib.mkIf config.homefree.service-options.webdav.enable {
-      isSystemUser = true;
-      group = "webdav";
-      uid = webdavUid;
-      description = "WebDAV container runtime user";
-    };
-    users.groups.webdav = lib.mkIf config.homefree.service-options.webdav.enable {
-      gid = webdavGid;
-    };
+  ## Container via the app-platform primitive (modules/app-platform.nix). webdav
+  ## mkdir's the CHILD data dir (bind-mounted at /data) but chowns + markers the
+  ## PARENT, so dataDir (mkdir) and chownDir (chown target) differ.
+  homefree.containers.webdav = lib.mkIf config.homefree.service-options.webdav.enable {
+    image = "hacdias/webdav:${version}";
+    ## Single Go binary on non-privileged 6060 — drop root.
+    runAs = { mode = "rootless"; uid = webdavUid; gid = webdavGid; };
+    dataDir = "${containerDataPath}/data";
+    chownDir = containerDataPath;
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.webdav.enable {
-    webdav = {
-      image = "hacdias/webdav:${version}";
+    ports = [
+      "0.0.0.0:${toString port}:6060"
+    ];
 
-      autoStart = true;
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/data:/data"
+      "${config-file}:/config.yml:ro"
+    ];
 
-      ## Drop root inside the container. webdav listens on 6060 so
-      ## no CAP_NET_BIND_SERVICE is required.
-      user = "${toString webdavUid}:${toString webdavGid}";
-
-      extraOptions = [
-        # "--pull=always"
-      ];
-
-      ports = [
-        "0.0.0.0:${toString port}:6060"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/data:/data"
-        "${config-file}:/config.yml:ro"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
-    };
-  };
-
-  systemd.services.podman-webdav = lib.mkIf config.homefree.service-options.webdav.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "hacdias-webdav-prestart" preStart}" ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
   };
 
