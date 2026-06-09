@@ -1,13 +1,16 @@
-{ config, lib, pkgs, options, ... }:
+{ config, lib, pkgs, options, homefree-inputs, ... }:
 
 with lib;
 
 let
   cfg = config.homefree;
 
-  # Path to web-platform directory in this repository
-  # This works because the whole homefree repo is in the nix store when building
-  installerWebPath = ../../web-platform;
+  # web-platform source, consumed via its own flake input rather than a
+  # `../../web-platform` relative path import. `.source` is the input's
+  # git-clean filtered tree (web-platform/flake.nix drops __pycache__/*.pyc
+  # etc.), so what we serve is byte-identical to the old path import but
+  # decoupled from this repo's directory layout.
+  installerWebPath = homefree-inputs.web-platform.legacyPackages.${pkgs.system}.source;
 
   # Python environment with required packages. The dependency set is factored
   # into web-platform/backend/python-env.nix so the backend import-all gate

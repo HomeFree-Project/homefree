@@ -32,7 +32,7 @@
 ## that is not its own LAN identity (a QEMU port-forward, or a dev box on an
 ## existing LAN). In that mode the `:80` catch-all SERVES the wizard inline
 ## instead of redirecting — see `devMode` below.
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, homefree-inputs, ... }:
 
 let
   cfg = config.homefree;
@@ -55,7 +55,7 @@ let
   ## static frontend files + an /api reverse-proxy to the admin backend.
   ## The SSO gate is intentionally omitted — in dev mode on an unfinished
   ## box SSO is not provisioned and the wizard must be reachable pre-SSO.
-  frontendPath = ../../web-platform/frontend;
+  frontendPath = homefree-inputs.web-platform.legacyPackages.${pkgs.system}.source + "/frontend";
 
   ## Where the wizard lives. We redirect to the box's bare LAN IP, NOT a
   ## hostname: a hostname in a redirect is resolved by whatever client
