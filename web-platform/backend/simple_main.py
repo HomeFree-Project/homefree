@@ -3759,6 +3759,7 @@ class HomefreeBaseOverrideRequest(BaseModel):
     type: str  # "local" | "remote"
     localUrl: Optional[str] = None
     remoteUrl: Optional[str] = None
+    remoteRef: Optional[str] = None  # pin remote to a branch / tag / commit
     url: Optional[str] = None
 
 
@@ -3766,6 +3767,7 @@ class HomefreeBaseProbeRequest(BaseModel):
     """Deep-probe an alternate HomeFree base repo before enabling it."""
     type: str
     url: str
+    ref: Optional[str] = None  # pin remote to a branch / tag / commit
 
 
 @app.get("/api/developers/homefree-base")
@@ -3834,6 +3836,7 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
             url = "git+file://" + url
         elif req.type == "remote" and url:
             url = PluginsService._normalize_remote_url(url)
+            url = PluginsService._compose_flake_ref(url, req.ref)
 
         result = PluginsService.probe_base_override(url)
         # Surface the canonical form so the UI can show "interpreted as".

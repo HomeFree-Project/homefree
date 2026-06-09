@@ -158,10 +158,11 @@ class PluginsService:
         Return the alternate-HomeFree-base setting, always including the
         official URL for the UI to show when the override is disabled.
 
-        Shape: { enabled, type, localUrl, remoteUrl, officialUrl }. Both
-        URLs are returned so the UI can keep each kind independently and
-        the active `type` selects which one is applied. Defaults to a
-        disabled local override when nothing has been configured.
+        Shape: { enabled, type, localUrl, remoteUrl, remoteRef, officialUrl }.
+        Both URLs are returned so the UI can keep each kind independently and
+        the active `type` selects which one is applied; `remoteRef` pins the
+        remote to a branch/tag/commit. Defaults to a disabled local override
+        when nothing has been configured.
         """
         config = ConfigReader.read_config()
         developers = config.get("developers") or {}
@@ -183,6 +184,7 @@ class PluginsService:
             "type": ftype,
             "localUrl": local_url or "",
             "remoteUrl": remote_url or "",
+            "remoteRef": override.get("remoteRef") or "",
             "officialUrl": OFFICIAL_HOMEFREE_URL,
         }
 
@@ -1102,6 +1104,9 @@ class PluginsService:
                 local_url = entry.get("url")
         local_url = (local_url or "").strip()
         remote_url = (remote_url or "").strip()
+        # A pinned ref (branch/tag/commit) only applies to a remote base;
+        # a local git+file:// checkout always tracks its working tree.
+        remote_ref = (entry.get("remoteRef") or "").strip() if ftype == "remote" else ""
         # For a local override the frontend sends a bare filesystem path;
         # store it as a git+file:// flake reference, mirroring custom flakes.
         # A remote ref is normalized into a form Nix accepts.
@@ -1110,8 +1115,10 @@ class PluginsService:
         if remote_url:
             remote_url = PluginsService._normalize_remote_url(remote_url)
 
-        # The active type selects which URL is validated and applied.
+        # The active type selects which URL is validated and applied. The
+        # pin is composed onto the active URL before it reaches flake.nix.
         active_url = remote_url if ftype == "remote" else local_url
+        applied_url = PluginsService._compose_flake_ref(active_url, remote_ref)
 
         # `stored` is kept verbatim in homefree-config.json so the UI
         # always shows the admin exactly what they entered — both kinds.
@@ -1120,21 +1127,28 @@ class PluginsService:
             "type": ftype,
             "localUrl": local_url,
             "remoteUrl": remote_url,
+            "remoteRef": remote_ref,
         }
 
-        # Validate the active URL. Failures become warnings, not blockers.
+        # Validate the active URL and the pin format. Failures become
+        # warnings, not blockers.
         ok, problems = PluginsService.validate_base_override(
             {"enabled": stored["enabled"], "type": ftype, "url": active_url}
         )
+        if remote_ref and not _FLAKE_REF_RE.match(remote_ref):
+            ok = False
+            problems = problems + [
+                f"'{remote_ref}' is not a valid branch, tag, or commit."
+            ]
 
         # `effective` is what actually gets written into flake.nix (it uses
-        # a single `url`). If the override is enabled but its active URL did
-        # not validate, fall back to disabled so a broken URL never reaches
-        # the build.
+        # a single `url` with the pin already composed in). If the override
+        # is enabled but its active URL did not validate, fall back to
+        # disabled so a broken URL never reaches the build.
         if stored["enabled"] and not ok:
-            effective = {"enabled": False, "type": ftype, "url": active_url}
+            effective = {"enabled": False, "type": ftype, "url": applied_url}
         else:
-            effective = {"enabled": stored["enabled"], "type": ftype, "url": active_url}
+            effective = {"enabled": stored["enabled"], "type": ftype, "url": applied_url}
 
         write_ok, err = PluginsService.write_base_override(stored, effective)
         if not write_ok:

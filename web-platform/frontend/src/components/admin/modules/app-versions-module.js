@@ -59,6 +59,7 @@ class AppVersionsModule extends LitElement {
     baseType: { type: String, state: true },
     baseLocalUrl: { type: String, state: true },
     baseRemoteUrl: { type: String, state: true },
+    baseRemoteRef: { type: String, state: true },
     baseSaving: { type: Boolean, state: true },
     baseProbing: { type: Boolean, state: true },
     baseProbeResult: { type: Object, state: true },
@@ -662,6 +663,7 @@ class AppVersionsModule extends LitElement {
     this.baseType = 'local';
     this.baseLocalUrl = '';
     this.baseRemoteUrl = '';
+    this.baseRemoteRef = '';
     this.baseSaving = false;
     this.baseProbing = false;
     this.baseProbeResult = null;
@@ -792,6 +794,7 @@ class AppVersionsModule extends LitElement {
         ? local.slice('git+file://'.length)
         : local;
       this.baseRemoteUrl = data.remoteUrl || '';
+      this.baseRemoteRef = data.remoteRef || '';
     } catch (e) {
       this.error = e.message || 'Failed to load the alternate-base setting.';
     } finally {
@@ -820,6 +823,7 @@ class AppVersionsModule extends LitElement {
         type: this.baseType,
         localUrl: this.baseLocalUrl,
         remoteUrl: this.baseRemoteUrl,
+        remoteRef: this.baseType === 'remote' ? (this.baseRemoteRef || undefined) : undefined,
       });
       this.baseWarnings = result.warnings || [];
       this.baseProbeResult = null;
@@ -872,6 +876,7 @@ class AppVersionsModule extends LitElement {
       this.baseProbeResult = await validateHomefreeBase({
         type: this.baseType,
         url: this._activeBaseUrl,
+        ref: this.baseType === 'remote' ? (this.baseRemoteRef || undefined) : undefined,
       });
     } catch (e) {
       this.baseErrors = [e.message || 'Could not probe the repository.'];
@@ -1253,6 +1258,22 @@ class AppVersionsModule extends LitElement {
                     A flake reference to a HomeFree repository, e.g.
                     github:owner/homefree or git+https://example.com/homefree.git.
                     Saved when you click away or press Enter.
+                  </span>
+                </label>
+                <label class="field ${this._baseFieldChanged('remoteRef') ? 'changed' : ''}">
+                  <span class="lbl">Branch / tag / commit (optional)</span>
+                  <input
+                    type="text"
+                    .value=${this.baseRemoteRef}
+                    placeholder="e.g. main, v1.2.3, fix/my-branch, or a commit SHA"
+                    @input=${(e) => { this.baseRemoteRef = e.target.value; }}
+                    @change=${this._onBaseUrlCommit}
+                    @keydown=${(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                  />
+                  <span class="hint">
+                    Pin the repository to a specific branch, tag, or commit —
+                    handy for testing a branch before it is merged. Leave blank
+                    to track the repository default branch.
                   </span>
                 </label>
               `}

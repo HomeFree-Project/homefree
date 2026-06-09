@@ -119,7 +119,23 @@ let
   mkOauth2ProxyContainer = colour: port: {
     image = "oauth2-proxy/oauth2-proxy:${oauth2ProxyVersion}";
     autoStart = false;
-    extraOptions = [ "--network=host" ];
+    ## OIDC discovery + token redemption are a self-call. The issuer
+    ## (OAUTH2_PROXY_OIDC_ISSUER_URL below) must stay the public FQDN
+    ## https://sso.<domain> so the token `iss` and the browser login URL
+    ## match — but that name must resolve to THIS box, not out to public
+    ## DNS. Without pinning it, the box's resolver recurses to the public
+    ## A/AAAA (the apex, via the `*` CNAME), so oauth2-proxy dials whatever
+    ## the current/stale public IP points at: a WAN-IP change, DDNS lag, or
+    ## a stale resolver-cache entry then breaks startup ("tls: internal
+    ## error" / connection failure) and, with it, the blue/green flip.
+    ## Pin it to loopback instead: --network=host means 127.0.0.1 is the
+    ## box's own Caddy, which serves sso.<domain> with a valid cert. The
+    ## self-call is now independent of public DNS entirely. Browser-facing
+    ## redirects are unaffected — those resolve on the user's client.
+    extraOptions = [
+      "--network=host"
+      "--add-host=sso.${config.homefree.system.domain}:127.0.0.1"
+    ];
     ports = [ "0.0.0.0:${toString port}:${toString port}" ];
     volumes = [ "/etc/localtime:/etc/localtime:ro" ];
     environment = {
