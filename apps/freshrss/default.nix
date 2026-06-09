@@ -148,13 +148,27 @@ PGEOF
     ## them on the very first install — rebuilds after install have no
     ## effect on the live FreshRSS user, but the values are kept in
     ## sync so a fresh install always uses the anchored credentials.
+    ##
+    ## CRITICAL: every value option uses the `--opt=value` form, NOT the
+    ## space-separated `--opt value`. The image entrypoint expands these
+    ## via `eval echo "$FRESHRSS_INSTALL"` then word-splits the result.
+    ## DB_PASSWORD is empty (local postgres, peer auth over the socket),
+    ## so the old `--db-password "%s"` rendered `--db-password ""`; eval
+    ## collapses the empty quotes to nothing, leaving a DANGLING
+    ## `--db-password` that swallows the next token (`--db-type`) as its
+    ## value. That shifts every following option, ultimately starving
+    ## `--default-user`, and do-install.php aborts with
+    ## "default-user cannot be empty". The `=` form makes each option
+    ## self-delimiting — `--db-password=` is an explicit empty value that
+    ## can never consume the next token. (FreshRSS's own README still
+    ## shows the space form; it is unsafe whenever any value is empty.)
     FRESHRSS_ADMIN_PASSWORD=$(cat ${secretsDir}/admin-password)
     FRESHRSS_ADMIN_API_PASSWORD=$(cat ${secretsDir}/admin-api-password)
     install -m 600 /dev/null ${runtimeEnvFile}
     {
-      printf 'FRESHRSS_INSTALL=--api-enabled --base-url %s --db-base %s --db-host %s --db-password "%s" --db-type pgsql --db-user %s --default-user %s --language en\n' \
+      printf 'FRESHRSS_INSTALL=--api-enabled --base-url=%s --db-base=%s --db-host=%s --db-password=%s --db-type=pgsql --db-user=%s --default-user=%s --language=en\n' \
         "${BASE_URL}" "${DB_BASE}" "${DB_HOST}" "${DB_PASSWORD}" "${DB_USER}" "${adminUsername}"
-      printf 'FRESHRSS_USER=--api-password %s --email %s --language en --password %s --user %s\n' \
+      printf 'FRESHRSS_USER=--api-password=%s --email=%s --language=en --password=%s --user=%s\n' \
         "$FRESHRSS_ADMIN_API_PASSWORD" "${ADMIN_EMAIL}" "$FRESHRSS_ADMIN_PASSWORD" "${adminUsername}"
     } > ${runtimeEnvFile}
 
