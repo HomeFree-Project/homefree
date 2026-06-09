@@ -122,6 +122,27 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional per modules/sso-clients.nix.
+    homefree.sso.clients = [{
+      svc = "cryptpad";
+      internal_name = "homefree-cryptpad";
+      ## CryptPad's SSO plugin is a server-side Node confidential
+      ## client (authcode + client_secret) — same shape as Forgejo
+      ## or Linkwarden.
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## CryptPad's SSO callback path is hardcoded to /ssoauth (see
+      ## cryptpad/sso README). The "main" CryptPad domain is the docs
+      ## subdomain; docs-sandbox is the iframe sandbox and never
+      ## receives OAuth callbacks.
+      redirect_uris = [ "https://docs.${domain}/ssoauth" ];
+      post_logout_uris = [ "https://docs.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-cryptpad.service" ];
+    }];
+
     ## Container via app-platform (modules/app-platform.nix). The dns-ready
     ## ordering and podman unit wiring are generated from this descriptor.
     ## root mode: the official cryptpad image requires root; a manual
