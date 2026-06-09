@@ -49,24 +49,6 @@ let
   ## exits 125 on first start.
   deviceId = lib.removePrefix "/dev/serial/by-id/" rawDeviceId;
   deviceArg = "/dev/serial/by-id/${deviceId}:/dev/zwave";
-
-  preStart = ''
-    set -eu
-    mkdir -p ${containerDataPath}
-    ## First-run seed: if there's no settings.json yet and a seed
-    ## file exists at the secrets path, copy it (and nodes.json) in.
-    ## After seed, subsequent rebuilds do NOT overwrite — the UI
-    ## owns its store from then on.
-    if [ ! -s ${containerDataPath}/settings.json ] \
-       && [ -d "${seedDir}" ]; then
-      for f in settings.json nodes.json; do
-        if [ -f "${seedDir}/$f" ]; then
-          cp "${seedDir}/$f" "${containerDataPath}/$f"
-          chmod 600 "${containerDataPath}/$f"
-        fi
-      done
-    fi
-  '';
 in
 {
   options.homefree.services.zwave-js-ui = userOptions;
@@ -130,37 +112,56 @@ in
         '';
       };
 
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zwave-js-ui.enable {
-      zwave-js-ui = {
-        image = "zwavejs/zwave-js-ui:${version}";
-        autoStart = true;
-
-        extraOptions = [
-          "--network=host"
-          "--device=${deviceArg}"
-        ];
-
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}:/usr/src/app/store"
-        ];
-
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          ## Pin the ports inside the container (defaults match these
-          ## but be explicit so a future image bump can't silently shift
-          ## them and break the Caddy upstream / HA WS URL).
-          PORT = toString port-ui;
-          ZWAVEJS_EXTERNAL_CONFIG = "/usr/src/app/store/.config-db";
-        };
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated;
+    ## this declares only the zwave-js-ui-specific data.
+    homefree.containers.zwave-js-ui = lib.mkIf config.homefree.services.zwave-js-ui.enable {
+      ## zwavejs/zwave-js-ui runs as root internally and requires access
+      ## to the USB Z-Wave stick via --device.
+      runAs = {
+        mode = "root";
+        reason = "image runs as root; needs direct USB device access via --device";
       };
-    };
+      image = "zwavejs/zwave-js-ui:${version}";
 
-    systemd.services.podman-zwave-js-ui = lib.mkIf config.homefree.services.zwave-js-ui.enable {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
-      serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "zwave-js-ui-prestart" preStart}" ];
+      ## preStart has set -eu + conditional seed logic; dataDir = null
+      ## and the full preStart goes in preStartInit.
+      dataDir = null;
+      preStartInit = ''
+        set -eu
+        mkdir -p ${containerDataPath}
+        ## First-run seed: if there's no settings.json yet and a seed
+        ## file exists at the secrets path, copy it (and nodes.json) in.
+        ## After seed, subsequent rebuilds do NOT overwrite — the UI
+        ## owns its store from then on.
+        if [ ! -s ${containerDataPath}/settings.json ] \
+           && [ -d "${seedDir}" ]; then
+          for f in settings.json nodes.json; do
+            if [ -f "${seedDir}/$f" ]; then
+              cp "${seedDir}/$f" "${containerDataPath}/$f"
+              chmod 600 "${containerDataPath}/$f"
+            fi
+          done
+        fi
+      '';
+
+      extraOptions = [
+        "--network=host"
+        "--device=${deviceArg}"
+      ];
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}:/usr/src/app/store"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        ## Pin the ports inside the container (defaults match these
+        ## but be explicit so a future image bump can't silently shift
+        ## them and break the Caddy upstream / HA WS URL).
+        PORT = toString port-ui;
+        ZWAVEJS_EXTERNAL_CONFIG = "/usr/src/app/store/.config-db";
       };
     };
 
