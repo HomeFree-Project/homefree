@@ -11,13 +11,11 @@ let
   grocyUid = 803;
   grocyGid = 803;
 
-  preStart = ''
-    mkdir -p ${containerDataPath}
-  '';
-
   version = "4.6.0";
 
   port = config.homefree.allocPort "grocy";
+
+  enable = config.homefree.service-options.grocy.enable;
 
   userOptions = {
     enable = lib.mkOption {
@@ -61,28 +59,21 @@ in
   };
 
   config = {
-    users.users.grocy = lib.mkIf config.homefree.service-options.grocy.enable {
-      isSystemUser = true;
-      group = "grocy";
-      uid = grocyUid;
-      description = "Grocy container runtime user (LinuxServer PUID/PGID)";
-    };
-    users.groups.grocy = lib.mkIf config.homefree.service-options.grocy.enable {
-      gid = grocyGid;
-    };
-
     ## @NOTE: Default username and password: admin, admin
     ## @TODO: Setup LDAP login (see /var/lib/grocy/data/config.php)
     ##        Can this be set up with env vars?
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.grocy.enable {
-    grocy = {
+    ## Container via app-platform (modules/app-platform.nix). The
+    ## dedicated system user/group, PUID/PGID env injection, dataDir
+    ## mkdir, dns-ready ordering, and podman unit wiring are all
+    ## generated from this descriptor.
+    homefree.containers.grocy = lib.mkIf enable {
       image = "lscr.io/linuxserver/grocy:${version}";
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
+      ## LinuxServer PUID/PGID: s6-overlay starts as root then drops to
+      ## PUID:PGID (chowning /config). The platform creates the dedicated
+      ## system user/group and injects PUID/PGID env automatically.
+      runAs = { mode = "linuxserver"; uid = grocyUid; gid = grocyGid; };
+      dataDir = containerDataPath;
 
       ports = [
         "0.0.0.0:${toString port}:80"
@@ -95,25 +86,8 @@ in
 
       environment = {
         TZ = config.homefree.system.timeZone;
-        ## LinuxServer PUID/PGID: the image's s6-overlay init runs as
-        ## root (mandatory for s6) but chowns /config and forks the
-        ## app process to PUID:PGID. Pointing this at a HomeFree-
-        ## managed system user instead of the LSIO default (uid 911 /
-        ## "abc") keeps data ownership outside the OS admin's UID
-        ## namespace and avoids collisions with future LSIO images.
-        PUID = toString grocyUid;
-        PGID = toString grocyGid;
       };
     };
-  };
-
-  systemd.services.podman-grocy = lib.mkIf config.homefree.service-options.grocy.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "grocy-prestart" preStart}" ];
-    };
-  };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.grocy) label name project-name;
