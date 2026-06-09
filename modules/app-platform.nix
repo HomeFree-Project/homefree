@@ -65,6 +65,9 @@ let
 
   mkContainer = _name: c: {
     inherit (c) image autoStart ports environmentFiles cmd dependsOn;
+    ## Only set imageFile when given (a locally-built tarball); otherwise
+    ## leave it at the oci default so the image is pulled from the registry.
+    imageFile = lib.mkIf (c.imageFile != null) c.imageFile;
     ## rootless -> drop privileges with user=; linuxserver/root leave it unset
     ## (the image's s6 init / entrypoint handles the drop via PUID/PGID).
     user = lib.mkIf (c.runAs.mode == "rootless")
@@ -92,6 +95,11 @@ let
       image = lib.mkOption {
         type = lib.types.str;
         description = "Fully-qualified container image ref (registry/repo:tag).";
+      };
+      imageFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        description = "Optional locally-built image tarball (oci-containers imageFile) for images not pulled from a registry.";
       };
       runAs = lib.mkOption {
         description = ''
@@ -180,12 +188,21 @@ in
     virtualisation.oci-containers.containers = lib.mapAttrs mkContainer enabled;
 
     systemd.services = lib.mapAttrs'
-      (name: c: lib.nameValuePair "podman-${name}" {
-        after = lib.optional c.dnsReady "dns-ready.service";
-        wants = lib.optional c.dnsReady "dns-ready.service";
-        serviceConfig.ExecStartPre =
-          [ "!${pkgs.writeShellScript "${name}-prestart" (mkPreStart c)}" ];
-      })
+      (name: c:
+        let pre = mkPreStart c; in
+        lib.nameValuePair "podman-${name}" (
+          {
+            after = lib.optional c.dnsReady "dns-ready.service";
+            wants = lib.optional c.dnsReady "dns-ready.service";
+          }
+          ## Only wire an ExecStartPre when there is actually a preStart to run
+          ## — a container with no dataDir/caBundle/hooks (e.g. radicle-httpd)
+          ## must not gain an empty prestart script it never had.
+          // lib.optionalAttrs (pre != "") {
+            serviceConfig.ExecStartPre =
+              [ "!${pkgs.writeShellScript "${name}-prestart" pre}" ];
+          })
+      )
       enabled;
   };
 }

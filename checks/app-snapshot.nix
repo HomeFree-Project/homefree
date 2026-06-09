@@ -62,8 +62,8 @@ let
   snapshot = {
     ## Curated container fields — data only, never script bodies.
     containers = lib.mapAttrs (_: c: {
-      inherit (c) image cmd entrypoint environment environmentFiles ports
-        volumes workdir dependsOn extraOptions autoStart user;
+      inherit (c) image imageFile cmd entrypoint environment environmentFiles
+        ports volumes workdir dependsOn extraOptions autoStart user;
     }) cfg.virtualisation.oci-containers.containers;
 
     appUsers = lib.mapAttrs (_: u: { inherit (u) uid group isSystemUser; })

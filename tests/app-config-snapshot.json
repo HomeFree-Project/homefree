@@ -67,6 +67,7 @@
         "--ulimit=host"
       ],
       "image": "adguard/adguardhome:v0.108.0-b.88",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9000:9000",
         "10.0.0.1:53:53/tcp",
@@ -102,6 +103,7 @@
         "--add-host=host.docker.internal:host-gateway"
       ],
       "image": "ghcr.io/azuracast/azuracast:0.23.6",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9003:80",
         "0.0.0.0:2033:2022"
@@ -133,6 +135,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "ckulka/baikal:0.10.1-nginx",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9005:80"
       ],
@@ -162,6 +165,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "cryptpad/cryptpad:version-2026.5.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9006:9006",
         "0.0.0.0:3023:3023"
@@ -222,6 +226,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "codeberg.org/forgejo/forgejo:15.0.2",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9007:9007",
         "0.0.0.0:3022:3022"
@@ -252,6 +257,7 @@
       ],
       "extraOptions": [],
       "image": "freshrss/freshrss:1.29.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9008:80"
       ],
@@ -282,6 +288,7 @@
         "--cap-add=CAP_PERFMON"
       ],
       "image": "ghcr.io/blakeblackshear/frigate:0.17.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9009:5000",
         "8554:8554",
@@ -309,6 +316,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "lscr.io/linuxserver/grocy:4.6.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9010:80"
       ],
@@ -333,6 +341,7 @@
         "--privileged"
       ],
       "image": "ghcr.io/home-assistant/home-assistant:2026.4",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -362,6 +371,7 @@
       ],
       "extraOptions": [],
       "image": "docker.io/sysadminsmedia/homebox:0.25.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9013:7745"
       ],
@@ -394,6 +404,7 @@
         "--cap-add=CAP_PERFMON"
       ],
       "image": "ghcr.io/immich-app/immich-machine-learning:v2.7.5",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -416,6 +427,7 @@
         "--health-cmd=redis-cli ping || exit 1"
       ],
       "image": "redis:8.8.0",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -456,6 +468,7 @@
       ],
       "extraOptions": [],
       "image": "ghcr.io/immich-app/immich-server:v2.7.5",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:2283:2283"
       ],
@@ -488,6 +501,7 @@
         "--group-add=303"
       ],
       "image": "lscr.io/linuxserver/jellyfin:10.11.11",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:8096:8096"
       ],
@@ -516,6 +530,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "joplin/server:3.7.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9014:22300"
       ],
@@ -539,6 +554,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "lscr.io/linuxserver/lidarr:8.1.2135",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9016:8686"
       ],
@@ -571,6 +587,7 @@
       ],
       "extraOptions": [],
       "image": "ghcr.io/linkwarden/linkwarden:v2.14.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9017:3000"
       ],
@@ -597,6 +614,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "matrixdotorg/synapse:v1.152.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9019:9019"
       ],
@@ -622,6 +640,7 @@
       ],
       "extraOptions": [],
       "image": "getmeili/meilisearch:v1.46.0",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -644,6 +663,7 @@
         "--network=host"
       ],
       "image": "coturn/coturn:4.6.2",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -675,6 +695,7 @@
       ],
       "extraOptions": [],
       "image": "netbirdio/dashboard:v2.16.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:33000:80"
       ],
@@ -701,6 +722,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "netbirdio/management:0.70.5",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:33073:80"
       ],
@@ -728,6 +750,7 @@
       ],
       "extraOptions": [],
       "image": "netbirdio/relay:0.70.5",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:33080:33080"
       ],
@@ -749,6 +772,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "netbirdio/signal:0.70.5",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:10000:80"
       ],
@@ -787,6 +811,7 @@
       ],
       "extraOptions": [],
       "image": "nextcloud:33.0.5-apache",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9022:80"
       ],
@@ -829,6 +854,7 @@
       ],
       "extraOptions": [],
       "image": "nextcloud:33.0.5-apache",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -853,6 +879,7 @@
         "--health-cmd=redis-cli ping || exit 1"
       ],
       "image": "redis:8.8.0",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -873,6 +900,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "lscr.io/linuxserver/nzbget:version-v24.8",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9023:6789"
       ],
@@ -918,6 +946,7 @@
         "--network=host"
       ],
       "image": "oauth2-proxy/oauth2-proxy:v7.12.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:4180:4180"
       ],
@@ -961,6 +990,7 @@
         "--network=host"
       ],
       "image": "oauth2-proxy/oauth2-proxy:v7.12.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:4181:4181"
       ],
@@ -988,6 +1018,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "odoo:19.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9025:8069"
       ],
@@ -1020,6 +1051,7 @@
         "--add-host=host.docker.internal:host-gateway"
       ],
       "image": "ghcr.io/open-webui/open-webui:v0.9.5",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9026:8254"
       ],
@@ -1047,6 +1079,7 @@
         "--shm-size=128M"
       ],
       "image": "ghcr.io/immich-app/postgres:18-vectorchord0.5.3-pgvector0.8.1",
+      "imageFile": null,
       "ports": [
         "127.0.0.1:6432:6432"
       ],
@@ -1070,6 +1103,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "tomsquest/docker-radicale:3.7.3.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:5232:5232"
       ],
@@ -1100,6 +1134,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "homefree/radicle:local",
+      "imageFile": "/nix/store/radicle.tar.gz",
       "ports": [
         "10.0.0.1:9029:9029"
       ],
@@ -1130,6 +1165,7 @@
       ],
       "extraOptions": [],
       "image": "homefree/radicle:local",
+      "imageFile": "/nix/store/radicle.tar.gz",
       "ports": [
         "0.0.0.0:8776:8776"
       ],
@@ -1159,6 +1195,7 @@
       ],
       "extraOptions": [],
       "image": "hadogenes/screeenly@sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9030:80"
       ],
@@ -1274,6 +1311,7 @@
       ],
       "extraOptions": [],
       "image": "snipe/snipe-it:v8.6.1",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9031:80"
       ],
@@ -1299,6 +1337,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "triliumnext/notes:v0.95.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9032:8080"
       ],
@@ -1330,6 +1369,7 @@
         "--mount=type=tmpfs,target=/tmp,tmpfs-size=104857600,exec"
       ],
       "image": "ghcr.io/lemker/unifi-os-server:v1.2.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:11443:443",
         "0.0.0.0:8080:8080",
@@ -1372,6 +1412,7 @@
       ],
       "extraOptions": [],
       "image": "vaultwarden/server:1.36.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:9033:8080"
       ],
@@ -1394,6 +1435,7 @@
       "environmentFiles": [],
       "extraOptions": [],
       "image": "hacdias/webdav:v5.11.10",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:5334:6060"
       ],
@@ -1455,6 +1497,7 @@
       ],
       "extraOptions": [],
       "image": "ghcr.io/zitadel/zitadel:v4.15.0",
+      "imageFile": null,
       "ports": [
         "0.0.0.0:3241:8080"
       ],
@@ -1485,6 +1528,7 @@
         "--network=host"
       ],
       "image": "ghcr.io/zitadel/zitadel-login:v4.15.0",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
@@ -1509,6 +1553,7 @@
         "--device=/dev/serial/by-id/:/dev/zwave"
       ],
       "image": "zwavejs/zwave-js-ui:11.19.1",
+      "imageFile": null,
       "ports": [],
       "user": null,
       "volumes": [
