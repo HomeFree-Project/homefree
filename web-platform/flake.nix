@@ -72,6 +72,17 @@
           touch $out
         '';
 
+        ## Module-EVAL gate: import every Lit component under a minimal DOM
+        ## shim (honouring the import map) to catch the Lit tagged-template
+        ## backtick *TypeError* variant that `node --check` (frontend-syntax)
+        ## misses — the module parses but blows up when its css`…`/html`…`
+        ## template is evaluated. See frontend/test/lit-eval-smoke.mjs.
+        frontend-eval = pkgs.runCommandLocal "wp-frontend-eval"
+          { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+          node ${src}/frontend/test/lit-eval-smoke.mjs
+          touch $out
+        '';
+
         ## Import every backend library module under the packaged pythonEnv —
         ## the ModuleNotFoundError catcher (excludes the dead strawberry path;
         ## see backend/tests/import_all.py).
