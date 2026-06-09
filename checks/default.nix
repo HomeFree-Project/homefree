@@ -7,13 +7,13 @@
 { self, system, pkgs, lib }:
 
 let
-  # Homefree pure-logic tests cover scripts/ (check-container-updates, stdlib
+  # Homefree pure-logic tests cover scripts/ (upgrade-apps bump-safety, stdlib
   # only) and apps/ (merge-ha-yaml — needs pyyaml). The web-platform backend
   # tests (hw_buckets) live in the web-platform flake.
   homefreePyEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pyyaml ]);
 in
 {
-  ## Homefree pure-logic unit tests (pytest): the container-update semver/tag
+  ## Homefree pure-logic unit tests (pytest): the upgrade-apps bump-safety
   ## logic (scripts/) and the Home Assistant YAML overlay merge (apps/). The
   ## hardware threshold tests moved to the web-platform flake with the backend.
   homefree-python-unit = pkgs.runCommandLocal "hf-python-unit"
