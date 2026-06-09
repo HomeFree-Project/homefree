@@ -59,6 +59,26 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional, consumed by
+    ## apps/zitadel/provision.nix via homefree.sso.resolved-clients.
+    homefree.sso.clients = [{
+      svc = "vaultwarden";
+      internal_name = "homefree-vaultwarden";
+      ## Vaultwarden 1.36+ confidential OIDC client (Rust server,
+      ## kept server-side).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Vaultwarden auto-derives its callback from DOMAIN. Per
+      ## https://github.com/dani-garcia/vaultwarden/wiki/Enabling-SSO-support-using-OpenId-Connect
+      ## the path is /identity/connect/oidc-signin.
+      redirect_uris = [ "https://vaultwarden.${domain}/identity/connect/oidc-signin" ];
+      post_logout_uris = [ "https://vaultwarden.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-vaultwarden.service" ];
+    }];
+
     ## Container workload via the app-platform primitive
     ## (modules/app-platform.nix). The chown-marker, CA-bundle synthesis,
     ## podman dns-ready unit, and the dedicated system user/group are all
