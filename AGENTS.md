@@ -309,6 +309,12 @@ Situational knowledge — read the linked note when working in that area:
   colour units; a flip activation script swaps them with zero downtime.
   Never `exit` in an activation script; snippets must precede flips.
   → `docs/agent-notes/blue-green-deployment.md`
+- **oauth2-proxy OIDC readiness gate** — the blue/green readiness gate
+  must probe that Zitadel actually *serves* OIDC discovery (200), not
+  just that the OIDC secrets exist; a secrets-only gate lets a colour
+  start against a restarting Zitadel, which 502s discovery and crash-
+  loops the colour into `start-limit-hit`, failing the rebuild.
+  → `docs/agent-notes/oauth2-proxy-oidc-readiness-gate.md`
 - **Secrets anchoring** — every auto-generated secret must be anchored
   into encrypted `/etc/nixos/secrets` (the only backed-up location) via
   `lib/secrets-anchor.nix`; generating straight into

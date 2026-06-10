@@ -110,6 +110,31 @@ let
     done
   '';
 
+  ## Readiness gate consulted by the blue/green flip + supervisor (NOT an
+  ## ExecStartPre — a false result means "defer the start", not "fail the
+  ## unit"). It is strictly broader than the secrets check: the secrets
+  ## existing on disk does NOT mean Zitadel is SERVING. On a steady-state
+  ## rebuild Zitadel's container restarts; until it finishes initialising,
+  ## Caddy answers its https://sso.<domain> vhost with a 502. oauth2-proxy
+  ## does OIDC discovery at startup and EXITS 1 on that 502 — five fast
+  ## exits trip the colour's Restart=on-failure start-limit (burst 5 /
+  ## 1 min) and leave a FAILED unit that makes the whole rebuild exit
+  ## non-zero. The secrets-only gate didn't catch this because on any box
+  ## past first-install the secrets are already present, so it passed
+  ## instantly and let the colour fast-fail against a not-yet-ready
+  ## Zitadel. So additionally probe the exact self-call oauth2-proxy makes
+  ## — loopback-pinned (--network=host + --add-host sso:127.0.0.1, see
+  ## mkOauth2ProxyContainer), skip-verify against Caddy's internal CA —
+  ## and refuse to start the colour until discovery returns 200. The flip
+  ## and supervisor then defer cleanly (current colour keeps serving) and
+  ## bring the colour up the instant Zitadel is ready.
+  oauth2ProxyReadinessGate = pkgs.writeShellScript "oauth2-proxy-readiness" ''
+    ${oauth2ProxySecretsCheck} || exit 1
+    ${pkgs.curl}/bin/curl -fsk --max-time 3 -o /dev/null \
+      --resolve sso.${config.homefree.system.domain}:443:127.0.0.1 \
+      https://sso.${config.homefree.system.domain}/.well-known/openid-configuration
+  '';
+
   ## Factory for an oauth2-proxy colour container. Differs between
   ## colours ONLY by port (`ports` mapping + OAUTH2_PROXY_HTTP_ADDRESS)
   ## -- see the INVARIANT in lib/blue-green.nix. autoStart=false: only
@@ -235,8 +260,13 @@ let
     ## `start-limit-hit` -- a failed unit that makes the finishing rebuild
     ## exit non-zero and leaves the box stuck in finish-setup. The gate
     ## defers bring-up to the supervisor, which starts blue the moment the
-    ## secrets land. Same three-file check the colour's ExecStartPre uses.
-    readinessGate = "${oauth2ProxySecretsCheck}";
+    ## prerequisites land. Broader than the colour's ExecStartPre secrets
+    ## check: it ALSO probes that Zitadel is actually serving OIDC
+    ## discovery (not merely that the secrets exist), so a colour is never
+    ## started against a restarting Zitadel — which 502s discovery and
+    ## crash-loops the colour into start-limit-hit. See the gate's own
+    ## definition above for the full rationale.
+    readinessGate = "${oauth2ProxyReadinessGate}";
     ## Order this flip after admin-api's snippet writer, so admin-api's
     ## file-scope Caddy `import` target exists before this flip reloads
     ## Caddy. The name is the static `${name}-bg-snippet` of
