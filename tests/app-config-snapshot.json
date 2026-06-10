@@ -6587,30 +6587,6 @@
         "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
         "OIDC_GRANT_TYPE_REFRESH_TOKEN"
       ],
-      "internal_name": "homefree-grampsweb",
-      "needs_pat": false,
-      "post_logout_uris": [
-        "https://grampsweb.homefree.host/"
-      ],
-      "post_restart_units": [
-        "podman-grampsweb.service",
-        "podman-grampsweb-celery.service"
-      ],
-      "redirect_uris": [
-        "https://grampsweb.homefree.host/api/oidc/callback/custom"
-      ],
-      "response_types": [
-        "OIDC_RESPONSE_TYPE_CODE"
-      ],
-      "svc": "grampsweb"
-    },
-    {
-      "app_type": "OIDC_APP_TYPE_WEB",
-      "auth_method": "OIDC_AUTH_METHOD_TYPE_POST",
-      "grant_types": [
-        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
-        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
-      ],
       "internal_name": "homefree-headplane",
       "needs_pat": false,
       "post_logout_uris": [

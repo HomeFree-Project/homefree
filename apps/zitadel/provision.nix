@@ -140,37 +140,6 @@ let
         "podman-oauth2-proxy-green.service"
       ];
     }
-    {
-      svc = "grampsweb";
-      internal_name = "homefree-grampsweb";
-      ## GrampsWeb (gramps-web-api 26.x) uses Authlib as a server-side
-      ## OIDC client — confidential (client_id + secret) authorization
-      ## code flow. The "custom" provider slot inside GrampsWeb is what
-      ## the plugin wires the GRAMPSWEB_OIDC_* env vars to.
-      ## TODO: migrate to the grampsweb plugin once the base repo grows
-      ## a per-service oidc-app extension point (see
-      ## homefree-grampsweb feat/native-oidc-sso commit message).
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Callback path is GRAMPSWEB_BASE_URL + /api/oidc/callback/<provider>
-      ## where <provider> is the literal string "custom" for any non-
-      ## built-in IdP (api/resources/oidc.py:107-110). The plugin sets
-      ## BASE_URL=https://grampsweb.<domain>, so the URI below is the
-      ## exact path Zitadel will see.
-      redirect_uris = [ "https://grampsweb.${domain}/api/oidc/callback/custom" ];
-      post_logout_uris = [ "https://grampsweb.${domain}/" ];
-      needs_pat = false;
-      ## Both containers consume the env file the plugin's preStart
-      ## synthesizes from the secrets we write below — restart both
-      ## so the celery worker doesn't sit with stale env after a
-      ## client_secret rotation.
-      post_restart_units = [
-        "podman-grampsweb.service"
-        "podman-grampsweb-celery.service"
-      ];
-    }
   ];
 
   ## Render the services table as newline-delimited records. Each
@@ -1184,10 +1153,12 @@ EOF
 
 in {
   config = lib.mkIf zitadelEnabled {
-    ## Push provision.nix's own base OIDC clients (oauth2-proxy with its derived
-    ## post-logout set, headplane, grampsweb, + any app not yet migrated to its
-    ## own module) into the shared SSO registry. Apps push the rest from their
-    ## apps/<name> modules; modules/sso-clients.nix dedups by internal_name.
+    ## Push provision.nix's own base OIDC client — the oauth2-proxy app (the
+    ## SSO gate itself, with its post-logout set derived from the gated-service
+    ## set) — into the shared SSO registry. It lives here rather than in an
+    ## apps/<name> module because it is the identity core, not a user app.
+    ## Every user-facing app (including plugins) pushes its own descriptor from
+    ## its own module; modules/sso-clients.nix dedups by internal_name.
     homefree.sso.clients = baseClients;
 
     systemd.services.zitadel-provision = {
