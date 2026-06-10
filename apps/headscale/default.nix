@@ -1197,6 +1197,13 @@ in
     {
       inherit (cfg.service-options.headscale) label name project-name;
       port-request = 8087;
+      ## Host app (NixOS-native, no OCI image): current version is the
+      ## nixpkgs build; latest comes from upstream GitHub Releases.
+      version-tracking = {
+        strategy = "nixpkgs";
+        repo = "juanfont/headscale";
+        current-version = pkgs.headscale.version;
+      };
       systemd-service-names = [ "headscale" ]
         ++ lib.optional deployHeadplane "headplane";
       admin = {

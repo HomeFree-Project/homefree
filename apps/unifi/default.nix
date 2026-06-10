@@ -176,6 +176,12 @@ in
       port-request = 11443;
       name = "UniFi OS";
       project-name = "UniFi OS Server";
+      ## ghcr.io/lemker/unifi-os-server is a community repackaging; its
+      ## releases live on the source GitHub repo, so track that directly.
+      version-tracking = {
+        strategy = "github-releases";
+        repo = "lemker/unifi-os-server";
+      };
       systemd-service-names = [
         "podman-unifi-os"
       ];

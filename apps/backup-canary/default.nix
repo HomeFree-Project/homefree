@@ -213,6 +213,10 @@ in
       inherit (cfg) label name project-name;
       port-request = null;
 
+      ## First-party HomeFree component with no upstream to track —
+      ## shown as "Not tracked" rather than a perpetual "unknown".
+      version-tracking.strategy = "none";
+
       sso = {
         kind = "none";
         applicable = false;

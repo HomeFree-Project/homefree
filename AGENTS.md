@@ -458,6 +458,16 @@ Situational knowledge — read the linked note when working in that area:
   how to regenerate a golden (incl. the live-VM `vm-state` socket gotcha that
   breaks impure golden regen).
   → `docs/agent-notes/snapshot-test-net.md`
+- **Version-tracking strategies** — the App Versions page's per-app
+  `version-tracking` descriptor: core owns a named-strategy catalog
+  (default `image` = unchanged), apps override (github/docker/gitlab/
+  forgejo/nixpkgs/url-regex/command/none). Gotchas: `channel`
+  stable-vs-prerelease anchor reshape + the loose tuple compare for a
+  declared `current-version`; `command` must be a `/nix/store` path;
+  descriptors are keyed per-LABEL but rows per-CONTAINER (primary-container
+  metadata alias); host apps come via `host-apps.json`; NO `release-tracking`
+  shim (would regress nextcloud).
+  → `docs/agent-notes/version-tracking-strategies.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

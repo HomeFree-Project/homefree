@@ -935,6 +935,15 @@ in
         label = "oauth2proxy";
         name = "OAuth2 Proxy";
         project-name = "OAuth2 Proxy";
+        ## The image pin `oauth2-proxy/oauth2-proxy` resolves to docker.io
+        ## by default, where that repo 404s (oauth2-proxy publishes on
+        ## quay/ghcr, not Hub) — track the GitHub releases instead. Both
+        ## blue + green containers share this image, so the image-matched
+        ## metadata alias applies the descriptor to both colour rows.
+        version-tracking = {
+          strategy = "github-releases";
+          repo = "oauth2-proxy/oauth2-proxy";
+        };
         systemd-service-names = [
           "podman-oauth2-proxy-blue"
           "podman-oauth2-proxy-green"

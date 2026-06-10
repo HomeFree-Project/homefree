@@ -2504,6 +2504,149 @@
             };
           };
 
+          ## Per-app version-detection override for the admin "Source
+          ## Code" page. HomeFree core owns a catalog of base strategies;
+          ## the DEFAULT (`strategy = "image"`, all params empty) infers
+          ## everything from the OCI image's registry host — i.e. today's
+          ## behaviour, so an app that sets nothing here is unchanged. An
+          ## app whose version the default can't resolve (a fork, a beta
+          ## channel, an odd tag shape, a digest pin, or a non-container
+          ## host app with no image) selects a different strategy and
+          ## parameterises it. The version-detection brain lives in
+          ## web-platform/backend/resolvers/app_versions.py; this is the
+          ## declarative input it consumes (via service-metadata.json).
+          ## Per rule 1 nothing app-specific lives in core — each app
+          ## (and each out-of-tree plugin, in its own repo) declares its
+          ## own descriptor here.
+          version-tracking = {
+            strategy = lib.mkOption {
+              type = lib.types.enum [
+                "image" "github-releases" "github-tags" "docker-hub"
+                "ghcr" "oci-v2" "gitlab" "forgejo" "gitea" "nixpkgs"
+                "url-regex" "command" "none"
+              ];
+              default = "image";
+              description = ''
+                Version-detection strategy. "image" (default) infers the
+                lookup from the OCI image registry — the pre-existing
+                behaviour. The registry strategies force a specific
+                upstream; "nixpkgs" is for host apps whose current version
+                is the build version; "url-regex" / "command" are generic
+                escape hatches; "none" opts the app out (shown as
+                "untracked", not a scary "unknown").
+              '';
+            };
+
+            repo = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Source repo/project the latest version comes from:
+                "<owner>/<name>" for github/forgejo/gitea, a full project
+                path for gitlab, or "<namespace>/<image>" for
+                docker-hub/ghcr/oci-v2 when it differs from the image's.
+              '';
+            };
+
+            registry = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Override registry/API host for docker-hub/ghcr/oci-v2/
+                gitlab/forgejo when it isn't inferable from the image
+                (e.g. "codeberg.org" for a forgejo strategy).
+              '';
+            };
+
+            tag-prefix = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Reserved: an extra literal tag prefix to tolerate beyond
+                the built-in version-/release- set. Prefer tag-pattern.
+              '';
+            };
+
+            tag-pattern = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Regex; only upstream tags matching it are considered.
+                Use to pin a single release stream when a repo publishes
+                several tag shapes.
+              '';
+            };
+
+            channel = lib.mkOption {
+              type = lib.types.enum [ "stable" "prerelease" "any" ];
+              default = "stable";
+              description = ''
+                Pre-release handling for explicit strategies. "stable"
+                (default) ignores -rc/-beta/-bNN tags; "prerelease" tracks
+                a beta line (advancing build numbers); "any" tracks
+                whatever stream the current pin is on. Has no effect on the
+                default "image" strategy.
+              '';
+            };
+
+            current-version = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Explicit current version when it can't be read from the
+                image tag — host apps (e.g. `pkgs.headscale.version`) and
+                digest-only pins. Compared to the latest by semver tuple,
+                so a "0.26.1" here matches an upstream "v0.26.1".
+              '';
+            };
+
+            url = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "url-regex strategy: page/endpoint to GET.";
+            };
+
+            regex = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                url-regex strategy: extraction regex; the first capture
+                group (else the whole match) is the version.
+              '';
+            };
+
+            command = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = ''
+                command strategy: a /nix/store script (declare it IN the
+                app module, e.g. `pkgs.writeShellScript`) the backend runs;
+                its trimmed first stdout line is the latest version. The
+                resolver refuses anything that isn't a store path, so this
+                can never carry runtime/user input.
+              '';
+            };
+
+            update-command = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = ''
+                Custom UPDATER for the admin page's per-row Update button,
+                for apps whose update is not a plain image-pin rewrite
+                (tag-scheme translation, vendored assets, …). A /nix/store
+                script (declare it IN the app module); the backend runs it
+                as `script <checkout-root> <target-version>` against the
+                writable local alternate-base checkout, instead of
+                upgrade-apps.py. Its last stdout line is reported as the
+                new value. Like `command`, only an eval-time store path is
+                accepted — never runtime input. Declaring this makes the
+                row one-click updatable regardless of how its version is
+                tracked; the app takes responsibility for the update being
+                safe.
+              '';
+            };
+          };
+
           systemd-service-names = lib.mkOption {
             type = lib.types.listOf lib.types.str;
             default = [];

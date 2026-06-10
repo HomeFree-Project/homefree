@@ -129,6 +129,7 @@ class AppVersionsModule extends LitElement {
     .summary .floating { color: #60a5fa; }
     .summary .local    { color: #a78bfa; }
     .summary .unknown { color: var(--hf-text-muted); }
+    .summary .untracked { color: var(--hf-text-muted); }
     .summary .ok { color: var(--hf-ok); }
     .summary .disabled { color: var(--hf-text-muted); }
 
@@ -241,6 +242,44 @@ class AppVersionsModule extends LitElement {
       color: var(--hf-text-muted);
       vertical-align: middle;
     }
+    /* Markers that sit in the status cell where the Update button would
+       be, when one-click bumping can't work for the row:
+       - plugin-tag: the pin lives in an external plugin repo;
+       - manual-tag: the version is declared in source (vendored assets /
+         a nixpkgs build), not an image pin upgrade-apps.py can rewrite. */
+    .status-cell .plugin-tag,
+    .status-cell .manual-tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: rgba(96, 165, 250, 0.12);
+      color: #60a5fa;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .status-cell .manual-tag {
+      background: var(--hf-surface-3);
+      color: var(--hf-text-muted);
+    }
+    /* SSO stack (zitadel / login UI / oauth2-proxy): one-click bumps are
+       refused by upgrade-apps.py to avoid locking every login out. */
+    .status-cell .guarded-tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--hf-warn-soft);
+      color: var(--hf-warn);
+      vertical-align: middle;
+      white-space: nowrap;
+    }
     .registry {
       color: var(--hf-text-muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -275,6 +314,7 @@ class AppVersionsModule extends LitElement {
     .pill.floating { background: rgba(96,165,250,0.12); color: #60a5fa; }
     .pill.local    { background: rgba(167,139,250,0.12); color: #a78bfa; }
     .pill.unknown  { background: rgba(148,163,184,0.12); color: var(--hf-text-muted); }
+    .pill.untracked { background: rgba(148,163,184,0.10); color: var(--hf-text-muted); }
     .pill.pending  { background: var(--hf-warn-soft); color: var(--hf-warn); }
 
     /* Advisory badge — severity-coloured, links to the project's
@@ -311,6 +351,7 @@ class AppVersionsModule extends LitElement {
 
     tr.outdated .version { color: var(--hf-warn); }
     tr.unknown  td      { opacity: 0.85; }
+    tr.untracked td     { opacity: 0.85; }
     tr.floating td      { opacity: 0.95; }
     tr.local    td      { opacity: 0.95; }
     /* Pending rebuild — the source pins a newer version than what's
@@ -1022,6 +1063,7 @@ class AppVersionsModule extends LitElement {
     const floating = this.apps.filter((a) => a.status === 'floating').length;
     const local = this.apps.filter((a) => a.status === 'local').length;
     const unknown = this.apps.filter((a) => a.status === 'unknown').length;
+    const untracked = this.apps.filter((a) => a.status === 'untracked').length;
     const disabled = this.apps.filter((a) => a.enabled === false).length;
     return html`
       <span class="summary">
@@ -1039,6 +1081,10 @@ class AppVersionsModule extends LitElement {
         ${unknown > 0 ? html`
           <span class="sep">·</span>
           <span class="count unknown">${unknown}</span> unknown
+        ` : ''}
+        ${untracked > 0 ? html`
+          <span class="sep">·</span>
+          <span class="count untracked">${untracked}</span> not tracked
         ` : ''}
         ${disabled > 0 ? html`
           <span class="sep">·</span>
@@ -1060,6 +1106,9 @@ class AppVersionsModule extends LitElement {
     }
     if (status === 'local') {
       return html`<span class="pill local">Local image</span>`;
+    }
+    if (status === 'untracked') {
+      return html`<span class="pill untracked">Not tracked</span>`;
     }
     return html`<span class="pill unknown">Unknown</span>`;
   }
@@ -1134,7 +1183,16 @@ class AppVersionsModule extends LitElement {
               ? html`<span class="pill pending"
                            title="Updated to ${app.pending_version} in the source — rebuild to deploy (currently running ${app.deployed_version}).">Pending rebuild</span>`
               : this._renderPill(app.status)}
-            ${app.status === 'outdated' && this._canUpgradeApps && !app.pending
+            ${app.status === 'outdated' && app.guarded
+              ? html`<span class="guarded-tag"
+                           title="One-click updates skip the SSO stack (Zitadel, its login UI, and OAuth2 Proxy) — a bad identity-core bump can lock every login out, including this page. Update deliberately: read the release notes, then run scripts/upgrade-apps.py --include-zitadel and rebuild.">SSO guard</span>`
+              : app.external && !(app.status === 'outdated' && app.updatable !== false)
+              ? html`<span class="plugin-tag"
+                           title="Provided by an external plugin flake. Its version pin lives in the plugin's own repository, so Update apps cannot bump it here.">Plugin</span>`
+              : app.status === 'outdated' && app.updatable === false
+              ? html`<span class="manual-tag"
+                           title="This version is not an image pin in this repository and the app declares no custom updater — it is maintained at its source (vendored assets or a nixpkgs build). Update it there, then bump the declared current-version.">Manual</span>`
+              : app.status === 'outdated' && this._canUpgradeApps && !app.pending
               ? html`
                 <button
                   class="btn row-update"

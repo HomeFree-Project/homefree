@@ -24,6 +24,16 @@
 
     nix-editor.url = "github:snowfallorg/nix-editor";
 
+    # Always-fresh Claude Code CLI. nixpkgs' claude-code (here on the 25.05
+    # channel) trails Anthropic releases by days/weeks; sadjow/claude-code-nix
+    # republishes the prebuilt native binary within ~1h via an hourly updater.
+    # Applied as an overlay in profiles/common.nix to override the stale
+    # claude-code in that profile's systemPackages. overlays.default builds via
+    # final.callPackage against our pkgs, so `follows` just keeps the lock from
+    # pulling in a second nixpkgs.
+    claude-code.url = "github:sadjow/claude-code-nix";
+    claude-code.inputs.nixpkgs.follows = "nixpkgs";
+
     sops-nix.url = "github:Mic92/sops-nix";
 
     headplane = {

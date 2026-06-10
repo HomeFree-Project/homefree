@@ -135,6 +135,16 @@ in
       inherit (cfg) label name project-name;
       enable = cfg.enable;
 
+      ## Host app (vendored static UI, no OCI image): current version is
+      ## the mirrored UI release (see ui/PROVENANCE.txt); latest comes
+      ## from upstream GitHub Releases. Bump current-version in lockstep
+      ## with the vendored ui/ snapshot.
+      version-tracking = {
+        strategy = "github-releases";
+        repo = "OpenSprinkler/OpenSprinkler-App";
+        current-version = "2.4.1";
+      };
+
       ## Caddy serves the static assets directly; there is no backend
       ## process. Track caddy for restart/health like other static
       ## entries (services/landing-page).

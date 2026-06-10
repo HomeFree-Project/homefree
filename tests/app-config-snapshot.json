@@ -553,7 +553,7 @@
       },
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "lscr.io/linuxserver/lidarr:8.1.2135",
+      "image": "lscr.io/linuxserver/lidarr:3.1.0",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9016:8686"
@@ -1669,7 +1669,20 @@
       },
       "systemd-service-names": [
         "podman-adguardhome"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "prerelease",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "adguard/adguardhome",
+        "strategy": "docker-hub",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -1734,7 +1747,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -1812,7 +1838,20 @@
         "admin-api-blue",
         "admin-api-green",
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -1883,7 +1922,20 @@
         "homefree-dashboard-sampler",
         "homefree-drive-temp-sampler",
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -1959,7 +2011,20 @@
       },
       "systemd-service-names": [
         "podman-azuracast"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2024,7 +2089,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2142,7 +2220,20 @@
       },
       "systemd-service-names": [
         "backup-canary"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "none",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2246,7 +2337,20 @@
       },
       "systemd-service-names": [
         "podman-baikal"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2363,7 +2467,20 @@
       },
       "systemd-service-names": [
         "podman-cryptpad"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2482,7 +2599,20 @@
       },
       "systemd-service-names": [
         "podman-forgejo"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2547,7 +2677,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2652,7 +2795,20 @@
       },
       "systemd-service-names": [
         "podman-freshrss"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2732,7 +2888,20 @@
       },
       "systemd-service-names": [
         "podman-frigate"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2797,7 +2966,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2862,7 +3044,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -2965,7 +3160,20 @@
       },
       "systemd-service-names": [
         "podman-grocy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3159,7 +3367,20 @@
       "systemd-service-names": [
         "headscale",
         "headplane"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "0.28.0",
+        "regex": "",
+        "registry": "",
+        "repo": "juanfont/headscale",
+        "strategy": "nixpkgs",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3224,7 +3445,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3300,7 +3534,20 @@
         "admin-api-blue",
         "admin-api-green",
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3430,7 +3677,20 @@
       },
       "systemd-service-names": [
         "podman-homeassistant"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3546,7 +3806,20 @@
       },
       "systemd-service-names": [
         "podman-homebox"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3653,7 +3926,20 @@
         "podman-immich-machine-learning",
         "podman-immich-redis",
         "podman-postgres-vectorchord"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3771,7 +4057,20 @@
       },
       "systemd-service-names": [
         "podman-jellyfin"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3874,7 +4173,20 @@
       },
       "systemd-service-names": [
         "podman-joplin"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -3948,7 +4260,20 @@
       },
       "systemd-service-names": [
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4091,7 +4416,20 @@
       },
       "systemd-service-names": [
         "podman-lidarr"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4199,7 +4537,20 @@
         "podman-linkwarden",
         "podman-meilisearch",
         "postgresql"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4272,7 +4623,20 @@
       },
       "systemd-service-names": [
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4404,7 +4768,20 @@
       "systemd-service-names": [
         "podman-matrix-synapse",
         "postgresql"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4469,7 +4846,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4596,7 +4986,20 @@
         "podman-netbird-relay",
         "podman-netbird-dashboard",
         "podman-netbird-coturn"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4718,7 +5121,20 @@
         "podman-nextcloud-redis",
         "podman-nextcloud-cron",
         "postgresql"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4847,7 +5263,20 @@
       },
       "systemd-service-names": [
         "podman-nzbget"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "24.8",
+        "regex": "",
+        "registry": "",
+        "repo": "nzbgetcom/nzbget",
+        "strategy": "github-releases",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": "/nix/store/nzbget-update",
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -4922,7 +5351,20 @@
       "systemd-service-names": [
         "podman-oauth2-proxy-blue",
         "podman-oauth2-proxy-green"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "oauth2-proxy/oauth2-proxy",
+        "strategy": "github-releases",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5002,7 +5444,20 @@
       "systemd-service-names": [
         "podman-odoo",
         "postgresql"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5106,7 +5561,20 @@
       "systemd-service-names": [
         "ollama",
         "podman-ollama-webui"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5233,7 +5701,20 @@
       },
       "systemd-service-names": [
         "caddy"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "2.4.1",
+        "regex": "",
+        "registry": "",
+        "repo": "OpenSprinkler/OpenSprinkler-App",
+        "strategy": "github-releases",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5329,7 +5810,20 @@
       },
       "systemd-service-names": [
         "podman-postgres-vectorchord"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "immich-app/postgres",
+        "strategy": "ghcr",
+        "tag-pattern": "^18-vectorchord([0-9.]+)-pgvector[0-9.]+$",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5436,7 +5930,20 @@
       "systemd-service-names": [
         "podman-radicale",
         "zitadel-password-shim"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5582,7 +6089,20 @@
       "systemd-service-names": [
         "podman-radicle-node",
         "podman-radicle-httpd"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5647,7 +6167,20 @@
         "notes": "",
         "secrets-dir": null
       },
-      "systemd-service-names": []
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5750,7 +6283,20 @@
       },
       "systemd-service-names": [
         "podman-screeenly"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "none",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5856,7 +6402,20 @@
       "systemd-service-names": [
         "podman-snipe-it",
         "mysql"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -5933,7 +6492,20 @@
       },
       "systemd-service-names": [
         "podman-trilium"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6009,7 +6581,20 @@
       },
       "systemd-service-names": [
         "podman-unifi-os"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "lemker/unifi-os-server",
+        "strategy": "github-releases",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6112,7 +6697,20 @@
       },
       "systemd-service-names": [
         "podman-vaultwarden"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6215,7 +6813,20 @@
       },
       "systemd-service-names": [
         "podman-webdav"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6323,7 +6934,20 @@
         "podman-zitadel-login",
         "podman-oauth2-proxy-blue",
         "podman-oauth2-proxy-green"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6390,7 +7014,20 @@
       },
       "systemd-service-names": [
         "zitadel-provision"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     },
     {
       "admin": {
@@ -6507,7 +7144,20 @@
       },
       "systemd-service-names": [
         "podman-zwave-js-ui"
-      ]
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
     }
   ],
   "ssoClients": [

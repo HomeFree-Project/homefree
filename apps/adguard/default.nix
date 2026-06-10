@@ -473,6 +473,14 @@ in
       inherit (config.homefree.service-options.adguard) label name project-name;
       port-request = null;
       enable = config.homefree.service-options.adguard.enable;
+      ## Pinned to AdGuard Home's beta channel (v…-b.NN); each beta build
+      ## is its own tag shape, so track the pre-release LINE explicitly
+      ## (advances b.88 -> b.90, and would jump to a newer stable too).
+      version-tracking = {
+        strategy = "docker-hub";
+        repo = "adguard/adguardhome";
+        channel = "prerelease";
+      };
       systemd-service-names = [
         "podman-adguardhome"
       ];

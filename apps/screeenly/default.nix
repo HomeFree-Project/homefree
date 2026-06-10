@@ -173,6 +173,10 @@ in
     {
       inherit (config.homefree.service-options.screeenly) label name project-name;
       port-request = null;
+      ## Pinned by digest to an effectively-unmaintained image with no
+      ## comparable upstream tags — track it as a deliberate "Not tracked"
+      ## rather than a perpetual "unknown".
+      version-tracking.strategy = "none";
       systemd-service-names = [
         "podman-screeenly"
       ];

@@ -1,6 +1,9 @@
 { config, lib, pkgs, ... }:
 let
-  version = "8.1.2135";
+  ## NOTE: the previous pin "8.1.2135" matched NO real linuxserver/lidarr
+  ## tag (the repo's release stream is 3.x) — a fresh box could never
+  ## pull it. Re-pinned to the current upstream release.
+  version = "3.1.0";
   port = config.homefree.allocPort "lidarr";
   containerDataPath = "/var/lib/lidarr";
   configPath = "${containerDataPath}/config";

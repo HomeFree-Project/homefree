@@ -85,14 +85,56 @@ let
   # Generate service metadata map for ALL services (enabled or not)
   # This maps service labels to their display names and project names
   # First, get metadata from service-config for enabled services
+  ## version-tracking carries `command`/`update-command` paths; coerce
+  ## them to store strings (or null) so the JSON encoder + the backend
+  ## resolver get plain strings. The resolver consumes this descriptor to
+  ## override its default image-derived version detection per app, and
+  ## the upgrade endpoint runs `update-command` in place of the generic
+  ## pin rewriter.
+  projectVersionTracking = vt: vt // {
+    command = if vt.command == null then null else toString vt.command;
+    update-command =
+      if vt.update-command == null then null else toString vt.update-command;
+  };
+
+  ## The version-detection resolver keys enabled rows on the CONTAINER
+  ## name, but version-tracking + project-name are declared per service
+  ## LABEL — and the two differ for some apps (unifi's container is
+  ## `unifi-os`, label `unifi`). So we ALSO alias the metadata under each
+  ## container name that shares the entry's PRIMARY (first) container's
+  ## image. That single rule covers two cases at once:
+  ##   * name != label (unifi-os -> unifi), and
+  ##   * blue/green pairs that share one image (oauth2-proxy-blue +
+  ##     oauth2-proxy-green both resolve oauth2proxy's descriptor).
+  ## Matching on IMAGE (not just "all containers") keeps a genuine sidecar
+  ## with a DIFFERENT image (immich-redis, postgres-vectorchord) OUT of the
+  ## alias, so it stays on the default strategy instead of inheriting the
+  ## app's upstream.
+  ociContainers = config.virtualisation.oci-containers.containers or {};
+  containerImageOf = cname: (ociContainers.${cname} or {}).image or null;
+  entryContainers = sc:
+    map (lib.removePrefix "podman-")
+      (lib.filter (lib.hasPrefix "podman-") sc.systemd-service-names);
+  primaryImageContainers = sc:
+    let conts = entryContainers sc;
+    in if conts == [] then []
+       else let primImg = containerImageOf (lib.head conts);
+            in lib.optionals (primImg != null)
+                 (lib.filter (c: containerImageOf c == primImg) conts);
+
   service-config-map = builtins.listToAttrs (
-    map (sc: {
-      name = sc.label;
-      value = {
-        name = sc.name;
-        project-name = sc.project-name;
-      };
-    }) cfg.service-config
+    lib.concatMap (sc:
+      let
+        value = {
+          name = sc.name;
+          project-name = sc.project-name;
+          version-tracking = projectVersionTracking sc.version-tracking;
+        };
+        aliases = lib.filter (c: c != sc.label) (primaryImageContainers sc);
+      in
+        [ { name = sc.label; inherit value; } ]
+        ++ map (c: { name = c; inherit value; }) aliases
+    ) cfg.service-config
   );
 
   # Generate metadata for ALL services from service-options
@@ -121,15 +163,64 @@ let
   all-service-metadata = default-service-metadata // service-config-map;
   service-metadata-json = (pkgs.formats.json {}).generate "service-metadata.json" all-service-metadata;
 
+  # Host-app catalog for the App Versions page: NON-container apps
+  # (headscale/headplane, opensprinkler, ...) that declare a
+  # version-tracking strategy but ship no OCI image, so they appear in
+  # neither image catalog above and would otherwise be invisible.
+  #   * non-container = no `podman-*` systemd unit, AND
+  #   * opted in      = a strategy other than the default "image"
+  # (an app keeps the default "image" strategy only when it HAS an image,
+  # so a non-container app on the default is genuinely untrackable and is
+  # deliberately omitted rather than shown as a perpetual "unknown").
+  hostAppHasContainer = sc:
+    lib.any (n: lib.hasPrefix "podman-" n) sc.systemd-service-names;
+  host-apps-list = map (sc: {
+    label = sc.label;
+    name = sc.name;
+    project-name = sc.project-name;
+    enabled = sc.enable;
+    version-tracking = projectVersionTracking sc.version-tracking;
+  }) (lib.filter
+        (sc: !(hostAppHasContainer sc)
+             && sc.version-tracking.strategy != "image")
+        cfg.service-config);
+  host-apps-json = (pkgs.formats.json {})
+    .generate "host-apps.json" host-apps-list;
+
+  # Provenance for the App Versions page: which containers are declared
+  # by THIS repo's tree vs. an external module (a plugin flake, or
+  # something dropped into /etc/nixos). External apps' version pins live
+  # in their own repository — `scripts/upgrade-apps.py` (the page's
+  # Update button) only edits this repo's checkout, so the UI must not
+  # offer Update on rows it can never bump, and the pending-rebuild
+  # overlay must not match them against this repo's pins.
+  #
+  # Detection is by definition LOCATION, not heuristics: a container is
+  # external when every file that defines it lives outside this repo's
+  # source tree. Checked on BOTH declaration surfaces — raw
+  # `virtualisation.oci-containers.containers` AND the app-platform
+  # registry `homefree.containers` (whose generator would otherwise make
+  # every registry app look like it came from modules/app-platform.nix).
+  homefreeSourceRoot = toString ../..;
+  containerDefLocations =
+    (options.virtualisation.oci-containers.containers.definitionsWithLocations or [])
+    ++ (options.homefree.containers.definitionsWithLocations or []);
+  internallyDefinedContainers = lib.unique (lib.concatMap
+    (d: if lib.hasPrefix homefreeSourceRoot (toString d.file)
+        then lib.attrNames d.value
+        else [])
+    containerDefLocations);
+
   # Container catalog for the Advanced -> App Versions page. Iterates
   # every container declared via virtualisation.oci-containers and
-  # emits its name + image string. Image-string parsing (registry /
-  # repo / tag split) is done in Python — keeping this aggregator dumb
-  # avoids brittle Nix string surgery and lets the resolver evolve
-  # without a rebuild.
+  # emits its name + image string + provenance. Image-string parsing
+  # (registry / repo / tag split) is done in Python — keeping this
+  # aggregator dumb avoids brittle Nix string surgery and lets the
+  # resolver evolve without a rebuild.
   container-images-list = lib.mapAttrsToList (name: c: {
     inherit name;
     image = c.image;
+    external = !(lib.elem name internallyDefinedContainers);
   }) (config.virtualisation.oci-containers.containers or {});
   container-images-json = (pkgs.formats.json {})
     .generate "container-images.json" container-images-list;
@@ -517,6 +608,7 @@ let
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
     ${pkgs.coreutils}/bin/cp ${container-images-json} /run/homefree/admin/container-images.json
     ${pkgs.coreutils}/bin/cp ${all-app-images-json} /run/homefree/admin/all-app-images.json
+    ${pkgs.coreutils}/bin/cp ${host-apps-json} /run/homefree/admin/host-apps.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
     ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
 

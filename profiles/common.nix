@@ -1,4 +1,4 @@
-{ pkgs, lib, config, utils, system, ...}:
+{ pkgs, lib, config, utils, system, homefree-inputs, ...}:
 let
   # Disable SCSI block-device runtime PM for a disk so the kernel does not
   # runtime-suspend it and issue a STOP UNIT (idle spindown). Invoked from a
@@ -18,6 +18,9 @@ in
 
   nixpkgs.overlays = [
     (import ../overlays/backblaze-b2.nix)
+    # Always-fresh Claude Code, overriding the stale nixpkgs claude-code in
+    # environment.systemPackages below. See the input in flake.nix.
+    homefree-inputs.claude-code.overlays.default
   ];
 
   # --------------------------------------------------------------------------------------

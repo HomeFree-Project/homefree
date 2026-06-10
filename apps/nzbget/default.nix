@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "version-v24.8";
+  version = "version-v26.1";
   port = config.homefree.allocPort "nzbget";
   containerDataPath = "/var/lib/nzbget";
   configPath = "${containerDataPath}/config";
@@ -10,6 +10,27 @@ let
   preStart = ''
     mkdir -p ${configPath}
     mkdir -p ${downloadsPath}
+  '';
+
+  ## Custom updater for the admin page's Update button. The tracked
+  ## "latest" is an upstream GitHub release tag (v26.1) while the pin is
+  ## LinuxServer's repackaged tag scheme (version-v24.8) — and nzbget's
+  ## yearly version jumps (24 -> 26) trip the generic cross-major guard.
+  ## The app owns the translation: rewrite this file's `version` binding
+  ## to LSIO's tag for the target release.
+  ## Contract (see module.nix version-tracking.update-command):
+  ##   $1 = writable checkout root, $2 = target version; last stdout
+  ##   line is reported as the new value.
+  nzbgetUpdater = pkgs.writeShellScript "nzbget-update" ''
+    set -eu
+    root="$1"
+    target="$2"
+    [ -n "$target" ] || { echo "no target version resolved" >&2; exit 1; }
+    tag="version-v''${target#v}"
+    file="$root/apps/nzbget/default.nix"
+    ${pkgs.gnugrep}/bin/grep -q '^  version = "' "$file"
+    ${pkgs.gnused}/bin/sed -i "0,/^  version = \"[^\"]*\";/s//  version = \"$tag\";/" "$file"
+    echo "$tag"
   '';
 
   userOptions = {
@@ -96,6 +117,17 @@ in
       inherit (config.homefree.service-options.nzbget) label name project-name;
       port-request = null;
       enable = config.homefree.service-options.nzbget.enable;
+      ## LinuxServer's `version-vNN.N` tag shares no shape with the upstream
+      ## GitHub releases (`vNN.N`), so track the source repo directly and
+      ## anchor on the clean version derived from the pin (loose compare
+      ## tolerates the v / version-v difference). The Update button runs
+      ## the custom updater above, which writes the LSIO-translated tag.
+      version-tracking = {
+        strategy = "github-releases";
+        repo = "nzbgetcom/nzbget";
+        current-version = lib.removePrefix "version-v" version;
+        update-command = nzbgetUpdater;
+      };
       sso = {
         kind = "none";
         applicable = false;
