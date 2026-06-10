@@ -264,7 +264,12 @@ without being asked.
   not a hardcoded entry in provision.nix.
   → `docs/agent-notes/sso-client-registry.md`
 - Behaviour-preserving changes to apps / Caddy are gated by the **snapshot
-  test net** (`nix flake check`); during a refactor the goldens are FROZEN.
+  test net** (`nix flake check`); during a refactor the goldens are FROZEN,
+  but any INTENDED output change (version bump, container/preStart/Caddy/SSO
+  edit, app add/remove) MUST regenerate its golden **in the same commit** —
+  and `nixos-rebuild` does NOT run `nix flake check`, so a missed regen
+  deploys fine and the net goes silently red. Run `nix flake check` before
+  calling a snapshot-affecting change done.
   → `docs/agent-notes/snapshot-test-net.md`
 
 ## Gotchas
@@ -447,8 +452,11 @@ Situational knowledge — read the linked note when working in that area:
   → `docs/agent-notes/sso-client-registry.md`
 - **Snapshot test net** — the app-config / preStart / Caddyfile snapshots
   + the `frontend-eval` Lit module-eval gate: what each catches, the
-  FROZEN-golden discipline, and how to regenerate a golden (incl. the live-VM
-  `vm-state` socket gotcha that breaks impure golden regen).
+  FROZEN-during-refactor vs regenerate-in-the-same-commit-for-intended-changes
+  discipline, the SILENT-staleness trap (`nixos-rebuild` skips `nix flake
+  check`, so a missed regen deploys fine and the net goes red invisibly), and
+  how to regenerate a golden (incl. the live-VM `vm-state` socket gotcha that
+  breaks impure golden regen).
   → `docs/agent-notes/snapshot-test-net.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note

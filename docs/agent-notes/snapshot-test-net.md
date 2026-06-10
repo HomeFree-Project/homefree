@@ -26,12 +26,34 @@ so a pure rebuild doesn't churn the golden, but a real package swap / version bu
 still shows.
 
 ### The frozen-golden discipline
-During a behaviour-preserving refactor the goldens are **FROZEN** — never
-regenerate them; a migration is correct iff the snapshot stays green untouched.
-Regenerate a golden ONLY for an INTENDED change (a version bump, a deliberate edit),
-after reviewing the drift to confirm it's exactly what you meant. The regeneration
-commands are in the header of `checks/app-snapshot.nix` (build the `…Text`
-derivation / eval `snapshotJson`, jq-sort, hash-strip).
+Two cases, opposite actions:
+
+- **Behaviour-preserving refactor → goldens are FROZEN.** Never regenerate; the
+  migration is correct iff the snapshot stays green untouched.
+- **Any INTENDED change that alters rendered output → regenerate the golden IN THE
+  SAME COMMIT as the source change**, after reviewing the drift to confirm it's
+  exactly what you meant. Triggers (non-exhaustive): an image **version bump**;
+  adding/removing/editing a container's `ports`/`volumes`/`environment`/
+  `extraOptions`/`user`; a `preStart` change; **adding or removing an app**; a
+  `service-config` / Caddy-vhost change; **adding/removing an SSO client**
+  (`homefree.sso.clients`). If you changed any of those and didn't touch a golden,
+  you almost certainly have a stale golden.
+
+The regeneration commands are in the header of `checks/app-snapshot.nix` (build the
+`…Text` derivation / eval `snapshotJson`, jq-sort, hash-strip).
+
+> ⚠️ **Stale goldens are SILENT — `nixos-rebuild` does NOT run `nix flake check`.**
+> A change that should have regenerated a golden but didn't will **still build and
+> deploy fine** on the box; the only thing that catches it is `nix flake check` (or
+> CI), which most rebuilds never run. So a missed regen sits invisibly until someone
+> runs the checks, then shows up as a confusing "`main`'s snapshot net is red" with
+> the drift being old version bumps. This has bitten the repo: a batch of version
+> bumps + an oauth2-proxy `--add-host` merged into `main` without regenerating the
+> goldens, leaving the net red while the deploy was perfectly healthy. **The fix is
+> always the same:** regenerate against current source and commit (a pure
+> re-baseline if the source change was already merged). The cure for the silence is
+> discipline at write time — golden and source in one commit — plus running
+> `nix flake check` before declaring a snapshot-affecting change done.
 
 > Gotcha: golden regeneration uses an `--impure builtins.getFlake (toString ./.)`,
 > which COPIES the whole working tree and chokes on a live VM's
