@@ -70,6 +70,18 @@ let
             IN      NS      localhost.
     EOF
     # cp /run/unbound/dynamic.zone /tmp
+
+    ## Record the hash of the conf this unbound instance is about to load.
+    ## dns-conf-coherence (below) compares this marker against the current
+    ## /etc/unbound/unbound.conf to detect an unbound that is RUNNING with
+    ## stale zone data — which happens when a switch's restart of unbound
+    ## is skipped (failed switch + retry) or silently ineffective (observed
+    ## on a real box: switch-to-configuration printed "stopping/starting
+    ## ... unbound.service" yet ExecMainStartTimestamp never changed).
+    ## ExecStartPre only runs on a REAL start, so an ineffective restart
+    ## leaves the old hash in place and the watchdog catches the drift.
+    sha256sum < "$(readlink -f /etc/unbound/unbound.conf)" \
+      | cut -d' ' -f1 > /run/unbound/loaded-conf.sha256
   '';
 in
 {
@@ -227,6 +239,72 @@ in
       ''}";
       RemainAfterExit = true;
       TimeoutStartSec = 120;
+    };
+  };
+
+  ## ── dns-conf-coherence — heal an unbound running with stale zone data ──
+  ##
+  ## switch-to-configuration's restart bookkeeping is not a guarantee:
+  ##   - a FAILED switch (any unrelated unit failing, e.g. fwupd-refresh)
+  ##     leaves the new unit files on disk, so the successful RETRY sees no
+  ##     unit diff and skips the unbound/adguard restarts the failed
+  ##     attempt never performed;
+  ##   - even a successful switch's stop/start of unbound has been observed
+  ##     to be silently ineffective (s-t-c printed "stopping/starting ...
+  ##     unbound.service", yet the process and ExecMainStartTimestamp
+  ##     survived unchanged).
+  ## Either way the box then serves PRE-CHANGE zone data with a perfectly
+  ## correct conf on disk — a freshly enabled app's subdomain NXDOMAINs and
+  ## the operator can't tell why (docs/agent-notes/
+  ## failed-switch-skips-dns-restarts.md). Instead of trusting the switch,
+  ## assert coherence from observed state: unbound's ExecStartPre records
+  ## the hash of the conf it actually loaded (/run/unbound/
+  ## loaded-conf.sha256, see preStart); this timer-driven oneshot compares
+  ## that marker against the current /etc/unbound/unbound.conf and, ONLY on
+  ## mismatch, restarts unbound — plus podman-adguardhome, which fronts it
+  ## on :53 and would otherwise keep serving its own cache of the stale
+  ## answers. A restart re-arms dns-ready via the existing partOf wiring,
+  ## so the heal composes with the image-pull gate like any other DNS
+  ## restart. On a healthy switch the hashes match and this is a no-op.
+  ##
+  ## Benign race: if the timer fires inside a switch's window between
+  ## /etc update and unbound's restart, the unit restarts twice —
+  ## systemd serializes jobs per unit and dns-ready re-arms, so the worst
+  ## case is a second one-second resolution blip.
+  systemd.services.dns-conf-coherence = {
+    description = "Restart DNS services if unbound runs with a stale config";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.writeShellScript "dns-conf-coherence" ''
+        set -eu
+        ## Not running (boot ordering, operator stop, crash-loop): nothing
+        ## to heal — the marker is rewritten on every real start.
+        ${pkgs.systemd}/bin/systemctl is-active --quiet unbound.service || exit 0
+        conf=$(${pkgs.coreutils}/bin/readlink -f /etc/unbound/unbound.conf) || exit 0
+        [ -e "$conf" ] || exit 0
+        current=$(${pkgs.coreutils}/bin/sha256sum < "$conf" | ${pkgs.coreutils}/bin/cut -d' ' -f1)
+        loaded=$(${pkgs.coreutils}/bin/cat /run/unbound/loaded-conf.sha256 2>/dev/null || echo unknown)
+        if [ "$current" != "$loaded" ]; then
+          echo "unbound is running with a stale config (loaded=$loaded current=$current); restarting unbound" >&2
+          ${pkgs.systemd}/bin/systemctl restart unbound.service
+          if ${pkgs.systemd}/bin/systemctl is-active --quiet podman-adguardhome.service; then
+            echo "restarting podman-adguardhome to drop its cache of the stale answers" >&2
+            ${pkgs.systemd}/bin/systemctl restart podman-adguardhome.service
+          fi
+        fi
+      ''}";
+    };
+  };
+
+  systemd.timers.dns-conf-coherence = {
+    description = "Periodic check that unbound serves its current config";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      ## First check shortly after boot (cheap no-op when coherent), then
+      ## every 10 minutes — bounding the stale-DNS window after a broken
+      ## switch to minutes instead of "until someone debugs it".
+      OnBootSec = "5min";
+      OnUnitActiveSec = "10min";
     };
   };
 

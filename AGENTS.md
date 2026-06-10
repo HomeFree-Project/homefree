@@ -287,6 +287,13 @@ Situational knowledge — read the linked note when working in that area:
 - **`dns-ready` ordering** — the DNS-readiness gate must re-arm when
   unbound/adguard restart, or container image pulls race a stale gate.
   → `docs/agent-notes/dns-ready-ordering.md`
+- **Stale DNS after a rebuild** — switch restart bookkeeping is not a
+  guarantee: a `failed (status 4)` switch (e.g. fwupd-refresh, now
+  guarded) makes the retry skip DNS restarts, and even a successful
+  switch's unbound restart has been observed silently ineffective; the
+  `dns-conf-coherence` watchdog self-heals the drift, AdGuard's cache
+  is a second stale layer.
+  → `docs/agent-notes/failed-switch-skips-dns-restarts.md`
 - **LAN-only vhost breaks over IPv6 / off-box DNS** — a `public = false`
   Caddy vhost binds only the box's LAN addresses (IPv4 + inside ULA via
   `lan-address-v6`), NOT the WAN IPv6; unbound's split-horizon hands

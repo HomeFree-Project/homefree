@@ -2004,6 +2004,284 @@ export PATH="$PATH"
 podman rm -f nextcloud-redis || true
 rm -f /run/nextcloud-redis/ctr-id
 
+### podman-nomad [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad || true
+rm -f /run/nomad/ctr-id
+
+### podman-nomad [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad
+mkdir -p /var/lib/nomad/update-shared
+mkdir -p /var/lib/nomad/storage
+mkdir -p /var/lib/homefree-secrets/nomad
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/app-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_app_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/app-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/app-key"
+elif [ -s "/var/lib/homefree-secrets/nomad/app-key" ]; then
+_anchor_set "nomad/app-key" "/var/lib/homefree-secrets/nomad/app-key"
+chmod 600 "/var/lib/homefree-secrets/nomad/app-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/app-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/app-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/app-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_app_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-password" ]; then
+_anchor_set "nomad/mysql-password" "/var/lib/homefree-secrets/nomad/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+APP_KEY=$(cat /var/lib/homefree-secrets/nomad/app-key)
+DB_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-password)
+install -m 600 /dev/null /var/lib/nomad/admin.env
+{
+printf 'APP_KEY=%s\n' "$APP_KEY"
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
+} > /var/lib/nomad/admin.env
+
+### podman-nomad-mysql [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad-mysql || true
+rm -f /run/nomad-mysql/ctr-id
+
+### podman-nomad-mysql [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad/mysql
+mkdir -p /var/lib/nomad
+mkdir -p /var/lib/homefree-secrets/nomad
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-root-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_root_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-root-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-root-password" ]; then
+_anchor_set "nomad/mysql-root-password" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-root-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-root-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-root-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_root_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-password" ]; then
+_anchor_set "nomad/mysql-password" "/var/lib/homefree-secrets/nomad/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+MYSQL_ROOT_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-root-password)
+MYSQL_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-password)
+install -m 600 /dev/null /var/lib/nomad/mysql.env
+{
+printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
+printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
+} > /var/lib/nomad/mysql.env
+
+### podman-nomad-redis [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad-redis || true
+rm -f /run/nomad-redis/ctr-id
+
+### podman-nomad-redis [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad/redis
+if [ ! -f /var/lib/nomad/redis/.chowned-813 ]; then
+chown -R 813:813 /var/lib/nomad/redis
+touch /var/lib/nomad/redis/.chowned-813
+fi
+
 ### podman-nzbget [0]
 #!/nix/store/bash-5.3p9/bin/bash
 set -o errexit

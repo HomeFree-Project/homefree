@@ -174,6 +174,10 @@ in
   # Firmware/BIOS updates
   services.fwupd.enable = true;
 
+  ## (fwupd-refresh.restartIfChanged is forced off in the merged
+  ## systemd.services attrset below — a switch must never depend on the
+  ## LVFS CDN being reachable.)
+
   # Setting to true will kill things like tmux on logout
   services.logind.settings.Login.KillUserProcesses = false;
 
@@ -306,7 +310,23 @@ in
           IOSchedulingClass = "idle";
         };
       }
-  ) config.services.btrfs.autoScrub.fileSystems);
+  ) config.services.btrfs.autoScrub.fileSystems)
+  // {
+    ## fwupd-refresh is a oneshot that downloads LVFS metadata over the
+    ## network. With the NixOS default (restartIfChanged = true), any
+    ## rebuild that changes its unit (e.g. an fwupd bump via flake.lock)
+    ## RE-RUNS the download in the middle of the switch — and one LVFS
+    ## hiccup / offline moment / DNS-restart blip then fails the unit,
+    ## which fails the ENTIRE switch with status 4 ("the following units
+    ## failed: fwupd-refresh.service"). Observed failing a real admin-UI
+    ## Apply. A failed switch is worse than it looks: the new unit files
+    ## are already on disk, so the retry sees no unit diff and silently
+    ## SKIPS the restarts the failed attempt never performed (see
+    ## docs/agent-notes/failed-switch-skips-dns-restarts.md). Metadata
+    ## freshness is the timer's job (fwupd-refresh.timer keeps running it
+    ## on schedule).
+    fwupd-refresh.restartIfChanged = false;
+  };
 
   environment.systemPackages = with pkgs; [
     (python3.withPackages (python-pkgs: with python-pkgs; [

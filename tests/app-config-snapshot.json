@@ -12,6 +12,9 @@
     "minecraft": {
       "gid": 812
     },
+    "nomad-redis": {
+      "gid": 813
+    },
     "vaultwarden": {
       "gid": 801
     },
@@ -39,6 +42,11 @@
       "group": "minecraft",
       "isSystemUser": true,
       "uid": 812
+    },
+    "nomad-redis": {
+      "group": "nomad-redis",
+      "isSystemUser": true,
+      "uid": 813
     },
     "vaultwarden": {
       "group": "vaultwarden",
@@ -888,6 +896,96 @@
       ],
       "workdir": null
     },
+    "nomad": {
+      "autoStart": true,
+      "cmd": [],
+      "dependsOn": [
+        "nomad-mysql",
+        "nomad-redis"
+      ],
+      "entrypoint": null,
+      "environment": {
+        "DB_DATABASE": "nomad",
+        "DB_HOST": "nomad-mysql",
+        "DB_NAME": "nomad",
+        "DB_PORT": "3306",
+        "DB_SSL": "false",
+        "DB_USER": "nomad_user",
+        "DISABLE_COMPRESSION": "false",
+        "HOST": "0.0.0.0",
+        "LOG_LEVEL": "info",
+        "NODE_ENV": "production",
+        "NOMAD_STORAGE_PATH": "/var/lib/nomad/storage",
+        "PORT": "8080",
+        "REDIS_HOST": "nomad-redis",
+        "REDIS_PORT": "6379",
+        "TZ": "Etc/UTC",
+        "URL": "https://nomad.homefree.host"
+      },
+      "environmentFiles": [
+        "/var/lib/nomad/admin.env"
+      ],
+      "extraOptions": [
+        "--add-host=host.docker.internal:host-gateway"
+      ],
+      "image": "ghcr.io/crosstalk-solutions/project-nomad:1.32.1",
+      "imageFile": null,
+      "ports": [
+        "0.0.0.0:9023:8080"
+      ],
+      "user": null,
+      "volumes": [
+        "/etc/localtime:/etc/localtime:ro",
+        "/var/lib/nomad/storage:/app/storage",
+        "/run/podman/podman.sock:/var/run/docker.sock",
+        "/var/lib/nomad/update-shared:/app/update-shared"
+      ],
+      "workdir": null
+    },
+    "nomad-mysql": {
+      "autoStart": true,
+      "cmd": [],
+      "dependsOn": [],
+      "entrypoint": null,
+      "environment": {
+        "MYSQL_DATABASE": "nomad",
+        "MYSQL_USER": "nomad_user",
+        "TZ": "Etc/UTC"
+      },
+      "environmentFiles": [
+        "/var/lib/nomad/mysql.env"
+      ],
+      "extraOptions": [],
+      "image": "docker.io/library/mysql:8.0",
+      "imageFile": null,
+      "ports": [],
+      "user": null,
+      "volumes": [
+        "/etc/localtime:/etc/localtime:ro",
+        "/var/lib/nomad/mysql:/var/lib/mysql"
+      ],
+      "workdir": null
+    },
+    "nomad-redis": {
+      "autoStart": true,
+      "cmd": [],
+      "dependsOn": [],
+      "entrypoint": null,
+      "environment": {
+        "TZ": "Etc/UTC"
+      },
+      "environmentFiles": [],
+      "extraOptions": [],
+      "image": "docker.io/library/redis:7-alpine",
+      "imageFile": null,
+      "ports": [],
+      "user": "813:813",
+      "volumes": [
+        "/etc/localtime:/etc/localtime:ro",
+        "/var/lib/nomad/redis:/data"
+      ],
+      "workdir": null
+    },
     "nzbget": {
       "autoStart": true,
       "cmd": [],
@@ -900,10 +998,10 @@
       },
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "lscr.io/linuxserver/nzbget:version-v24.8",
+      "image": "lscr.io/linuxserver/nzbget:version-v26.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9023:6789"
+        "0.0.0.0:9024:6789"
       ],
       "user": null,
       "volumes": [
@@ -1023,7 +1121,7 @@
       "image": "odoo:19.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9025:8069"
+        "0.0.0.0:9026:8069"
       ],
       "user": null,
       "volumes": [
@@ -1056,7 +1154,7 @@
       "image": "ghcr.io/open-webui/open-webui:v0.9.6",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9026:8254"
+        "0.0.0.0:9027:8254"
       ],
       "user": null,
       "volumes": [
@@ -1123,7 +1221,7 @@
       "cmd": [
         "radicle-httpd",
         "--listen",
-        "0.0.0.0:9029"
+        "0.0.0.0:9030"
       ],
       "dependsOn": [
         "radicle-node"
@@ -1139,7 +1237,7 @@
       "image": "homefree/radicle:local",
       "imageFile": "/nix/store/radicle.tar.gz",
       "ports": [
-        "10.0.0.1:9029:9029"
+        "10.0.0.1:9030:9030"
       ],
       "user": null,
       "volumes": [
@@ -1200,7 +1298,7 @@
       "image": "hadogenes/screeenly@sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9030:80"
+        "0.0.0.0:9031:80"
       ],
       "user": null,
       "volumes": [
@@ -1225,7 +1323,7 @@
         "APP_FORCE_TLS": "false",
         "APP_LOCALE": "",
         "APP_LOCKED": "false",
-        "APP_PORT": "9031",
+        "APP_PORT": "9032",
         "APP_TIMEZONE": "Etc/UTC",
         "APP_TRUSTED_PROXIES": "192.168.1.1,10.0.0.1,172.16.0.0/12",
         "APP_URL": "https://snipeit.homefree.host",
@@ -1316,7 +1414,7 @@
       "image": "snipe/snipe-it:v8.6.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9031:80"
+        "0.0.0.0:9032:80"
       ],
       "user": null,
       "volumes": [
@@ -1342,7 +1440,7 @@
       "image": "triliumnext/notes:v0.95.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9032:8080"
+        "0.0.0.0:9033:8080"
       ],
       "user": null,
       "volumes": [
@@ -1417,7 +1515,7 @@
       "image": "vaultwarden/server:1.36.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9033:8080"
+        "0.0.0.0:9034:8080"
       ],
       "user": "801:801",
       "volumes": [
@@ -5144,6 +5242,151 @@
       "backup": {
         "mysql-databases": [],
         "paths": [
+          "/var/lib/nomad/mysql",
+          "/var/lib/nomad/redis"
+        ],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "nomad",
+      "name": "Project NOMAD Offline Knowledge Server",
+      "options-metadata": [
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Enable Project NOMAD offline knowledge server",
+          "enum-values": null,
+          "nullable": false,
+          "path": "enable",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Make service accessible from WAN",
+          "enum-values": null,
+          "nullable": false,
+          "path": "public",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": null,
+          "description": "Location of downloaded offline content (ZIM files, maps, courses). Point at a data pool — content can run to hundreds of GB.",
+          "enum-values": null,
+          "nullable": true,
+          "path": "storage-path",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "path",
+          "ui-hint": "directory-picker"
+        },
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Whether to backup downloaded offline content (re-downloadable; can be hundreds of GB)",
+          "enum-values": null,
+          "nullable": false,
+          "path": "enable-backup-content",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        }
+      ],
+      "parent": null,
+      "port-request": null,
+      "project-name": "Project N.O.M.A.D.",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 9023,
+        "public": false,
+        "require-admin-role": false,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "nomad"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [
+        "podman-nomad",
+        "podman-nomad-mysql",
+        "podman-nomad-redis"
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "1.32.1",
+        "regex": "",
+        "registry": "",
+        "repo": "Crosstalk-Solutions/project-nomad",
+        "strategy": "github-releases",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
+        "show": true,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
+        "paths": [
           "/var/lib/nzbget/downloads"
         ],
         "postgres-databases": []
@@ -5238,7 +5481,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9023,
+        "port": 9024,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -5267,7 +5510,7 @@
       "version-tracking": {
         "channel": "stable",
         "command": null,
-        "current-version": "24.8",
+        "current-version": "26.1",
         "regex": "",
         "registry": "",
         "repo": "nzbgetcom/nzbget",
@@ -5417,7 +5660,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9025,
+        "port": 9026,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -5535,7 +5778,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9026,
+        "port": 9027,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6051,7 +6294,7 @@
         "enable": true,
         "extra-csp-sources": [],
         "extra-http-hosts": [],
-        "extraCaddyConfig": "## radicle-explorer talks to the JSON API at /api/*;\n## reverse-proxy those to radicle-httpd.\n@rad_api path /api/*\nhandle @rad_api {\n  reverse_proxy http://10.0.0.1:9029\n}\n\n## SPA fallback. radicle-explorer is a client-side-routed\n## SPA: URLs like /seeds/<host>/<rid> and /<rid>/tree/...\n## have no corresponding file in the static build — the\n## SPA's JS router resolves them after /index.html boots.\n## Without this rewrite, a browser reload on any deep\n## link 404s from Caddy's file_server.\n##\n## Matchers:\n##   not path /api/*  — leave API calls untouched. Caddy's\n##     directive ordering runs `rewrite` BEFORE `handle`,\n##     so without this guard /api/v1/foo would be rewritten\n##     to /index.html before the API handler ever saw it.\n##   not file         — only fire when no static file exists\n##     at the request path. /assets/<hash>.js, /favicon.ico,\n##     /index.html itself etc. are real files and continue\n##     to flow through to file_server normally. `file` uses\n##     the `root` set in the parent static-path block.\n@rad_spa {\n  not path /api/*\n  not file\n}\nrewrite @rad_spa /index.html\n",
+        "extraCaddyConfig": "## radicle-explorer talks to the JSON API at /api/*;\n## reverse-proxy those to radicle-httpd.\n@rad_api path /api/*\nhandle @rad_api {\n  reverse_proxy http://10.0.0.1:9030\n}\n\n## SPA fallback. radicle-explorer is a client-side-routed\n## SPA: URLs like /seeds/<host>/<rid> and /<rid>/tree/...\n## have no corresponding file in the static build — the\n## SPA's JS router resolves them after /index.html boots.\n## Without this rewrite, a browser reload on any deep\n## link 404s from Caddy's file_server.\n##\n## Matchers:\n##   not path /api/*  — leave API calls untouched. Caddy's\n##     directive ordering runs `rewrite` BEFORE `handle`,\n##     so without this guard /api/v1/foo would be rewritten\n##     to /index.html before the API handler ever saw it.\n##   not file         — only fire when no static file exists\n##     at the request path. /assets/<hash>.js, /favicon.ico,\n##     /index.html itself etc. are real files and continue\n##     to flow through to file_server normally. `file` uses\n##     the `root` set in the parent static-path block.\n@rad_spa {\n  not path /api/*\n  not file\n}\nrewrite @rad_spa /index.html\n",
         "host": null,
         "http-domains": [
           "homefree.lan",
@@ -6258,7 +6501,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9030,
+        "port": 9031,
         "public": false,
         "require-admin-role": true,
         "rootDomain": false,
@@ -6376,7 +6619,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9031,
+        "port": 9032,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6466,7 +6709,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9032,
+        "port": 9033,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6672,7 +6915,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9033,
+        "port": 9034,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -7417,6 +7660,7 @@
         "https://notes.homefree.host/",
         "https://trilium.homefree.host/",
         "https://screeenly.homefree.host/",
+        "https://nomad.homefree.host/",
         "https://nvr.homefree.host/",
         "https://frigate.homefree.host/",
         "https://baikal.homefree.host/",

@@ -2225,6 +2225,106 @@ http://nextcloud.homefree.lan, http://nextcloud.lan, https://nextcloud.homefree.
 	}
 }
 
+http://nomad.homefree.lan, http://nomad.lan, https://nomad.homefree.host {
+	log {
+		output file /var/log/caddy/access-nomad.log
+	}
+
+	header {
+		# Add general security headers
+		Strict-Transport-Security "max-age=31536000; includeSubdomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-XSS-Protection "1; mode=block"
+		# Phase 5 M3 — CSP + Permissions-Policy baselines.
+		# Default-src is same-origin only. Apps that legitimately
+		# embed OTHER HomeFree apps (the AI catalog iframes the
+		# individual app surfaces; CryptPad uses a separate
+		# docs-sandbox.<domain> origin for its sandboxed renderer)
+		# need cross-subdomain frame/script/style/connect. The
+		# *.<domain> source list permits any subdomain of this
+		# box's domain, but still rejects arbitrary off-host
+		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
+		# cover the many third-party apps in this repo that emit
+		# inline handlers or use eval indirectly. Per-vhost
+		# overrides via extraCaddyConfig where a tighter policy
+		# is feasible. See
+		# docs/agent-notes/security-audit-phase-5.md M3.
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
+	}
+	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+	## Three conditions, all required (AND):
+	##
+	## 1. scheme is http:// — never redirect an https:// request onto
+	##    itself (that would loop).
+	##
+	## 2. .setup-complete exists — the finish-setup wizard has
+	##    finished. The wizard is served over plain HTTP on the LAN
+	##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+	##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+	##    issued (which happens DURING that rebuild's activation), the
+	##    wizard's in-flight poll would be 301'd to https://<host> — a
+	##    host the laptop may not resolve and a cert it may not yet
+	##    trust — and the wizard would freeze on "Starting…" never
+	##    seeing the terminal status. Gating on .setup-complete keeps
+	##    the HTTP origin stable for the whole wizard lifetime; the
+	##    wizard's final step writes that sentinel, so the redirect
+	##    goes live on the very next request — exactly when it's safe.
+	##
+	## 3. the cert file exists — Caddy has issued the cert for the
+	##    canonical host. The glob covers any ACME CA directory name
+	##    (LE prod/staging, ZeroSSL).
+	##
+	## All three conditions live in ONE `expression` matcher so they
+	## are AND-ed and the `redir` stays a top-level directive — it
+	## simply does nothing when the matcher is false and the request
+	## falls through to file_server / reverse_proxy as normal. (A
+	## `handle`/`route` wrapper would instead SWALLOW non-matching
+	## requests and return an empty 200.) CEL's `file()` function
+	## does request-time existence checks, so no rebuild flips the
+	## gate. `file()` returns true if ANY listed path exists; we call
+	## it twice and AND the results, and the cert path uses a glob to
+	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nomad.homefree.host/nomad.homefree.host.crt"]})
+	redir @http_redirect_https https://nomad.homefree.host{uri} 301
+	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nomad.homefree.host/nomad.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+
+	handle {
+		reverse_proxy http://10.0.0.1:9023 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}
+
 http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http://trilium.lan, https://notes.homefree.host, https://trilium.homefree.host {
 	log {
 		output file /var/log/caddy/access-trilium.log
@@ -2316,7 +2416,7 @@ http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http:/
 	import oauth2_proxy_forward_auth
 
 	handle {
-		reverse_proxy http://10.0.0.1:9032 {
+		reverse_proxy http://10.0.0.1:9033 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -2523,7 +2623,7 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 	redir @http_redirect_https https://nzbget.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9023 {
+		reverse_proxy http://10.0.0.1:9024 {
 		}
 	}
 }
@@ -2594,7 +2694,7 @@ http://odoo.homefree.lan, http://odoo.lan, http://erp.homefree.lan, http://erp.l
 	redir @http_redirect_https https://odoo.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9025 {
+		reverse_proxy http://10.0.0.1:9026 {
 		}
 	}
 }
@@ -2665,7 +2765,7 @@ http://ollama.homefree.lan, http://ollama.lan, https://ollama.homefree.host {
 	redir @http_redirect_https https://ollama.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9026 {
+		reverse_proxy http://10.0.0.1:9027 {
 		}
 	}
 }
@@ -3093,7 +3193,7 @@ http://radicle.homefree.lan, http://radicle.lan, http://rad.homefree.lan, http:/
 	## reverse-proxy those to radicle-httpd.
 	@rad_api path /api/*
 	handle @rad_api {
-		reverse_proxy http://10.0.0.1:9029
+		reverse_proxy http://10.0.0.1:9030
 	}
 
 	## SPA fallback. radicle-explorer is a client-side-routed
@@ -3216,7 +3316,7 @@ http://screeenly.homefree.lan, http://screeenly.lan, https://screeenly.homefree.
 	import admin_api_admin_check
 
 	handle {
-		reverse_proxy http://10.0.0.1:9030 {
+		reverse_proxy http://10.0.0.1:9031 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -3291,7 +3391,7 @@ http://snipeit.homefree.lan, http://snipeit.lan, https://snipeit.homefree.host {
 	redir @http_redirect_https https://snipeit.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9031 {
+		reverse_proxy http://10.0.0.1:9032 {
 		}
 	}
 }
@@ -3511,7 +3611,7 @@ http://vaultwarden.homefree.lan, http://vaultwarden.lan, https://vaultwarden.hom
 	redir @http_redirect_https https://vaultwarden.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9033 {
+		reverse_proxy http://10.0.0.1:9034 {
 		}
 	}
 }

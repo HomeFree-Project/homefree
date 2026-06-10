@@ -54,7 +54,7 @@ let
     "adguard" "azuracast" "backup-canary" "baikal" "cryptpad" "forgejo"
     "freshrss" "frigate" "grocy" "headscale" "home-assistant" "homebox"
     "immich" "jellyfin" "joplin" "lidarr" "linkwarden" "matrix" "mediawiki"
-    "minecraft" "netbird" "nextcloud" "nzbget" "odoo" "ollama"
+    "minecraft" "netbird" "nextcloud" "nomad" "nzbget" "odoo" "ollama"
     "opensprinkler-ui" "radicale" "radicle" "screeenly" "snipe-it" "trilium"
     "unifi" "vaultwarden" "webdav" "zitadel" "zwave-js-ui"
   ];
