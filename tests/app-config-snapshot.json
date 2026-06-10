@@ -340,7 +340,7 @@
         "--network=host",
         "--privileged"
       ],
-      "image": "ghcr.io/home-assistant/home-assistant:2026.6.1",
+      "image": "ghcr.io/home-assistant/home-assistant:2026.6.2",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -633,13 +633,14 @@
       "dependsOn": [],
       "entrypoint": null,
       "environment": {
+        "MEILI_EXPERIMENTAL_DUMPLESS_UPGRADE": "true",
         "TZ": "Etc/UTC"
       },
       "environmentFiles": [
         "/var/lib/linkwarden-podman/meili.env"
       ],
       "extraOptions": [],
-      "image": "getmeili/meilisearch:v1.46.0",
+      "image": "getmeili/meilisearch:v1.46.1",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -943,7 +944,8 @@
         "/var/lib/oauth2-proxy/env"
       ],
       "extraOptions": [
-        "--network=host"
+        "--network=host",
+        "--add-host=sso.homefree.host:127.0.0.1"
       ],
       "image": "oauth2-proxy/oauth2-proxy:v7.12.0",
       "imageFile": null,
@@ -987,7 +989,8 @@
         "/var/lib/oauth2-proxy/env"
       ],
       "extraOptions": [
-        "--network=host"
+        "--network=host",
+        "--add-host=sso.homefree.host:127.0.0.1"
       ],
       "image": "oauth2-proxy/oauth2-proxy:v7.12.0",
       "imageFile": null,
@@ -1050,7 +1053,7 @@
       "extraOptions": [
         "--add-host=host.docker.internal:host-gateway"
       ],
-      "image": "ghcr.io/open-webui/open-webui:v0.9.5",
+      "image": "ghcr.io/open-webui/open-webui:v0.9.6",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9026:8254"
@@ -1496,7 +1499,7 @@
         "/var/lib/zitadel/env"
       ],
       "extraOptions": [],
-      "image": "ghcr.io/zitadel/zitadel:v4.15.0",
+      "image": "ghcr.io/zitadel/zitadel:v4.15.1",
       "imageFile": null,
       "ports": [
         "0.0.0.0:3241:8080"
@@ -1527,7 +1530,7 @@
         "--user=1000:1000",
         "--network=host"
       ],
-      "image": "ghcr.io/zitadel/zitadel-login:v4.15.0",
+      "image": "ghcr.io/zitadel/zitadel-login:v4.15.1",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -1549,8 +1552,7 @@
       },
       "environmentFiles": [],
       "extraOptions": [
-        "--network=host",
-        "--device=/dev/serial/by-id/:/dev/zwave"
+        "--network=host"
       ],
       "image": "zwavejs/zwave-js-ui:11.19.1",
       "imageFile": null,

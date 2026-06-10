@@ -573,9 +573,9 @@ FRESHRSS_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/freshrss/admin-password)
 FRESHRSS_ADMIN_API_PASSWORD=$(cat /var/lib/homefree-secrets/freshrss/admin-api-password)
 install -m 600 /dev/null /var/lib/freshrss-podman/runtime.env
 {
-printf 'FRESHRSS_INSTALL=--api-enabled --base-url %s --db-base %s --db-host %s --db-password "%s" --db-type pgsql --db-user %s --default-user %s --language en\n' \
+printf 'FRESHRSS_INSTALL=--api-enabled --base-url=%s --db-base=%s --db-host=%s --db-password=%s --db-type=pgsql --db-user=%s --default-user=%s --language=en\n' \
 "/" "freshrss" "/run/postgresql" "" "freshrss" "homefree"
-printf 'FRESHRSS_USER=--api-password %s --email %s --language en --password %s --user %s\n' \
+printf 'FRESHRSS_USER=--api-password=%s --email=%s --language=en --password=%s --user=%s\n' \
 "$FRESHRSS_ADMIN_API_PASSWORD" "homefree@homefree.host" "$FRESHRSS_ADMIN_PASSWORD" "homefree"
 } > /var/lib/freshrss-podman/runtime.env
 install -m 600 /dev/null /var/lib/freshrss-podman/sso.env
@@ -820,6 +820,7 @@ rm -f /run/immich-machine-learning/ctr-id
 ### podman-immich-machine-learning [1]
 #!/nix/store/bash-5.3p9/bin/bash
 mkdir -p /var/cache/immich
+mkdir -p /var/lib/immich
 
 ### podman-immich-redis [0]
 #!/nix/store/bash-5.3p9/bin/bash
@@ -2634,7 +2635,7 @@ elif [ -s "/var/lib/homefree-secrets/snipe-it/app-key" ]; then
 _anchor_set "snipe-it/app-key" "/var/lib/homefree-secrets/snipe-it/app-key"
 chmod 600 "/var/lib/homefree-secrets/snipe-it/app-key"
 else
-printf '%s' "$( sh -c 'printf "base64:%s" "$(/nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32)"' )" > "$_anchor_tmp"
+printf '%s' "$( printf 'base64:%s' "$(/nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32)" )" > "$_anchor_tmp"
 _anchor_set "snipe-it/app-key" "$_anchor_tmp"
 install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/snipe-it/app-key"
 printf 1 > "$_anchor_fresh_marker"
