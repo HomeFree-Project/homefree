@@ -20,7 +20,7 @@ let
   ## Open WebUI image tag. Kept in a `version` let-binding (like every
   ## other app) so the App Versions page's "Update apps" bumper can
   ## rewrite it — a literal inline tag is invisible to that parser.
-  version = "v0.9.5";
+  version = "v0.9.6";
 
   port-internal = 8254;
   ## Host-side port — claimed via the central allocator. Pinned to

@@ -37,7 +37,7 @@ let
     };
   };
 
-  zitadelVersion = "v4.15.0";
+  zitadelVersion = "v4.15.1";
   zitadelDataPath = "/var/lib/zitadel";
   zitadelPort = 3241;
 

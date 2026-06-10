@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   version = "v2.14.1";
-  version-meili = "v1.46.0";
+  version-meili = "v1.46.1";
   containerDataPath = "/var/lib/linkwarden-podman";
   secretsDir = "/var/lib/homefree-secrets/linkwarden";
 
@@ -349,6 +349,17 @@ in
 
     environment = {
       TZ = config.homefree.system.timeZone;
+      ## Migrate data.ms in place on a version mismatch instead of
+      ## refusing to start. Meilisearch stamps the DB with the EXACT
+      ## engine version and won't open a mismatched one — even a patch
+      ## bump like 1.46.0 -> 1.46.1 — so without this every version-meili
+      ## bump bricks the container into a restart loop (see
+      ## docs/agent-notes/meilisearch-data-migration.md). The flag makes
+      ## the engine upgrade the on-disk format on startup; it is a no-op
+      ## when versions already match, so it is safe to leave on always.
+      ## Linkwarden's index is derived from its postgres anyway, so even a
+      ## failed migration is recoverable via re-index.
+      MEILI_EXPERIMENTAL_DUMPLESS_UPGRADE = "true";
     };
 
     ## MEILI_MASTER_KEY (anchored, shared with Linkwarden) is written
