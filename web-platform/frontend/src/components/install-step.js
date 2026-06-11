@@ -345,13 +345,11 @@ class InstallStep extends LitElement {
             <h3>Installation Log</h3>
           </div>
           <div class="logs-container">
-            ${this.logs.map(log => html`
-              <div class="log-line ${log.type}">
-                ${log.raw
-                  ? log.message
-                  : html`[${new Date(log.timestamp).toLocaleTimeString()}] ${log.message}`}
-              </div>
-            `)}
+            ${this.logs.map(log => html`<div class="log-line ${log.type}">${
+              log.raw
+                ? log.message
+                : html`[${new Date(log.timestamp).toLocaleTimeString()}] ${log.message}`
+            }</div>`)}
             ${this.logs.length === 0 ? html`
               <div class="log-line info">Waiting for installation to start...</div>
             ` : ''}

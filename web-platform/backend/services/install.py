@@ -936,7 +936,6 @@ class InstallationService:
         part = InstallationService._get_partitioning()
         use_encryption = part['use_encryption']
         use_lanzaboote = part['use_lanzaboote'] and fw_type == "efi"
-        first_disk = part['disks'][0]
 
         # Generate bootloader config. When lanzaboote (Secure Boot) is
         # opted in, secureboot.nix owns the bootloader and sets
@@ -956,9 +955,19 @@ class InstallationService:
   boot.loader.efi.canTouchEfiVariables = true;
 """
         else:
-            bootloader = f"""  # Bootloader (BIOS)
+            # BIOS / legacy boot. We deliberately do NOT set
+            # boot.loader.grub.device here: disko's gpt type already
+            # emits `boot.loader.grub.devices = [ <disk> ]` for every
+            # disk that carries an EF02 BIOS-boot partition (see
+            # disko/lib/types/gpt.nix, and the EF02 stub added in
+            # disko_builder.py). Setting `device` too makes nixpkgs add
+            # the same disk to grub.devices a second time; the two list
+            # definitions merge and GRUB's assertion rejects the
+            # duplicate ("You cannot have duplicated devices in
+            # mirroredBoots"). Letting disko own grub.devices also gives
+            # RAID1 BIOS installs a bootloader on BOTH disks for free.
+            bootloader = """  # Bootloader (BIOS) — grub.devices supplied by disko (EF02 partition)
   boot.loader.grub.enable = true;
-  boot.loader.grub.device = "{first_disk}";
   boot.loader.grub.useOSProber = true;
 """
 

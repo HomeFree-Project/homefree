@@ -21,7 +21,7 @@ class UsersStep extends LitElement {
     }
 
     .users-container {
-      max-width: 600px;
+      max-width: 800px;
       margin: 0 auto;
     }
 

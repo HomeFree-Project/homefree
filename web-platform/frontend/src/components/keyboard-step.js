@@ -14,7 +14,7 @@ class KeyboardStep extends LitElement {
     }
 
     .keyboard-container {
-      max-width: 600px;
+      max-width: 800px;
       margin: 0 auto;
     }
 

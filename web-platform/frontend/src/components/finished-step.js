@@ -12,7 +12,7 @@ class FinishedStep extends LitElement {
     }
 
     .finished-container {
-      max-width: 700px;
+      max-width: 800px;
       margin: 0 auto;
       text-align: center;
     }
