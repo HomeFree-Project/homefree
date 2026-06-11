@@ -40,4 +40,5 @@ class InstallResolver:
             completed=status.get('completed', False),
             error=status.get('error'),
             recovery_passphrase=status.get('recovery_passphrase'),
+            error_detail=status.get('error_detail'),
         )

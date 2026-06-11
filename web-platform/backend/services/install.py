@@ -43,6 +43,11 @@ class InstallationService:
 
     # Set during partitioning; surfaced to the UI completion screen.
     _recovery_passphrase: Optional[str] = None
+
+    # Tail of the failing subprocess's output (disko / nixos-install),
+    # surfaced to the UI log panel alongside the error so the operator
+    # doesn't have to shell in and read the backend journal.
+    _error_detail: Optional[str] = None
     # The DiskoConfigBuilder used for this install, kept so later steps
     # (config generation) can query the LUKS layout.
     _disko_builder: Optional[Any] = None
@@ -416,6 +421,7 @@ class InstallationService:
         # Clear per-install state from any earlier attempt.
         InstallationService._recovery_passphrase = None
         InstallationService._disko_builder = None
+        InstallationService._error_detail = None
 
         # Start installation in background thread
         InstallationService._install_thread = threading.Thread(
@@ -435,6 +441,7 @@ class InstallationService:
         """
         status = InstallationService._status.copy()
         status['recovery_passphrase'] = InstallationService._recovery_passphrase
+        status['error_detail'] = InstallationService._error_detail
         return status
 
     @staticmethod
@@ -781,13 +788,14 @@ class InstallationService:
                 logger.info(f"disko: {line.rstrip()}")
             process.wait()
             if process.returncode != 0:
-                # Surface the tail of disko's own output in the error so
-                # the failure cause is visible in the UI, not just the
-                # backend journal.
-                tail = "\n".join(disko_output[-15:]) or "(no output)"
+                # Surface the tail of disko's own output in the UI log
+                # panel, not just the backend journal; the banner keeps
+                # the short summary.
+                InstallationService._error_detail = (
+                    "\n".join(disko_output[-40:]) or "(no output)"
+                )
                 raise Exception(
-                    f"disko failed with exit code {process.returncode}.\n"
-                    f"Last output:\n{tail}"
+                    f"disko failed with exit code {process.returncode}"
                 )
         except FileNotFoundError:
             raise Exception(
@@ -1483,6 +1491,11 @@ class InstallationService:
             if process.returncode != 0:
                 logger.error(f"nixos-install failed with exit code {process.returncode}")
                 logger.error(f"Full output:\n{''.join(output_lines[-100:])}")  # Last 100 lines
+                # Surface the tail in the UI log panel; the failing
+                # command's own error sits in the last few dozen lines.
+                InstallationService._error_detail = (
+                    "".join(output_lines[-40:]).rstrip() or "(no output)"
+                )
                 raise Exception(f"nixos-install failed with code {process.returncode}")
 
             logger.info("nixos-install completed successfully")

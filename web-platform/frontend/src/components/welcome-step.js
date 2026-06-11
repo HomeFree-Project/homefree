@@ -1,8 +1,10 @@
 import { LitElement, html, css } from 'lit';
+import { getSystemInfo } from '../api/client.js';
 
 class WelcomeStep extends LitElement {
   static properties = {
     data: { type: Object },
+    biosMode: { type: Boolean },
   };
 
   static styles = css`
@@ -91,6 +93,22 @@ class WelcomeStep extends LitElement {
 
   constructor() {
     super();
+    this.biosMode = false;
+  }
+
+  async connectedCallback() {
+    super.connectedCallback();
+    // Surface a legacy-BIOS boot on the very first screen: switching
+    // the firmware to UEFI means rebooting the installer, so the user
+    // should learn about it before filling in eight steps of config —
+    // not at the disk-setup step (or worse, from a failed install).
+    try {
+      const systemInfo = await getSystemInfo();
+      this.biosMode = !(systemInfo.capabilities && systemInfo.capabilities.uefi);
+    } catch (error) {
+      // Probe failure: don't show a possibly-wrong warning.
+      this.biosMode = false;
+    }
   }
 
   render() {
@@ -116,6 +134,19 @@ class WelcomeStep extends LitElement {
             <li>VPN mesh networking with Headscale</li>
           </ul>
         </div>
+
+        ${this.biosMode ? html`
+          <div class="warning">
+            <strong>⚠️ Legacy BIOS boot detected</strong>
+            The installer booted in legacy BIOS mode. HomeFree supports
+            BIOS, but UEFI is strongly recommended: Secure Boot and
+            TPM-based unattended disk unlock only work with UEFI. If this
+            machine supports UEFI, reboot the installer in UEFI mode
+            before continuing. For virtual machines, select UEFI (OVMF)
+            firmware when creating the VM — Cockpit and virt-manager
+            default to legacy BIOS.
+          </div>
+        ` : ''}
 
         <div class="warning">
           <strong>⚠️ Important:</strong>
