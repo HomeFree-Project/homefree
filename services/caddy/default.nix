@@ -682,9 +682,12 @@ in
               # blank map while the rest of the page works. img/media/
               # frame already allowed blob:; workers were an oversight.
               # Per-vhost overrides via extraCaddyConfig where a
-              # tighter policy is feasible. See
+              # tighter policy is feasible. A vhost may also set
+              # reverse-proxy.disable-csp = true to suppress this line
+              # entirely and let a well-behaved upstream (e.g. FreshRSS)
+              # serve its own, stricter CSP. See
               # docs/agent-notes/security-audit-phase-5.md M3.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              ${lib.optionalString (! (reverse-proxy-config.disable-csp or false)) ''Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"''}
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
           '' else "")

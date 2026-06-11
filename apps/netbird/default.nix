@@ -68,9 +68,9 @@ let
   ## Image tags. Pin all of these together — NetBird ships breaking
   ## changes in the management.json schema across minor versions, so
   ## bumping these should be a deliberate, coordinated update.
-  managementTag = "0.72.2";
-  signalTag = "0.72.2";
-  relayTag = "0.72.2";
+  managementTag = "0.72.3";
+  signalTag = "0.72.3";
+  relayTag = "0.72.3";
   dashboardTag = "v2.39.0";
   coturnTag = "4.12.0";
 

@@ -105,7 +105,10 @@ http://adguard.homefree.lan, http://adguard.lan, https://adguard.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -506,7 +509,10 @@ http://auth.homefree.lan, http://auth.lan, https://auth.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -583,7 +589,10 @@ http://azuracast.homefree.lan, http://azuracast.lan, https://azuracast.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -661,7 +670,10 @@ http://baikal.homefree.lan, http://baikal.lan, https://baikal.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -780,7 +792,10 @@ http://canary.homefree.lan, http://canary.lan, https://canary.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -858,7 +873,10 @@ http://cockpit.homefree.lan, http://cockpit.lan, https://cockpit.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -970,7 +988,10 @@ http://cyberchef.homefree.lan, http://cyberchef.lan, https://cyberchef.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1077,7 +1098,10 @@ http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, htt
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1155,7 +1179,10 @@ http://flatnotes.homefree.lan, http://flatnotes.lan, https://flatnotes.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1262,9 +1289,12 @@ http://freshrss.homefree.lan, http://freshrss.lan, https://freshrss.homefree.hos
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1340,7 +1370,10 @@ http://git.homefree.lan, http://git.lan, http://forgejo.homefree.lan, http://for
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1435,7 +1468,10 @@ http://grocy.homefree.lan, http://grocy.lan, https://grocy.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1741,7 +1777,10 @@ http://homeassistant.homefree.lan, http://homeassistant.lan, http://ha.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1821,7 +1860,10 @@ http://homebox.homefree.lan, http://homebox.lan, https://homebox.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1899,7 +1941,10 @@ http://joplin.homefree.lan, http://joplin.lan, https://joplin.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -1977,7 +2022,10 @@ http://kiwix.homefree.lan, http://kiwix.lan, https://kiwix.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2084,7 +2132,10 @@ http://kolibri.homefree.lan, http://kolibri.lan, https://kolibri.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2191,7 +2242,10 @@ http://lidarr.homefree.lan, http://lidarr.lan, https://lidarr.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2269,7 +2323,10 @@ http://links.homefree.lan, http://links.lan, http://linkwarden.homefree.lan, htt
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2521,7 +2578,10 @@ http://matrix.homefree.lan, http://matrix.lan, https://matrix.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2608,7 +2668,10 @@ http://media.homefree.lan, http://media.lan, http://video.homefree.lan, http://v
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2686,7 +2749,10 @@ http://netbird.homefree.lan, http://netbird.lan, https://netbird.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2776,7 +2842,10 @@ http://nextcloud.homefree.lan, http://nextcloud.lan, https://nextcloud.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -2922,7 +2991,10 @@ http://nomad.homefree.lan, http://nomad.lan, https://nomad.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3029,7 +3101,10 @@ http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http:/
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3136,7 +3211,10 @@ http://nvr.homefree.lan, http://nvr.lan, http://frigate.homefree.lan, http://fri
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3275,7 +3353,10 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3353,7 +3434,10 @@ http://odoo.homefree.lan, http://odoo.lan, http://erp.homefree.lan, http://erp.l
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3431,7 +3515,10 @@ http://ollama.homefree.lan, http://ollama.lan, https://ollama.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3657,7 +3744,10 @@ http://photos.homefree.lan, http://photos.lan, http://immich.homefree.lan, http:
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3735,7 +3825,10 @@ http://radicale.homefree.lan, http://radicale.lan, http://dav.homefree.lan, http
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -3973,7 +4066,10 @@ http://screeenly.homefree.lan, http://screeenly.lan, https://screeenly.homefree.
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4085,7 +4181,10 @@ http://snipeit.homefree.lan, http://snipeit.lan, https://snipeit.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4163,7 +4262,10 @@ http://sso.homefree.lan, http://sso.lan, https://sso.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4244,7 +4346,10 @@ http://unifi.homefree.lan, http://unifi.lan, https://unifi.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4326,7 +4431,10 @@ http://vaultwarden.homefree.lan, http://vaultwarden.lan, https://vaultwarden.hom
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4404,7 +4512,10 @@ http://vpn.homefree.lan, http://vpn.lan, http://headscale.homefree.lan, http://h
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4583,7 +4694,10 @@ http://webdav.homefree.lan, http://webdav.lan, https://webdav.homefree.host {
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
@@ -4903,7 +5017,10 @@ http://zwave.homefree.lan, http://zwave.lan, http://zwavejs.homefree.lan, http:/
 		# blank map while the rest of the page works. img/media/
 		# frame already allowed blob:; workers were an oversight.
 		# Per-vhost overrides via extraCaddyConfig where a
-		# tighter policy is feasible. See
+		# tighter policy is feasible. A vhost may also set
+		# reverse-proxy.disable-csp = true to suppress this line
+		# entirely and let a well-behaved upstream (e.g. FreshRSS)
+		# serve its own, stricter CSP. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
 		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"

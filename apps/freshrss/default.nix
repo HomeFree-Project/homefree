@@ -92,9 +92,38 @@ PGEOF
     ## `postgres`, ownership stays with `postgres` and `freshrss` can
     ## connect but can't ALTER/INSERT. Reassign ownership and grant
     ## all on existing objects so an in-place migration just works.
+    ##
+    ## NOTE: `REASSIGN OWNED BY postgres TO freshrss` does NOT work here
+    ## and was a silent no-op for a long time: the bootstrap superuser
+    ## `postgres` also owns pinned/system-required objects in the DB, so
+    ## REASSIGN OWNED aborts the whole command with an error (swallowed
+    ## by the `|| true`) and reassigns nothing. Symptom: FreshRSS 1.29.x
+    ## tries `ALTER TABLE ... ADD COLUMN lastModified`, which needs
+    ## OWNERSHIP (not just the GRANTs below), fails with "must be owner
+    ## of table", and every read then errors on the missing column ->
+    ## no articles, refresh dies. Fix: explicitly ALTER ... OWNER on
+    ## each user object in schema public. Idempotent (re-owning to the
+    ## same role is a no-op); generic (per-user table names like
+    ## freshrss_<user>_entry are matched by schema scan, not hardcoded).
     ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d freshrss <<'PGEOF' || true
       ALTER DATABASE freshrss OWNER TO freshrss;
-      REASSIGN OWNED BY postgres TO freshrss;
+      ALTER SCHEMA public OWNER TO freshrss;
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+          EXECUTE format('ALTER TABLE public.%I OWNER TO freshrss', r.tablename);
+        END LOOP;
+        FOR r IN SELECT sequence_name FROM information_schema.sequences
+                 WHERE sequence_schema = 'public' LOOP
+          EXECUTE format('ALTER SEQUENCE public.%I OWNER TO freshrss', r.sequence_name);
+        END LOOP;
+        FOR r IN SELECT table_name FROM information_schema.views
+                 WHERE table_schema = 'public' LOOP
+          EXECUTE format('ALTER VIEW public.%I OWNER TO freshrss', r.table_name);
+        END LOOP;
+      END
+      $$;
       GRANT ALL PRIVILEGES ON DATABASE freshrss TO freshrss;
       GRANT ALL ON SCHEMA public TO freshrss;
       GRANT ALL ON ALL TABLES IN SCHEMA public TO freshrss;
@@ -477,6 +506,10 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.freshrss.public;
+        ## FreshRSS sets its own (strict) Content-Security-Policy and
+        ## flags the loosened Caddy baseline as unsafe. Suppress Caddy's
+        ## CSP on this vhost so FreshRSS's own policy reaches the browser.
+        disable-csp = true;
       };
       backup = {
         paths = [

@@ -2960,6 +2960,31 @@
               '';
             };
 
+            disable-csp = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy does NOT emit a Content-Security-Policy
+                header on this vhost, letting the upstream app serve its
+                own CSP unchanged. All OTHER baseline security headers
+                (HSTS, X-Content-Type-Options, X-Frame-Options,
+                Referrer-Policy, X-XSS-Protection, Permissions-Policy)
+                are still applied.
+
+                Caddy's `header` directive REPLACES the upstream CSP, so
+                the loosened `*.<domain>` + `'unsafe-inline'` +
+                `'unsafe-eval'` baseline (needed by apps like NOMAD's
+                MapLibre and CryptPad) overwrites the stricter policy a
+                well-behaved app sets for itself. Set this for an app
+                that manages its own CSP competently — e.g. FreshRSS,
+                which otherwise warns that the served CSP is unsafe.
+
+                Only use for apps you trust to always emit a sound CSP;
+                a HomeFree-authored page must keep the baseline. Only
+                affects reverse-proxy / non-static vhosts.
+              '';
+            };
+
             basic-auth = lib.mkOption {
               type = lib.types.bool;
               default = false;
