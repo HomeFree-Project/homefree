@@ -96,6 +96,38 @@ let
 
   marker = "${stateDir}/${failureMarker}";
 
+  ## ── Optional readiness gate ───────────────────────────────────────
+  ## A shell command (typically a script path) that returns 0 when the
+  ## workload's EXTERNAL prerequisites are present, non-zero otherwise.
+  ##
+  ## Some services depend on secrets that are provisioned ASYNCHRONOUSLY
+  ## *after* this activation runs — oauth2-proxy is the case: its OIDC
+  ## client-id/secret and cookie secret are written by Zitadel's
+  ## post-activation provisioning job, so on a first install they cannot
+  ## exist when the flip runs during `switch-to-configuration`. Without a
+  ## gate, the flip (and the supervisor, which defaults to blue when no
+  ## pointer exists) start the colour anyway; its ExecStartPre secrets
+  ## check fails, the supervisor retries every few seconds, systemd trips
+  ## `start-limit-hit`, and that FAILED unit makes the whole rebuild exit
+  ## non-zero — which on a fresh box leaves finish-setup permanently
+  ## stuck (the wizard only writes `.setup-complete` after a successful
+  ## finishing rebuild).
+  ##
+  ## When set, BOTH the flip and the supervisor consult this gate and
+  ## refuse to start a colour until it passes. The first-deploy flip then
+  ## commits the pointers but defers the actual start to the supervisor,
+  ## which brings the colour up the instant the prerequisites land — a
+  ## clean single-pass install. Default (null): always ready (admin-api
+  ## and any future self-contained service set nothing).
+  readinessGate = descriptor.readinessGate or null;
+  readinessCheckFn = ''
+    readiness_ready() {
+      ${if readinessGate == null
+        then "return 0"
+        else "${readinessGate} >/dev/null 2>&1"}
+    }
+  '';
+
   ## ── The active-colour anchor ──────────────────────────────────────
   ## `<name>-active.service` is a polling SUPERVISOR (defined below).
   ##
@@ -153,6 +185,7 @@ let
   ## transient probe failures on the just-promoted colour don't count
   ## against the new colour.
   activeSupervisorScript = ''
+    ${readinessCheckFn}
     sysctl=${pkgs.systemd}/bin/systemctl
     last_color=""
     unhealthy_streak=0
@@ -173,8 +206,15 @@ let
       fi
 
       if [ "$($sysctl is-active "$want" 2>/dev/null)" != "active" ]; then
-        echo "${name}-active: $want (active colour) not running — starting it"
-        $sysctl start "$want" 2>/dev/null || true
+        # Readiness gate: don't start the colour before its external
+        # prerequisites exist (e.g. oauth2-proxy's OIDC secrets, written
+        # later by Zitadel provisioning). Starting early just crash-loops
+        # the unit into start-limit-hit. Skip this tick; the next one
+        # retries, so the colour comes up the moment the gate passes.
+        if readiness_ready; then
+          echo "${name}-active: $want (active colour) not running — starting it"
+          $sysctl start "$want" 2>/dev/null || true
+        fi
         unhealthy_streak=0
       elif ${healthProbe}; then
         unhealthy_streak=0
@@ -272,6 +312,7 @@ let
   flipScript = ''
     ${writeUpstreamSnippet}
     ${healthGateFn}
+    ${readinessCheckFn}
 
     ${name}_flip() {
       local sysctl=${pkgs.systemd}/bin/systemctl
@@ -326,12 +367,69 @@ let
         echo "${name}-flip: FAILED ($2) — still serving previous version" >&2
       }
 
+      # mark_deferred <colour> <reason>: a flip we INTENTIONALLY postpone —
+      # not a failure. Used when Caddy is mid-restart this rebuild, so a
+      # colour whose startup talks to SSO through Caddy can't health-gate
+      # yet. Same marker file (so the UI nudges a re-apply) but flagged
+      # `deferred` + `failed:false` so the reporter words it as "finishes
+      # on re-apply", not "failed". active-closure is left unchanged by the
+      # caller, so the next rebuild re-runs the flip once Caddy is back up.
+      mark_deferred() {
+        ${pkgs.coreutils}/bin/printf \
+          '{"failed": false, "deferred": true, "service": "%s", "attempted_color": "%s", "attempted_closure": "%s", "reason": "%s", "timestamp": "%s"}\n' \
+          "${name}" "$1" "$desired_closure" "$2" "$(${pkgs.coreutils}/bin/date -Is)" \
+          > "${marker}"
+        echo "${name}-flip: deferred ($2) — current colour keeps serving" >&2
+      }
+
+      # reload_caddy: a few attempts, covering the brief window where Caddy
+      # is active but :2019 hasn't rebound (e.g. just finished restarting).
+      reload_caddy() {
+        local i
+        for i in 1 2 3 4 5; do
+          if $sysctl reload caddy 2>/dev/null; then return 0; fi
+          ${pkgs.coreutils}/bin/sleep 1
+        done
+        return 1
+      }
+
+      # A rebuild that changes the Caddy PACKAGE stops caddy during the
+      # activation phase — exactly when this flip runs. Reloading it, or
+      # health-gating a colour that reaches SSO through it, then fails
+      # spuriously. Detect that once: when down we skip the (pointless)
+      # reload — Caddy reads the upstream snippet on its fresh post-
+      # activation start — and treat a health-gate timeout as a clean
+      # defer rather than a failure.
+      local caddy_down=0
+      if [ "$($sysctl is-active caddy.service 2>/dev/null)" != "active" ]; then
+        caddy_down=1
+        echo "${name}-flip: caddy not active (restarting this rebuild) — will skip its reload; a caddy-dependent colour defers"
+      fi
+
       # 2. Migration branch — first deploy of blue/green for this
       #    service. No pointer files yet; the legacy unit is retired.
       if [ ! -f "$statedir/active-color" ]; then
         echo "${name}-flip: first deploy — migrating to blue"
         write_upstream_snippet "$blue_port" || true
         $sysctl stop ${migrateFrom} 2>/dev/null || true
+        # Readiness gate not satisfied → the workload's external
+        # prerequisites (e.g. SSO secrets provisioned asynchronously by
+        # Zitadel AFTER this activation) aren't present yet. Starting blue
+        # now would fail its ExecStartPre and the supervisor would
+        # crash-loop it into start-limit-hit — a failed unit that fails
+        # the whole rebuild and blocks finish-setup. Defer cleanly:
+        # commit the intended pointers (so the supervisor knows the target
+        # colour and Caddy routes to it) but do NOT start blue and do NOT
+        # write a failure marker. The supervisor brings blue up the instant
+        # the prerequisites land — a clean single-pass install. This is a
+        # legitimate "waiting on provisioning" state, not an error.
+        if ! readiness_ready; then
+          echo blue > "$statedir/active-color"
+          echo "$desired_closure" > "$statedir/active-closure"
+          ${pkgs.coreutils}/bin/rm -f "${marker}"
+          echo "${name}-flip: deferred — readiness gate not satisfied; supervisor will start blue once ready"
+          return 0
+        fi
         if $sysctl start ${unitName "blue"} && health_gate ${unitName "blue"} "$blue_port"; then
           # active-color is the single source of truth — the supervisor
           # and the `${name}-snippet` oneshot both derive from it.
@@ -340,13 +438,27 @@ let
           ${pkgs.coreutils}/bin/rm -f "${marker}"
           echo "${name}-flip: migrated — now serving blue"
         else
-          echo "${name}-flip: blue failed on first deploy" >&2
           $sysctl stop ${unitName "blue"} 2>/dev/null || true
           ${lib.optionalString (migrateRollback == "restart-legacy") ''
             $sysctl start ${migrateFrom} 2>/dev/null || true
           ''}
-          mark_failed blue "blue failed to come up on first deploy"
+          if [ "$caddy_down" = 1 ]; then
+            mark_deferred blue "caddy was restarting this rebuild; re-apply to finish"
+          else
+            echo "${name}-flip: blue failed on first deploy" >&2
+            mark_failed blue "blue failed to come up on first deploy"
+          fi
         fi
+        return 0
+      fi
+
+      # Readiness gate for the steady-state path too: if a rebuild
+      # changes the service while its external prerequisites are
+      # (transiently) absent, don't start the standby — it would
+      # crash-loop. Skip the flip cleanly; the current colour keeps
+      # serving and a later rebuild retries once ready. Not a failure.
+      if ! readiness_ready; then
+        echo "${name}-flip: readiness gate not satisfied — skipping flip, current colour keeps serving"
         return 0
       fi
 
@@ -376,20 +488,32 @@ let
         return 0
       fi
 
-      # 5. Health-gate the standby.
+      # 5. Health-gate the standby. A timeout while Caddy is down is most
+      #    likely caused by Caddy being down (the colour can't reach SSO at
+      #    startup), so defer rather than fail — re-apply verifies properly
+      #    once Caddy is back up.
       if ! health_gate "$standby_unit" "$standby_port"; then
         $sysctl stop "$standby_unit" 2>/dev/null || true
-        mark_failed "$standby" "health check timeout"
+        if [ "$caddy_down" = 1 ]; then
+          mark_deferred "$standby" "caddy was restarting this rebuild; re-apply to finish"
+        else
+          mark_failed "$standby" "health check timeout"
+        fi
         return 0
       fi
 
-      # 6. Point Caddy at the standby colour and reload gracefully.
+      # 6. Point Caddy at the standby colour and reload gracefully. When
+      #    Caddy is down (being restarted this rebuild) the reload is both
+      #    impossible AND unnecessary: Caddy reads the freshly-written
+      #    upstream snippet on its post-activation start, so we skip it.
       if ! write_upstream_snippet "$standby_port"; then
         $sysctl stop "$standby_unit" 2>/dev/null || true
         mark_failed "$standby" "could not write upstream snippet"
         return 0
       fi
-      if ! $sysctl reload caddy; then
+      if [ "$caddy_down" = 1 ]; then
+        echo "${name}-flip: caddy down — skipping reload; it reads the new upstream snippet on its fresh start"
+      elif ! reload_caddy; then
         # Roll the snippet back; keep the old colour serving.
         write_upstream_snippet "$( [ "$current" = blue ] && echo "$blue_port" || echo "$green_port" )" || true
         $sysctl stop "$standby_unit" 2>/dev/null || true

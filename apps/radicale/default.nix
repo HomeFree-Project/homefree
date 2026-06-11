@@ -14,7 +14,7 @@ let
     };
   };
 
-  version = "3.6.1.0";
+  version = "3.7.3.0";
   containerDataPath = "/var/lib/radicale-podman";
   port = config.homefree.allocPort "radicale";
 
@@ -61,17 +61,6 @@ let
     [logging]
     level = info
   '';
-
-  preStart = ''
-    mkdir -p ${containerDataPath}
-    mkdir -p ${containerDataPath}/collections
-    ## The tomsquest image runs as uid 2999. Make the data dir
-    ## writable by that user.
-    chown -R 2999:2999 ${containerDataPath} || true
-    ## Replace the in-image config with ours on every boot so a
-    ## config change in this .nix file lands without manual editing.
-    install -m 644 ${radicaleConfig} ${containerDataPath}/config
-  '';
 in
 {
   options.homefree.services.radicale = userOptions;
@@ -99,15 +88,34 @@ in
   };
 
   config = {
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.radicale.enable {
-    radicale = {
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated;
+    ## this declares only the radicale-specific data.
+    ##
+    ## The tomsquest image runs internally as uid 2999; we run the container
+    ## as root (user= unset) and do the chown manually in preStartInit to
+    ## match the original behaviour — the image's internal uid is not stable
+    ## enough to pin as a HomeFree-managed system user.
+    homefree.containers.radicale = lib.mkIf config.homefree.service-options.radicale.enable {
+      runAs = {
+        mode = "root";
+        reason = "image runs internally as uid 2999; chown done manually in preStartInit";
+      };
       image = "tomsquest/docker-radicale:${version}";
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-      ];
+      ## preStart does multiple mkdirs + chown + config install,
+      ## so dataDir is null and the full preStart is in preStartInit.
+      dataDir = null;
+      preStartInit = ''
+        mkdir -p ${containerDataPath}
+        mkdir -p ${containerDataPath}/collections
+        ## The tomsquest image runs as uid 2999. Make the data dir
+        ## writable by that user.
+        chown -R 2999:2999 ${containerDataPath} || true
+        ## Replace the in-image config with ours on every boot so a
+        ## config change in this .nix file lands without manual editing.
+        install -m 644 ${radicaleConfig} ${containerDataPath}/config
+      '';
 
       ports = [
         "0.0.0.0:${toString port}:5232"
@@ -126,24 +134,19 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  };
 
-  systemd.services.podman-radicale = lib.mkIf config.homefree.service-options.radicale.enable  {
-    after = [
-      "dns-ready.service"
-      "zitadel-password-shim.service"
-    ];
-    wants = [ "zitadel-password-shim.service" "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "radicale-prestart" preStart}" ];
+    ## Extra ordering for the zitadel-password-shim dependency, merged
+    ## with the generated dns-ready ordering from the primitive.
+    systemd.services.podman-radicale = lib.mkIf config.homefree.service-options.radicale.enable {
+      after = [ "zitadel-password-shim.service" ];
+      wants = [ "zitadel-password-shim.service" ];
     };
-  };
 
-  ## Radicale's `auth.type = oauth2` validates DAV-client credentials
-  ## against the zitadel-password-shim. Register as a shim consumer so
-  ## the shim's systemd unit runs whenever Radicale is enabled.
-  homefree.service-options.zitadel-password-shim.consumers =
-    lib.optionals config.homefree.service-options.radicale.enable [ "radicale" ];
+    ## Radicale's `auth.type = oauth2` validates DAV-client credentials
+    ## against the zitadel-password-shim. Register as a shim consumer so
+    ## the shim's systemd unit runs whenever Radicale is enabled.
+    homefree.service-options.zitadel-password-shim.consumers =
+      lib.optionals config.homefree.service-options.radicale.enable [ "radicale" ];
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicale) label name project-name;

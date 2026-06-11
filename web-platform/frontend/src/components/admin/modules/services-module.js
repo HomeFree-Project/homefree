@@ -969,7 +969,7 @@ class ServicesModule extends LitElement {
     this.loading = true;
     this.error = null;
     this.searchQuery = '';
-    this.sortKey = 'name';
+    this.sortKey = 'status';
     this.sortDir = 'asc';
     this.apiUnavailable = false;
     this.pollInterval = null;
@@ -980,6 +980,15 @@ class ServicesModule extends LitElement {
     this.hasAuthorizedKeys = false;
     this.undeployedPaths = new Set();
     this.appliedConfig = null;
+    // Frozen display order for the service list ("cards stay put while
+    // editing"). NON-reactive on purpose — set during render() and never
+    // declared as Lit properties, so updating them can't trigger a render
+    // loop. See the stable-order block in render(). _sortOrder is the
+    // label order last committed; _sortOrderSig is the signature of the
+    // inputs that are ALLOWED to resettle it (sort key/dir, the service
+    // set, and appliedConfig — i.e. an Apply).
+    this._sortOrder = [];
+    this._sortOrderSig = '';
     this.openModal = null;
     this.pendingActions = {};
     this.actionErrors = {};
@@ -1570,13 +1579,16 @@ class ServicesModule extends LitElement {
     const childServices = this.getChildServices(service.label);
     const hasChildren = childServices.length > 0;
 
-    // An "external service" is an enabled top-level entry with no systemd
-    // units and no child instances — a reverse-proxy / static-path vhost
-    // configured on the External Proxies page, pointing off-box. It has
-    // no local run-state (systemd reports unknown), so instead of a
-    // meaningless "Unknown" pill we label it "External".
-    const hasUnitsLive = service.systemd_services && service.systemd_services.length > 0;
-    const isExternal = isEnabled && !service.parent && !hasUnitsLive && !hasChildren;
+    // An "external service" is a top-level catalog entry with no systemd
+    // units — a reverse-proxy / static-path vhost configured on the
+    // External Proxies page, pointing off-box. Classifying it is the
+    // backend's job (service.external): the resolver knows each entry's
+    // reverse-proxy host, so it can tell a genuine off-box proxy from an
+    // on-box app whose flake merely omitted systemd-service-names. Trust
+    // that flag instead of re-deriving "external" from "has no live units"
+    // here — the local recompute mislabeled on-box apps (e.g. mosaic) that
+    // forgot to declare their units as "External".
+    const isExternal = service.external === true && isEnabled && !hasChildren;
 
     const statusClass = isExternal
       ? 'external'
@@ -2356,8 +2368,34 @@ class ServicesModule extends LitElement {
     };
     const sortedParents = [...parentServices].sort(cmp);
 
+    // Stable display order — "cards stay put while editing." `cmp` runs on
+    // EVERY render: the 5s status poll and every optimistic toggle both
+    // re-enter here. The appliedConfig freeze (above) keeps the `enabled`/
+    // `exposed` keys stable for catalog apps, but the `status` sort reads
+    // LIVE run-state (statusRank -> getStatusClass) and external-proxy
+    // enable/public live OUTSIDE appliedConfig — so for those a toggle or a
+    // status poll would yank a card to a new row. Freeze the ORDER itself:
+    // only resettle when the user changes the sort, the SET of services
+    // changes (add/remove), or a rebuild lands (appliedConfig changes).
+    // Between those, reuse the prior order so nothing moves mid-edit —
+    // exactly the contract documented above (resettle on Apply or reload).
+    const orderSig = [
+      this.sortKey,
+      this.sortDir,
+      sortedParents.map(s => s.label).slice().sort().join(','), // the SET, order-independent
+      JSON.stringify(appliedServices),                          // changes when an Apply lands
+    ].join('|');
+    if (orderSig !== this._sortOrderSig) {
+      this._sortOrderSig = orderSig;
+      this._sortOrder = sortedParents.map(s => s.label);
+    }
+    const orderIdx = new Map(this._sortOrder.map((l, i) => [l, i]));
+    const stableParents = [...sortedParents].sort(
+      (a, b) => (orderIdx.get(a.label) ?? Infinity) - (orderIdx.get(b.label) ?? Infinity)
+    );
+
     // Filter services based on search query
-    const filteredServices = sortedParents.filter(service => {
+    const filteredServices = stableParents.filter(service => {
       const searchLower = this.searchQuery.toLowerCase();
       return (
         service.name.toLowerCase().includes(searchLower) ||

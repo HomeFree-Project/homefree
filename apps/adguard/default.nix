@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "v0.107.73";
+  version = "v0.108.0-b.88";
   image = "adguard/adguardhome:${version}";
   containerDataPath = "/var/lib/adguardhome-podman";
   port = config.homefree.allocPort "adguard";
@@ -36,7 +36,7 @@ let
       ## See that file for rationale (Tailscale-IP isn't known at Nix
       ## eval time; --bind-dynamic + --interface=tailscale0 binds at
       ## runtime to whatever IP tailscaled assigns).
-      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "fd01::1" ];
+      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "${config.homefree.network.lan-address-v6}" ];
       port = 53;
       anonymize_client_ip = false;
       ratelimit = 0;
@@ -189,89 +189,6 @@ let
   ## so they survive a restore — see lib/secrets-anchor.nix.
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
-  preStart = ''
-    mkdir -p ${containerDataPath}/conf
-    mkdir -p ${containerDataPath}/work
-    mkdir -p ${adguardSecretsDir}
-    chmod 700 ${adguardSecretsDir}
-
-    ${anchor.preamble}
-
-    ## ── Random per-install admin password ──────────────────────────
-    ## The plaintext password is anchored into encrypted
-    ## /etc/nixos/secrets so it survives a restore
-    ## (lib/secrets-anchor.nix). Stored mode 0400 for emergency LAN
-    ## access; the bcrypt hash (spliced into AdGuardHome.yaml) is a
-    ## DERIVATIVE — re-derived via extraInstall whenever it is missing,
-    ## not anchored itself (its random salt would change every boot).
-    ${anchor.anchorSecret {
-      service = "adguard";
-      key = "admin-password";
-      dir = adguardSecretsDir;
-      mkdirMode = null;
-      mode = "400";
-      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
-      extraInstall = ''
-        if [ ! -s ${adguardSecretsDir}/admin-password.bcrypt ]; then
-          # htpasswd -bnBC 10 produces `username:$2y$10$...`; we want
-          # only the hash. -b takes the password on the command line.
-          HASH=$(${pkgs.apacheHttpd}/bin/htpasswd -bnBC 10 "" \
-            "$(cat ${adguardSecretsDir}/admin-password)" \
-            | tr -d '\n' \
-            | sed 's/^://')
-          printf '%s' "$HASH" > ${adguardSecretsDir}/admin-password.bcrypt
-          chmod 400 ${adguardSecretsDir}/admin-password.bcrypt
-        fi
-      '';
-    }}
-
-    ## Splice the bcrypt hash into the generated YAML. We can't put
-    ## the real hash in the Nix expression because (a) it's random per
-    ## install and (b) Nix store contents are world-readable, which
-    ## would defeat the secrecy.
-    HASH=$(cat ${adguardSecretsDir}/admin-password.bcrypt)
-    # Escape characters that have meaning to sed's replacement side:
-    # &, /, and our delimiter |. The hash contains $ and . which are
-    # fine in the replacement context.
-    ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
-    ${pkgs.gnused}/bin/sed \
-      "s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
-      ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml
-    chmod 600 ${containerDataPath}/conf/AdGuardHome.yaml
-
-    ## After (re)generating the AdGuard admin password, refresh
-    ## Caddy's Basic-Auth bridge so the reverse-proxy header reflects
-    ## the current credential. Two-step:
-    ##   1. Restart the bridge (rewrites the env file).
-    ##   2. Reload Caddy so it re-reads EnvironmentFile.
-    ##
-    ## `--no-block` everywhere so we never deadlock on Caddy's own
-    ## activation. If Caddy isn't running yet (initial boot), both
-    ## commands silently no-op and Caddy will pick up the file when
-    ## systemd starts it next.
-    systemctl restart --no-block caddy-adguard-basic-auth.service \
-      2>/dev/null || true
-    systemctl reload --no-block caddy.service 2>/dev/null || true
-
-    ## There is no DNS running yet at port 53, so start a temporary
-    ## proxy service (managed by systemd) so that podman pull works
-
-    # Start the DNS proxy service (systemd manages its lifecycle)
-    systemctl start adguardhome-dns-proxy.service
-
-    # Ensure the proxy is stopped even if the script fails
-    trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
-
-    # Give the proxy a moment to start listening
-    sleep 1
-
-    # Pull the container image (DNS now available via proxy)
-    ${pkgs.podman}/bin/podman pull ${image}
-
-    # Stop the proxy service (AdGuard Home will take over port 53)
-    systemctl stop adguardhome-dns-proxy.service
-  '';
-
   userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -314,11 +231,117 @@ in
   };
 
   config = {
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.adguard.enable {
-    adguardhome = {
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated.
+    ## Extra unit properties (restartTriggers, unitConfig, ExecStopPost,
+    ## LimitNOFILE, Restart override) are in the separate
+    ## systemd.services.podman-adguardhome block below.
+    homefree.containers.adguardhome = lib.mkIf config.homefree.service-options.adguard.enable {
+      ## AdGuard Home requires root for DNS ports (<1024) and --network=host.
+      runAs = {
+        mode = "root";
+        reason = "needs root for DNS port 53 binding and --network=host; CAP_NET_BIND_SERVICE alone is insufficient with --network=host";
+      };
       image = image;
 
-      autoStart = true;
+      ## AdGuard IS the box's LAN resolver, so it must NOT order itself
+      ## after dns-ready — dns-ready is ordered after *it*
+      ## (services/unbound/default.nix `dnsUnits`). Leaving the
+      ## app-platform default (dnsReady = true) creates a systemd ordering
+      ## cycle (podman-adguardhome -> dns-ready -> podman-adguardhome) that
+      ## systemd breaks by deleting one job at random: on the boots where it
+      ## drops podman-adguardhome's start job, AdGuard never comes up and the
+      ## box has no DNS ("no internet"). AdGuard bootstraps its own image
+      ## pull via the temporary adguardhome-dns-proxy (preStartInit below),
+      ## so it doesn't need the dns-ready gate.
+      dnsReady = false;
+
+      ## preStart anchors the admin password, splices the bcrypt hash
+      ## into the config YAML, and manages a temporary DNS proxy for
+      ## image pulls — all of which goes in preStartInit (dataDir = null).
+      dataDir = null;
+      preStartInit = ''
+        mkdir -p ${containerDataPath}/conf
+        mkdir -p ${containerDataPath}/work
+        mkdir -p ${adguardSecretsDir}
+        chmod 700 ${adguardSecretsDir}
+
+        ${anchor.preamble}
+
+        ## ── Random per-install admin password ──────────────────────────
+        ## The plaintext password is anchored into encrypted
+        ## /etc/nixos/secrets so it survives a restore
+        ## (lib/secrets-anchor.nix). Stored mode 0400 for emergency LAN
+        ## access; the bcrypt hash (spliced into AdGuardHome.yaml) is a
+        ## DERIVATIVE — re-derived via extraInstall whenever it is missing,
+        ## not anchored itself (its random salt would change every boot).
+        ${anchor.anchorSecret {
+          service = "adguard";
+          key = "admin-password";
+          dir = adguardSecretsDir;
+          mkdirMode = null;
+          mode = "400";
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
+          extraInstall = ''
+            if [ ! -s ${adguardSecretsDir}/admin-password.bcrypt ]; then
+              # htpasswd -bnBC 10 produces `username:$2y$10$...`; we want
+              # only the hash. -b takes the password on the command line.
+              HASH=$(${pkgs.apacheHttpd}/bin/htpasswd -bnBC 10 "" \
+                "$(cat ${adguardSecretsDir}/admin-password)" \
+                | tr -d '\n' \
+                | sed 's/^://')
+              printf '%s' "$HASH" > ${adguardSecretsDir}/admin-password.bcrypt
+              chmod 400 ${adguardSecretsDir}/admin-password.bcrypt
+            fi
+          '';
+        }}
+
+        ## Splice the bcrypt hash into the generated YAML. We can't put
+        ## the real hash in the Nix expression because (a) it's random per
+        ## install and (b) Nix store contents are world-readable, which
+        ## would defeat the secrecy.
+        HASH=$(cat ${adguardSecretsDir}/admin-password.bcrypt)
+        # Escape characters that have meaning to sed's replacement side:
+        # &, /, and our delimiter |. The hash contains $ and . which are
+        # fine in the replacement context.
+        ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
+        ${pkgs.gnused}/bin/sed \
+          "s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
+          ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml
+        chmod 600 ${containerDataPath}/conf/AdGuardHome.yaml
+
+        ## After (re)generating the AdGuard admin password, refresh
+        ## Caddy's Basic-Auth bridge so the reverse-proxy header reflects
+        ## the current credential. Two-step:
+        ##   1. Restart the bridge (rewrites the env file).
+        ##   2. Reload Caddy so it re-reads EnvironmentFile.
+        ##
+        ## `--no-block` everywhere so we never deadlock on Caddy's own
+        ## activation. If Caddy isn't running yet (initial boot), both
+        ## commands silently no-op and Caddy will pick up the file when
+        ## systemd starts it next.
+        systemctl restart --no-block caddy-adguard-basic-auth.service \
+          2>/dev/null || true
+        systemctl reload --no-block caddy.service 2>/dev/null || true
+
+        ## There is no DNS running yet at port 53, so start a temporary
+        ## proxy service (managed by systemd) so that podman pull works
+
+        # Start the DNS proxy service (systemd manages its lifecycle)
+        systemctl start adguardhome-dns-proxy.service
+
+        # Ensure the proxy is stopped even if the script fails
+        trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
+
+        # Give the proxy a moment to start listening
+        sleep 1
+
+        # Pull the container image (DNS now available via proxy)
+        ${pkgs.podman}/bin/podman pull ${image}
+
+        # Stop the proxy service (AdGuard Home will take over port 53)
+        systemctl stop adguardhome-dns-proxy.service
+      '';
 
       extraOptions = [
         # "--pull=never"
@@ -371,86 +394,93 @@ in
         TZ = config.homefree.system.timeZone;
       };
     };
-  };
 
-  environment.etc."podman-adguardhome-dns.conf".text = ''
-    nameserver 127.0.0.1:53530
-  '';
+    environment.etc."podman-adguardhome-dns.conf".text = ''
+      nameserver 127.0.0.1:53530
+    '';
 
-  # Dedicated systemd service for temporary DNS proxy during image pull
-  # Not auto-started; manually controlled by preStart script
-  systemd.services.adguardhome-dns-proxy = lib.mkIf config.homefree.service-options.adguard.enable {
-    description = "Temporary DNS proxy for AdGuard Home startup";
-    after = [ "unbound.service" ];
-    wants = [ "unbound.service" ];
-    serviceConfig = {
-      Type = "simple";
-      # Use dnsmasq instead of socat - properly handles concurrent UDP DNS queries
-      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq --no-daemon --bind-interfaces --listen-address=127.0.0.1 --listen-address=::1 --port=53 --server=127.0.0.1#53530 --no-resolv --no-hosts --log-queries";
-      Restart = "no";
-      # Clean shutdown
-      KillMode = "process";
-      KillSignal = "SIGTERM";
-      TimeoutStopSec = 5;
-      SuccessExitStatus = 143;
+    # Dedicated systemd service for temporary DNS proxy during image pull
+    # Not auto-started; manually controlled by preStart script
+    systemd.services.adguardhome-dns-proxy = lib.mkIf config.homefree.service-options.adguard.enable {
+      description = "Temporary DNS proxy for AdGuard Home startup";
+      after = [ "unbound.service" ];
+      wants = [ "unbound.service" ];
+      serviceConfig = {
+        Type = "simple";
+        # Use dnsmasq instead of socat - properly handles concurrent UDP DNS queries
+        ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq --no-daemon --bind-interfaces --listen-address=127.0.0.1 --listen-address=::1 --port=53 --server=127.0.0.1#53530 --no-resolv --no-hosts --log-queries";
+        Restart = "no";
+        # Clean shutdown
+        KillMode = "process";
+        KillSignal = "SIGTERM";
+        TimeoutStopSec = 5;
+        SuccessExitStatus = 143;
+      };
     };
-  };
 
-  systemd.services.podman-adguardhome =lib.mkIf config.homefree.service-options.adguard.enable {
-    after = [ "unbound.service" ];
-    wants = [ "unbound.service" ];
-    ## AdGuard is the front-end resolver and caches whatever unbound
-    ## returns. With `cache_optimistic = true` and `cache_ttl_min =
-    ## 3600` it will keep serving a stale answer for up to 12h. When a
-    ## service is toggled public<->private, unbound's local-zone /
-    ## local-data records change (e.g. a private service's AAAA flips
-    ## from a WAN address to NODATA) — but AdGuard would go on handing
-    ## clients the old record, so the service appears unreachable
-    ## (IPv6-preferring browsers connect over WAN to a LAN-only vhost
-    ## and get a blank page). Restarting AdGuard whenever unbound's
-    ## config changes flushes its cache so the new records take effect
-    ## immediately.
-    restartTriggers = [
-      (builtins.toJSON config.services.unbound.settings)
-    ];
-    ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives;
-    ## putting them under serviceConfig renders them into [Service] where
-    ## systemd silently ignores them ("Unknown key '...' in section [Service]").
-    ## They must go under unitConfig to take effect.
-    ##
-    ## Bumped from the default-ish 5×60s to 30×600s so a cold-boot pull-retry
-    ## window (~7.5 min at RestartSec=15s) can ride out the period during
-    ## which unbound's upstream DoT path (TCP/853 to public resolvers) is
-    ## not yet reachable post-`network-online.target`. The previous values
-    ## were never effective anyway because of the section-placement bug, so
-    ## adguardhome was inheriting systemd defaults; this both fixes the
-    ## placement and chooses values that actually survive a cold-cache boot.
-    unitConfig = {
-      StartLimitBurst = 30;
-      StartLimitIntervalSec = 600;
-    };
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "adguardhome-prestart" preStart}" ];
-      # Cleanup any leftover DNS proxy processes on service stop/restart/failure
-      ExecStopPost = [
-        "${pkgs.writeShellScript "adguardhome-cleanup" ''
-          # Stop the DNS proxy service if it's still running
-          systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true
-          # Kill any leftover dnsmasq processes on port 53 (belt and suspenders)
-          ${pkgs.procps}/bin/pkill -f "dnsmasq.*--port=53.*--server=127.0.0.1#53530" || true
-        ''}"
+    ## Extra unit properties for the generated podman-adguardhome unit, merged
+    ## with the dns-ready ordering and ExecStartPre from the primitive.
+    systemd.services.podman-adguardhome = lib.mkIf config.homefree.service-options.adguard.enable {
+      after = [ "unbound.service" ];
+      wants = [ "unbound.service" ];
+      ## AdGuard is the front-end resolver and caches whatever unbound
+      ## returns. With `cache_optimistic = true` and `cache_ttl_min =
+      ## 3600` it will keep serving a stale answer for up to 12h. When a
+      ## service is toggled public<->private, unbound's local-zone /
+      ## local-data records change (e.g. a private service's AAAA flips
+      ## between the inside LAN ULA and the public WAN address) — but
+      ## AdGuard would go on handing clients the old record, so the service
+      ## appears unreachable (IPv6-preferring clients connect to the wrong
+      ## address and get a blank page). Restarting AdGuard whenever unbound's
+      ## config changes flushes its cache so the new records take effect
+      ## immediately.
+      restartTriggers = [
+        (builtins.toJSON config.services.unbound.settings)
       ];
-      ## Bump ulimit
-      LimitNOFILE = 65535;
-      Restart = lib.mkForce "on-failure";
-      RestartSec = 15;
+      ## StartLimitBurst / StartLimitIntervalSec are [Unit]-section directives;
+      ## putting them under serviceConfig renders them into [Service] where
+      ## systemd silently ignores them ("Unknown key '...' in section [Service]").
+      ## They must go under unitConfig to take effect.
+      ##
+      ## Bumped from the default-ish 5×60s to 30×600s so a cold-boot pull-retry
+      ## window (~7.5 min at RestartSec=15s) can ride out the period during
+      ## which unbound's upstream DoT path (TCP/853 to public resolvers) is
+      ## not yet reachable post-`network-online.target`. The previous values
+      ## were never effective anyway because of the section-placement bug, so
+      ## adguardhome was inheriting systemd defaults; this both fixes the
+      ## placement and chooses values that actually survive a cold-cache boot.
+      unitConfig = {
+        StartLimitBurst = 30;
+        StartLimitIntervalSec = 600;
+      };
+      serviceConfig = {
+        ExecStopPost = [
+          "${pkgs.writeShellScript "adguardhome-cleanup" ''
+            # Stop the DNS proxy service if it's still running
+            systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true
+            # Kill any leftover dnsmasq processes on port 53 (belt and suspenders)
+            ${pkgs.procps}/bin/pkill -f "dnsmasq.*--port=53.*--server=127.0.0.1#53530" || true
+          ''}"
+        ];
+        ## Bump ulimit
+        LimitNOFILE = 65535;
+        Restart = lib.mkForce "on-failure";
+        RestartSec = 15;
+      };
     };
-  };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.adguard) label name project-name;
       port-request = null;
       enable = config.homefree.service-options.adguard.enable;
+      ## Pinned to AdGuard Home's beta channel (v…-b.NN); each beta build
+      ## is its own tag shape, so track the pre-release LINE explicitly
+      ## (advances b.88 -> b.90, and would jump to a newer stable too).
+      version-tracking = {
+        strategy = "docker-hub";
+        repo = "adguard/adguardhome";
+        channel = "prerelease";
+      };
       systemd-service-names = [
         "podman-adguardhome"
       ];
@@ -534,4 +564,3 @@ in
     }];
   };
 }
-

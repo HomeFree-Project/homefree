@@ -43,6 +43,8 @@ from resolvers.secrets import router as secrets_router
 from resolvers.backups import router as backups_router
 from resolvers.storage import router as storage_router
 from resolvers.alerts import router as alerts_router
+from resolvers.app_versions import router as app_versions_router
+from resolvers.source_iso import router as source_iso_router
 
 # Configure logging
 logging.basicConfig(
@@ -149,6 +151,70 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         if cls._dev_mode_cache is None:
             cls._dev_mode_cache = os.environ.get("HOMEFREE_DEVELOPMENT") == "1"
         return cls._dev_mode_cache
+
+    ## Where Caddy's ACME storage keeps issued certs. Same path the
+    ## @sso_gate / certRedirect globs in services/caddy/default.nix peek
+    ## at. The `*` covers the ACME CA directory name (LE prod/staging,
+    ## ZeroSSL) — any of them.
+    CADDY_CERT_GLOB = (
+        "/var/lib/caddy/.local/share/caddy/certificates/*/{host}/{host}.crt"
+    )
+    ## System domain, read once from the on-disk config. Fixed for the
+    ## life of the process (changing it requires a rebuild → restart).
+    HOMEFREE_CONFIG_FILE = Path("/etc/nixos/homefree-config.json")
+    _domain_cache = None
+
+    @classmethod
+    def _domain(cls) -> str:
+        if cls._domain_cache is None:
+            try:
+                import json
+                cfg = json.loads(cls.HOMEFREE_CONFIG_FILE.read_text())
+                cls._domain_cache = cfg["system"]["domain"]
+            except Exception:
+                cls._domain_cache = ""
+        return cls._domain_cache
+
+    @classmethod
+    def _sso_gate_cert_present(cls, request: Request) -> bool:
+        """Mirror the cert clause of services/caddy/default.nix's
+        @sso_gate matcher.
+
+        Caddy only runs the SSO `forward_auth` (and thus only sets the
+        X-Auth-Request-* headers) once a TLS cert exists for the vhost's
+        canonical HTTPS host. Until then it serves the site open on plain
+        HTTP on the LAN — SSO over OIDC fundamentally needs a working
+        HTTPS auth.<domain>, so enforcing the gate before any cert lands
+        would just 502 and lock the operator out.
+
+        The backend MUST match that decision. If it didn't, then in the
+        no-cert window Caddy would forward an unauthenticated request
+        (no header) while this middleware rejected it with
+        "missing X-Auth-Request-User" — exactly the breakage this guards
+        against. We check the SAME glob, keyed on the SAME canonical host
+        Caddy uses, at request time (no caching) so enforcement flips on
+        the instant the cert lands, no restart.
+
+        admin-api backs two SSO-gated vhosts — admin.<domain> and
+        home.<domain> — and each Caddy gate keys on its OWN canonical
+        host's cert. A request to home.<domain> resolves to the home
+        cert; everything else (admin.<domain>, the bare LAN IP,
+        http.<localDomain>) is served by the admin vhost, whose gate
+        keys on admin.<domain>.
+
+        Returns True (cert present → enforce) when the domain can't be
+        determined, so a fully-provisioned box never silently opens — the
+        config file always exists post-setup.
+        """
+        import glob
+        domain = cls._domain()
+        if not domain:
+            return True
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        canonical = (
+            f"home.{domain}" if host == f"home.{domain}" else f"admin.{domain}"
+        )
+        return bool(glob.glob(cls.CADDY_CERT_GLOB.format(host=canonical)))
 
     ## Stale-claim recovery cache for _live_admin_lookup().
     ##
@@ -292,6 +358,20 @@ class TrustedHeaderAuthMiddleware(BaseHTTPMiddleware):
         # mode, so this never relaxes a real deployment — and admin-api
         # listens on loopback only regardless.
         if self._is_dev_mode():
+            return await call_next(request)
+
+        # TLS-cert gate parity with Caddy's @sso_gate. Caddy skips its
+        # SSO forward_auth — and therefore never sets X-Auth-Request-* —
+        # until the canonical host's cert is issued, serving the site
+        # open on plain HTTP in the meantime (SSO over OIDC needs a
+        # working HTTPS auth.<domain>). Mirror that here: while the cert
+        # is absent the whole admin UI + API stays open, exactly as the
+        # gate intends. Without this the static shell loads but every
+        # /api/* call 401s with "missing X-Auth-Request-User", because
+        # Caddy forwarded it through unauthenticated. Checked per request
+        # (like Caddy's CEL file()), so enforcement turns on the instant
+        # the cert lands — no restart.
+        if not self._sso_gate_cert_present(request):
             return await call_next(request)
 
         user = request.headers.get(self.USER_HEADER) \
@@ -516,6 +596,8 @@ app.include_router(secrets_router)
 app.include_router(backups_router)
 app.include_router(storage_router)
 app.include_router(alerts_router)
+app.include_router(app_versions_router)
+app.include_router(source_iso_router)
 
 # Startup event handler
 @app.on_event("startup")
@@ -546,6 +628,69 @@ async def clear_service_restart_flag():
         BackupOperations.start_prewarm_thread()
     except Exception as e:
         logger.error(f"Error starting backup path cache pre-warm: {e}")
+
+    # One-shot migration of the plugin-flakes JSON key:
+    # `developers.flakes` → `plugins.flakes`. The Plugins page used to be
+    # called Developers and stored its registered flakes under the legacy
+    # key. Renamed to make the JSON match the UI. Idempotent: a no-op if
+    # `plugins.flakes` already exists or `developers.flakes` is absent.
+    # `developers.homefree-base` (alternate-base override) stays put.
+    # TODO(homefree-next): drop this migration once boxes are off the
+    # legacy key.
+    try:
+        _migrate_developers_flakes_to_plugins()
+    except Exception as e:
+        logger.error(f"Error migrating developers.flakes → plugins.flakes: {e}")
+
+
+def _migrate_developers_flakes_to_plugins() -> None:
+    from services.config_writer import ConfigWriter
+    cfg_path = ConfigWriter.CONFIG_FILE
+    if not cfg_path.exists():
+        return
+    raw = cfg_path.read_text()
+    try:
+        cfg = json.loads(raw)
+    except Exception as e:
+        logger.warning(
+            f"Skipping plugins.flakes migration — could not parse "
+            f"{cfg_path}: {e}"
+        )
+        return
+    developers = cfg.get("developers") if isinstance(cfg, dict) else None
+    plugins = cfg.get("plugins") if isinstance(cfg, dict) else None
+    if not isinstance(developers, dict):
+        return
+    legacy_flakes = developers.get("flakes")
+    if not isinstance(legacy_flakes, list):
+        return
+    if isinstance(plugins, dict) and isinstance(plugins.get("flakes"), list):
+        # Already migrated. Drop the legacy key if it lingers so we don't
+        # have two source-of-truth copies (the plugins.flakes write path
+        # is canonical going forward).
+        if "flakes" in developers:
+            developers.pop("flakes", None)
+            _write_migrated_config(cfg_path, cfg, developers)
+        return
+    if not isinstance(plugins, dict):
+        plugins = {}
+        cfg["plugins"] = plugins
+    plugins["flakes"] = legacy_flakes
+    developers.pop("flakes", None)
+    _write_migrated_config(cfg_path, cfg, developers)
+    logger.info(
+        f"Migrated {len(legacy_flakes)} flake(s) from developers.flakes "
+        "to plugins.flakes"
+    )
+
+
+def _write_migrated_config(cfg_path, cfg, developers) -> None:
+    """Atomic write of the migrated config; drops `developers` entirely if
+    it has no remaining children so a fully-migrated config doesn't carry
+    an empty section."""
+    if isinstance(developers, dict) and not developers:
+        cfg.pop("developers", None)
+    cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=False) + "\n")
 
 # Request/Response Models
 class NetworkConfigRequest(BaseModel):
@@ -1998,6 +2143,36 @@ async def _resolve_user_id_by_name(cx, base: str, username: str) -> str:
     return users[0]["id"]
 
 
+async def _wait_user_searchable(cx, base, username, *,
+                                timeout=3.0, interval=0.2):
+    """Block until a just-created user is visible to users/_search.
+
+    Zitadel's command API (users/human/_import) returns before the read
+    projection that list_users() queries catches up, so without this the
+    admin UI's immediate re-fetch shows a stale list until a manual
+    reload. Best-effort: returns False on timeout rather than failing
+    the create."""
+    import asyncio
+    import time
+    deadline = time.monotonic() + timeout
+    while True:
+        r = await cx.post(
+            f"{base}/management/v1/users/_search",
+            headers=_zitadel_headers(),
+            json={"queries": [{
+                "userNameQuery": {
+                    "userName": username,
+                    "method": "TEXT_QUERY_METHOD_EQUALS",
+                },
+            }]},
+        )
+        if r.status_code < 400 and (r.json().get("result") or []):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+
+
 @app.get("/api/users/me")
 async def get_current_user(request: Request):
     """Return the currently-authenticated user's record. Auth comes
@@ -2105,6 +2280,12 @@ async def create_user(req: CreateUserRequest):
                 await _set_admin_role(cx, base, user_id, True)
             except HTTPException as e:
                 err = f"User created but admin grant failed: {e.detail}"
+
+        # Wait for the read projection to catch up so the admin UI's
+        # immediate re-fetch includes the new user (Zitadel command vs.
+        # query eventual consistency).
+        if user_id:
+            await _wait_user_searchable(cx, base, req.username)
 
     payload = {"id": user_id, "username": req.username}
     if err:
@@ -2961,6 +3142,67 @@ async def mark_finish_setup_complete():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _require_restore_allowed():
+    """Restore re-keys the secrets store and triggers a rebuild — only allow it
+    while initial setup is still pending (.setup-complete absent). On an already
+    configured box it would be a dangerous, SSO-bypassing operation."""
+    if Path("/var/lib/homefree-secrets/.setup-complete").exists():
+        raise HTTPException(
+            status_code=403,
+            detail="Restore from backup is only available during initial setup.")
+
+
+@app.post("/api/finish-setup/restore/open")
+async def finish_setup_restore_open(request: dict):
+    """Open a backup for restore: pull + summarize its system-config snapshot and
+    verify the operator's SSH private key can decrypt the backed-up secrets."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService, RestoreSetupError
+        try:
+            summary = RestoreSetupService.open_backup(request or {})
+        except RestoreSetupError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse(content=summary)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"restore/open error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to open the backup.")
+
+
+@app.post("/api/finish-setup/restore/apply")
+async def finish_setup_restore_apply(request: dict):
+    """Re-key the backed-up secrets to this box's host key, merge the backup's
+    logical config (optionally onto a new domain), and start a rebuild."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService, RestoreSetupError
+        try:
+            result = RestoreSetupService.apply_restore(request or {})
+        except RestoreSetupError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse(content=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"restore/apply error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to apply the restore.")
+
+
+@app.post("/api/finish-setup/restore/cancel")
+async def finish_setup_restore_cancel(request: dict):
+    """Drop a restore staging session (operator backed out of the restore)."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService
+        RestoreSetupService.cancel((request or {}).get("session_id", ""))
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        logger.error(f"restore/cancel error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel restore.")
+
+
 @app.get("/api/config/current")
 async def get_current_config():
     """Get current NixOS configuration (admin mode only)"""
@@ -3429,9 +3671,9 @@ async def check_system_updates():
         if isinstance(result, dict):
             result["baseOverrideActive"] = SystemUpdates.base_override_active()
             if result["baseOverrideActive"]:
-                from services.developers import DevelopersService
+                from services.plugins import PluginsService
                 result["baseOverrideUrl"] = (
-                    DevelopersService.get_base_override().get("url", "")
+                    PluginsService.get_base_override().get("url", "")
                 )
         return JSONResponse(content=result)
 
@@ -3465,45 +3707,47 @@ async def apply_system_update():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class DeveloperFlakeRequest(BaseModel):
-    """Register/update a custom developer flake."""
+class PluginFlakeRequest(BaseModel):
+    """Register/update a custom plugin flake."""
     name: str
     type: str  # "local" | "remote"
     url: str
+    ref: Optional[str] = None  # pin to a branch / tag / commit (remote only)
     inputName: Optional[str] = None
     moduleAttr: Optional[str] = None
     id: Optional[str] = None
     enabled: Optional[bool] = True
 
 
-class DeveloperFlakeProbeRequest(BaseModel):
+class PluginFlakeProbeRequest(BaseModel):
     """Deep-probe a flake URL before registering it."""
     type: str
     url: str
+    ref: Optional[str] = None  # pin to a branch / tag / commit
     moduleAttr: Optional[str] = None
 
 
-@app.get("/api/developers/flakes")
-async def get_developer_flakes():
-    """List the custom flakes registered via the Developers section."""
+@app.get("/api/plugins/flakes")
+async def get_plugin_flakes():
+    """List the registered plugin flakes."""
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        return JSONResponse(content={"flakes": DevelopersService.list_flakes()})
+        return JSONResponse(content={"flakes": PluginsService.list_flakes()})
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error listing developer flakes: {e}")
+        logger.error(f"Error listing plugin flakes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/developers/flakes")
-async def save_developer_flake(req: DeveloperFlakeRequest):
+@app.post("/api/plugins/flakes")
+async def save_plugin_flake(req: PluginFlakeRequest):
     """
     Register a new custom flake (no id) or update an existing one (with id).
     Rewrites /etc/nixos/flake.nix and custom-flakes.nix; does NOT rebuild —
@@ -3511,45 +3755,45 @@ async def save_developer_flake(req: DeveloperFlakeRequest):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        result = DevelopersService.register_or_update(req.dict())
+        result = PluginsService.register_or_update(req.dict())
         status = 200 if result.get("success") else 400
         return JSONResponse(content=result, status_code=status)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error saving developer flake: {e}")
+        logger.error(f"Error saving plugin flake: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/developers/flakes/{flake_id}")
-async def delete_developer_flake(flake_id: str):
+@app.delete("/api/plugins/flakes/{flake_id}")
+async def delete_plugin_flake(flake_id: str):
     """Remove a registered custom flake. Does not rebuild."""
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        result = DevelopersService.delete_flake(flake_id)
+        result = PluginsService.delete_flake(flake_id)
         status = 200 if result.get("success") else 404
         return JSONResponse(content=result, status_code=status)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting developer flake: {e}")
+        logger.error(f"Error deleting plugin flake: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/developers/flakes/{flake_id}/check-update")
-async def check_developer_flake_update(flake_id: str):
+@app.get("/api/plugins/flakes/{flake_id}/check-update")
+async def check_plugin_flake_update(flake_id: str):
     """
     Probe a registered remote flake's upstream and compare its current
     revision to the rev pinned in flake.lock. Stage-only — does not write
@@ -3557,12 +3801,12 @@ async def check_developer_flake_update(flake_id: str):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        result = DevelopersService.check_flake_update(flake_id)
+        result = PluginsService.check_flake_update(flake_id)
         if result.get("success"):
             status = 200
         elif "No flake with id" in (result.get("message") or ""):
@@ -3574,12 +3818,12 @@ async def check_developer_flake_update(flake_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error checking developer flake update: {e}")
+        logger.error(f"Error checking plugin flake update: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/developers/flakes/{flake_id}/update")
-async def update_developer_flake(flake_id: str):
+@app.post("/api/plugins/flakes/{flake_id}/update")
+async def update_plugin_flake(flake_id: str):
     """
     Re-lock a single remote flake input via `nix flake update <inputName>`.
     Does NOT rebuild — the resulting flake.lock drift surfaces through the
@@ -3587,12 +3831,12 @@ async def update_developer_flake(flake_id: str):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        result = DevelopersService.update_flake(flake_id)
+        result = PluginsService.update_flake(flake_id)
         if result.get("success"):
             status = 200
         elif "No flake with id" in (result.get("message") or ""):
@@ -3604,12 +3848,12 @@ async def update_developer_flake(flake_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating developer flake: {e}")
+        logger.error(f"Error updating plugin flake: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/developers/flakes/validate")
-async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
+@app.post("/api/plugins/flakes/validate")
+async def validate_plugin_flake(req: PluginFlakeProbeRequest):
     """
     Deep-probe a flake URL: confirm it is reachable and exposes the
     requested nixosModules attribute. Best-effort — offline boxes get
@@ -3617,7 +3861,7 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
@@ -3626,9 +3870,12 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
         if req.type == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
         elif req.type == "remote" and url:
-            url = DevelopersService._normalize_remote_url(url)
+            url = PluginsService._normalize_remote_url(url)
+        # Probe the exact ref the user pinned, so "Validate" verifies the
+        # branch/tag/commit actually exists — not just the default branch.
+        url = PluginsService._compose_flake_ref(url, req.ref)
 
-        result = DevelopersService.probe_flake(url, req.moduleAttr or "default")
+        result = PluginsService.probe_flake(url, req.moduleAttr or "default")
         # Surface the canonical form so the UI can show "interpreted as".
         result["normalizedUrl"] = url
         return JSONResponse(content=result)
@@ -3636,7 +3883,7 @@ async def validate_developer_flake(req: DeveloperFlakeProbeRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error validating developer flake: {e}")
+        logger.error(f"Error validating plugin flake: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3651,6 +3898,7 @@ class HomefreeBaseOverrideRequest(BaseModel):
     type: str  # "local" | "remote"
     localUrl: Optional[str] = None
     remoteUrl: Optional[str] = None
+    remoteRef: Optional[str] = None  # pin remote to a branch / tag / commit
     url: Optional[str] = None
 
 
@@ -3658,6 +3906,7 @@ class HomefreeBaseProbeRequest(BaseModel):
     """Deep-probe an alternate HomeFree base repo before enabling it."""
     type: str
     url: str
+    ref: Optional[str] = None  # pin remote to a branch / tag / commit
 
 
 @app.get("/api/developers/homefree-base")
@@ -3668,12 +3917,12 @@ async def get_homefree_base():
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        return JSONResponse(content=DevelopersService.get_base_override())
+        return JSONResponse(content=PluginsService.get_base_override())
 
     except HTTPException:
         raise
@@ -3691,12 +3940,12 @@ async def save_homefree_base(req: HomefreeBaseOverrideRequest):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
-        result = DevelopersService.set_base_override(req.dict())
+        result = PluginsService.set_base_override(req.dict())
         status = 200 if result.get("success") else 400
         return JSONResponse(content=result, status_code=status)
 
@@ -3716,7 +3965,7 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
     """
     try:
         from services.mode import ModeService
-        from services.developers import DevelopersService
+        from services.plugins import PluginsService
 
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
@@ -3725,9 +3974,10 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
         if req.type == "local" and url and not url.startswith("git+file://"):
             url = "git+file://" + url
         elif req.type == "remote" and url:
-            url = DevelopersService._normalize_remote_url(url)
+            url = PluginsService._normalize_remote_url(url)
+            url = PluginsService._compose_flake_ref(url, req.ref)
 
-        result = DevelopersService.probe_base_override(url)
+        result = PluginsService.probe_base_override(url)
         # Surface the canonical form so the UI can show "interpreted as".
         result["normalizedUrl"] = url
         return JSONResponse(content=result)
@@ -3737,6 +3987,301 @@ async def validate_homefree_base(req: HomefreeBaseProbeRequest):
     except Exception as e:
         logger.error(f"Error validating alternate HomeFree base: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/homefree-base/flake-update")
+async def update_homefree_base_flakes():
+    """
+    Run `nix flake update` in the local alternate-base checkout, bumping its
+    flake.lock inputs (nixpkgs and any other flake inputs) to their latest.
+    Requires an ENABLED, LOCAL alternate base — the official upstream tree
+    lives read-only in /nix/store, so its lock can't be rewritten. Does NOT
+    rebuild; the user applies via the global Apply flow afterwards.
+    """
+    import asyncio as _asyncio
+    import os as _os
+    import subprocess
+    from pathlib import Path as _Path
+    from services.mode import ModeService
+    from services.plugins import PluginsService
+
+    if not ModeService.is_admin():
+        raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+    base = PluginsService.get_base_override()
+    if not base.get("enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate HomeFree repository is not enabled. Configure a "
+                   "local checkout before running Update flakes.",
+        )
+    if (base.get("type") or "") != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Update flakes requires a LOCAL alternate base — a remote "
+                   "URL points at a read-only tree.",
+        )
+    local_url = base.get("localUrl") or ""
+    if local_url.startswith("git+file://"):
+        local_url = local_url[len("git+file://"):]
+    local_url = local_url.strip()
+    if not local_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Alternate base is enabled but its local path is empty.",
+        )
+    repo_root = _Path(local_url)
+    if not (repo_root / "flake.nix").is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No flake.nix at {repo_root}. Is the alternate base a "
+                   "HomeFree checkout?",
+        )
+
+    # Give the subprocess a normal system PATH so `nix` and its git/curl
+    # fetchers resolve regardless of the admin-api unit's trimmed PATH.
+    env = dict(_os.environ)
+    env["PATH"] = env.get("PATH", "") + ":/run/current-system/sw/bin"
+
+    # IDLE timeout, not a wall-clock cap: a flake update can legitimately
+    # run for minutes (it fetches metadata + a NAR hash for every input),
+    # so we only abort if nix goes completely silent — i.e. stops emitting
+    # output for IDLE_SECS, which signals a stalled fetch rather than slow
+    # progress. nix streams its progress + "Updated input '...'" lines to
+    # stderr, so we merge stderr into stdout and reset the idle clock on
+    # any bytes. The whole process group is killed on idle so hung child
+    # fetchers (git/curl) die with it.
+    IDLE_SECS = 180
+
+    def _run_idle(cmd):
+        import os
+        import select
+        import signal as _signal
+        import time
+
+        proc = subprocess.Popen(
+            cmd, cwd=str(repo_root), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        fd = proc.stdout.fileno()
+        chunks = []
+        last = time.monotonic()
+        idle = False
+        try:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 1.0)
+                now = time.monotonic()
+                if ready:
+                    data = os.read(fd, 65536)
+                    if not data:
+                        break  # EOF — nix finished writing
+                    chunks.append(data)
+                    last = now
+                elif proc.poll() is not None:
+                    break  # exited, nothing more buffered
+                elif now - last > IDLE_SECS:
+                    idle = True
+                    break
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, _signal.SIGKILL)
+                except Exception:
+                    proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
+        try:
+            rest = os.read(fd, 1 << 20)
+            if rest:
+                chunks.append(rest)
+        except Exception:
+            pass
+        rc = proc.poll()
+        return rc, b"".join(chunks).decode("utf-8", "replace"), idle
+
+    try:
+        rc, out, idle = await _asyncio.to_thread(
+            _run_idle,
+            ["nix", "--extra-experimental-features", "nix-command flakes",
+             "flake", "update"],
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="`nix` was not found on the admin-api PATH.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to run nix flake update: {e}"
+        )
+
+    out = (out or "").strip()
+    if idle:
+        raise HTTPException(
+            status_code=504,
+            detail=f"nix flake update produced no output for {IDLE_SECS}s and "
+                   "was stopped — likely a stalled fetch. Last output: "
+                   f"{out[-600:] or 'none'}",
+        )
+    if rc != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"nix flake update failed (exit {rc}): "
+                   f"{out[-800:] or 'no output'}",
+        )
+    updated = [
+        ln.strip() for ln in out.splitlines()
+        if "Updated input" in ln or "Added input" in ln
+    ]
+    return JSONResponse(content={
+        "success": True,
+        "updated": updated,
+        "output": out[-2000:],
+    })
+
+
+@app.get("/api/developers/homefree-base/nixpkgs")
+async def get_homefree_base_nixpkgs():
+    """
+    Report the nixpkgs commit + commit date pinned in the relevant
+    flake.lock: the local-base checkout's lock when one is configured
+    (what Update flakes rewrites), else the instance lock at
+    /etc/nixos/flake.lock. Shape:
+      { rev, shortRev, date, lastModified, owner, repo, ref, commitUrl,
+        source: "checkout"|"instance" }  — or {} when nothing parseable.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+    from services.mode import ModeService
+    from services.plugins import PluginsService
+
+    if not ModeService.is_admin():
+        raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+    def _extract(lock_path: _Path):
+        try:
+            data = _json.loads(lock_path.read_text())
+        except (OSError, ValueError):
+            return None
+        nodes = data.get("nodes")
+        if not isinstance(nodes, dict):
+            return None
+        # Prefer a node literally named "nixpkgs"; otherwise any node whose
+        # locked source is the nixpkgs repo (covers `nixpkgs-unstable` etc.).
+        node = nodes.get("nixpkgs")
+        if not isinstance(node, dict):
+            node = next(
+                (n for n in nodes.values()
+                 if isinstance(n, dict)
+                 and (n.get("locked") or {}).get("repo") == "nixpkgs"),
+                None,
+            )
+        if not isinstance(node, dict):
+            return None
+        locked = node.get("locked") or {}
+        original = node.get("original") or {}
+        rev = locked.get("rev")
+        if not rev:
+            return None
+        lm = locked.get("lastModified")
+        date = None
+        if isinstance(lm, (int, float)):
+            date = (datetime.fromtimestamp(lm, tz=timezone.utc)
+                    .strftime("%Y-%m-%d %H:%M UTC"))
+        owner = locked.get("owner") or original.get("owner")
+        repo = locked.get("repo") or original.get("repo") or "nixpkgs"
+        commit_url = (
+            f"https://github.com/{owner}/{repo}/commit/{rev}"
+            if owner and (locked.get("type") or original.get("type")) == "github"
+            else None
+        )
+        return {
+            "rev": rev,
+            "shortRev": rev[:12],
+            "lastModified": lm,
+            "date": date,
+            "owner": owner,
+            "repo": repo,
+            "ref": original.get("ref"),
+            "commitUrl": commit_url,
+        }
+
+    candidates = []
+    try:
+        base = PluginsService.get_base_override()
+        if base.get("enabled") and (base.get("type") or "") == "local":
+            local = base.get("localUrl") or ""
+            if local.startswith("git+file://"):
+                local = local[len("git+file://"):]
+            local = local.strip()
+            if local:
+                candidates.append((_Path(local) / "flake.lock", "checkout"))
+    except Exception as e:
+        logger.warning(f"nixpkgs info: base override read failed: {e}")
+    candidates.append((_Path("/etc/nixos/flake.lock"), "instance"))
+
+    for lock_path, source in candidates:
+        info = _extract(lock_path)
+        if info:
+            info["source"] = source
+            return JSONResponse(content=info)
+    return JSONResponse(content={})
+
+
+@app.get("/api/plugin-directory")
+async def get_plugin_directory(refresh: int = 0):
+    """
+    Return the curated plugin catalog from git.homefree.host/homefree-plugins.
+
+    Drives the Plugin Directory section at the top of the Plugins page —
+    each repo in the homefree-plugins org is a self-contained
+    HomeFree-extending flake; users one-click install one and it flows
+    through the same /api/plugins/flakes pipeline as a manual register.
+
+    `refresh=1` bypasses the in-process cache.
+    """
+    try:
+        from services.mode import ModeService
+        from services.plugin_directory import fetch_directory
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        return JSONResponse(content=await fetch_directory(force_refresh=bool(refresh)))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching plugin directory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Backwards-compat aliases for the renamed /api/plugins/flakes* routes.
+# The page was renamed Developers → Plugins; the route group moved to
+# /api/plugins/flakes* and these aliases keep older clients alive through
+# one release. Marked deprecated=True so the OpenAPI schema reflects it.
+# `/api/developers/homefree-base*` is unchanged (the homefree-base
+# override genuinely is a developer feature; only the flakes list got
+# renamed). TODO(homefree-next): remove these aliases.
+for _legacy_path, _method, _handler in (
+    ("/api/developers/flakes", "GET", get_plugin_flakes),
+    ("/api/developers/flakes", "POST", save_plugin_flake),
+    ("/api/developers/flakes/{flake_id}", "DELETE", delete_plugin_flake),
+    ("/api/developers/flakes/{flake_id}/check-update", "GET", check_plugin_flake_update),
+    ("/api/developers/flakes/{flake_id}/update", "POST", update_plugin_flake),
+    ("/api/developers/flakes/validate", "POST", validate_plugin_flake),
+):
+    app.add_api_route(
+        _legacy_path,
+        _handler,
+        methods=[_method],
+        deprecated=True,
+        include_in_schema=False,
+    )
 
 
 # Serve frontend static files

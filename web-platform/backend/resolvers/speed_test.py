@@ -79,21 +79,48 @@ def _now_iso() -> str:
 class _UploadBody:
     """Lazy bytes producer for httpx upload — avoids materialising the full
     payload in RAM. Yields fixed-size chunks of urandom until `size` bytes
-    are sent or the cancel flag is set."""
+    are sent or the cancel/stop flag is set.
 
-    def __init__(self, size: int, cancel_event: threading.Event, chunk: int = 65536):
+    When `counter`/`diag` are supplied, each chunk is tallied AS IT IS SENT
+    (right after httpx pulls it from this iterator and writes it to the
+    socket), not when the whole POST completes. This is what makes upload
+    throughput symmetric with download: on any uplink slower than the
+    per-stream completion rate, a single 25 MB POST does not finish inside
+    the steady-state window, so completion-only counting left the counter
+    at 0 and reported 0.0 Mbps. Counting per chunk reflects the bytes
+    actually pushed onto the wire during the window."""
+
+    def __init__(self, size: int, cancel_event: threading.Event, chunk: int = 65536,
+                 counter: "Optional[_AtomicBytes]" = None,
+                 diag: "Optional[_StreamDiagnostics]" = None,
+                 idx: Optional[int] = None,
+                 stop_event: Optional[threading.Event] = None):
         self.size = size
         self.cancel_event = cancel_event
         self.chunk = chunk
+        self.counter = counter
+        self.diag = diag
+        self.idx = idx
+        self.stop_event = stop_event
 
     def __iter__(self):
         remaining = self.size
         while remaining > 0:
-            if self.cancel_event.is_set():
+            if self.cancel_event.is_set() or (
+                self.stop_event is not None and self.stop_event.is_set()
+            ):
                 return
             n = min(self.chunk, remaining)
             yield os.urandom(n)
             remaining -= n
+            # Tally AFTER the yield resumes — at that point httpx has taken
+            # this chunk and written it to the connection, so it represents
+            # bytes genuinely sent (not merely queued for a POST that may
+            # never finish within the measurement window).
+            if self.counter is not None:
+                self.counter.add(n)
+            if self.diag is not None and self.idx is not None:
+                self.diag.record_bytes(self.idx, n)
 
 
 class _AtomicBytes:
@@ -544,15 +571,22 @@ class SpeedTestResolver:
         stop: threading.Event,
         cancel_event: threading.Event,
     ) -> None:
-        """Worker: POST after POST, counting bytes only AFTER each POST
-        completes successfully (httpx buffers the body iterator, so
-        counting mid-yield over-reports when stop fires)."""
+        """Worker: POST after POST. Bytes are tallied by the body iterator
+        AS THEY ARE SENT (see _UploadBody) rather than once per completed
+        POST — otherwise an uplink too slow to finish a 25 MB POST inside
+        the steady-state window leaves the counter at 0 and reports 0.0
+        Mbps. Passing `stop` into the body also lets an in-flight POST stop
+        producing the instant the window ends, so the worker joins
+        promptly."""
         timeout = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
         try:
             with httpx.Client(timeout=timeout, headers=HTTP_HEADERS) as c:
                 while not stop.is_set() and not cancel_event.is_set():
                     try:
-                        body = _UploadBody(PER_STREAM_UPLOAD_BYTES, cancel_event)
+                        body = _UploadBody(
+                            PER_STREAM_UPLOAD_BYTES, cancel_event,
+                            counter=counter, diag=diag, idx=idx, stop_event=stop,
+                        )
                         r = c.post(
                             f"{CF_BASE}/__up",
                             content=iter(body),
@@ -566,14 +600,17 @@ class SpeedTestResolver:
                             logger.warning("upload stream %d HTTP %s", idx, r.status_code)
                             time.sleep(0.5)
                             continue
-                        # Body was fully transmitted and acked.
-                        counter.add(PER_STREAM_UPLOAD_BYTES)
-                        diag.record_bytes(idx, PER_STREAM_UPLOAD_BYTES)
+                        # Bytes already tallied incrementally by the body
+                        # iterator as they were written to the socket.
                     except Exception as e:
+                        if stop.is_set() or cancel_event.is_set():
+                            # Expected at the window end: stopping the body
+                            # mid-stream sends fewer than the declared
+                            # content-length, which raises here. Not a real
+                            # error — the bytes sent were already counted.
+                            return
                         diag.record_error(idx, f"{type(e).__name__}: {e}")
                         logger.warning("upload stream %d error: %s", idx, e)
-                        if stop.is_set() or cancel_event.is_set():
-                            return
         except Exception as e:
             diag.record_error(idx, f"client init: {type(e).__name__}: {e}")
             logger.warning("upload stream %d client init: %s", idx, e)

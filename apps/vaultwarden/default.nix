@@ -26,106 +26,12 @@ let
   ## Container runs under a dedicated unprivileged host UID instead
   ## of root. The vaultwarden upstream image's default USER is root
   ## but `/start.sh` does no chown-on-entry, so the data dir just has
-  ## to be writable by the target UID. UIDs in the 800–899 range are
-  ## reserved for HomeFree app-container runtimes (NixOS auto-assigns
-  ## system users from 999 downward, so this range stays clear well
-  ## into the foreseeable future).
+  ## to be writable by the target UID. UIDs in the 800-899 range are
+  ## reserved for HomeFree app-container runtimes.
   vaultwardenUid = 801;
   vaultwardenGid = 801;
 
-  ## preStart writes Vaultwarden's OIDC env file from Zitadel
-  ## secrets, plus a combined CA bundle so Vaultwarden's Rust HTTP
-  ## stack trusts sso.<domain>'s Caddy-issued cert.
-  ##
-  ## Vaultwarden 1.36+ has native OIDC. The auto-derived callback
-  ## URI is <DOMAIN>/identity/connect/oidc-signin — that's what we
-  ## register in services/zitadel-provision.nix.
-  ##
-  ## Admin role mapping: Vaultwarden has NO concept of OIDC->admin
-  ## propagation. The admin panel is gated by a separate
-  ## ADMIN_TOKEN (kept disabled for now). Master password is still
-  ## required after SSO — SSO authenticates, master password
-  ## derives the vault encryption key. Users set it on first login.
-  preStart = ''
-    mkdir -p ${containerDataPath}
-
-    ## One-shot chown of the data dir to the dedicated container UID.
-    ## Marker file gates the recursive walk so subsequent boots are a
-    ## no-op even on a multi-GB vault directory. After a UID change
-    ## the operator can `rm` the marker to force a re-chown.
-    if [ ! -f ${containerDataPath}/.chowned-${toString vaultwardenUid} ]; then
-      chown -R ${toString vaultwardenUid}:${toString vaultwardenGid} ${containerDataPath}
-      touch ${containerDataPath}/.chowned-${toString vaultwardenUid}
-    fi
-
-    ## Combined CA bundle (system + Caddy local CA) for Rust
-    ## native-tls. SSL_CERT_FILE env var below points the container
-    ## at this file.
-    {
-      cat /etc/ssl/certs/ca-certificates.crt
-      if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
-        echo
-        cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
-      fi
-    } > ${containerDataPath}/ca-bundle.crt
-    chmod 644 ${containerDataPath}/ca-bundle.crt
-
-    install -m 600 /dev/null ${ssoEnvFile}
-    if [ -s ${secretsDir}/oidc-client-id ] \
-       && [ -s ${secretsDir}/oidc-client-secret ]; then
-      CID=$(cat ${secretsDir}/oidc-client-id)
-      CSEC=$(cat ${secretsDir}/oidc-client-secret)
-      {
-        echo "SSO_ENABLED=true"
-        echo "SSO_AUTHORITY=https://sso.${domain}"
-        echo "SSO_CLIENT_ID=$CID"
-        echo "SSO_CLIENT_SECRET=$CSEC"
-        ## Default scopes are "profile email"; add Zitadel's roles
-        ## scope for future role propagation. Harmless until
-        ## Vaultwarden grows admin-role support upstream.
-        echo "SSO_SCOPES=email profile urn:zitadel:iam:org:project:roles"
-        ## SSO_ONLY=true hides the email/master-password form on
-        ## the login page so users only see the "Sign in with SSO"
-        ## button. Like Homebox's ALLOW_LOCAL_LOGIN=false but
-        ## controlled by a different name. Only set when SSO is
-        ## actually configured.
-        echo "SSO_ONLY=true"
-        ## Match existing-email users on first SSO login so a fresh
-        ## SSO sign-in claims any pre-existing local account with
-        ## the same email instead of creating a duplicate.
-        echo "SSO_SIGNUPS_MATCH_EMAIL=true"
-        ## PKCE is on by default in 1.36+; spell it out for clarity.
-        echo "SSO_PKCE=true"
-        ## Zitadel puts BOTH the client_id AND the project_id in the
-        ## id_token's `aud` array. Vaultwarden by default trusts only
-        ## the client_id and rejects the rest with "Invalid audiences:
-        ## <id> is not a trusted audience". Trust any 18-digit Zitadel
-        ## snowflake ID — Zitadel's audiences are all numeric resource
-        ## IDs of fixed width.
-        echo "SSO_AUDIENCE_TRUSTED=^[0-9]{15,20}$"
-        ## Decouple Vaultwarden's own session lifetime from Zitadel's
-        ## SSO session. With this OFF (the default), Vaultwarden
-        ## re-validates every refresh-token rotation against Zitadel,
-        ## which forces a fresh SSO prompt as soon as Zitadel's
-        ## per-app token expires — often a few hours. With it ON,
-        ## SSO authenticates the user once; thereafter Vaultwarden's
-        ## own access/refresh tokens own the session, so the
-        ## Bitwarden mobile app rotates silently in the background.
-        echo "SSO_AUTH_ONLY_NOT_SESSION=true"
-        ## Refresh token lifetime: default is 30 days. Extend to 1
-        ## year so users away from a network where sso.<domain> is
-        ## reachable don't get locked into a "sign back in" loop
-        ## on the road. Trade-off: a stolen refresh token is valid
-        ## for the full year; acceptable for a personal vault.
-        echo "REFRESH_VALIDITY_SECS=31536000"
-      } > ${ssoEnvFile}
-    else
-      ## Pre-provisioning (fresh install): empty env file. SSO is
-      ## off, local signup-disabled flow is what Vaultwarden serves.
-      : > ${ssoEnvFile}
-    fi
-    chmod 600 ${ssoEnvFile}
-  '';
+  enable = config.homefree.service-options.vaultwarden.enable;
 in
 {
   options.homefree.services.vaultwarden = userOptions;
@@ -153,81 +59,114 @@ in
   };
 
   config = {
-    users.users.vaultwarden = lib.mkIf config.homefree.service-options.vaultwarden.enable {
-      isSystemUser = true;
-      group = "vaultwarden";
-      uid = vaultwardenUid;
-      description = "Vaultwarden container runtime user";
-    };
-    users.groups.vaultwarden = lib.mkIf config.homefree.service-options.vaultwarden.enable {
-      gid = vaultwardenGid;
-    };
+    ## OIDC client descriptor — unconditional, consumed by
+    ## apps/zitadel/provision.nix via homefree.sso.resolved-clients.
+    homefree.sso.clients = [{
+      svc = "vaultwarden";
+      internal_name = "homefree-vaultwarden";
+      ## Vaultwarden 1.36+ confidential OIDC client (Rust server,
+      ## kept server-side).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Vaultwarden auto-derives its callback from DOMAIN. Per
+      ## https://github.com/dani-garcia/vaultwarden/wiki/Enabling-SSO-support-using-OpenId-Connect
+      ## the path is /identity/connect/oidc-signin.
+      redirect_uris = [ "https://vaultwarden.${domain}/identity/connect/oidc-signin" ];
+      post_logout_uris = [ "https://vaultwarden.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-vaultwarden.service" ];
+    }];
 
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
-      vaultwarden = {
-        image = "vaultwarden/server:${version}";
+    ## Container workload via the app-platform primitive
+    ## (modules/app-platform.nix). The chown-marker, CA-bundle synthesis,
+    ## podman dns-ready unit, and the dedicated system user/group are all
+    ## generated; this declares only the vaultwarden-specific data.
+    homefree.containers.vaultwarden = lib.mkIf enable {
+      image = "vaultwarden/server:${version}";
 
-        autoStart = true;
+      ## Drop root inside the container. The vaultwarden image's
+      ## /start.sh does no chown-on-entry - the bind-mounted /data
+      ## just needs to be writable by this UID, which preStart ensures.
+      runAs = { mode = "rootless"; uid = vaultwardenUid; gid = vaultwardenGid; };
+      dataDir = containerDataPath;
 
-        ## Drop root inside the container. The vaultwarden image's
-        ## /start.sh does no chown-on-entry — the bind-mounted /data
-        ## just needs to be writable by this UID, which preStart
-        ## ensures.
-        user = "${toString vaultwardenUid}:${toString vaultwardenGid}";
+      ## Vaultwarden (Rust) fetches Zitadel's OIDC discovery over Caddy's local CA.
+      ## Rust native-tls honors SSL_CERT_FILE (default env var + container path).
+      caBundle = true;
 
-        extraOptions = [
-          # "--pull=always"
-        ];
+      ports = [
+        ## Container-internal listen port is 8080, not the upstream
+        ## image default of 80. Non-root processes cannot bind to
+        ## privileged ports (<1024) and we now run vaultwarden as
+        ## UID 801. ROCKET_PORT below tells the Rocket HTTP server
+        ## to listen on 8080.
+        "0.0.0.0:${toString port}:8080"
+      ];
 
-        ports = [
-          ## Container-internal listen port is 8080, not the upstream
-          ## image default of 80. Non-root processes can't bind to
-          ## privileged ports (<1024) and we now run vaultwarden as
-          ## UID ${toString vaultwardenUid}. ROCKET_PORT below tells
-          ## the Rocket HTTP server to listen on 8080.
-          "0.0.0.0:${toString port}:8080"
-        ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}:/data"
+        ## (the synthesized CA bundle mount is appended by caBundle = true)
+      ];
 
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}:/data"
-          ## Mount the synthesized CA bundle (Caddy local CA + system
-          ## roots) so Vaultwarden's Rust HTTP client trusts
-          ## sso.<domain> when fetching OIDC discovery.
-          "${containerDataPath}/ca-bundle.crt:/etc/ssl/homefree-ca-bundle.crt:ro"
-        ];
-
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          ## DOMAIN drives the redirect_uri Vaultwarden registers
-          ## with Zitadel. Must be the public HTTPS URL — Caddy
-          ## fronts the container at this URL.
-          DOMAIN = "https://vaultwarden.${config.homefree.system.domain}";
-          ## Disable open registration — SSO becomes the only path
-          ## in. Existing local users created BEFORE SSO was wired
-          ## up still log in via SSO_SIGNUPS_MATCH_EMAIL once they
-          ## attempt SSO sign-in.
-          SIGNUPS_ALLOWED = "false";
-          ## Rust native-tls honors SSL_CERT_FILE.
-          SSL_CERT_FILE = "/etc/ssl/homefree-ca-bundle.crt";
-          ## Rocket's listen port. Must be >= 1024 because vaultwarden
-          ## runs as a non-root UID inside the container (see `user`
-          ## above). The container port mapping in `ports` above
-          ## matches this.
-          ROCKET_PORT = "8080";
-        };
-
-        ## OIDC env synthesized by preStart from Zitadel secrets.
-        environmentFiles = [ ssoEnvFile ];
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        ## DOMAIN drives the redirect_uri Vaultwarden registers
+        ## with Zitadel. Must be the public HTTPS URL - Caddy
+        ## fronts the container at this URL.
+        DOMAIN = "https://vaultwarden.${config.homefree.system.domain}";
+        ## Disable open registration - SSO becomes the only path
+        ## in. Existing local users created BEFORE SSO was wired
+        ## up still log in via SSO_SIGNUPS_MATCH_EMAIL once they
+        ## attempt SSO sign-in.
+        SIGNUPS_ALLOWED = "false";
+        ## Rocket's listen port. Must be >= 1024 because vaultwarden
+        ## runs as a non-root UID inside the container.
+        ROCKET_PORT = "8080";
+        ## (SSL_CERT_FILE pointing at the CA bundle is added by caBundle = true)
       };
-    };
 
-    systemd.services.podman-vaultwarden =lib.optionalAttrs config.homefree.service-options.vaultwarden.enable {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
-      serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "vaultwarden-prestart" preStart}" ];
-      };
+      ## OIDC env synthesized by preStartFinal from Zitadel secrets.
+      environmentFiles = [ ssoEnvFile ];
+
+      ## Synthesize Vaultwarden's OIDC env file from the secrets
+      ## zitadel-provision writes. Runs after the CA-bundle synthesis.
+      ##
+      ## Vaultwarden 1.36+ has native OIDC. The auto-derived callback
+      ## URI is <DOMAIN>/identity/connect/oidc-signin.
+      ##
+      ## Admin role mapping: Vaultwarden has NO concept of OIDC->admin
+      ## propagation. The admin panel is gated by a separate
+      ## ADMIN_TOKEN (kept disabled for now). Master password is still
+      ## required after SSO - SSO authenticates, master password
+      ## derives the vault encryption key. Users set it on first login.
+      preStartFinal = ''
+        install -m 600 /dev/null ${ssoEnvFile}
+        if [ -s ${secretsDir}/oidc-client-id ] \
+           && [ -s ${secretsDir}/oidc-client-secret ]; then
+          CID=$(cat ${secretsDir}/oidc-client-id)
+          CSEC=$(cat ${secretsDir}/oidc-client-secret)
+          {
+            echo "SSO_ENABLED=true"
+            echo "SSO_AUTHORITY=https://sso.${domain}"
+            echo "SSO_CLIENT_ID=$CID"
+            echo "SSO_CLIENT_SECRET=$CSEC"
+            echo "SSO_SCOPES=email profile urn:zitadel:iam:org:project:roles"
+            echo "SSO_ONLY=true"
+            echo "SSO_SIGNUPS_MATCH_EMAIL=true"
+            echo "SSO_PKCE=true"
+            echo "SSO_AUDIENCE_TRUSTED=^[0-9]{15,20}$"
+            echo "SSO_AUTH_ONLY_NOT_SESSION=true"
+            echo "REFRESH_VALIDITY_SECS=31536000"
+          } > ${ssoEnvFile}
+        else
+          ## Pre-provisioning (fresh install): empty env file.
+          : > ${ssoEnvFile}
+        fi
+        chmod 600 ${ssoEnvFile}
+      '';
     };
 
     homefree.service-config = [{
@@ -241,8 +180,8 @@ in
         kind = "native_oidc";
         ## Dev context (intentionally not surfaced in the admin UI):
         ## Vaultwarden 1.36+ native OIDC. Master password still
-        ## required after SSO for vault decryption (E2E encryption —
-        ## can't be bypassed).
+        ## required after SSO for vault decryption (E2E encryption -
+        ## cannot be bypassed).
       };
       reverse-proxy = {
         enable = config.homefree.service-options.vaultwarden.enable;

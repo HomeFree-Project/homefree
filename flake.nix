@@ -24,6 +24,16 @@
 
     nix-editor.url = "github:snowfallorg/nix-editor";
 
+    # Always-fresh Claude Code CLI. nixpkgs' claude-code (here on the 25.05
+    # channel) trails Anthropic releases by days/weeks; sadjow/claude-code-nix
+    # republishes the prebuilt native binary within ~1h via an hourly updater.
+    # Applied as an overlay in profiles/common.nix to override the stale
+    # claude-code in that profile's systemPackages. overlays.default builds via
+    # final.callPackage against our pkgs, so `follows` just keeps the lock from
+    # pulling in a second nixpkgs.
+    claude-code.url = "github:sadjow/claude-code-nix";
+    claude-code.inputs.nixpkgs.follows = "nixpkgs";
+
     sops-nix.url = "github:Mic92/sops-nix";
 
     headplane = {
@@ -40,131 +50,28 @@
     #   url = "github:chayleaf/nixos-router";
     #   inputs.nixpkgs.follows = "nixpkgs";
     # };
+
+    ## Dendritic structure (Wave 0c): flake-parts is the module framework and
+    ## import-tree auto-imports every .nix under ./flake-modules. The flake
+    ## outputs (nixosModules, nixosConfigurations, apps, devShells, packages,
+    ## checks) now live in flake-modules/*.nix — a pure structural move; the
+    ## evaluated configs are unchanged (verified by drvPath equality).
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+
+    import-tree.url = "github:vic/import-tree";
+
+    ## web-platform is its own flake (the Python + JS subsystem) with its own
+    ## devShell + checks. homefree re-exports those checks (flake-modules/
+    ## checks.nix). Wiring homefree to also consume its source tree as this
+    ## input (replacing installerWebPath = ../../web-platform) is a later step.
+    web-platform.url = "path:./web-platform";
+    web-platform.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, ... } @ inputs:
-  let
-    system = "x86_64-linux";
-    # Can't use name "inputs" as it gets overridden by parent flakes that define inputs.nixpkgs.lib.nixosSystem
-    homefree-inputs = inputs;
-    # versionInfo = import ./version.nix;
-    # version = versionInfo.version + (inputs.nixpkgs.lib.optionalString (!versionInfo.released) "-dirty");
-    pkgs = import inputs.nixpkgs { inherit system; };
-    update-versions = pkgs.writeShellApplication {
-      name = "update-versions";
-      runtimeInputs = with pkgs; [ python3 skopeo ];
-      text = ''
-        exec python3 ${./scripts/check-container-updates.py} "$@"
-      '';
+  outputs = inputs:
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [ "x86_64-linux" ];
+      imports = (inputs.import-tree ./flake-modules).imports;
     };
-
-    # Helper function to create script apps
-    mkScriptApp = system: pkgs: scriptName: scriptPath: {
-      type = "app";
-      program = "${pkgs.writeShellScriptBin scriptName ''
-        exec ${scriptPath} "$@"
-      ''}/bin/${scriptName}";
-    };
-
-    # Create apps for a specific system
-    mkSystemApps = system: pkgs: {
-      deploy = mkScriptApp system pkgs "deploy" ./scripts/deploy.sh;
-      build-iso-image = mkScriptApp system pkgs "build-image" ./scripts/build-image.sh;
-      flash = mkScriptApp system pkgs "flash" ./scripts/flash.sh;
-      build = mkScriptApp system pkgs "build" ./scripts/build.sh;
-      run-vm = mkScriptApp system pkgs "run" ./scripts/run-vm.sh;
-    };
-  in
-  {
-    apps = {
-      ${system} = (mkSystemApps system inputs.nixpkgs.legacyPackages.${system}) // {
-        update-versions = {
-          type = "app";
-          program = "${update-versions}/bin/update-versions";
-        };
-      };
-    };
-
-    # Development shell with everything ./scripts/run-vm.sh needs to
-    # build an installer image and boot it in QEMU - including swtpm
-    # (emulated TPM2) and virtiofsd (source-tree share / dev mode).
-    devShells.${system}.default = pkgs.mkShell {
-      packages = with pkgs; [
-        qemu            # qemu-system-x86_64 + qemu-img + qemu-bridge-helper
-        swtpm           # emulated TPM2 for --tpm
-        virtiofsd       # source-tree share for the wizard's dev mode
-        OVMF            # UEFI firmware (run-vm.sh also resolves this itself)
-        nix             # build-image / flake builds
-        git
-        jq
-        virt-viewer     # remote-viewer for --virtviewer
-      ];
-      shellHook = ''
-        echo "HomeFree dev shell - VM tooling ready."
-        echo "  nix run .#build           # build the installer ISO"
-        echo "  nix run .#run-vm -- --tpm # boot it with an emulated TPM2"
-      '';
-    };
-
-    nixosModules = rec {
-      homefree = import ./default.nix { inherit homefree-inputs; inherit system; };
-      imports = [ ];
-      default = homefree;
-      lan-client = import ./lan-client.nix { inherit homefree-inputs; inherit system; };
-      ## Per-instance config loader: maps a parsed homefree-config.json
-      ## into homefree.*. The instance flake.nix adds this module and
-      ## provides the parsed JSON + instance dir via specialArgs
-      ## (homefreeConfigJson / homefreeInstanceDir). Kept OUT of the main
-      ## `homefree` module's imports because the repo's own test
-      ## nixosConfigurations don't supply those specialArgs. See
-      ## modules/homefree-config-loader.nix and
-      ## docs/agent-notes/homefree-configuration-nix-is-generated.md.
-      homefree-config-loader = ./modules/homefree-config-loader.nix;
-    };
-
-    nixosConfigurations = {
-      # Note that this uses unstable
-      homefree = inputs.nixpkgs-unstable.lib.nixosSystem {
-        system = system;
-        modules = [
-          self.nixosModules.homefree
-          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
-        ];
-        specialArgs = {
-          system = system;
-          inherit homefree-inputs;
-        };
-      };
-
-      # Note that this uses unstable
-      lan-client = inputs.nixpkgs-unstable.lib.nixosSystem {
-        system = system;
-        modules = [
-          self.nixosModules.lan-client
-          "${inputs.nixpkgs-unstable}/nixos/modules/virtualisation/qemu-vm.nix"
-        ];
-        specialArgs = {
-          system = system;
-          inherit homefree-inputs;
-        };
-      };
-
-      # Default installer - Web-based (replaces Calamares)
-      # Note that this uses STABLE, as the installation CD doesn't necessarily work on unstable
-      homefree-installer = inputs.nixpkgs.lib.nixosSystem {
-        system = system;
-        modules = [
-          ## HomeFree web-based installer
-          ./installer
-        ];
-        specialArgs = {
-          system = system;
-          inherit homefree-inputs;
-        };
-      };
-    };
-    packages.${system} = {
-      inherit update-versions;
-    };
-  };
 }

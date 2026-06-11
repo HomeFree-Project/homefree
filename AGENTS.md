@@ -255,6 +255,22 @@ without being asked.
   declare both itself.
 - `homefree.service-config` entries drive the reverse proxy, backups,
   the admin UI catalog, and SSO metadata.
+- A container app declares its workload via the **app-platform primitive**:
+  one `homefree.containers.<container>` entry per container (the generator
+  emits the user/group, chown, CA-bundle, oci-container, and dns-ready unit).
+  → `docs/agent-notes/app-platform.md`
+- An SSO-gated app declares its OIDC client via the **SSO registry**: a
+  `homefree.sso.clients` push (consumed by `apps/zitadel/provision.nix`),
+  not a hardcoded entry in provision.nix.
+  → `docs/agent-notes/sso-client-registry.md`
+- Behaviour-preserving changes to apps / Caddy are gated by the **snapshot
+  test net** (`nix flake check`); during a refactor the goldens are FROZEN,
+  but any INTENDED output change (version bump, container/preStart/Caddy/SSO
+  edit, app add/remove) MUST regenerate its golden **in the same commit** —
+  and `nixos-rebuild` does NOT run `nix flake check`, so a missed regen
+  deploys fine and the net goes silently red. Run `nix flake check` before
+  calling a snapshot-affecting change done.
+  → `docs/agent-notes/snapshot-test-net.md`
 
 ## Gotchas
 
@@ -271,6 +287,25 @@ Situational knowledge — read the linked note when working in that area:
 - **`dns-ready` ordering** — the DNS-readiness gate must re-arm when
   unbound/adguard restart, or container image pulls race a stale gate.
   → `docs/agent-notes/dns-ready-ordering.md`
+- **Stale DNS after a rebuild** — switch restart bookkeeping is not a
+  guarantee: a `failed (status 4)` switch (e.g. fwupd-refresh, now
+  guarded) makes the retry skip DNS restarts, and even a successful
+  switch's unbound restart has been observed silently ineffective; the
+  `dns-conf-coherence` watchdog self-heals the drift, AdGuard's cache
+  is a second stale layer.
+  → `docs/agent-notes/failed-switch-skips-dns-restarts.md`
+- **LAN-only vhost breaks over IPv6 / off-box DNS** — a `public = false`
+  Caddy vhost binds only the box's LAN addresses (IPv4 + inside ULA via
+  `lan-address-v6`), NOT the WAN IPv6; unbound's split-horizon hands
+  on-box-resolver clients the LAN `A`+`AAAA`. But the domain's wildcard
+  public AAAA points at the box WAN, so a client on a non-box resolver
+  (cellular/VPN/Private-DNS) gets that AAAA, hits the box WAN IPv6 `:443`
+  where the vhost isn't served, and a catch-all returns an empty `200` —
+  silently breaking WebSocket/streaming clients (`Expected HTTP 101 … was
+  '200 OK'`), classically "works until the app is restarted." Fix: make
+  the service `public`, or keep it LAN-only and point the client's
+  resolver at the box.
+  → `docs/agent-notes/lan-only-vhost-ipv6-split-horizon.md`
 - **systemd unit patterns** — restart policy applied to all catalog
   services (a disabled app must set `service-config.enable` or it leaks
   a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap
@@ -286,6 +321,12 @@ Situational knowledge — read the linked note when working in that area:
   colour units; a flip activation script swaps them with zero downtime.
   Never `exit` in an activation script; snippets must precede flips.
   → `docs/agent-notes/blue-green-deployment.md`
+- **oauth2-proxy OIDC readiness gate** — the blue/green readiness gate
+  must probe that Zitadel actually *serves* OIDC discovery (200), not
+  just that the OIDC secrets exist; a secrets-only gate lets a colour
+  start against a restarting Zitadel, which 502s discovery and crash-
+  loops the colour into `start-limit-hit`, failing the rebuild.
+  → `docs/agent-notes/oauth2-proxy-oidc-readiness-gate.md`
 - **Secrets anchoring** — every auto-generated secret must be anchored
   into encrypted `/etc/nixos/secrets` (the only backed-up location) via
   `lib/secrets-anchor.nix`; generating straight into
@@ -362,6 +403,23 @@ Situational knowledge — read the linked note when working in that area:
   parity; reclaim MUST `cryptsetup close` before `mdadm --stop`; create has
   rollback (close+erase) on any raised exception — don't add `return _error()`
   in the encrypted path. → `docs/agent-notes/storage-encryption.md`
+- **DLNA media server (minidlna)** — the Shared Folders page's per-folder
+  `media` toggle is served by a HOST `services.minidlna` (NOT podman: SSDP
+  multicast on 1900/udp can't cross the bridge), driven from
+  `homefree.storage.shares`. LAN-only + unauthenticated; `openFirewall` off
+  (reach via the nftables LAN-accept rule, never WAN). Shares 1900/udp with Home
+  Assistant's SSDP integration (coexist via `SO_REUSEADDR` — verify, don't
+  assume); Jellyfin stays a separate app, not a DLNA engine.
+  → `docs/agent-notes/dlna-media-server.md`
+- **Meilisearch data-migration on minor bumps** — `data.ms` carries a
+  version marker; the engine refuses to start on a newer image until
+  the operator dump/imports or rebuilds. Only `apps/linkwarden`
+  uses it today, and Linkwarden's index is derived from its postgres,
+  so the recovery is: stop, `mv data.ms data.ms.old-<old>`, start
+  fresh, click Re-index in Linkwarden. Don't generalise to apps where
+  meili is the source-of-truth. The `upgrade-apps.py` safety guard
+  doesn't catch this — bumps look semver-clean.
+  → `docs/agent-notes/meilisearch-data-migration.md`
 - **Landing-page edge fronting (Layer 7, opt-in)** — `trusted_proxies`
   must live in Caddy's global `servers { }` block (per-listener, not
   per-site); shipped CIDRs for `cloudflare`/`bunny` need diffing against
@@ -377,12 +435,54 @@ Situational knowledge — read the linked note when working in that area:
   / Sensor 2) deliberately omit limits — skip them in the alert source,
   surface on the Hardware page only.
   → `docs/agent-notes/nvme-threshold-cascade.md`
+- **libvirt bridges vs the router firewall** — an `accept` in another
+  nftables table can't override our default-drop forward chain (push the
+  bridge to `homefree.network.extra-trusted-interfaces` instead), and the
+  router's `flush ruleset` wipes libvirt's table on every rebuild reload
+  (nftables ExecReload/ExecStartPost must try-restart libvirtd). Also:
+  cockpit-machines is libvirt-dbus-only; the flake's test config renders
+  an EMPTY ruleset (router profile gated off).
+  → `docs/agent-notes/libvirt-bridges-and-the-router-firewall.md`
 - **Security audit — Phase 5** — Standing list of residual
   hardening findings beyond the per-app Phases 1–4 work, with
   severity, fix path, and a Status: field per item so the doc
   evolves as fixes land. Read this before starting any new
   hardening work to avoid duplicating effort.
   → `docs/agent-notes/security-audit-phase-5.md`
+- **Deferred cleanup — developers→plugins rename** — Standing
+  punch list of the back-compat surfaces (route aliases, JSON
+  reader fallback, frontend export aliases, one-shot startup
+  migration) tagged `TODO(homefree-next)` to delete once every
+  deployed box has booted on the renamed code.
+  → `docs/agent-notes/developers-to-plugins-rename-cleanup.md`
+- **App-platform primitive** — `homefree.containers.<name>` registry +
+  generator that emits the per-container skeleton (user/group, marker
+  chown, CA-bundle, oci-container, dns-ready unit). How to add/migrate an
+  app, the `runAs` modes (rootless/linuxserver/root + `createUser`), the
+  escape hatch for bespoke postStart/ordering.
+  → `docs/agent-notes/app-platform.md`
+- **SSO client registry** — `homefree.sso.clients`: each SSO-gated app
+  pushes its own OIDC descriptor; `apps/zitadel/provision.nix` consumes the
+  deduped/sorted result instead of a hardcoded catalog.
+  → `docs/agent-notes/sso-client-registry.md`
+- **Snapshot test net** — the app-config / preStart / Caddyfile snapshots
+  + the `frontend-eval` Lit module-eval gate: what each catches, the
+  FROZEN-during-refactor vs regenerate-in-the-same-commit-for-intended-changes
+  discipline, the SILENT-staleness trap (`nixos-rebuild` skips `nix flake
+  check`, so a missed regen deploys fine and the net goes red invisibly), and
+  how to regenerate a golden (incl. the live-VM `vm-state` socket gotcha that
+  breaks impure golden regen).
+  → `docs/agent-notes/snapshot-test-net.md`
+- **Version-tracking strategies** — the App Versions page's per-app
+  `version-tracking` descriptor: core owns a named-strategy catalog
+  (default `image` = unchanged), apps override (github/docker/gitlab/
+  forgejo/nixpkgs/url-regex/command/none). Gotchas: `channel`
+  stable-vs-prerelease anchor reshape + the loose tuple compare for a
+  declared `current-version`; `command` must be a `/nix/store` path;
+  descriptors are keyed per-LABEL but rows per-CONTAINER (primary-container
+  metadata alias); host apps come via `host-apps.json`; NO `release-tracking`
+  shim (would regress nextcloud).
+  → `docs/agent-notes/version-tracking-strategies.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

@@ -228,6 +228,29 @@ it, record the pointers. `migrateRollback` decides what happens if blue
 fails to come up — `"restart-legacy"` (admin-api) brings the old unit
 back; `"leave-down"` (oauth2-proxy) leaves it down for a CLI re-apply.
 
+### Readiness gate — async-provisioned prerequisites
+
+Optional `readinessGate` (a shell command returning 0 when ready). It
+exists for services whose prerequisites are provisioned **asynchronously
+after** activation, so they cannot exist at flip time on a first install.
+oauth2-proxy is the case: its OIDC client-id/secret and cookie secret are
+written by Zitadel's post-activation provisioning job. Without the gate,
+the first-deploy flip and the supervisor (which defaults to blue when no
+pointer exists) start the colour, its `ExecStartPre` secrets check fails,
+the supervisor retries every few seconds, systemd trips
+`start-limit-hit`, and that **failed unit makes the whole rebuild exit
+non-zero** — which on a fresh box leaves finish-setup permanently stuck
+(the wizard only writes `.setup-complete` after a successful finishing
+rebuild).
+
+When set, both the flip and the supervisor consult it: the first-deploy
+flip **commits the pointers but defers the start** (no failure marker —
+it is not an error), and the supervisor starts the colour the instant the
+gate passes. So provisioning writing the secrets brings the service up
+within one poll interval — a clean single-pass install, no re-apply.
+admin-api and any self-contained service simply omit it (defaults to
+always-ready).
+
 ## Using it for a new service
 
 From a service module with `lib` and `pkgs` in scope:
@@ -245,6 +268,8 @@ bg = (import ../../lib/blue-green.nix { inherit lib pkgs; }) {
   migrateFrom     = "my-service.service";
   migrateRollback = "restart-legacy";
   failureMarker   = "my-service-flip-failed.json";
+  # optional: defer start until async-provisioned prerequisites exist
+  # readinessGate = "${mySecretsCheckScript}";
   # order this flip after every OTHER blue/green service's snippet writer
   snippetActivationDeps = [ "admin-api-bg-snippet" "oauth2-proxy-bg-snippet" ];
 };
@@ -262,6 +287,40 @@ For a podman container, set `workload.kind = "oci-container"` with a
 that sets `restartIfChanged = false`. See `apps/zitadel/default.nix`
 (oauth2-proxy) and `services/admin-web/default.nix` (admin-api) for the
 two worked examples.
+
+## Gotcha: a rebuild that restarts Caddy breaks the flip
+
+The flip runs as an **activation script**. `switch-to-configuration`
+stops a unit that needs *restarting* in the stop phase, which runs
+**before** activation scripts — so on any rebuild that changes the Caddy
+**package** (e.g. a `nixpkgs` bump), Caddy is **down while every flip
+runs**. Two ways that bit us (all three errors below were one root
+cause — Caddy down during activation):
+
+- `systemctl reload caddy` in the flip → unit inactive → "caddy reload
+  failed".
+- a colour whose startup reaches SSO *through* Caddy (oauth2-proxy
+  fetches its OIDC discovery doc from `sso.<domain>` at boot) can't come
+  up → health-gate "health check timeout".
+- `caddy-acme-retry` (`wantedBy dns-ready`) fires the instant
+  `caddy.service` goes active, before `:2019` rebinds → `caddy reload`
+  "connection refused", a red failed unit.
+
+You **cannot** wait for Caddy inside the flip/activation — Caddy only
+starts in the post-activation phase, so blocking deadlocks the rebuild
+(same reason `caddy-acme-retry` can't wait inside `ExecReload`).
+
+Fix (all gated on a `caddy_down` check so the normal path is untouched):
+- The flip detects `systemctl is-active caddy != active` and then (a)
+  **skips the reload** — Caddy reads the upstream snippet on its fresh
+  post-activation start, so a caddy-independent colour like admin-api
+  still completes in one pass — and (b) **defers** (not "fails") a colour
+  whose health-gate times out, leaving `active-closure` unchanged so the
+  next rebuild re-runs the flip once Caddy is back. `mark_deferred`
+  writes `deferred:true` and `nix_operations._apply_flip_failure` words
+  it "re-apply to finish", not "failed".
+- `caddy-acme-retry` waits for `:2019` to actually answer before
+  reloading, and exits 0 (skips, no failed unit) if it never comes up.
 
 ## Files
 

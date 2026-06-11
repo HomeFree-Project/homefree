@@ -1,9 +1,14 @@
 { homefree-inputs, config, lib, pkgs, ... }:
 let
   lan-address = config.homefree.network.lan-address;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
-  proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  ## DNS/ingress consumer: read the generic ingress-vhosts registry (label +
+  ## reverse-proxy), NOT homefree.service-config directly — decoupled from the
+  ## service-config schema, same as services/caddy. The composition layer
+  ## projects service-config into it (module.nix, homefree.internal.ingress-vhosts).
+  proxiedHostConfig = lib.filter (vhost: vhost.reverse-proxy.enable == true) config.homefree.internal.ingress-vhosts;
   proxiedDomains = config.homefree.proxied-domains;
   zones = [config.homefree.system.domain] ++ config.homefree.system.additionalDomains;
 
@@ -30,6 +35,26 @@ let
       lib.concatStringsSep "." cleanParts
   ) nonPublicProxiedDomains);
 
+  # Flattened "<subdomain>.<domain>" FQDNs for every NON-public
+  # reverse-proxy service. Shared by the split-horizon local-data so the
+  # same name set gets both a LAN A (IPv4) and a LAN AAAA (ULA) record.
+  # The `public == false` filter mirrors caddy's `bind <lan-address>
+  # <lan-address-v6>` gate (see the caddy.community thread referenced in
+  # the local-data block below).
+  nonPublicProxyFqdns = lib.flatten (lib.map
+    (service-config:
+      lib.flatten (lib.map
+        (subdomain:
+          lib.map
+            (domain: "${subdomain}.${domain}")
+            (service-config.reverse-proxy.http-domains ++ service-config.reverse-proxy.https-domains)
+        )
+        service-config.reverse-proxy.subdomains
+      )
+    )
+    (lib.filter (service-config: service-config.reverse-proxy.public == false) proxiedHostConfig)
+  );
+
   preStart = ''
     touch /run/unbound/include.conf
     cat > /run/unbound/dynamic.zone<< EOF
@@ -45,6 +70,18 @@ let
             IN      NS      localhost.
     EOF
     # cp /run/unbound/dynamic.zone /tmp
+
+    ## Record the hash of the conf this unbound instance is about to load.
+    ## dns-conf-coherence (below) compares this marker against the current
+    ## /etc/unbound/unbound.conf to detect an unbound that is RUNNING with
+    ## stale zone data — which happens when a switch's restart of unbound
+    ## is skipped (failed switch + retry) or silently ineffective (observed
+    ## on a real box: switch-to-configuration printed "stopping/starting
+    ## ... unbound.service" yet ExecMainStartTimestamp never changed).
+    ## ExecStartPre only runs on a REAL start, so an ineffective restart
+    ## leaves the old hash in place and the watchdog catches the drift.
+    sha256sum < "$(readlink -f /etc/unbound/unbound.conf)" \
+      | cut -d' ' -f1 > /run/unbound/loaded-conf.sha256
   '';
 in
 {
@@ -55,8 +92,24 @@ in
   ## For a proper authoritative DNS, look at NSD.
 
   systemd.services.unbound = {
-    after = [ "nftables.service" ];
-    wants = [ "nftables.service" ];
+    ## Order unbound after the network is actually ONLINE — not merely
+    ## after `network.target` (interfaces configured). unbound forwards
+    ## all recursion to its DoT upstreams (Quad9 / Cloudflare on :853)
+    ## and, with DNSSEC validation enabled (`auto-trust-anchor-file`
+    ## below), it must fetch the root `. DNSKEY` rrset from one of them to
+    ## PRIME the validator before it will answer ANY recursive query. The
+    ## upstream NixOS module orders unbound only after `network.target`,
+    ## so on a fresh box it started ~5s BEFORE `network-online.target` was
+    ## reached, tried to prime while the WAN/DoT path was still
+    ## unreachable, and logged "failed to prime trust anchor -- could not
+    ## fetch DNSKEY rrset . DNSKEY IN" — SERVFAILing every recursive query
+    ## until a later retry happened to land after the network came up
+    ## ("DNS wasn't working for a while" right after first boot). Gating
+    ## on `network-online.target` makes the first prime attempt land once
+    ## upstream is reachable. No dependency cycle: network-online does not
+    ## depend on DNS (wait-online only needs an interface with an IP).
+    after = [ "nftables.service" "network-online.target" ];
+    wants = [ "nftables.service" "network-online.target" ];
     serviceConfig = {
       ExecStartPre = [ "!${pkgs.writeShellScript "unbound-prestart" preStart}" ];
       # Allow Unbound to use configured outgoing-range (8192 ports)
@@ -189,6 +242,72 @@ in
     };
   };
 
+  ## ── dns-conf-coherence — heal an unbound running with stale zone data ──
+  ##
+  ## switch-to-configuration's restart bookkeeping is not a guarantee:
+  ##   - a FAILED switch (any unrelated unit failing, e.g. fwupd-refresh)
+  ##     leaves the new unit files on disk, so the successful RETRY sees no
+  ##     unit diff and skips the unbound/adguard restarts the failed
+  ##     attempt never performed;
+  ##   - even a successful switch's stop/start of unbound has been observed
+  ##     to be silently ineffective (s-t-c printed "stopping/starting ...
+  ##     unbound.service", yet the process and ExecMainStartTimestamp
+  ##     survived unchanged).
+  ## Either way the box then serves PRE-CHANGE zone data with a perfectly
+  ## correct conf on disk — a freshly enabled app's subdomain NXDOMAINs and
+  ## the operator can't tell why (docs/agent-notes/
+  ## failed-switch-skips-dns-restarts.md). Instead of trusting the switch,
+  ## assert coherence from observed state: unbound's ExecStartPre records
+  ## the hash of the conf it actually loaded (/run/unbound/
+  ## loaded-conf.sha256, see preStart); this timer-driven oneshot compares
+  ## that marker against the current /etc/unbound/unbound.conf and, ONLY on
+  ## mismatch, restarts unbound — plus podman-adguardhome, which fronts it
+  ## on :53 and would otherwise keep serving its own cache of the stale
+  ## answers. A restart re-arms dns-ready via the existing partOf wiring,
+  ## so the heal composes with the image-pull gate like any other DNS
+  ## restart. On a healthy switch the hashes match and this is a no-op.
+  ##
+  ## Benign race: if the timer fires inside a switch's window between
+  ## /etc update and unbound's restart, the unit restarts twice —
+  ## systemd serializes jobs per unit and dns-ready re-arms, so the worst
+  ## case is a second one-second resolution blip.
+  systemd.services.dns-conf-coherence = {
+    description = "Restart DNS services if unbound runs with a stale config";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.writeShellScript "dns-conf-coherence" ''
+        set -eu
+        ## Not running (boot ordering, operator stop, crash-loop): nothing
+        ## to heal — the marker is rewritten on every real start.
+        ${pkgs.systemd}/bin/systemctl is-active --quiet unbound.service || exit 0
+        conf=$(${pkgs.coreutils}/bin/readlink -f /etc/unbound/unbound.conf) || exit 0
+        [ -e "$conf" ] || exit 0
+        current=$(${pkgs.coreutils}/bin/sha256sum < "$conf" | ${pkgs.coreutils}/bin/cut -d' ' -f1)
+        loaded=$(${pkgs.coreutils}/bin/cat /run/unbound/loaded-conf.sha256 2>/dev/null || echo unknown)
+        if [ "$current" != "$loaded" ]; then
+          echo "unbound is running with a stale config (loaded=$loaded current=$current); restarting unbound" >&2
+          ${pkgs.systemd}/bin/systemctl restart unbound.service
+          if ${pkgs.systemd}/bin/systemctl is-active --quiet podman-adguardhome.service; then
+            echo "restarting podman-adguardhome to drop its cache of the stale answers" >&2
+            ${pkgs.systemd}/bin/systemctl restart podman-adguardhome.service
+          fi
+        fi
+      ''}";
+    };
+  };
+
+  systemd.timers.dns-conf-coherence = {
+    description = "Periodic check that unbound serves its current config";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      ## First check shortly after boot (cheap no-op when coherent), then
+      ## every 10 minutes — bounding the stale-DNS window after a broken
+      ## switch to minutes instead of "until someone debugs it".
+      OnBootSec = "5min";
+      OnUnitActiveSec = "10min";
+    };
+  };
+
   services.unbound = {
     enable = true;
 
@@ -300,49 +419,27 @@ in
           ) config.homefree.dns.local.overrides
         )
         ++
-        # Point proxy URLs to internal IP when on LAN
-        (lib.map
-          (fqn: "\"${fqn} IN A ${lan-address}\"")
-          ## Flatten to single list
-          ## e.g. [ "hij.lmnop" "hij.xyz" "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ]
-          (lib.flatten
-            ## Map across all proxy configs
-            ## creating list of lists
-            ## e.g. [ [ "hij.lmnop" "hij.xyz" ] [ "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ] ]
-            (lib.map
-              (service-config:
-                ## Flatten subdomain-domain combinations for individual proxy into single list
-                ## e.g. [ "abc.lmnop" "abc.xyz"  "def.lmnop" "def.xyz" ]
-                lib.flatten
-                ## Create all subdomain-domain combinations, grouped by subdomain
-                ## e.g. [ [ "abc.lmnop" "abc.xyz" ] [ "def.lmnop" "def.xyz" ]]
-                (lib.map
-                  (subdomain:
-                    # Create <subdomain>.<domain> fqn string
-                    (lib.map
-                      (domain: "${subdomain}.${domain}")
-                      (service-config.reverse-proxy.http-domains ++ service-config.reverse-proxy.https-domains)
-                    )
-                  )
-                  service-config.reverse-proxy.subdomains
-                )
-              )
-              ## @TODO: Get rid of this filter
-              ## See: https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
-              # (lib.filter (proxy-config: proxy-config.public == false) proxiedHostConfig)
-
-              ## For services that always need a public IP, e.g. headscale, filter out those with public set to true
-              (lib.filter (service-config: service-config.reverse-proxy.public == false) proxiedHostConfig)
-              # proxiedHostConfig
-            )
-          )
-        )
+        # Point proxy URLs to the internal LAN IPs when on LAN
+        # (split-horizon). A -> LAN IPv4, AAAA -> LAN ULA, over the SAME
+        # non-public FQDN set (nonPublicProxyFqdns, built above). The AAAA
+        # is what lets IPv6-preferring clients on the box's resolver get a
+        # working LAN path instead of NODATA — paired with caddy binding
+        # the ULA on these vhosts. See the caddy.community thread:
+        # https://caddy.community/t/caddy-not-handling-requests-when-listening-on-all-interfaces-serving-a-hostname-mapped-to-an-internal-ip/26384
+        (lib.map (fqn: "\"${fqn} IN A ${lan-address}\"") nonPublicProxyFqdns)
+        ++
+        (lib.map (fqn: "\"${fqn} IN AAAA ${lan-address-v6}\"") nonPublicProxyFqdns)
         ++
         # Point non-public proxied domains to internal IP
         # For redirect zones, only the base domain is needed (wildcards handled automatically)
         # For transparent zones (domains also in additionalDomains), we need explicit entries
         (lib.map
           (domain: "\"${domain} IN A ${lan-address}\"")
+          nonPublicBaseDomains
+        )
+        ++
+        (lib.map
+          (domain: "\"${domain} IN AAAA ${lan-address-v6}\"")
           nonPublicBaseDomains
         )
         # @TODO: Headscale subdomains need internal DNS for DERP connectivity

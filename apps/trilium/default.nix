@@ -64,60 +64,37 @@ in
 
   config = {
 
-  virtualisation.oci-containers.containers = if config.homefree.services.trilium.enable == true then {
-    trilium = {
-      ## SKIPPED Phase 3 UID-pin: the triliumnext/notes image's
-      ## entrypoint ALWAYS starts as root, runs `chown -R` over
-      ## /home/node, and then drops to the internal `node` user
-      ## (uid 1000) via `su`. Setting `user=` forces the container
-      ## to start as a non-root UID, the chown fails with
-      ## "Operation not permitted" on every file, and the `su` call
-      ## bombs with "must be suid to work properly". Trilium is
-      ## still non-root in practice (PID 1 runs as root briefly, the
-      ## actual Node.js process runs as node uid 1000), but its data
-      ## files end up owned by host uid 1000 (the OS admin). Fix-
-      ## options: build a custom image with USER set to a different
-      ## fixed UID, or run with --userns=keep-id and a host-side
-      ## uid-1000 owner override.
-      image = "triliumnext/notes:v${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix): the
+  ## dns-ready podman unit and the data-dir mkdir (the entire preStart) are
+  ## generated from this descriptor.
+  homefree.containers.trilium = lib.mkIf config.homefree.services.trilium.enable {
+    ## SKIPPED Phase 3 UID-pin: the triliumnext/notes image's entrypoint
+    ## ALWAYS starts as root, runs `chown -R` over /home/node, then drops to
+    ## the internal `node` user (uid 1000) via `su`. Setting user= forces a
+    ## non-root start, the chown fails "Operation not permitted" on every
+    ## file, and `su` bombs "must be suid to work properly".
+    runAs = { mode = "root"; reason = "image entrypoint chowns /home/node as root then su-drops to node uid 1000; user= breaks it"; };
+    image = "triliumnext/notes:v${version}";
+    dataDir = containerDataPath;
 
-      autoStart = true;
+    ports = [
+      "0.0.0.0:${toString port}:8080"
+    ];
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}:/home/node/trilium-data"
+    ];
 
-      ports = [
-        "0.0.0.0:${toString port}:8080"
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:/home/node/trilium-data"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        TRILIUM_DATA_DIR = "/home/node/trilium-data";
-        ## Disable Trilium's inner login screen — Caddy's SSO gate
-        ## is the only auth layer. Trilium opens directly to the
-        ## notes view for anyone who got past the gate.
-        TRILIUM_GENERAL_NOAUTHENTICATION = "true";
-        ## Trust Caddy's X-Forwarded-* headers so Trilium builds
-        ## absolute URLs against the public hostname. Hop count = 1
-        ## (Caddy is the only proxy in front). Express's `trust
-        ## proxy` rejects the literal string "true" via env vars,
-        ## hence the integer.
-        TRILIUM_NETWORK_TRUSTEDREVERSEPROXY = "1";
-      };
-    };
-  } else {};
-
-  systemd.services.podman-trilium = lib.mkIf (config.homefree.services.trilium.enable == true) {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "trilium-prestart" preStart}" ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      TRILIUM_DATA_DIR = "/home/node/trilium-data";
+      ## Disable Trilium's inner login screen — Caddy's SSO gate is the only
+      ## auth layer; Trilium opens directly to the notes view.
+      TRILIUM_GENERAL_NOAUTHENTICATION = "true";
+      ## Trust Caddy's X-Forwarded-* so Trilium builds absolute URLs against
+      ## the public hostname. Express rejects "true" via env, hence integer 1.
+      TRILIUM_NETWORK_TRUSTEDREVERSEPROXY = "1";
     };
   };
 

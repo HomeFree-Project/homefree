@@ -1,4 +1,4 @@
-{ pkgs, lib, config, utils, system, ...}:
+{ pkgs, lib, config, utils, system, homefree-inputs, ...}:
 let
   # Disable SCSI block-device runtime PM for a disk so the kernel does not
   # runtime-suspend it and issue a STOP UNIT (idle spindown). Invoked from a
@@ -18,6 +18,9 @@ in
 
   nixpkgs.overlays = [
     (import ../overlays/backblaze-b2.nix)
+    # Always-fresh Claude Code, overriding the stale nixpkgs claude-code in
+    # environment.systemPackages below. See the input in flake.nix.
+    homefree-inputs.claude-code.overlays.default
   ];
 
   # --------------------------------------------------------------------------------------
@@ -115,19 +118,9 @@ in
     gid = 33;
   };
 
-  ## Wheel-group NOPASSWD: ALL is gated behind
-  ## `homefree.system.wheel-passwordless` (default true — historical
-  ## behaviour; useful for debugging and unattended automation). When
-  ## flipped to false, the rule is omitted and wheel members re-enter
-  ## their password on `sudo`. See module.nix for the option
-  ## declaration and docs/agent-notes/security-audit-phase-5.md for
-  ## the rationale.
-  security.sudo.extraRules = lib.optionals config.homefree.system.wheel-passwordless [
-    {
-      groups = [ "wheel" ];
-      commands = [ { command = "ALL"; options = [ "NOPASSWD" ]; } ];
-    }
-  ];
+  # Wheel-group NOPASSWD and the ssh-key-only password-auth policy live in the
+  # homefree-only profiles/security-policy.nix — this base profile is shared
+  # with lan-client and must not reference homefree.* options.
 
   # --------------------------------------------------------------------------------------
   # Package config
@@ -181,6 +174,10 @@ in
   # Firmware/BIOS updates
   services.fwupd.enable = true;
 
+  ## (fwupd-refresh.restartIfChanged is forced off in the merged
+  ## systemd.services attrset below — a switch must never depend on the
+  ## LVFS CDN being reachable.)
+
   # Setting to true will kill things like tmux on logout
   services.logind.settings.Login.KillUserProcesses = false;
 
@@ -193,22 +190,10 @@ in
   # @TODO: Move to "environment"?
   services.printing.drivers = [ pkgs.brlaser ];
 
-  # Enable the OpenSSH daemon.
-  #
-  # PasswordAuthentication + KbdInteractiveAuthentication are gated
-  # behind `homefree.system.ssh-key-only` (default false — preserves
-  # historical password-login behaviour, mitigated by the WAN
-  # firewall + Phase 4 sshd fail2ban jail). When the option is
-  # flipped to true, only SSH public-key auth is accepted — confirm
-  # the admin user already has a working SSH key first or remote
-  # access is lost. See docs/agent-notes/security-audit-phase-5.md.
-  services.openssh = {
-    enable = true;
-    settings = lib.mkIf config.homefree.system.ssh-key-only {
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
-    };
-  };
+  # Enable the OpenSSH daemon. The ssh-key-only PasswordAuthentication policy
+  # lives in the homefree-only profiles/security-policy.nix (not here — this
+  # base profile is shared with lan-client).
+  services.openssh.enable = true;
 
   # This will save you money and possibly your life!
   services.thermald.enable = true;
@@ -325,7 +310,23 @@ in
           IOSchedulingClass = "idle";
         };
       }
-  ) config.services.btrfs.autoScrub.fileSystems);
+  ) config.services.btrfs.autoScrub.fileSystems)
+  // {
+    ## fwupd-refresh is a oneshot that downloads LVFS metadata over the
+    ## network. With the NixOS default (restartIfChanged = true), any
+    ## rebuild that changes its unit (e.g. an fwupd bump via flake.lock)
+    ## RE-RUNS the download in the middle of the switch — and one LVFS
+    ## hiccup / offline moment / DNS-restart blip then fails the unit,
+    ## which fails the ENTIRE switch with status 4 ("the following units
+    ## failed: fwupd-refresh.service"). Observed failing a real admin-UI
+    ## Apply. A failed switch is worse than it looks: the new unit files
+    ## are already on disk, so the retry sees no unit diff and silently
+    ## SKIPS the restarts the failed attempt never performed (see
+    ## docs/agent-notes/failed-switch-skips-dns-restarts.md). Metadata
+    ## freshness is the timer's job (fwupd-refresh.timer keeps running it
+    ## on schedule).
+    fwupd-refresh.restartIfChanged = false;
+  };
 
   environment.systemPackages = with pkgs; [
     (python3.withPackages (python-pkgs: with python-pkgs; [

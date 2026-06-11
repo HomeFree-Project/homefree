@@ -26,7 +26,7 @@
 ## the Alerts page (rather than spawning a separate process per
 ## query).
 
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, homefree-inputs, ... }:
 let
   cfg = config.homefree.alerts;
 
@@ -133,7 +133,7 @@ let
     httpx
   ]);
 
-  webBackend = ../../web-platform/backend;
+  webBackend = homefree-inputs.web-platform.legacyPackages.${pkgs.system}.source + "/backend";
 
   ## Shell wrapper. Mirrors the dashboard-sampler / drive-temp-
   ## sampler pattern in services/admin-web/default.nix. The PATH

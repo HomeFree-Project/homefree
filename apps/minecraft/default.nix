@@ -2,6 +2,15 @@
 let
   version = "2026.5.0";
 
+  ## The DEFAULT image pin, on its own scanner-visible line: the version
+  ## tracker / upgrade-apps.py parse literal `image = "...''${version}";`
+  ## lines only — the previous inline `''${if instance.image-tag ...}`
+  ## expression made minecraft invisible to both (never bumpable, and
+  ## each instance container surfaced as its own row instead of
+  ## collapsing onto this single source pin). Instance image-tag
+  ## overrides are applied where the container is declared.
+  image = "itzg/minecraft-server:${version}";
+
   ## @TODO: Need to manage these ports to avoid conflicts
   initialPort = 25565;
 
@@ -311,7 +320,11 @@ in
       {
         name = "minecraft_${instance.subdomain}";
         value = {
-          image = "itzg/minecraft-server:${if instance.image-tag != null then instance.image-tag else version}";
+          ## Per-instance image-tag override (App Configuration page);
+          ## the default pin is the let-bound `image` above.
+          image = if instance.image-tag != null
+            then "itzg/minecraft-server:${instance.image-tag}"
+            else image;
 
           autoStart = true;
 

@@ -32,6 +32,7 @@ in
     ./profiles/hardware-configuration.nix
     ./profiles/router.nix
     ./profiles/secrets.nix
+    ./profiles/security-policy.nix
     ./profiles/traffic-control.nix
     ./profiles/virtualisation.nix
 
@@ -39,12 +40,16 @@ in
     ./modules/mounts.nix
     ./modules/storage-pools.nix
     ./modules/storage-shares.nix
+    ./modules/media-server.nix
     ./modules/snapshots.nix
     ./modules/service-restart-policy.nix
+    ./modules/app-platform.nix
+    ./modules/sso-clients.nix
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix
     ./modules/setup-state.nix
     ./modules/finish-setup-console.nix
+    ./modules/secrets-recipient-migrate.nix
     ./modules/boot-mirror.nix
     ./modules/auditd.nix
   ]

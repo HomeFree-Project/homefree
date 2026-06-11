@@ -26,7 +26,7 @@ let
   };
 
   ## Image pinned to a known-good tag. Update on review.
-  version = "11.17.0";
+  version = "11.19.1";
 
   containerDataPath = "/var/lib/zwave-js-ui";
   seedDir = "/var/lib/homefree-secrets/zwave-js-ui/seed";
@@ -36,9 +36,11 @@ let
 
   ## /dev/serial/by-id/* is stable across reboots; the device id varies
   ## per stick (e.g. usb-0658_0200-if00 for an Aeotec Z-Stick Gen5).
-  ## Instance config sets this; with no default, enabling the service
-  ## without a deviceId fails Nix evaluation — surfaces the missing
-  ## config at build time instead of at container boot.
+  ## Instance config sets this. It is OPTIONAL: a missing deviceId must
+  ## not fail the build (Z-Wave is an optional peripheral, and the box may
+  ## be built before the stick is attached) — the container then starts
+  ## WITHOUT the USB bind and the UI loads with no controller, with a
+  ## build warning (see `warnings` below) instead of an assertion.
   rawDeviceId = config.homefree.service-options.zwave-js-ui.deviceId;
   ## Accept either the bare id ("usb-0658_0200-if00") or the full path
   ## ("/dev/serial/by-id/usb-0658_0200-if00"). The admin UI and the
@@ -49,24 +51,6 @@ let
   ## exits 125 on first start.
   deviceId = lib.removePrefix "/dev/serial/by-id/" rawDeviceId;
   deviceArg = "/dev/serial/by-id/${deviceId}:/dev/zwave";
-
-  preStart = ''
-    set -eu
-    mkdir -p ${containerDataPath}
-    ## First-run seed: if there's no settings.json yet and a seed
-    ## file exists at the secrets path, copy it (and nodes.json) in.
-    ## After seed, subsequent rebuilds do NOT overwrite — the UI
-    ## owns its store from then on.
-    if [ ! -s ${containerDataPath}/settings.json ] \
-       && [ -d "${seedDir}" ]; then
-      for f in settings.json nodes.json; do
-        if [ -f "${seedDir}/$f" ]; then
-          cp "${seedDir}/$f" "${containerDataPath}/$f"
-          chmod 600 "${containerDataPath}/$f"
-        fi
-      done
-    fi
-  '';
 in
 {
   options.homefree.services.zwave-js-ui = userOptions;
@@ -119,48 +103,74 @@ in
   };
 
   config = {
-    assertions = lib.optional
+    ## Optional-peripheral degradation: enabling the service without a
+    ## deviceId WARNS (not fails). The container still builds and runs;
+    ## the web UI is reachable but has no controller bound until the stick
+    ## is attached and deviceId is set + rebuilt. See the conditional
+    ## `--device` bind below.
+    warnings = lib.optional
       (config.homefree.services.zwave-js-ui.enable && deviceId == "")
-      {
-        assertion = false;
-        message = ''
-          homefree.service-options.zwave-js-ui.deviceId must be set when
-          the service is enabled. Find it with:
-            ls /dev/serial/by-id/
-        '';
+      ''
+        homefree.service-options.zwave-js-ui is enabled but deviceId is
+        unset — Z-Wave JS UI will start WITHOUT a controller. The UI is
+        reachable but cannot manage a Z-Wave network until you attach the
+        USB controller, set deviceId (find it with `ls /dev/serial/by-id/`),
+        and rebuild.
+      '';
+
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit ordering and ExecStartPre are generated;
+    ## this declares only the zwave-js-ui-specific data.
+    homefree.containers.zwave-js-ui = lib.mkIf config.homefree.services.zwave-js-ui.enable {
+      ## zwavejs/zwave-js-ui runs as root internally and requires access
+      ## to the USB Z-Wave stick via --device.
+      runAs = {
+        mode = "root";
+        reason = "image runs as root; needs direct USB device access via --device";
       };
+      image = "zwavejs/zwave-js-ui:${version}";
 
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.services.zwave-js-ui.enable {
-      zwave-js-ui = {
-        image = "zwavejs/zwave-js-ui:${version}";
-        autoStart = true;
+      ## preStart has set -eu + conditional seed logic; dataDir = null
+      ## and the full preStart goes in preStartInit.
+      dataDir = null;
+      preStartInit = ''
+        set -eu
+        mkdir -p ${containerDataPath}
+        ## First-run seed: if there's no settings.json yet and a seed
+        ## file exists at the secrets path, copy it (and nodes.json) in.
+        ## After seed, subsequent rebuilds do NOT overwrite — the UI
+        ## owns its store from then on.
+        if [ ! -s ${containerDataPath}/settings.json ] \
+           && [ -d "${seedDir}" ]; then
+          for f in settings.json nodes.json; do
+            if [ -f "${seedDir}/$f" ]; then
+              cp "${seedDir}/$f" "${containerDataPath}/$f"
+              chmod 600 "${containerDataPath}/$f"
+            fi
+          done
+        fi
+      '';
 
-        extraOptions = [
-          "--network=host"
-          "--device=${deviceArg}"
-        ];
+      ## Only bind the USB controller when a deviceId is configured.
+      ## Without it the container runs deviceless (UI up, no Z-Wave net) —
+      ## podman would otherwise exit 125 trying to mount a nonexistent
+      ## /dev/serial/by-id/ path.
+      extraOptions = [
+        "--network=host"
+      ] ++ lib.optional (deviceId != "") "--device=${deviceArg}";
 
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}:/usr/src/app/store"
-        ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}:/usr/src/app/store"
+      ];
 
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          ## Pin the ports inside the container (defaults match these
-          ## but be explicit so a future image bump can't silently shift
-          ## them and break the Caddy upstream / HA WS URL).
-          PORT = toString port-ui;
-          ZWAVEJS_EXTERNAL_CONFIG = "/usr/src/app/store/.config-db";
-        };
-      };
-    };
-
-    systemd.services.podman-zwave-js-ui = lib.mkIf config.homefree.services.zwave-js-ui.enable {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
-      serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "zwave-js-ui-prestart" preStart}" ];
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        ## Pin the ports inside the container (defaults match these
+        ## but be explicit so a future image bump can't silently shift
+        ## them and break the Caddy upstream / HA WS URL).
+        PORT = toString port-ui;
+        ZWAVEJS_EXTERNAL_CONFIG = "/usr/src/app/store/.config-db";
       };
     };
 

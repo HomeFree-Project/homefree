@@ -35,6 +35,56 @@
           line, e.g. `import /run/homefree/admin-api-upstream.caddy`.
         '';
       };
+
+      ## Generic per-service backup-source registry. The backup primitive
+      ## (services/backup) consumes THIS, not homefree.service-config, so it
+      ## stays decoupled from the service-config schema. Populated by the
+      ## composition layer (config section below) from each service-config
+      ## entry's backup fields. Generic per-entry shape:
+      ## { label, paths, postgres-databases, mysql-databases }.
+      backup-sources = lib.mkOption {
+        type = with lib.types; listOf (submodule {
+          options = {
+            label = lib.mkOption { type = str; };
+            paths = lib.mkOption { type = listOf str; default = [ ]; };
+            postgres-databases = lib.mkOption { type = listOf str; default = [ ]; };
+            mysql-databases = lib.mkOption { type = listOf str; default = [ ]; };
+          };
+        });
+        internal = true;
+        default = [ ];
+        description = "Generic backup-source registry consumed by services/backup, decoupled from service-config.";
+      };
+
+      ## Generic ingress registry consumed by the ingress-related primitives —
+      ## services/caddy (vhosts), services/unbound (split-horizon DNS records),
+      ## profiles/router (WAN firewall ports for public services). Decoupled
+      ## from the service-config schema; each entry is
+      ## { label, reverse-proxy, firewall }. Populated by the composition layer.
+      ingress-vhosts = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic ingress registry (label + reverse-proxy + firewall) consumed by caddy, unbound, and the router.";
+      };
+
+      ## Generic port-request registry consumed by services/port-allocator
+      ## (label + port-request), decoupled from service-config.
+      port-requests = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic port-request registry (label + port-request) consumed by the port allocator.";
+      };
+
+      ## Generic managed-unit registry consumed by modules/service-restart-policy
+      ## (enable + systemd-service-names), decoupled from service-config.
+      managed-units = lib.mkOption {
+        type = with lib.types; listOf attrs;
+        internal = true;
+        default = [ ];
+        description = "Generic managed-unit registry (enable + systemd-service-names) consumed by the restart policy.";
+      };
     };
 
     system = {
@@ -320,6 +370,21 @@
         description = "Internal interface to the local network";
       };
 
+      ## Additional host interfaces granted the trusted-internal
+      ## forwarding class in the router's nftables ruleset: input
+      ## accept + forward to/from LAN and WAN with established return
+      ## paths — the same trust class as the podman bridges. Set by
+      ## modules that create host bridges carrying operator-owned
+      ## workloads (apps/cockpit pushes libvirt's "virbr0" when its
+      ## machines-ui VM support is enabled); not a homefree-config.json
+      ## binding. Values support nftables trailing-asterisk prefix
+      ## matches ("virbr*").
+      extra-trusted-interfaces = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "Extra interfaces the firewall treats as trusted internal networks";
+      };
+
       # QEMU User-Mode Network Details:
       # - Guest IP: Always 10.0.2.15
       # - Gateway/Host: Always 10.0.2.2
@@ -329,6 +394,19 @@
         type = lib.types.str;
         default = "10.0.0.1";
         description = "IP address of the LAN gateway (router address)";
+      };
+
+      lan-address-v6 = lib.mkOption {
+        type = lib.types.str;
+        default = "fd01::1";
+        description = ''
+          Inside (LAN) ULA IPv6 address of the router. Used for the IPv6
+          half of split-horizon: LAN-only vhosts (reverse-proxy.public ==
+          false) bind this address and unbound returns it as the AAAA for
+          those non-public names, so IPv6-preferring clients on the box's
+          resolver get a working LAN path instead of NODATA. Must match the
+          ULA assigned to the LAN interface in profiles/router.nix.
+        '';
       };
 
       lan-subnet = lib.mkOption {
@@ -1198,8 +1276,49 @@
                 NFS server default. Pairs with anon-uid.
               '';
             };
+            media = lib.mkOption {
+              type = bool;
+              default = false;
+              description = ''
+                Expose this folder through the DLNA/UPnP media server (minidlna)
+                so smart TVs and AV receivers on the LAN can browse and play its
+                contents — the same role Synology's "Media Server" played. This
+                is independent of the NFS export (`enabled`): a folder can be
+                media-only, NFS-only, or both.
+
+                SECURITY: DLNA has NO authentication. Any device on the LAN can
+                read an exposed folder's contents. It is LAN-only (the router
+                firewall never exposes DLNA to the WAN). Off by default; tick
+                only for media folders.
+              '';
+            };
+            media-type = lib.mkOption {
+              type = enum [ "all" "audio" "video" "pictures" ];
+              default = "all";
+              description = ''
+                Which media kinds this folder contributes to the DLNA library
+                (only used when `media` is true). Maps to minidlna's media_dir
+                type prefixes:
+                - "all" (default): audio + video + images (no prefix).
+                - "audio":    A, prefix — keeps a music folder out of the TV's
+                              video menu.
+                - "video":    V, prefix.
+                - "pictures": P, prefix.
+              '';
+            };
           };
         });
+      };
+
+      media-server = {
+        friendly-name = lib.mkOption {
+          type = with lib.types; nullOr str;
+          default = null;
+          description = ''
+            Name the DLNA/UPnP media server advertises to TVs and receivers on
+            the LAN. null falls back to the box hostname.
+          '';
+        };
       };
     };
 
@@ -1356,10 +1475,14 @@
         type = lib.types.bool;
         default = false;
         description = ''
-          Master toggle for the alerts engine. Off by default so a
-          fresh HomeFree box does not poll, write state, or surface a
-          notification surface unless the user has explicitly opted in
-          (typically from the admin UI Alerts page).
+          Master toggle for the alerts engine. Fresh installs seed
+          `alerts.enable: true` (plus the ntfy push channel) in
+          homefree-config.json (see install.py's HOMEFREE_JSON_TEMPLATE),
+          so new boxes default ON. This option
+          default (false) — and the loader's matching `or false` — applies
+          only to older configs that predate the alerts block, so
+          upgrading boxes are not silently flipped on. Toggle it from the
+          admin UI Alerts page.
         '';
       };
 
@@ -2396,6 +2519,149 @@
             };
           };
 
+          ## Per-app version-detection override for the admin "Source
+          ## Code" page. HomeFree core owns a catalog of base strategies;
+          ## the DEFAULT (`strategy = "image"`, all params empty) infers
+          ## everything from the OCI image's registry host — i.e. today's
+          ## behaviour, so an app that sets nothing here is unchanged. An
+          ## app whose version the default can't resolve (a fork, a beta
+          ## channel, an odd tag shape, a digest pin, or a non-container
+          ## host app with no image) selects a different strategy and
+          ## parameterises it. The version-detection brain lives in
+          ## web-platform/backend/resolvers/app_versions.py; this is the
+          ## declarative input it consumes (via service-metadata.json).
+          ## Per rule 1 nothing app-specific lives in core — each app
+          ## (and each out-of-tree plugin, in its own repo) declares its
+          ## own descriptor here.
+          version-tracking = {
+            strategy = lib.mkOption {
+              type = lib.types.enum [
+                "image" "github-releases" "github-tags" "docker-hub"
+                "ghcr" "oci-v2" "gitlab" "forgejo" "gitea" "nixpkgs"
+                "url-regex" "command" "none"
+              ];
+              default = "image";
+              description = ''
+                Version-detection strategy. "image" (default) infers the
+                lookup from the OCI image registry — the pre-existing
+                behaviour. The registry strategies force a specific
+                upstream; "nixpkgs" is for host apps whose current version
+                is the build version; "url-regex" / "command" are generic
+                escape hatches; "none" opts the app out (shown as
+                "untracked", not a scary "unknown").
+              '';
+            };
+
+            repo = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Source repo/project the latest version comes from:
+                "<owner>/<name>" for github/forgejo/gitea, a full project
+                path for gitlab, or "<namespace>/<image>" for
+                docker-hub/ghcr/oci-v2 when it differs from the image's.
+              '';
+            };
+
+            registry = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Override registry/API host for docker-hub/ghcr/oci-v2/
+                gitlab/forgejo when it isn't inferable from the image
+                (e.g. "codeberg.org" for a forgejo strategy).
+              '';
+            };
+
+            tag-prefix = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Reserved: an extra literal tag prefix to tolerate beyond
+                the built-in version-/release- set. Prefer tag-pattern.
+              '';
+            };
+
+            tag-pattern = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Regex; only upstream tags matching it are considered.
+                Use to pin a single release stream when a repo publishes
+                several tag shapes.
+              '';
+            };
+
+            channel = lib.mkOption {
+              type = lib.types.enum [ "stable" "prerelease" "any" ];
+              default = "stable";
+              description = ''
+                Pre-release handling for explicit strategies. "stable"
+                (default) ignores -rc/-beta/-bNN tags; "prerelease" tracks
+                a beta line (advancing build numbers); "any" tracks
+                whatever stream the current pin is on. Has no effect on the
+                default "image" strategy.
+              '';
+            };
+
+            current-version = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                Explicit current version when it can't be read from the
+                image tag — host apps (e.g. `pkgs.headscale.version`) and
+                digest-only pins. Compared to the latest by semver tuple,
+                so a "0.26.1" here matches an upstream "v0.26.1".
+              '';
+            };
+
+            url = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "url-regex strategy: page/endpoint to GET.";
+            };
+
+            regex = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = ''
+                url-regex strategy: extraction regex; the first capture
+                group (else the whole match) is the version.
+              '';
+            };
+
+            command = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = ''
+                command strategy: a /nix/store script (declare it IN the
+                app module, e.g. `pkgs.writeShellScript`) the backend runs;
+                its trimmed first stdout line is the latest version. The
+                resolver refuses anything that isn't a store path, so this
+                can never carry runtime/user input.
+              '';
+            };
+
+            update-command = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = ''
+                Custom UPDATER for the admin page's per-row Update button,
+                for apps whose update is not a plain image-pin rewrite
+                (tag-scheme translation, vendored assets, …). A /nix/store
+                script (declare it IN the app module); the backend runs it
+                as `script <checkout-root> <target-version>` against the
+                writable local alternate-base checkout, instead of
+                upgrade-apps.py. Its last stdout line is reported as the
+                new value. Like `command`, only an eval-time store path is
+                accepted — never runtime input. Declaring this makes the
+                row one-click updatable regardless of how its version is
+                tracked; the app takes responsibility for the update being
+                safe.
+              '';
+            };
+          };
+
           systemd-service-names = lib.mkOption {
             type = lib.types.listOf lib.types.str;
             default = [];
@@ -2643,6 +2909,79 @@
                 admin pages) where Caddy's pooled connection gets
                 a TCP RST after the upstream's per-request close,
                 producing intermittent 502s.
+              '';
+            };
+
+            strip-cookies = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy removes the inbound Cookie header
+                (`header_up -Cookie`) before forwarding to this
+                upstream. Default is off (cookies pass through).
+
+                Set this for buffer-constrained embedded HTTP servers
+                — the same class of appliance as `disable-keepalive`
+                (OpenSprinkler, some smart-home gear, older NAS admin
+                pages). HomeFree's SSO session cookie is scoped to the
+                parent domain (oauth2-proxy's COOKIE_DOMAINS), so the
+                browser attaches the large, chunked oauth2 cookie to
+                every `<sub>.<domain>` request — including non-SSO
+                external proxies. A tiny appliance with a ~2 KB request
+                buffer overflows on it and returns "The request was too
+                large". These appliances do not use cookies, so dropping
+                the header is safe. Leave off for normal apps, which
+                need their cookies.
+              '';
+            };
+
+            extra-csp-sources = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [];
+              example = [ "https://ui.opensprinkler.com" ];
+              description = ''
+                Extra origins appended to THIS vhost's Content-Security-
+                Policy fetch directives (script-src, style-src, img-src,
+                font-src, connect-src), on top of the same-origin +
+                `*.<domain>` baseline.
+
+                Almost always leave empty — HomeFree's own pages must
+                never load third-party assets (see AGENTS.md rule 8).
+                The escape hatch exists for proxied THIRD-PARTY
+                appliances whose own UI bootstraps from a vendor CDN —
+                e.g. OpenSprinkler firmware serves a tiny HTML shell that
+                pulls its JavaScript from https://ui.opensprinkler.com.
+                Listing that origin here lets the device's UI load.
+
+                This necessarily loosens this one vhost's CSP and makes
+                the page issue off-box requests, so prefer self-hosting
+                the asset where the device supports repointing it. Only
+                affects external-proxy / non-static vhosts.
+              '';
+            };
+
+            disable-csp = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy does NOT emit a Content-Security-Policy
+                header on this vhost, letting the upstream app serve its
+                own CSP unchanged. All OTHER baseline security headers
+                (HSTS, X-Content-Type-Options, X-Frame-Options,
+                Referrer-Policy, X-XSS-Protection, Permissions-Policy)
+                are still applied.
+
+                Caddy's `header` directive REPLACES the upstream CSP, so
+                the loosened `*.<domain>` + `'unsafe-inline'` +
+                `'unsafe-eval'` baseline (needed by apps like NOMAD's
+                MapLibre and CryptPad) overwrites the stricter policy a
+                well-behaved app sets for itself. Set this for an app
+                that manages its own CSP competently — e.g. FreshRSS,
+                which otherwise warns that the served CSP is unsafe.
+
+                Only use for apps you trust to always emit a sound CSP;
+                a HomeFree-authored page must keep the baseline. Only
+                affects reverse-proxy / non-static vhosts.
               '';
             };
 
@@ -3268,6 +3607,34 @@
   };
 
   config = {
+    ## Composition glue: project each service-config entry's backup fields into
+    ## the generic homefree.internal.backup-sources registry that the backup
+    ## primitive consumes. This homefree-specific mapping keeps the backup
+    ## module itself free of the service-config schema (registry middle-path).
+    homefree.internal.backup-sources = lib.map
+      (entry: {
+        inherit (entry) label;
+        inherit (entry.backup) paths postgres-databases mysql-databases;
+      })
+      config.homefree.service-config;
+
+    ## Composition glue: project the ingress-relevant fields of each
+    ## service-config entry into the generic ingress-vhosts registry that the
+    ## caddy generator consumes (it reads only label + reverse-proxy).
+    homefree.internal.ingress-vhosts = lib.map
+      (entry: { inherit (entry) label reverse-proxy firewall; })
+      config.homefree.service-config;
+
+    ## Composition glue for the remaining generic-primitive consumers (port
+    ## allocator, restart policy) — same pattern, narrow projections.
+    homefree.internal.port-requests = lib.map
+      (entry: { inherit (entry) label port-request; })
+      config.homefree.service-config;
+
+    homefree.internal.managed-units = lib.map
+      (entry: { inherit (entry) label enable systemd-service-names; })
+      config.homefree.service-config;
+
     assertions =
       let
         elemInList = x: xs: lib.foldl' (acc: el: acc || el == x) false xs;

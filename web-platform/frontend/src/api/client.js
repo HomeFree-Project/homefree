@@ -18,13 +18,20 @@ const DEFAULT_TIMEOUT_MS = 8000;
  */
 async function fetchAPI(endpoint, options = {}) {
   try {
-    // Honour a caller-supplied signal if present; otherwise impose the
-    // default timeout. AbortSignal.any keeps both alive when both exist.
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs || DEFAULT_TIMEOUT_MS);
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, timeoutSignal])
-      : timeoutSignal;
     const { timeoutMs, ...fetchOptions } = options;
+    // `timeoutMs: 0` (or null) opts OUT of a client-side wall-clock
+    // ceiling — for endpoints whose own backend enforces an idle/no-output
+    // timeout and may legitimately run for minutes (e.g. `nix flake
+    // update`). Otherwise impose the default. AbortSignal.any keeps a
+    // caller-supplied signal alive alongside the timeout.
+    const effectiveTimeout = timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : timeoutMs;
+    let signal = options.signal || undefined;
+    if (effectiveTimeout) {
+      const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
+      signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : timeoutSignal;
+    }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       headers: {
@@ -32,7 +39,7 @@ async function fetchAPI(endpoint, options = {}) {
         ...options.headers,
       },
       ...fetchOptions,
-      signal,
+      ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {
@@ -80,12 +87,17 @@ async function get(endpoint, { retries = 2, retryDelayMs = 300 } = {}) {
 }
 
 /**
- * POST request helper
+ * POST request helper.
+ *
+ * `options` is forwarded to fetchAPI — notably `timeoutMs` for endpoints
+ * that legitimately run longer than the 8s default (e.g. `nix flake
+ * update`, which fetches input metadata and can take a minute).
  */
-async function post(endpoint, data) {
+async function post(endpoint, data, options = {}) {
   return fetchAPI(endpoint, {
     method: 'POST',
     body: JSON.stringify(data),
+    ...options,
   });
 }
 
@@ -413,24 +425,38 @@ export const applySystemUpdate = () => post('/api/system/updates/apply', {});
 export const getRebuildStatusWithHistory = () =>
   get('/api/config/rebuild-status?include_history=1');
 
-// Developers — register custom Nix flakes that extend the system. Writing
-// a flake rewrites /etc/nixos/flake.nix; the user then clicks Apply.
-export const getDeveloperFlakes = () => get('/api/developers/flakes');
-export const saveDeveloperFlake = (entry) => post('/api/developers/flakes', entry);
-export const deleteDeveloperFlake = (id) =>
-  fetchAPI(`/api/developers/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
-export const validateDeveloperFlake = (probe) =>
-  post('/api/developers/flakes/validate', probe);
+// Plugins — register Nix flakes that extend the system. Writing a flake
+// rewrites /etc/nixos/flake.nix; the user then clicks Apply.
+export const getPluginFlakes = () => get('/api/plugins/flakes');
+export const savePluginFlake = (entry) => post('/api/plugins/flakes', entry);
+export const deletePluginFlake = (id) =>
+  fetchAPI(`/api/plugins/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const validatePluginFlake = (probe) =>
+  post('/api/plugins/flakes/validate', probe);
 // Probe a registered remote flake's upstream and compare to the rev pinned
 // in flake.lock. Read-only; nothing is written. Local flakes auto-refresh
 // on every Apply, so the UI hides these for them.
-export const checkDeveloperFlakeUpdate = (id) =>
-  get(`/api/developers/flakes/${encodeURIComponent(id)}/check-update`);
+export const checkPluginFlakeUpdate = (id) =>
+  get(`/api/plugins/flakes/${encodeURIComponent(id)}/check-update`);
 // Re-lock a single remote flake input. Stages a change — the operator
 // applies via the sidebar Apply pill, which sees the new "build inputs
 // changed" reason.
-export const updateDeveloperFlake = (id) =>
-  post(`/api/developers/flakes/${encodeURIComponent(id)}/update`, {});
+export const updatePluginFlake = (id) =>
+  post(`/api/plugins/flakes/${encodeURIComponent(id)}/update`, {});
+// Plugin Directory — fetch the curated catalog from
+// git.homefree.host/homefree-plugins (proxied + cached by the backend).
+export const getPluginDirectory = (opts = {}) =>
+  get(`/api/plugin-directory${opts.forceRefresh ? '?refresh=1' : ''}`);
+
+// Back-compat aliases for the old export names. The Plugins page used to
+// be called Developers and the surface was named accordingly. Removable
+// next release. TODO(homefree-next): drop these.
+export const getDeveloperFlakes = getPluginFlakes;
+export const saveDeveloperFlake = savePluginFlake;
+export const deleteDeveloperFlake = deletePluginFlake;
+export const validateDeveloperFlake = validatePluginFlake;
+export const checkDeveloperFlakeUpdate = checkPluginFlakeUpdate;
+export const updateDeveloperFlake = updatePluginFlake;
 
 // Alternate HomeFree base repo — build this system from a fork or a local
 // working copy instead of the official homefree-base. Saving rewrites
@@ -439,6 +465,18 @@ export const getHomefreeBase = () => get('/api/developers/homefree-base');
 export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
 export const validateHomefreeBase = (probe) =>
   post('/api/developers/homefree-base/validate', probe);
+// Runs `nix flake update` in the local alternate-base checkout to bump its
+// flake.lock inputs. Requires an enabled local base; returns
+// { success, updated: [...], output }. No client-side ceiling
+// (timeoutMs: 0) — a flake update can legitimately run for minutes; the
+// backend enforces an IDLE timeout (abort only if nix stops producing
+// output), so a slow-but-progressing update is never cut off.
+export const updateHomefreeBaseFlakes = () =>
+  post('/api/developers/homefree-base/flake-update', {}, { timeoutMs: 0 });
+// Current nixpkgs commit + date from the relevant flake.lock (the local
+// checkout's if configured, else the instance lock).
+export const getHomefreeBaseNixpkgs = () =>
+  get('/api/developers/homefree-base/nixpkgs');
 
 // Secrets — used by the finish-setup wizard and the DNS module.
 export const getSecretsStatus = () => get('/api/secrets/status');
@@ -454,6 +492,24 @@ export const setSecret = (serviceLabel, secretKey, value) =>
 // and the captive portal.
 export const markFinishSetupComplete = () =>
   post('/api/finish-setup/complete', {});
+
+// --- Restore from backup (Finish Setup) -------------------------------------
+// Open a backup: pull + summarize its system-config snapshot and verify the
+// pasted SSH private key can decrypt it. May restic-restore for a few seconds,
+// so it opts out of the client wall-clock timeout.
+export const restoreOpen = (payload) =>
+  post('/api/finish-setup/restore/open', payload, { timeoutMs: 0 });
+// Re-key secrets + merge config (optionally new domain) + start the rebuild.
+export const restoreApply = (payload) =>
+  post('/api/finish-setup/restore/apply', payload, { timeoutMs: 0 });
+// Drop a restore staging session (operator backed out).
+export const restoreCancel = (sessionId) =>
+  post('/api/finish-setup/restore/cancel', { session_id: sessionId });
+// Inline service-DATA restore after the restore rebuild succeeds. Reuses the
+// existing backups job API; poll getBackupJobCurrent for progress.
+export const restoreAllBackups = (payload) =>
+  post('/api/backups/restore-all', payload, { timeoutMs: 0 });
+export const getBackupJobCurrent = () => get('/api/backups/jobs/current');
 
 // Services
 export const getServices = () => get('/api/services');
@@ -495,6 +551,32 @@ export const refreshFirmwareMetadata = () => post('/api/firmware/refresh', {});
 export const updateFirmware = (deviceIds) =>
   post('/api/firmware/update', { device_ids: deviceIds });
 export const getFirmwareUpdateStatus = () => get('/api/firmware/update-status');
+
+// App versions — backs the Advanced -> App Versions page. The GET is
+// read-only and always fast (served from the on-disk cache); the POST
+// kicks an asynchronous refresh against upstream registries and
+// returns immediately, so the UI re-polls the GET until last_checked
+// advances.
+export const getAppVersions = () => get('/api/apps/versions');
+export const refreshAppVersions = () => post('/api/apps/versions/refresh', {});
+
+// Runs scripts/upgrade-apps.py against the local checkout and returns
+// the JSON summary (bumped, skipped_zitadel, warnings, errors,
+// unmapped). The endpoint refuses unless an alternate-base local
+// repository is configured — bumping pins in the read-only upstream
+// /nix/store tree can't take effect.
+export const upgradeApps = (opts = {}) =>
+  post('/api/apps/versions/upgrade', opts, { timeoutMs: 130000 });
+
+// Source Code page — Publish ISO image.
+// GET returns { build: {state, source, started_at, finished_at, ...},
+//               latest: {name, size, sha256, modified}, alt_base: {...},
+//               log_tail: "..." }
+// POST { source: 'alt'|'main' } kicks a background build. Polls GET to
+// see progress; while build.state === 'running', re-poll every few
+// seconds until it flips to 'done' or 'error'.
+export const getIsoStatus = () => get('/api/source/iso/status');
+export const buildIso = (opts = {}) => post('/api/source/iso/build', opts);
 
 // Power off — confirmation-gated by the caller (see confirmDialog).
 // rebootSystem is already exported above in the "System Control"

@@ -865,6 +865,21 @@ class AlertsModule extends LitElement {
     return JSON.parse(JSON.stringify(this.config?.alerts || {}));
   }
 
+  // ntfy's WAN-exposure flag lives at services.ntfy.public (a regular
+  // service flag), NOT in the alerts subtree. Route it through the same
+  // service-public-toggle event the App Configuration card uses, so
+  // admin-app.handleServicePublicToggle does the immutable merge into
+  // pendingConfig.services.ntfy.public. Emitting it via _setField /
+  // config-change would shallow-replace pendingConfig.services and
+  // clobber unrelated pending service edits.
+  _setNtfyPublic(value) {
+    this.dispatchEvent(new CustomEvent('service-public-toggle', {
+      detail: { serviceLabel: 'ntfy', isPublic: value === true },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   _fmtTime(ts) {
     if (!ts) return '—';
     return new Date(ts * 1000).toLocaleString();
@@ -1560,11 +1575,11 @@ class AlertsModule extends LitElement {
 
         ${!info.public ? html`
           <div class="warn-box">
-            <strong>LAN-only:</strong> ntfy is not exposed to the WAN, so
-            your phone must be on the home Wi-Fi to receive pushes. To
-            allow off-network pushes, enable
-            <code>homefree.services.ntfy.public</code> in the JSON Config,
-            or reach the server via a VPN.
+            <strong>LAN-only:</strong> ntfy is not yet exposed to the WAN,
+            so your phone must be on the home Wi-Fi to receive pushes. To
+            allow off-network pushes, turn on the
+            <strong>Allow off-network pushes</strong> toggle above, then
+            Apply. (This clears once the rebuild deploys.)
           </div>
         ` : ''}
 
@@ -1745,6 +1760,15 @@ class AlertsModule extends LitElement {
           help="Enables the self-hosted ntfy server and dispatches alert events to it."
           ?undeployed=${this._undeployed('alerts.channels.ntfy.enable')}
           @field-change=${(e) => this._setField('channels.ntfy.enable', e.detail.value)}
+        ></form-field>
+
+        <form-field
+          label="Allow off-network pushes (expose ntfy on the WAN)"
+          type="boolean"
+          .value=${this.config?.services?.ntfy?.public === true}
+          help="Recommended. While LAN-only, off Wi-Fi (cellular/VPN) your phone resolves ntfy to a public IPv6 that the LAN-only server doesn't answer, so the WebSocket fails (HTTP 200 instead of 101) and pushes silently stop after a network change until you restart the app. Exposing ntfy on the WAN serves it on all interfaces and fixes this. Access stays protected by your unguessable topic UUID. Turn on 'ntfy push' above for this to take effect."
+          ?undeployed=${this._undeployed('services.ntfy.public')}
+          @field-change=${(e) => this._setNtfyPublic(e.detail.value)}
         ></form-field>
         ${ntfy.enable === true ? this._renderNtfyPairing() : ''}
       </config-section>

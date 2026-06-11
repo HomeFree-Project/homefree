@@ -139,6 +139,10 @@ class InstallProgress:
     # LUKS recovery passphrase, surfaced once disk encryption secrets
     # have been generated so the UI can show it on the completion screen.
     recovery_passphrase: Optional[str] = None
+    # Tail of the failing subprocess's output (disko / nixos-install),
+    # so the UI log panel can show the actual cause without the operator
+    # having to shell in and read the backend journal.
+    error_detail: Optional[str] = None
 
 
 @dataclass

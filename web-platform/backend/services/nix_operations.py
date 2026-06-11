@@ -219,6 +219,23 @@ class NixOperations:
                     f"Config sync failed or had warnings: {sync_result.get('message', 'Unknown error')}"
                 )
 
+            # Idempotently migrate /etc/nixos/flake.nix to the current
+            # managed shape before rebuilding. Besides the developer-plugin
+            # scaffolding, this converts the system to build against the
+            # homefree base's nixpkgs-unstable (instead of a per-instance
+            # nixpkgs pin), so every box on its next Apply stops drifting and
+            # tracks the centrally-controlled nixpkgs. Best-effort: an
+            # unusual flake.nix that can't be scaffolded must never block a
+            # rebuild (the build still works on the existing pin). Local
+            # import avoids any import-order coupling at module load.
+            try:
+                from services.plugins import PluginsService
+                ok, err = PluginsService.ensure_scaffold()
+                if not ok:
+                    logger.warning(f"flake.nix scaffold/migration skipped: {err}")
+            except Exception as e:
+                logger.warning(f"flake.nix scaffold/migration error (ignored): {e}")
+
             # Refresh local working-tree flake inputs so we don't build
             # against a stale lock snapshot of the dev source. Required for
             # both `path:` and `git+file://` inputs — neither auto-detects
@@ -828,11 +845,22 @@ class NixOperations:
                 except Exception:
                     marker = {}
                 reason = marker.get("reason", "unknown error")
-                notes.append(
-                    f"\n[{label}] hot-swap to the new version failed "
-                    f"({reason}) — still serving the previous {label}. "
-                    "The rest of the rebuild was applied. Re-apply to retry."
-                )
+                if marker.get("deferred"):
+                    # Not a failure — the flip was intentionally postponed
+                    # (Caddy was mid-restart this rebuild). The previous
+                    # version keeps serving and the next rebuild completes
+                    # the hot-swap automatically.
+                    notes.append(
+                        f"\n[{label}] update deferred ({reason}) — still "
+                        f"serving the previous {label}. Re-apply to finish "
+                        "the hot-swap."
+                    )
+                else:
+                    notes.append(
+                        f"\n[{label}] hot-swap to the new version failed "
+                        f"({reason}) — still serving the previous {label}. "
+                        "The rest of the rebuild was applied. Re-apply to retry."
+                    )
             if notes:
                 status = dict(status)
                 status["partial_success"] = True

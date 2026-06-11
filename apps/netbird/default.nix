@@ -68,11 +68,11 @@ let
   ## Image tags. Pin all of these together — NetBird ships breaking
   ## changes in the management.json schema across minor versions, so
   ## bumping these should be a deliberate, coordinated update.
-  managementTag = "0.70.5";
-  signalTag = "0.70.5";
-  relayTag = "0.70.5";
-  dashboardTag = "v2.16.0";
-  coturnTag = "4.6.2";
+  managementTag = "0.72.3";
+  signalTag = "0.72.3";
+  relayTag = "0.72.3";
+  dashboardTag = "v2.39.0";
+  coturnTag = "4.12.0";
 
   ## Port allocations. Headscale's embedded DERP claims 3478/udp for
   ## STUN, so NetBird's coturn moves to 3479/udp to dodge the conflict.
@@ -296,6 +296,56 @@ in
   };
 
   config = {
+    ## OIDC client descriptor — unconditional per modules/sso-clients.nix.
+    homefree.sso.clients = [{
+      svc = "netbird";
+      internal_name = "homefree-netbird";
+      ## NetBird needs to authenticate THREE clients with one OIDC app:
+      ##   1. Web dashboard SPA at https://netbird.<domain>/{auth,silent-auth}
+      ##   2. NetBird CLI / native client via loopback http://localhost:53000/
+      ##   3. Mobile clients via the same loopback flow
+      ## NATIVE app type is required for (2)/(3) — USER_AGENT rejects
+      ## non-https loopback redirect_uris. NATIVE + AUTH_METHOD_NONE +
+      ## PKCE accepts both https web callbacks and http loopback URIs.
+      ##
+      ## Even the web dashboard's "Sign in" button ends up redirecting
+      ## through http://localhost:53000/ because the dashboard reads
+      ## the PKCE config from /api/users/.../authorization — and that
+      ## endpoint serves the management.json PKCEAuthorizationFlow
+      ## (CLI-targeted). Registering localhost as a valid redirect on
+      ## the same app fixes the browser flow too.
+      app_type = "OIDC_APP_TYPE_NATIVE";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      ## DEVICE_CODE is required for the NetBird mobile/desktop app's
+      ## Device Authorization Flow — without it, Zitadel rejects the
+      ## /oauth/v2/device_authorization request and the app shows
+      ## "Authentication error — see logs for more info" before any
+      ## browser ever opens. AUTHORIZATION_CODE handles the loopback
+      ## CLI + web dashboard flows; REFRESH_TOKEN keeps sessions alive.
+      grant_types = [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE"
+        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
+        "OIDC_GRANT_TYPE_DEVICE_CODE"
+      ];
+      redirect_uris = [
+        "https://netbird.${domain}/auth"
+        "https://netbird.${domain}/silent-auth"
+        "http://localhost:53000/"
+      ];
+      post_logout_uris = [ "https://netbird.${domain}/" ];
+      needs_pat = true;        # mgmt machine user for org/group reads
+      ## Both containers consume the client_id: management.json on
+      ## the management side, and dashboard.env on the dashboard SPA
+      ## side. Restart both when the secret rotates — otherwise the
+      ## dashboard keeps a stale client_id and login fails with
+      ## "Errors.App.NotFound".
+      post_restart_units = [
+        "podman-netbird-management.service"
+        "podman-netbird-dashboard.service"
+      ];
+    }];
+
     ## Reserve NetBird's host-published ports from the kernel's ephemeral
     ## range (32768–60999). Without this, an outbound TCP connection
     ## (most commonly tailscaled, but anything making outbound TCP) can
@@ -313,132 +363,186 @@ in
       "${toString netbirdMgmtPort},${toString netbirdRelayPort},${toString netbirdDashboardPort}";
 
     ## ── NetBird server containers ──────────────────────────────────────
-    ## All five containers are always rendered when NetBird is
-    ## enabled. Pre-provisioning, the management + dashboard
-    ## containers refuse to start (their preStart bails on missing
-    ## secrets), and the others sit idle. zitadel-provision.service
-    ## kicks them via `systemctl restart` once secrets land — single
-    ## rebuild, no manual intervention.
-    virtualisation.oci-containers.containers = lib.mkMerge [
-      (lib.optionalAttrs enabled {
-        netbird-management = {
-          image = "netbirdio/management:${managementTag}";
-          autoStart = true;
-          ## NetBird 0.70+ runs the REST API + gRPC mux on container
-          ## port 80, with a legacy gRPC-only compat server on the
-          ## port configured in management.json (33073). All Caddy
-          ## traffic — REST `/api/*` and `/management.ManagementService/*`
-          ## gRPC — targets host:33073 → container:80. The legacy
-          ## gRPC-only socket on container:33073 is unused.
-          ports = [
-            "0.0.0.0:${toString netbirdMgmtPort}:80"
-          ];
-          volumes = [
-            "${netbirdDataPath}:/var/lib/netbird"
-            "${netbirdDataPath}/management.json:/etc/netbird/management.json:ro"
-            ## Trust Caddy's local CA so OIDC discovery against
-            ## https://sso.${domain} succeeds. See ca-bundle synthesis
-            ## in managementJsonPreStart.
-            "${netbirdDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
-            "/etc/localtime:/etc/localtime:ro"
-          ];
-          cmd = [
-            "--port" "80"
-            "--log-file" "console"
-            "--log-level" "info"
-            "--disable-anonymous-metrics=true"
-            "--single-account-mode-domain=netbird.${domain}"
-            "--dns-domain=netbird.${domain}"
-          ];
-        };
-
-        netbird-signal = {
-          image = "netbirdio/signal:${signalTag}";
-          autoStart = true;
-          ports = [
-            "0.0.0.0:${toString netbirdSignalPort}:80"
-          ];
-          volumes = [
-            "${netbirdSignalDataPath}:/var/lib/netbird"
-            "/etc/localtime:/etc/localtime:ro"
-          ];
-          cmd = [ "--log-file" "console" "--port" "80" ];
-        };
-
-        netbird-relay = {
-          image = "netbirdio/relay:${relayTag}";
-          autoStart = true;
-          ports = [
-            "0.0.0.0:${toString netbirdRelayPort}:${toString netbirdRelayPort}"
-          ];
-          environment = {
-            NB_LOG_LEVEL = "info";
-            NB_LISTEN_ADDRESS = ":${toString netbirdRelayPort}";
-            NB_EXPOSED_ADDRESS = "netbird.${domain}:${toString netbirdRelayPort}";
-            ## Auth secret loaded from env file populated at preStart
-          };
-          environmentFiles = [ "${netbirdDataPath}/relay.env" ];
-        };
-
-        netbird-dashboard = {
-          image = "netbirdio/dashboard:${dashboardTag}";
-          autoStart = true;
-          ports = [
-            "0.0.0.0:${toString netbirdDashboardPort}:80"
-          ];
-          environment = {
-            NETBIRD_MGMT_API_ENDPOINT = "https://netbird.${domain}";
-            NETBIRD_MGMT_GRPC_API_ENDPOINT = "https://netbird.${domain}";
-            ## AUTH_AUDIENCE + AUTH_CLIENT_ID are synthesised from the
-            ## on-disk client_id at preStart (see dashboard.env). We
-            ## can't bake them inline because the file may not exist
-            ## at Nix-eval time on a fresh install — that would force
-            ## a double-rebuild after provisioning.
-            AUTH_CLIENT_SECRET = "";  # Native PKCE app — no secret in browser
-            AUTH_AUTHORITY = "https://${zitadelDomain}";
-            USE_AUTH0 = "false";
-            ## Include Zitadel's project-role scope so the dashboard's
-            ## access token carries the user's homefree-* roles. The
-            ## management server's IdP integration queries Zitadel
-            ## directly by PAT to determine user roles, but having
-            ## roles in the token is needed for any future client-
-            ## side admin/user distinction.
-            AUTH_SUPPORTED_SCOPES = "openid profile email offline_access api urn:zitadel:iam:org:project:roles";
-            AUTH_REDIRECT_URI = "/auth";
-            AUTH_SILENT_REDIRECT_URI = "/silent-auth";
-            NETBIRD_TOKEN_SOURCE = "idToken";
-            NGINX_SSL_PORT = "443";
-            ## Caddy terminates TLS — disable letsencrypt inside the container
-            LETSENCRYPT_DOMAIN = "";
-            LETSENCRYPT_EMAIL = "";
-          };
-          environmentFiles = [ "${netbirdDataPath}/dashboard.env" ];
-        };
-
-        netbird-coturn = {
-          image = "coturn/coturn:${coturnTag}";
-          autoStart = true;
-          extraOptions = [ "--network=host" ];
-          volumes = [
-            "${turnserverConfFile}:/etc/turnserver.conf:ro"
-          ];
-          cmd = [ "-c" "/etc/turnserver.conf" ];
-        };
-      })
-    ];
-
-    ## Render the relay env file from the generated relay-secret. The
-    ## management container's preStart already creates the file under
-    ## /var/lib/netbird/relay-secret; we just need to surface it as an
-    ## env var via a separate file (kept tiny so it's easy to re-emit).
+    ## All five containers are always rendered when NetBird is enabled,
+    ## via the app-platform primitive (modules/app-platform.nix): the
+    ## dedicated podman-* dns-ready units and the per-container shell are
+    ## generated. Every container runs as root inside (see the SKIPPED
+    ## Phase 3 note at the top of this file); none of the bespoke
+    ## bootstrap (management.json synthesis, secret anchoring, env files,
+    ## ConditionPathExists gates, extra ordering) lives in the primitive
+    ## — that stays in the systemd.services.podman-* declarations below.
     ##
+    ## Pre-provisioning, the management + dashboard containers refuse to
+    ## start (their preStart bails / the unit's condition is unmet), and
+    ## the others sit idle. zitadel-provision.service kicks them via
+    ## `systemctl restart` once secrets land — single rebuild, no manual
+    ## intervention.
+
+    ## management — dataDir=null + caBundle=false: the whole bespoke
+    ## preStart (CA-bundle synthesis, TURN/relay secret anchoring,
+    ## management.json sed) lives verbatim in preStartInit. The
+    ## ConditionPathExists secrets gate + extra ordering (after zitadel)
+    ## stay in the systemd override below.
+    homefree.containers.netbird-management = lib.mkIf enabled {
+      image = "netbirdio/management:${managementTag}";
+      runAs = { mode = "root"; reason = "upstream netbird image runs as root; binds container port 80"; };
+      dataDir = null;
+      caBundle = false;
+
+      ## NetBird 0.70+ runs the REST API + gRPC mux on container
+      ## port 80, with a legacy gRPC-only compat server on the
+      ## port configured in management.json (33073). All Caddy
+      ## traffic — REST /api/* and /management.ManagementService/*
+      ## gRPC — targets host:33073 → container:80. The legacy
+      ## gRPC-only socket on container:33073 is unused.
+      ports = [
+        "0.0.0.0:${toString netbirdMgmtPort}:80"
+      ];
+      volumes = [
+        "${netbirdDataPath}:/var/lib/netbird"
+        "${netbirdDataPath}/management.json:/etc/netbird/management.json:ro"
+        ## Trust Caddy's local CA so OIDC discovery against
+        ## https://sso.${domain} succeeds. See ca-bundle synthesis
+        ## in managementJsonPreStart.
+        "${netbirdDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
+        "/etc/localtime:/etc/localtime:ro"
+      ];
+      cmd = [
+        "--port" "80"
+        "--log-file" "console"
+        "--log-level" "info"
+        "--disable-anonymous-metrics=true"
+        "--single-account-mode-domain=netbird.${domain}"
+        "--dns-domain=netbird.${domain}"
+      ];
+
+      ## Full bespoke preStart (CA bundle + anchored TURN/relay secrets +
+      ## management.json sed) — runs verbatim, no generated mkdir/chown.
+      preStartInit = managementJsonPreStart;
+    };
+
+    ## signal — only a single mkdir of its own data dir; let the
+    ## primitive emit that via dataDir (root mode → no chown).
+    homefree.containers.netbird-signal = lib.mkIf enabled {
+      image = "netbirdio/signal:${signalTag}";
+      runAs = { mode = "root"; reason = "upstream netbird image runs as root; binds container port 80"; };
+      ## Volume mount target needs to exist before podman binds it in;
+      ## the primitive's mkdir covers what the hand-written preStart did.
+      dataDir = netbirdSignalDataPath;
+      caBundle = false;
+      ports = [
+        "0.0.0.0:${toString netbirdSignalPort}:80"
+      ];
+      volumes = [
+        "${netbirdSignalDataPath}:/var/lib/netbird"
+        "/etc/localtime:/etc/localtime:ro"
+      ];
+      cmd = [ "--log-file" "console" "--port" "80" ];
+    };
+
+    ## relay — dataDir=null + caBundle=false: relay.env synthesis lives
+    ## verbatim in preStartInit. The ConditionPathExists relay-secret
+    ## gate + after-management ordering stay in the override below.
+    homefree.containers.netbird-relay = lib.mkIf enabled {
+      image = "netbirdio/relay:${relayTag}";
+      runAs = { mode = "root"; reason = "upstream netbird image runs as root"; };
+      dataDir = null;
+      caBundle = false;
+      ports = [
+        "0.0.0.0:${toString netbirdRelayPort}:${toString netbirdRelayPort}"
+      ];
+      environment = {
+        NB_LOG_LEVEL = "info";
+        NB_LISTEN_ADDRESS = ":${toString netbirdRelayPort}";
+        NB_EXPOSED_ADDRESS = "netbird.${domain}:${toString netbirdRelayPort}";
+        ## Auth secret loaded from env file populated at preStart
+      };
+      environmentFiles = [ "${netbirdDataPath}/relay.env" ];
+
+      ## Render the relay env file from the generated relay-secret. The
+      ## management container's preStart already creates the file under
+      ## /var/lib/netbird/relay-secret; we just need to surface it as an
+      ## env var via a separate file (kept tiny so it's easy to re-emit).
+      preStartInit = ''
+        set -eu
+        install -m 600 /dev/null ${netbirdDataPath}/relay.env
+        echo "NB_AUTH_SECRET=$(cat ${netbirdDataPath}/relay-secret)" \
+          > ${netbirdDataPath}/relay.env
+      '';
+    };
+
+    ## dashboard — dataDir=null + caBundle=false: dashboard.env synthesis
+    ## (its own mkdir + set -eu) lives verbatim in preStartInit. The
+    ## ConditionPathExists gate + TimeoutStopSec/KillMode shutdown tuning
+    ## stay in the systemd override below.
+    homefree.containers.netbird-dashboard = lib.mkIf enabled {
+      image = "netbirdio/dashboard:${dashboardTag}";
+      runAs = { mode = "root"; reason = "upstream netbird dashboard (nginx) image runs as root; binds container port 80"; };
+      dataDir = null;
+      caBundle = false;
+      ports = [
+        "0.0.0.0:${toString netbirdDashboardPort}:80"
+      ];
+      environment = {
+        NETBIRD_MGMT_API_ENDPOINT = "https://netbird.${domain}";
+        NETBIRD_MGMT_GRPC_API_ENDPOINT = "https://netbird.${domain}";
+        ## AUTH_AUDIENCE + AUTH_CLIENT_ID are synthesised from the
+        ## on-disk client_id at preStart (see dashboard.env). We
+        ## can't bake them inline because the file may not exist
+        ## at Nix-eval time on a fresh install — that would force
+        ## a double-rebuild after provisioning.
+        AUTH_CLIENT_SECRET = "";  # Native PKCE app — no secret in browser
+        AUTH_AUTHORITY = "https://${zitadelDomain}";
+        USE_AUTH0 = "false";
+        ## Include Zitadel's project-role scope so the dashboard's
+        ## access token carries the user's homefree-* roles. The
+        ## management server's IdP integration queries Zitadel
+        ## directly by PAT to determine user roles, but having
+        ## roles in the token is needed for any future client-
+        ## side admin/user distinction.
+        AUTH_SUPPORTED_SCOPES = "openid profile email offline_access api urn:zitadel:iam:org:project:roles";
+        AUTH_REDIRECT_URI = "/auth";
+        AUTH_SILENT_REDIRECT_URI = "/silent-auth";
+        NETBIRD_TOKEN_SOURCE = "idToken";
+        NGINX_SSL_PORT = "443";
+        ## Caddy terminates TLS — disable letsencrypt inside the container
+        LETSENCRYPT_DOMAIN = "";
+        LETSENCRYPT_EMAIL = "";
+      };
+      environmentFiles = [ "${netbirdDataPath}/dashboard.env" ];
+
+      ## Full dashboard.env synthesis (its own set -eu + mkdir).
+      preStartInit = dashboardEnvPreStart;
+    };
+
+    ## coturn — host networking for STUN/TURN. --network=host stays in
+    ## extraOptions (NOT runAs.rootless — that would set the podman
+    ## user= field and drift). No data dir / CA bundle / preStart, so
+    ## the primitive emits no ExecStartPre for it (matching the
+    ## hand-written unit). dns-ready ordering is generated.
+    homefree.containers.netbird-coturn = lib.mkIf enabled {
+      image = "coturn/coturn:${coturnTag}";
+      runAs = { mode = "root"; reason = "coturn uses --network=host for STUN/TURN; runs root inside"; };
+      extraOptions = [ "--network=host" ];
+      volumes = [
+        "${turnserverConfFile}:/etc/turnserver.conf:ro"
+      ];
+      cmd = [ "-c" "/etc/turnserver.conf" ];
+    };
+
+    ## ── systemd unit overrides (escape hatches) ──────────────────────────
+    ## These merge with the generated podman-* units from the app-platform
+    ## primitive to add the secrets gates + extra ordering the primitive
+    ## doesn't know about. The primitive already supplies the dns-ready
+    ## after/wants and (where present) the ExecStartPre prestart script.
+
     ## The management container's preStart bails on missing Zitadel
     ## secrets — see managementJsonPreStart's gate at the top of this
-    ## file. That's what keeps the unit cleanly inactive (rather than
-    ## crash-looping) until zitadel-provision lands the secrets.
+    ## file. The ConditionPathExists below keeps the unit cleanly
+    ## inactive (rather than crash-looping) until zitadel-provision
+    ## lands the secrets.
     systemd.services.podman-netbird-management = lib.mkIf enabled {
-      after = [ "dns-ready.service" "podman-zitadel.service" ];
-      wants = [ "dns-ready.service" ];
+      after = [ "podman-zitadel.service" ];
       ## Unit is silently skipped (ConditionResult=no) until all four
       ## Zitadel-provided secrets land on disk. zitadel-provision
       ## `try-restart`s us once they do — no crash-loop, no restart
@@ -449,73 +553,39 @@ in
         "${secretsDir}/mgmt-machine-token"
         "${secretsDir}/data-store-encryption-key"
       ];
-      serviceConfig.ExecStartPre = [
-        "!${pkgs.writeShellScript "netbird-management-prestart" managementJsonPreStart}"
-      ];
-    };
-
-    systemd.services.podman-netbird-signal = lib.mkIf enabled {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
-      ## Volume mount target needs to exist before podman tries to bind
-      ## it in. Independent of the OIDC secrets gate.
-      serviceConfig.ExecStartPre = [
-        "!${pkgs.writeShellScript "netbird-signal-prestart" ''
-          mkdir -p ${netbirdSignalDataPath}
-        ''}"
-      ];
     };
 
     systemd.services.podman-netbird-relay = lib.mkIf enabled {
-      after = [ "dns-ready.service" "podman-netbird-management.service" ];
-      wants = [ "dns-ready.service" ];
+      after = [ "podman-netbird-management.service" ];
       ## Relay needs the auth secret that netbird-management generates
       ## in its preStart. Gate on the file being present so we don't
       ## crash-loop pre-provisioning.
       unitConfig.ConditionPathExists = [
         "${netbirdDataPath}/relay-secret"
       ];
-      serviceConfig.ExecStartPre = [
-        "!${pkgs.writeShellScript "netbird-relay-env" ''
-          set -eu
-          install -m 600 /dev/null ${netbirdDataPath}/relay.env
-          echo "NB_AUTH_SECRET=$(cat ${netbirdDataPath}/relay-secret)" \
-            > ${netbirdDataPath}/relay.env
-        ''}"
-      ];
     };
 
     systemd.services.podman-netbird-dashboard = lib.mkIf enabled {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
       unitConfig.ConditionPathExists = [
         "${secretsDir}/oidc-client-id"
       ];
+      ## The netbirdio/dashboard container ignores SIGTERM cleanly:
+      ## its entrypoint loops a "substitute env vars + exec nginx"
+      ## script that absorbs the signal but never propagates a
+      ## graceful shutdown. The default 2-minute TimeoutStopSec
+      ## means every `systemctl restart` of the dashboard takes 2
+      ## minutes — painful during rebuilds, even with `--no-block`
+      ## from zitadel-provision, because other units (caddy, the
+      ## dashboard itself's auto-restart) end up waiting on it.
+      ##
+      ## Shorten the grace window to 5s and follow with SIGKILL.
+      ## Nothing in the dashboard does writeable I/O on shutdown
+      ## (it's a static nginx serving the SPA bundle), so an
+      ## abrupt kill is safe.
       serviceConfig = {
-        ExecStartPre = [
-          "!${pkgs.writeShellScript "netbird-dashboard-prestart" dashboardEnvPreStart}"
-        ];
-        ## The netbirdio/dashboard container ignores SIGTERM cleanly:
-        ## its entrypoint loops a "substitute env vars + exec nginx"
-        ## script that absorbs the signal but never propagates a
-        ## graceful shutdown. The default 2-minute TimeoutStopSec
-        ## means every `systemctl restart` of the dashboard takes 2
-        ## minutes — painful during rebuilds, even with `--no-block`
-        ## from zitadel-provision, because other units (caddy, the
-        ## dashboard itself's auto-restart) end up waiting on it.
-        ##
-        ## Shorten the grace window to 5s and follow with SIGKILL.
-        ## Nothing in the dashboard does writeable I/O on shutdown
-        ## (it's a static nginx serving the SPA bundle), so an
-        ## abrupt kill is safe.
         TimeoutStopSec = lib.mkForce "5s";
         KillMode = lib.mkForce "mixed";
       };
-    };
-
-    systemd.services.podman-netbird-coturn = lib.mkIf enabled {
-      after = [ "dns-ready.service" ];
-      wants = [ "dns-ready.service" ];
     };
 
 

@@ -9,7 +9,7 @@ let
 
   # image = "lscr.io/linuxserver/freshrss";
   image = "freshrss/freshrss";
-  version = "1.28.1";
+  version = "1.29.1";
 
   port = config.homefree.allocPort "freshrss";
 
@@ -92,9 +92,38 @@ PGEOF
     ## `postgres`, ownership stays with `postgres` and `freshrss` can
     ## connect but can't ALTER/INSERT. Reassign ownership and grant
     ## all on existing objects so an in-place migration just works.
+    ##
+    ## NOTE: `REASSIGN OWNED BY postgres TO freshrss` does NOT work here
+    ## and was a silent no-op for a long time: the bootstrap superuser
+    ## `postgres` also owns pinned/system-required objects in the DB, so
+    ## REASSIGN OWNED aborts the whole command with an error (swallowed
+    ## by the `|| true`) and reassigns nothing. Symptom: FreshRSS 1.29.x
+    ## tries `ALTER TABLE ... ADD COLUMN lastModified`, which needs
+    ## OWNERSHIP (not just the GRANTs below), fails with "must be owner
+    ## of table", and every read then errors on the missing column ->
+    ## no articles, refresh dies. Fix: explicitly ALTER ... OWNER on
+    ## each user object in schema public. Idempotent (re-owning to the
+    ## same role is a no-op); generic (per-user table names like
+    ## freshrss_<user>_entry are matched by schema scan, not hardcoded).
     ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d freshrss <<'PGEOF' || true
       ALTER DATABASE freshrss OWNER TO freshrss;
-      REASSIGN OWNED BY postgres TO freshrss;
+      ALTER SCHEMA public OWNER TO freshrss;
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+          EXECUTE format('ALTER TABLE public.%I OWNER TO freshrss', r.tablename);
+        END LOOP;
+        FOR r IN SELECT sequence_name FROM information_schema.sequences
+                 WHERE sequence_schema = 'public' LOOP
+          EXECUTE format('ALTER SEQUENCE public.%I OWNER TO freshrss', r.sequence_name);
+        END LOOP;
+        FOR r IN SELECT table_name FROM information_schema.views
+                 WHERE table_schema = 'public' LOOP
+          EXECUTE format('ALTER VIEW public.%I OWNER TO freshrss', r.table_name);
+        END LOOP;
+      END
+      $$;
       GRANT ALL PRIVILEGES ON DATABASE freshrss TO freshrss;
       GRANT ALL ON SCHEMA public TO freshrss;
       GRANT ALL ON ALL TABLES IN SCHEMA public TO freshrss;
@@ -148,13 +177,27 @@ PGEOF
     ## them on the very first install — rebuilds after install have no
     ## effect on the live FreshRSS user, but the values are kept in
     ## sync so a fresh install always uses the anchored credentials.
+    ##
+    ## CRITICAL: every value option uses the `--opt=value` form, NOT the
+    ## space-separated `--opt value`. The image entrypoint expands these
+    ## via `eval echo "$FRESHRSS_INSTALL"` then word-splits the result.
+    ## DB_PASSWORD is empty (local postgres, peer auth over the socket),
+    ## so the old `--db-password "%s"` rendered `--db-password ""`; eval
+    ## collapses the empty quotes to nothing, leaving a DANGLING
+    ## `--db-password` that swallows the next token (`--db-type`) as its
+    ## value. That shifts every following option, ultimately starving
+    ## `--default-user`, and do-install.php aborts with
+    ## "default-user cannot be empty". The `=` form makes each option
+    ## self-delimiting — `--db-password=` is an explicit empty value that
+    ## can never consume the next token. (FreshRSS's own README still
+    ## shows the space form; it is unsafe whenever any value is empty.)
     FRESHRSS_ADMIN_PASSWORD=$(cat ${secretsDir}/admin-password)
     FRESHRSS_ADMIN_API_PASSWORD=$(cat ${secretsDir}/admin-api-password)
     install -m 600 /dev/null ${runtimeEnvFile}
     {
-      printf 'FRESHRSS_INSTALL=--api-enabled --base-url %s --db-base %s --db-host %s --db-password "%s" --db-type pgsql --db-user %s --default-user %s --language en\n' \
+      printf 'FRESHRSS_INSTALL=--api-enabled --base-url=%s --db-base=%s --db-host=%s --db-password=%s --db-type=pgsql --db-user=%s --default-user=%s --language=en\n' \
         "${BASE_URL}" "${DB_BASE}" "${DB_HOST}" "${DB_PASSWORD}" "${DB_USER}" "${adminUsername}"
-      printf 'FRESHRSS_USER=--api-password %s --email %s --language en --password %s --user %s\n' \
+      printf 'FRESHRSS_USER=--api-password=%s --email=%s --language=en --password=%s --user=%s\n' \
         "$FRESHRSS_ADMIN_API_PASSWORD" "${ADMIN_EMAIL}" "$FRESHRSS_ADMIN_PASSWORD" "${adminUsername}"
     } > ${runtimeEnvFile}
 
@@ -206,6 +249,23 @@ PGEOF
   ## DB not ready, user missing) is non-fatal.
   postStart = ''
     CFG=${containerDataPath}/data/config.php
+    ## FRESH-INSTALL RACE: on the very first start the in-container
+    ## entrypoint runs do-install.php (which writes config.php)
+    ## CONCURRENTLY with this ExecStartPost. Bailing the instant
+    ## config.php is absent means the first install never gets auth_type
+    ## flipped to 'http_auth', so SSO stays off and FreshRSS shows its
+    ## native form login until the container happens to restart (e.g. the
+    ## next rebuild) — which is exactly why a freshly-installed box looks
+    ## broken while an older one works. Poll for config.php so the SSO
+    ## migration runs on the first install too. Bounded (~60s) so an
+    ## uninstalled / failing container still exits cleanly; the unit's
+    ## TimeoutStartSec is infinity so blocking here is safe. On an
+    ## already-installed restart config.php exists immediately and the
+    ## loop breaks on the first iteration.
+    for _ in $(seq 1 60); do
+      [ -s "$CFG" ] && break
+      sleep 1
+    done
     if [ ! -s "$CFG" ]; then
       exit 0
     fi
@@ -307,69 +367,106 @@ in
   };
 
   config = {
-    virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.freshrss.enable {
-      freshrss = {
-        ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
-        ## entrypoint does extensive root-only setup on every start —
-        ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
-        ## ini files under /etc/php/, runs a2enmod for
-        ## mod_auth_openidc, drops a cron PID file under /var/run,
-        ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
-        ## every one of those fails and the container exits 1. The
-        ## image is fundamentally root-in-container; making it
-        ## non-root requires either a custom image build or
-        ## --userns=keep-id with a host-side UID matching the
-        ## image's expected www-data uid.
-        image = "${image}:${version}";
+    ## OIDC client descriptor — unconditional per modules/sso-clients.nix.
+    homefree.sso.clients = [{
+      svc = "freshrss";
+      internal_name = "homefree-freshrss";
+      ## FreshRSS uses Apache mod_auth_openidc — server-side
+      ## confidential client (authcode + secret).
+      app_type = "OIDC_APP_TYPE_WEB";
+      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
+      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
+      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
+      ## Callback path hardcoded by the FreshRSS image's Apache
+      ## config: OIDCRedirectURI /i/oidc/. Trailing slash is part of
+      ## the path mod_auth_openidc serves, so register it as-is.
+      redirect_uris = [ "https://freshrss.${domain}/i/oidc/" ];
+      post_logout_uris = [ "https://freshrss.${domain}/" ];
+      needs_pat = false;
+      post_restart_units = [ "podman-freshrss.service" ];
+    }];
 
-        autoStart = true;
+    ## Container via the app-platform primitive (modules/app-platform.nix).
+    ## The dns-ready podman unit is generated. The CA bundle is mounted manually
+    ## (over the Debian system path /etc/ssl/certs/ca-certificates.crt, not the
+    ## default homefree path) so caBundle=false and the full preStart goes in
+    ## preStartInit. The ExecStartPost (SSO migration) and postgresql ordering
+    ## stay in a separate systemd.services.podman-freshrss merge below.
+    homefree.containers.freshrss = lib.mkIf config.homefree.service-options.freshrss.enable {
+      ## SKIPPED Phase 3 non-root pass: the FreshRSS image's
+      ## entrypoint does extensive root-only setup on every start —
+      ## writes /etc/localtime + /etc/timezone, sed-edits the PHP
+      ## ini files under /etc/php/, runs a2enmod for
+      ## mod_auth_openidc, drops a cron PID file under /var/run,
+      ## and runs `chown` over /var/www/FreshRSS. As a non-root UID
+      ## every one of those fails and the container exits 1. The
+      ## image is fundamentally root-in-container; making it
+      ## non-root requires either a custom image build or
+      ## --userns=keep-id with a host-side UID matching the
+      ## image's expected www-data uid.
+      runAs = { mode = "root"; reason = "image entrypoint does root-only Apache/PHP setup and chowns /var/www/FreshRSS; non-root uid breaks startup"; };
+      image = "${image}:${version}";
 
-        extraOptions = [
-          # "--pull=always"
-        ];
+      ## dataDir=null + caBundle=false: the CA bundle is written into
+      ## containerDataPath/ca-bundle.crt by preStartInit and mounted over
+      ## /etc/ssl/certs/ca-certificates.crt (the Debian system bundle path
+      ## that mod_auth_openidc's libcurl reads). The standard homefree CA-bundle
+      ## path + SSL_CERT_FILE env would not reach libcurl.
+      dataDir = null;
+      caBundle = false;
 
-        ports = [
-          "0.0.0.0:${toString port}:80"
-        ];
+      ports = [
+        "0.0.0.0:${toString port}:80"
+      ];
 
-        volumes = [
-          "/etc/localtime:/etc/localtime:ro"
-          "${containerDataPath}/data:/var/www/FreshRSS/data"
-          "${containerDataPath}/extensions:/var/www/FreshRSS/extensions"
-          ## Bind-mount the host's postgres socket so FreshRSS can
-          ## connect as unix:/run/postgresql instead of TCP. Avoids
-          ## the missing pg_hba entry for the container's veth IP.
-          "/run/postgresql:/run/postgresql"
-          ## mod_auth_openidc uses libcurl, which on Debian honors
-          ## /etc/ssl/certs/ca-certificates.crt — mount our combined
-          ## bundle (system + Caddy local CA) on top so OIDC discovery
-          ## against sso.<domain> validates.
-          "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
-        ];
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}/data:/var/www/FreshRSS/data"
+        "${containerDataPath}/extensions:/var/www/FreshRSS/extensions"
+        ## Bind-mount the host's postgres socket so FreshRSS can
+        ## connect as unix:/run/postgresql instead of TCP. Avoids
+        ## the missing pg_hba entry for the container's veth IP.
+        "/run/postgresql:/run/postgresql"
+        ## mod_auth_openidc uses libcurl, which on Debian honors
+        ## /etc/ssl/certs/ca-certificates.crt — mount our combined
+        ## bundle (system + Caddy local CA) on top so OIDC discovery
+        ## against sso.<domain> validates.
+        "${containerDataPath}/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro"
+      ];
 
-        environment = {
-          TZ = config.homefree.system.timeZone;
-          FRESHRSS_ENV = "development";
-          SERVER_DNS = "freshrss.${domain}";
-          CRON_MIN = "1,31";
-          ## FRESHRSS_INSTALL and FRESHRSS_USER are synthesised into
-          ## runtime.env by preStart, carrying the anchored admin
-          ## password + Fever API password. They are consumed by the
-          ## FreshRSS image's first-install code path only (after
-          ## install, FreshRSS reads config.php and ignores them).
-          ## See the let-binding ADMIN_EMAIL above for how the email
-          ## comes from instance config.
-        };
-
-        ## runtime.env: FRESHRSS_INSTALL + FRESHRSS_USER (anchored
-        ## passwords). ssoEnvFile: OIDC_* synthesized when Zitadel
-        ## has provisioned the OIDC client. Pre-provisioning,
-        ## ssoEnvFile is empty so OIDC_ENABLED defaults to undefined
-        ## and the Apache <IfDefine OIDC_ENABLED> block is inert.
-        environmentFiles = [ runtimeEnvFile ssoEnvFile ];
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        FRESHRSS_ENV = "development";
+        SERVER_DNS = "freshrss.${domain}";
+        CRON_MIN = "1,31";
+        ## FRESHRSS_INSTALL and FRESHRSS_USER are synthesised into
+        ## runtime.env by preStart, carrying the anchored admin
+        ## password + Fever API password. They are consumed by the
+        ## FreshRSS image's first-install code path only (after
+        ## install, FreshRSS reads config.php and ignores them).
+        ## See the let-binding ADMIN_EMAIL above for how the email
+        ## comes from instance config.
       };
+
+      ## runtime.env: FRESHRSS_INSTALL + FRESHRSS_USER (anchored
+      ## passwords). ssoEnvFile: OIDC_* synthesized when Zitadel
+      ## has provisioned the OIDC client. Pre-provisioning,
+      ## ssoEnvFile is empty so OIDC_ENABLED defaults to undefined
+      ## and the Apache <IfDefine OIDC_ENABLED> block is inert.
+      environmentFiles = [ runtimeEnvFile ssoEnvFile ];
+
+      ## Full preStart body: mkdir, postgres bootstrap, CA-bundle synthesis,
+      ## secret anchoring, runtime.env + sso.env synthesis. All handled here
+      ## since caBundle=false (non-standard mount path) and dataDir=null.
+      preStartInit = preStart;
     };
 
+    ## PostgreSQL ordering + ExecStartPost (SSO migration). These MERGE
+    ## with the dns-ready after/wants the app-platform generates for
+    ## podman-freshrss. The ExecStartPost is NOT part of homefree.containers
+    ## (the platform only generates ExecStartPre); it stays here so the
+    ## service-restart-policy module and the platform-generated unit both see
+    ## it merged into the same podman-freshrss unit.
     systemd.services.podman-freshrss = lib.mkIf config.homefree.service-options.freshrss.enable {
       ## FreshRSS connects to PostgreSQL over the host's
       ## /run/postgresql socket, bind-mounted into the container. A
@@ -379,12 +476,10 @@ in
       ## fails with "No such file or directory". `partOf` makes a
       ## PostgreSQL restart cascade a FreshRSS restart, re-binding the
       ## current /run/postgresql.
-      after = [ "dns-ready.service" "postgresql.service" ];
+      after = [ "postgresql.service" ];
       requires = [ "postgresql.service" ];
-      wants = [ "dns-ready.service" ];
       partOf = [ "postgresql.service" ];
       serviceConfig = {
-        ExecStartPre = [ "!${pkgs.writeShellScript "freshrss-prestart" preStart}" ];
         ExecStartPost = [ "!${pkgs.writeShellScript "freshrss-poststart" postStart}" ];
       };
     };
@@ -411,6 +506,10 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.freshrss.public;
+        ## FreshRSS sets its own (strict) Content-Security-Policy and
+        ## flags the loosened Caddy baseline as unsafe. Suppress Caddy's
+        ## CSP on this vhost so FreshRSS's own policy reaches the browser.
+        disable-csp = true;
       };
       backup = {
         paths = [

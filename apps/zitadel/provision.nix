@@ -107,7 +107,7 @@ let
   ## new files. Using try-restart (not restart) means units that aren't
   ## currently running stay down — which is what we want when a service
   ## is disabled in the user's config.
-  services = [
+  baseClients = [
     {
       svc = "zitadel";
       internal_name = "homefree-oauth2proxy";
@@ -140,252 +140,6 @@ let
         "podman-oauth2-proxy-green.service"
       ];
     }
-    {
-      svc = "headscale";
-      internal_name = "homefree-headplane";
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      redirect_uris = [ "https://vpn.${domain}/admin/oidc/callback" ];
-      post_logout_uris = [ "https://vpn.${domain}/admin" ];
-      needs_pat = false;
-      post_restart_units = [ "headplane.service" ];
-    }
-    {
-      svc = "netbird";
-      internal_name = "homefree-netbird";
-      ## NetBird needs to authenticate THREE clients with one OIDC app:
-      ##   1. Web dashboard SPA at https://netbird.<domain>/{auth,silent-auth}
-      ##   2. NetBird CLI / native client via loopback http://localhost:53000/
-      ##   3. Mobile clients via the same loopback flow
-      ## NATIVE app type is required for (2)/(3) — USER_AGENT rejects
-      ## non-https loopback redirect_uris. NATIVE + AUTH_METHOD_NONE +
-      ## PKCE accepts both https web callbacks and http loopback URIs.
-      ##
-      ## Even the web dashboard's "Sign in" button ends up redirecting
-      ## through http://localhost:53000/ because the dashboard reads
-      ## the PKCE config from /api/users/.../authorization — and that
-      ## endpoint serves the management.json PKCEAuthorizationFlow
-      ## (CLI-targeted). Registering localhost as a valid redirect on
-      ## the same app fixes the browser flow too.
-      app_type = "OIDC_APP_TYPE_NATIVE";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      ## DEVICE_CODE is required for the NetBird mobile/desktop app's
-      ## Device Authorization Flow — without it, Zitadel rejects the
-      ## /oauth/v2/device_authorization request and the app shows
-      ## "Authentication error — see logs for more info" before any
-      ## browser ever opens. AUTHORIZATION_CODE handles the loopback
-      ## CLI + web dashboard flows; REFRESH_TOKEN keeps sessions alive.
-      grant_types = [
-        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE"
-        "OIDC_GRANT_TYPE_REFRESH_TOKEN"
-        "OIDC_GRANT_TYPE_DEVICE_CODE"
-      ];
-      redirect_uris = [
-        "https://netbird.${domain}/auth"
-        "https://netbird.${domain}/silent-auth"
-        "http://localhost:53000/"
-      ];
-      post_logout_uris = [ "https://netbird.${domain}/" ];
-      needs_pat = true;        # mgmt machine user for org/group reads
-      ## Both containers consume the client_id: management.json on
-      ## the management side, and dashboard.env on the dashboard SPA
-      ## side. Restart both when the secret rotates — otherwise the
-      ## dashboard keeps a stale client_id and login fails with
-      ## "Errors.App.NotFound".
-      post_restart_units = [
-        "podman-netbird-management.service"
-        "podman-netbird-dashboard.service"
-      ];
-    }
-    {
-      svc = "immich";
-      internal_name = "homefree-immich";
-      ## NATIVE + AUTH_METHOD_NONE (PKCE-only) is required so the
-      ## Android Immich app's custom-scheme redirect
-      ## `app.immich:///oauth-callback` is accepted by Zitadel —
-      ## OIDC_APP_TYPE_WEB rejects all non-http(s) redirects
-      ## regardless of `devMode`. NATIVE apps allow BOTH http(s) and
-      ## custom-scheme redirects, so the same client_id serves both
-      ## web (photos.<domain>) and Android. Since Zitadel forbids a
-      ## client_secret on AUTH_METHOD_NONE apps, immich-podman.nix's
-      ## post-hook also clears the secret from the Immich system-
-      ## config row in the DB.
-      app_type = "OIDC_APP_TYPE_NATIVE";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_NONE";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      redirect_uris = [
-        "https://photos.${domain}/auth/login"
-        "https://immich.${domain}/auth/login"
-        "app.immich:///oauth-callback"
-      ];
-      post_logout_uris = [ "https://photos.${domain}/" ];
-      needs_pat = false;
-      ## Immich applies OIDC config via its own admin REST API after the
-      ## OIDC app exists. Restarting the container is harmless but not
-      ## strictly required. The post-hook is invoked separately by
-      ## services/immich-podman.nix in Phase 5.3.
-      post_restart_units = [ "podman-immich-server.service" ];
-    }
-    {
-      svc = "nextcloud";
-      internal_name = "homefree-nextcloud";
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      redirect_uris = [ "https://nextcloud.${domain}/apps/user_oidc/code" ];
-      post_logout_uris = [ "https://nextcloud.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-nextcloud.service" ];
-    }
-    {
-      svc = "forgejo";
-      internal_name = "homefree-forgejo";
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      redirect_uris = [ "https://git.${domain}/user/oauth2/Zitadel/callback" ];
-      post_logout_uris = [ "https://git.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-forgejo.service" ];
-    }
-    {
-      svc = "home-assistant";
-      internal_name = "homefree-home-assistant";
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## auth_oidc HA component callback path (see source:
-      ## custom_components/auth_oidc/endpoints/callback.py → PATH).
-      redirect_uris = [
-        "https://ha.${domain}/auth/oidc/callback"
-        "https://homeassistant.${domain}/auth/oidc/callback"
-      ];
-      post_logout_uris = [ "https://ha.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-homeassistant.service" ];
-    }
-    {
-      svc = "homebox";
-      internal_name = "homefree-homebox";
-      ## Homebox v0.25+ confidential OIDC client (server-side Go app).
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Homebox hardcodes its OIDC callback path. Confirmed
-      ## empirically: clicking "Sign in" produces a redirect_uri of
-      ## /api/v1/users/login/oidc/callback (not the
-      ## /api/v1/users/oidc-callback I initially guessed from a
-      ## `homebox api --help` that doesn't expose a --redirect-url
-      ## option).
-      redirect_uris = [ "https://homebox.${domain}/api/v1/users/login/oidc/callback" ];
-      post_logout_uris = [ "https://homebox.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-homebox.service" ];
-    }
-    {
-      svc = "vaultwarden";
-      internal_name = "homefree-vaultwarden";
-      ## Vaultwarden 1.36+ confidential OIDC client (Rust server,
-      ## kept server-side).
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Vaultwarden auto-derives its callback from DOMAIN. Per
-      ## https://github.com/dani-garcia/vaultwarden/wiki/Enabling-SSO-support-using-OpenId-Connect
-      ## the path is /identity/connect/oidc-signin.
-      redirect_uris = [ "https://vaultwarden.${domain}/identity/connect/oidc-signin" ];
-      post_logout_uris = [ "https://vaultwarden.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-vaultwarden.service" ];
-    }
-    {
-      svc = "ollama";
-      internal_name = "homefree-ollama";
-      ## Open WebUI is a Node.js server-side app using a confidential
-      ## OIDC client (authcode + secret). Not a SPA — secrets are
-      ## kept server-side in the container.
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Open WebUI's OIDC callback path is /oauth/oidc/callback
-      ## (see OPENID_REDIRECT_URI in services/ollama-podman.nix).
-      redirect_uris = [ "https://ollama.${domain}/oauth/oidc/callback" ];
-      post_logout_uris = [ "https://ollama.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-ollama-webui.service" ];
-    }
-    {
-      svc = "linkwarden";
-      internal_name = "homefree-linkwarden";
-      ## Linkwarden is a Next.js + NextAuth app — confidential client
-      ## (authcode + secret), all OIDC handling server-side.
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Linkwarden v2.x has a known NextAuth basePath bug
-      ## (linkwarden/linkwarden#1422): NEXTAUTH_URL is
-      ## https://<host>/api/v1/auth but the SDK builds the outgoing
-      ## redirect_uri against the NextAuth default
-      ## /api/auth/callback/<provider> — ignoring the /v1 segment.
-      ## We register the URI Linkwarden actually sends so Zitadel
-      ## accepts the request; Caddy then rewrites the inbound callback
-      ## from /api/auth/... to /api/v1/auth/... so it reaches the real
-      ## NextAuth handler (the no-v1 path is a hard 404).
-      redirect_uris = [
-        "https://linkwarden.${domain}/api/auth/callback/zitadel"
-        "https://links.${domain}/api/auth/callback/zitadel"
-      ];
-      post_logout_uris = [ "https://links.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-linkwarden.service" ];
-    }
-    {
-      svc = "cryptpad";
-      internal_name = "homefree-cryptpad";
-      ## CryptPad's SSO plugin is a server-side Node confidential
-      ## client (authcode + client_secret) — same shape as Forgejo
-      ## or Linkwarden.
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## CryptPad's SSO callback path is hardcoded to /ssoauth (see
-      ## cryptpad/sso README). The "main" CryptPad domain is the docs
-      ## subdomain; docs-sandbox is the iframe sandbox and never
-      ## receives OAuth callbacks.
-      redirect_uris = [ "https://docs.${domain}/ssoauth" ];
-      post_logout_uris = [ "https://docs.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-cryptpad.service" ];
-    }
-    {
-      svc = "freshrss";
-      internal_name = "homefree-freshrss";
-      ## FreshRSS uses Apache mod_auth_openidc — server-side
-      ## confidential client (authcode + secret).
-      app_type = "OIDC_APP_TYPE_WEB";
-      auth_method = "OIDC_AUTH_METHOD_TYPE_POST";
-      response_types = [ "OIDC_RESPONSE_TYPE_CODE" ];
-      grant_types = [ "OIDC_GRANT_TYPE_AUTHORIZATION_CODE" "OIDC_GRANT_TYPE_REFRESH_TOKEN" ];
-      ## Callback path hardcoded by the FreshRSS image's Apache
-      ## config: OIDCRedirectURI /i/oidc/. Trailing slash is part of
-      ## the path mod_auth_openidc serves, so register it as-is.
-      redirect_uris = [ "https://freshrss.${domain}/i/oidc/" ];
-      post_logout_uris = [ "https://freshrss.${domain}/" ];
-      needs_pat = false;
-      post_restart_units = [ "podman-freshrss.service" ];
-    }
   ];
 
   ## Render the services table as newline-delimited records. Each
@@ -411,6 +165,10 @@ let
     (if s.needs_pat then "true" else "false")
     (joinUS s.post_restart_units)
   ];
+  ## Consume the deduped + sorted SSO client registry (modules/sso-clients.nix)
+  ## instead of a hardcoded list: baseClients (above) are pushed into it, and
+  ## each SSO-gated app pushes its own descriptor from its apps/<name> module.
+  services = config.homefree.sso.resolved-clients;
   serviceRecords = lib.concatStringsSep "\n" (map serviceRecord services);
 
   provisionScript = pkgs.writeShellApplication {
@@ -1395,6 +1153,14 @@ EOF
 
 in {
   config = lib.mkIf zitadelEnabled {
+    ## Push provision.nix's own base OIDC client — the oauth2-proxy app (the
+    ## SSO gate itself, with its post-logout set derived from the gated-service
+    ## set) — into the shared SSO registry. It lives here rather than in an
+    ## apps/<name> module because it is the identity core, not a user app.
+    ## Every user-facing app (including plugins) pushes its own descriptor from
+    ## its own module; modules/sso-clients.nix dedups by internal_name.
+    homefree.sso.clients = baseClients;
+
     systemd.services.zitadel-provision = {
       description = "Provision OIDC apps + machine users in Zitadel for HomeFree services";
       after = [ "podman-zitadel.service" "network-online.target" ];

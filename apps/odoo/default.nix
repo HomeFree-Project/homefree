@@ -11,25 +11,7 @@ let
   odoo-uid = "100";
   odoo-gid = "101";
 
-  preStart = ''
-    mkdir -p ${containerDataPath}/data
-    mkdir -p ${containerDataPath}/config
-    mkdir -p ${containerDataPath}/addons
-
-    # Create default odoo.conf if it doesn't exist
-    if [ ! -f ${containerDataPath}/config/odoo.conf ]; then
-      cat > ${containerDataPath}/config/odoo.conf << 'EOF'
-[options]
-addons_path = /mnt/extra-addons
-data_dir = /var/lib/odoo
-EOF
-    fi
-
-    # Ensure proper permissions for odoo user (uid 100, gid 101)
-    chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/data || true
-    chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/config || true
-    chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/addons || true
-  '';
+  enable = config.homefree.services.odoo.enable;
 
   userOptions = {
     enable = lib.mkOption {
@@ -78,7 +60,7 @@ in
 
   config = {
 
-  services.postgresql = if config.homefree.services.odoo.enable then {
+  services.postgresql = if enable then {
     enable = true;
     ensureDatabases = [ database-name ];
     ensureUsers = [{
@@ -88,55 +70,85 @@ in
     }];
   } else {};
 
-  virtualisation.oci-containers.containers = if config.homefree.services.odoo.enable then {
-    odoo = {
-      image = "odoo:${version}";
-      autoStart = true;
-      ports = [ "0.0.0.0:${toString port}:8069" ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/data:/var/lib/odoo"
-        "${containerDataPath}/config:/etc/odoo"
-        "${containerDataPath}/addons:/mnt/extra-addons"
-        "/run/postgresql:/run/postgresql"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        ## libpq treats a host beginning with `/` as a unix socket
-        ## directory. /run/postgresql is bind-mounted into the
-        ## container (volumes above), so odoo connects via the socket
-        ## under local-trust auth — no password needed, and the
-        ## connection bypasses the host pg_hba TCP rules entirely.
-        ## Same pattern as freshrss / joplin / matrix / nextcloud.
-        ## (Previously HOST was the lan-address with TCP+trust; Phase
-        ## 2's hba swap to scram-sha-256 broke that path because
-        ## odoo's role has no password.)
-        HOST = "/run/postgresql";
-        USER = database-user;
-      };
-
-      # Initialize database with base module on startup
-      # Odoo skips re-initialization if already done
-      cmd = [ "--database" database-name "--init" "base" ];
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## SKIPPED non-root: Odoo 19's official image is built with uid 100 / gid 101
+  ## baked in; the entrypoint chowns /var/lib/odoo and /etc/odoo at startup as
+  ## root then drops to that uid. Passing user= prevents the chown, causing
+  ## startup failures. The image predates HomeFree's 800-899 uid range and has
+  ## no PUID/PGID mechanism. postgresql ordering + partOf are in the escape-hatch
+  ## systemd.services.podman-odoo block below.
+  homefree.containers.odoo = lib.mkIf enable {
+    image = "odoo:${version}";
+    runAs = {
+      mode = "root";
+      reason = "official image chowns /var/lib/odoo + /etc/odoo as root at startup then drops to uid 100; user= breaks the chown";
     };
-  } else {};
 
-  systemd.services.podman-odoo = {
-    after = [ "dns-ready.service" "postgresql.service" ];
+    ports = [ "0.0.0.0:${toString port}:8069" ];
+
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/data:/var/lib/odoo"
+      "${containerDataPath}/config:/etc/odoo"
+      "${containerDataPath}/addons:/mnt/extra-addons"
+      "/run/postgresql:/run/postgresql"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      ## libpq treats a host beginning with `/` as a unix socket
+      ## directory. /run/postgresql is bind-mounted into the
+      ## container (volumes above), so odoo connects via the socket
+      ## under local-trust auth — no password needed, and the
+      ## connection bypasses the host pg_hba TCP rules entirely.
+      ## Same pattern as freshrss / joplin / matrix / nextcloud.
+      ## (Previously HOST was the lan-address with TCP+trust; Phase
+      ## 2's hba swap to scram-sha-256 broke that path because
+      ## odoo's role has no password.)
+      HOST = "/run/postgresql";
+      USER = database-user;
+    };
+
+    # Initialize database with base module on startup
+    # Odoo skips re-initialization if already done
+    cmd = [ "--database" database-name "--init" "base" ];
+
+    ## Multiple independent subdirs + config file + unconditional chowns.
+    ## Emit the full preStart verbatim (no generated mkdir/chown — root mode).
+    preStartInit = ''
+      mkdir -p ${containerDataPath}/data
+      mkdir -p ${containerDataPath}/config
+      mkdir -p ${containerDataPath}/addons
+
+      # Create default odoo.conf if it doesn't exist
+      if [ ! -f ${containerDataPath}/config/odoo.conf ]; then
+        cat > ${containerDataPath}/config/odoo.conf << 'EOF'
+[options]
+addons_path = /mnt/extra-addons
+data_dir = /var/lib/odoo
+EOF
+      fi
+
+      # Ensure proper permissions for odoo user (uid 100, gid 101)
+      chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/data || true
+      chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/config || true
+      chown -R ${odoo-uid}:${odoo-gid} ${containerDataPath}/addons || true
+    '';
+  };
+
+  ## Escape hatch: postgresql ordering not covered by the app-platform descriptor.
+  ## Merged onto the generated podman-odoo unit (dns-ready after/wants come from
+  ## the generator; postgresql after/requires/partOf are added here).
+  systemd.services.podman-odoo = lib.mkIf enable {
+    after = [ "postgresql.service" ];
     requires = [ "postgresql.service" ];
-    wants = [ "dns-ready.service" ];
     ## Re-bind /run/postgresql when postgres restarts — without
     ## partOf the container's existing mount is orphaned and DB
     ## queries fail with ENOENT. Same pattern as nextcloud/freshrss.
     partOf = [ "postgresql.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "odoo-prestart" preStart}" ];
-    };
   };
 
-  homefree.service-config = if config.homefree.services.odoo.enable == true then [{
+  homefree.service-config = if enable then [{
     label = "odoo";
       port-request = null;
     name = "Odoo ERP";

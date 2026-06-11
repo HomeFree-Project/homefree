@@ -231,15 +231,20 @@ in
         snapshots      = p.snapshots or false;
       }) (jsonData.storage.pools or []);
       shares = map (s: {
-        enabled   = s.enabled or true;
-        name      = s.name;
-        path      = s.path;
-        allowed   = s.allowed or "";
-        read-only = s.read-only or false;
-        squash    = s.squash or "root";
-        anon-uid  = s.anon-uid or null;
-        anon-gid  = s.anon-gid or null;
+        enabled    = s.enabled or true;
+        name       = s.name;
+        path       = s.path;
+        allowed    = s.allowed or "";
+        read-only  = s.read-only or false;
+        squash     = s.squash or "root";
+        anon-uid   = s.anon-uid or null;
+        anon-gid   = s.anon-gid or null;
+        media      = s.media or false;
+        media-type = s.media-type or "all";
       }) (jsonData.storage.shares or []);
+      media-server = {
+        friendly-name = (jsonData.storage.media-server or {}).friendly-name or null;
+      };
     };
 
     ## System-disk LUKS + TPM2 first-boot enrollment. Flipped to true by
@@ -380,9 +385,13 @@ in
         };
       });
 
-    ## Alerts framework. Off by default; `or`-defaults preserve
-    ## backwards compat with older homefree-config.json files (rule 11)
-    ## and mirror the option defaults in module.nix.
+    ## Alerts framework. Fresh installs seed `alerts.enable: true` plus
+    ## the ntfy push channel via install.py's HOMEFREE_JSON_TEMPLATE, so
+    ## new boxes default ON. The `or false` defaults below only apply to
+    ## older configs that predate the alerts block (no `alerts` key) —
+    ## those stay OFF so upgrading boxes aren't silently flipped on
+    ## (rule 11). The remaining `or`-defaults backfill every sub-key and
+    ## mirror module.nix.
     alerts =
       let
         a = jsonData.alerts or {};
@@ -582,6 +591,8 @@ in
         ssl       = e.ssl or false;
         ssl-no-verify = e.ssl-no-verify or false;
         disable-keepalive = e.disable-keepalive or false;
+        strip-cookies = e.strip-cookies or false;
+        extra-csp-sources = e.extra-csp-sources or [];
         public    = e.public or false;
         oauth2    = e.oauth2 or false;
         basic-auth = e.basic-auth or false;

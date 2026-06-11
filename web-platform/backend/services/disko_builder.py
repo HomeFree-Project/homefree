@@ -302,6 +302,24 @@ class DiskoConfigBuilder:
         else:
             esp_mount = None
         if esp_mount:
+            # 1M BIOS-boot partition (EF02) ahead of the ESP. Inert on a
+            # UEFI install, but when the ISO was booted in legacy BIOS
+            # mode the generated config installs GRUB for i386-pc, and
+            # grub-install on a GPT disk has nowhere to embed core.img
+            # without one ("embedding won't be possible") — the install
+            # then dies at the bootloader step. KVM/cockpit VMs default
+            # to SeaBIOS, so the BIOS path is common in practice.
+            partitions.append(
+                '          boot = {\n'
+                '            size = "1M";\n'
+                '            type = "EF02";\n'
+                # Nix attrsets sort alphabetically; disko orders
+                # partition creation by priority, so pin the BIOS-boot
+                # stub to the front of the disk (upstream disko
+                # convention for EF02).
+                '            priority = 1;\n'
+                '          };\n'
+            )
             partitions.append(
                 '          ESP = {\n'
                 '            size = "512M";\n'

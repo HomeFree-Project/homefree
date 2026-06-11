@@ -91,6 +91,8 @@ class InstallStep extends LitElement {
 
     .log-line {
       margin-bottom: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
 
     .log-line.error {
@@ -175,6 +177,27 @@ class InstallStep extends LitElement {
     this.logs = [];
     this.recoveryPassphrase = '';
     this.stopPolling = null;
+    this.followTail = true;
+    this.errorDetailShown = false;
+  }
+
+  willUpdate(changedProperties) {
+    // Decide BEFORE the new log lines render whether the user was
+    // reading the tail; only then does the panel follow the new
+    // bottom, so scrolling up to inspect earlier lines sticks.
+    if (changedProperties.has('logs')) {
+      const c = this.shadowRoot && this.shadowRoot.querySelector('.logs-container');
+      this.followTail = !c || (c.scrollHeight - c.scrollTop - c.clientHeight) < 48;
+    }
+  }
+
+  updated(changedProperties) {
+    if (changedProperties.has('logs') && this.followTail) {
+      const c = this.shadowRoot.querySelector('.logs-container');
+      if (c) {
+        c.scrollTop = c.scrollHeight;
+      }
+    }
   }
 
   async connectedCallback() {
@@ -225,6 +248,24 @@ class InstallStep extends LitElement {
           timestamp: new Date().toISOString(),
         };
         this.logs = [...this.logs, entry].slice(-200);
+      }
+
+      // On failure the backend captures the tail of the failing
+      // command's output (disko / nixos-install); append it to the log
+      // panel so the actual cause is visible without shelling in and
+      // reading the backend journal.
+      if (status.error_detail && !this.errorDetailShown) {
+        this.errorDetailShown = true;
+        const now = new Date().toISOString();
+        const detailLines = status.error_detail
+          .split('\n')
+          .filter(line => line.trim() !== '')
+          .map(line => ({ type: 'error', raw: true, message: line, timestamp: now }));
+        this.logs = [
+          ...this.logs,
+          { type: 'info', message: '--- output of the failing step ---', timestamp: now },
+          ...detailLines,
+        ].slice(-200);
       }
 
       if (this.completed || this.error) {
@@ -293,6 +334,9 @@ class InstallStep extends LitElement {
           <div class="error-message">
             <strong>✗ Installation Failed</strong>
             <p>${this.error}</p>
+            ${this.errorDetailShown ? html`
+              <p>The output of the failing step is at the end of the installation log below.</p>
+            ` : ''}
           </div>
         ` : ''}
 
@@ -301,11 +345,11 @@ class InstallStep extends LitElement {
             <h3>Installation Log</h3>
           </div>
           <div class="logs-container">
-            ${this.logs.map(log => html`
-              <div class="log-line ${log.type}">
-                [${new Date(log.timestamp).toLocaleTimeString()}] ${log.message}
-              </div>
-            `)}
+            ${this.logs.map(log => html`<div class="log-line ${log.type}">${
+              log.raw
+                ? log.message
+                : html`[${new Date(log.timestamp).toLocaleTimeString()}] ${log.message}`
+            }</div>`)}
             ${this.logs.length === 0 ? html`
               <div class="log-line info">Waiting for installation to start...</div>
             ` : ''}

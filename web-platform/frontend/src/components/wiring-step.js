@@ -28,7 +28,7 @@ class WiringStep extends LitElement {
     :host { display: block; }
 
     .container {
-      max-width: 720px;
+      max-width: 800px;
       margin: 0 auto;
     }
 

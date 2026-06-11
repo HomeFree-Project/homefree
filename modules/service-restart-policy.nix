@@ -35,10 +35,13 @@
 let
   ## Flatten every `systemd-service-names` entry across all
   ## *enabled* registered services into a unique unit-name list.
+  ## Read the generic managed-units registry (enable + systemd-service-names),
+  ## not homefree.service-config directly — decoupled from the service-config
+  ## schema (module.nix projects it).
   allUnitNames = lib.unique (lib.concatMap
     (sc: sc.systemd-service-names or [])
     (lib.filter (sc: sc.enable or true)
-      (config.homefree.service-config or []))
+      (config.homefree.internal.managed-units or []))
   );
 
   ## Per-unit overrides. mkDefault so an app's own

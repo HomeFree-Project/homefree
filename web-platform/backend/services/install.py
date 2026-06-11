@@ -43,6 +43,11 @@ class InstallationService:
 
     # Set during partitioning; surfaced to the UI completion screen.
     _recovery_passphrase: Optional[str] = None
+
+    # Tail of the failing subprocess's output (disko / nixos-install),
+    # surfaced to the UI log panel alongside the error so the operator
+    # doesn't have to shell in and read the backend journal.
+    _error_detail: Optional[str] = None
     # The DiskoConfigBuilder used for this install, kept so later steps
     # (config generation) can query the LUKS layout.
     _disko_builder: Optional[Any] = None
@@ -59,7 +64,13 @@ class InstallationService:
   description = "HomeFree NixOS Configuration";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The system nixpkgs is NOT pinned per-instance: it follows the
+    # HomeFree base flake's nixpkgs-unstable so every box shares the same
+    # nixpkgs the homefree repo controls (bumped via the admin UI's
+    # "Update flakes" button / a homefree-base revision bump), instead of
+    # drifting on a per-instance flake.lock. homefree-base is always
+    # declared below, so this follows resolves in both prod and dev mode.
+    nixpkgs.follows = "homefree-base/nixpkgs-unstable";
     homefree-base.url = "git+https://git.homefree.host/homefree/homefree.git";@@lanzaboote_input@@
     # >>> homefree-base-override (managed - do not edit by hand) >>>@@base_override_region@@
     # <<< homefree-base-override <<<
@@ -98,7 +109,11 @@ class InstallationService:
     homefreeConfigJson = builtins.fromJSON (builtins.readFile ./homefree-config.json);
   in {
     nixosConfigurations = {
-      @@hostname@@ = nixpkgs.lib.nixosSystem {
+      # Build with the bound base's nixpkgs-unstable (homefree = the
+      # selected base input, official or local dev) so the system tracks
+      # the shared, centrally-controlled nixpkgs rather than a per-instance
+      # pin. This mirrors the homefree repo's own nixosConfigurations.
+      @@hostname@@ = homefree.inputs.nixpkgs-unstable.lib.nixosSystem {
         inherit system;
         modules = [
           homefree.nixosModules.homefree@@lanzaboote_module@@
@@ -197,6 +212,10 @@ class InstallationService:
   "sso": {
     "allowUserRegistration": false,
     "per-service": {}
+  },
+  "alerts": {
+    "enable": true,
+    "channels": { "ntfy": { "enable": true } }
   },
   "services": {},
   "service-config": [],
@@ -371,6 +390,26 @@ class InstallationService:
             logger.warning("Installation already in progress")
             return False
 
+        # Pre-flight: the install thread reads everything from
+        # ConfigService's in-memory state, and its first action is to
+        # repartition the target disks. Refuse to start if a required
+        # field never reached the backend (a frontend save that failed,
+        # or a backend restart since the step was completed) so the
+        # failure surfaces before any disk is touched.
+        config = ConfigService.get_config()
+        if not config.get('password'):
+            raise Exception(
+                "The installer backend has no admin password configured. "
+                "Go back to the Users step, re-enter the account details, "
+                "and try again."
+            )
+        if not config.get('partitioning'):
+            raise Exception(
+                "The installer backend has no partitioning configuration. "
+                "Go back to the Partitioning step, select the target "
+                "disk(s), and try again."
+            )
+
         InstallationService._running = True
         InstallationService._status = {
             'step': 'Starting installation...',
@@ -382,6 +421,7 @@ class InstallationService:
         # Clear per-install state from any earlier attempt.
         InstallationService._recovery_passphrase = None
         InstallationService._disko_builder = None
+        InstallationService._error_detail = None
 
         # Start installation in background thread
         InstallationService._install_thread = threading.Thread(
@@ -401,6 +441,7 @@ class InstallationService:
         """
         status = InstallationService._status.copy()
         status['recovery_passphrase'] = InstallationService._recovery_passphrase
+        status['error_detail'] = InstallationService._error_detail
         return status
 
     @staticmethod
@@ -747,13 +788,14 @@ class InstallationService:
                 logger.info(f"disko: {line.rstrip()}")
             process.wait()
             if process.returncode != 0:
-                # Surface the tail of disko's own output in the error so
-                # the failure cause is visible in the UI, not just the
-                # backend journal.
-                tail = "\n".join(disko_output[-15:]) or "(no output)"
+                # Surface the tail of disko's own output in the UI log
+                # panel, not just the backend journal; the banner keeps
+                # the short summary.
+                InstallationService._error_detail = (
+                    "\n".join(disko_output[-40:]) or "(no output)"
+                )
                 raise Exception(
-                    f"disko failed with exit code {process.returncode}.\n"
-                    f"Last output:\n{tail}"
+                    f"disko failed with exit code {process.returncode}"
                 )
         except FileNotFoundError:
             raise Exception(
@@ -894,7 +936,6 @@ class InstallationService:
         part = InstallationService._get_partitioning()
         use_encryption = part['use_encryption']
         use_lanzaboote = part['use_lanzaboote'] and fw_type == "efi"
-        first_disk = part['disks'][0]
 
         # Generate bootloader config. When lanzaboote (Secure Boot) is
         # opted in, secureboot.nix owns the bootloader and sets
@@ -914,9 +955,19 @@ class InstallationService:
   boot.loader.efi.canTouchEfiVariables = true;
 """
         else:
-            bootloader = f"""  # Bootloader (BIOS)
+            # BIOS / legacy boot. We deliberately do NOT set
+            # boot.loader.grub.device here: disko's gpt type already
+            # emits `boot.loader.grub.devices = [ <disk> ]` for every
+            # disk that carries an EF02 BIOS-boot partition (see
+            # disko/lib/types/gpt.nix, and the EF02 stub added in
+            # disko_builder.py). Setting `device` too makes nixpkgs add
+            # the same disk to grub.devices a second time; the two list
+            # definitions merge and GRUB's assertion rejects the
+            # duplicate ("You cannot have duplicated devices in
+            # mirroredBoots"). Letting disko own grub.devices also gives
+            # RAID1 BIOS installs a bootloader on BOTH disks for free.
+            bootloader = """  # Bootloader (BIOS) — grub.devices supplied by disko (EF02 partition)
   boot.loader.grub.enable = true;
-  boot.loader.grub.device = "{first_disk}";
   boot.loader.grub.useOSProber = true;
 """
 
@@ -1449,6 +1500,11 @@ class InstallationService:
             if process.returncode != 0:
                 logger.error(f"nixos-install failed with exit code {process.returncode}")
                 logger.error(f"Full output:\n{''.join(output_lines[-100:])}")  # Last 100 lines
+                # Surface the tail in the UI log panel; the failing
+                # command's own error sits in the last few dozen lines.
+                InstallationService._error_detail = (
+                    "".join(output_lines[-40:]).rstrip() or "(no output)"
+                )
                 raise Exception(f"nixos-install failed with code {process.returncode}")
 
             logger.info("nixos-install completed successfully")

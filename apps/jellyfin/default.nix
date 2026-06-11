@@ -13,26 +13,10 @@ let
   jellyfinUid = 811;
   jellyfinGid = 811;
 
-  preStart = ''
-    mkdir -p ${containerDataPath}
-    mkdir -p ${containerDataPath}/media
-
-    ## Marker-gated full-tree chown to the dedicated jellyfin UID.
-    ## The LSIO entrypoint chowns /config on first start when PUID
-    ## changes, but its chown has been observed to miss deep
-    ## descendants (jellyfin.db left at uid 911 after switching
-    ## PUID=811 in Phase 3, breaking the SQLite write path). A
-    ## host-side `chown -R` once per UID change is the reliable
-    ## fix. Marker file gates so subsequent boots are a no-op even
-    ## on a multi-TB library; remove the marker to force re-chown.
-    if [ ! -f ${containerDataPath}/.chowned-${toString jellyfinUid} ]; then
-      chown -R ${toString jellyfinUid}:${toString jellyfinGid} ${containerDataPath}
-      touch ${containerDataPath}/.chowned-${toString jellyfinUid}
-    fi
-  '';
-
   port = config.homefree.allocPort "jellyfin";
-  version = "10.11.8";
+  version = "10.11.11";
+
+  enable = config.homefree.service-options.jellyfin.enable;
 
   userOptions = {
     enable = lib.mkOption {
@@ -88,11 +72,11 @@ in
   ##--------------------------------------------------------------------------------
 
   ## enable vaapi on OS-level
-  nixpkgs.config.packageOverrides = pkgs: (lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
+  nixpkgs.config.packageOverrides = pkgs: (lib.optionalAttrs enable {
     vaapiIntel = pkgs.vaapiIntel.override { enableHybridCodec = true; };
   });
 
-  hardware.graphics = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
+  hardware.graphics = lib.optionalAttrs enable {
     enable = true;
     extraPackages = with pkgs; [
       intel-media-driver
@@ -106,74 +90,73 @@ in
     ];
   };
 
-    users.users.jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
-      isSystemUser = true;
-      group = "jellyfin";
-      uid = jellyfinUid;
-      description = "Jellyfin container runtime user";
-    };
-    users.groups.jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
-      gid = jellyfinGid;
-    };
+  ## Container via app-platform (modules/app-platform.nix). The dedicated
+  ## system user/group (uid/gid 811), PUID/PGID env injection, dataDir mkdir,
+  ## dns-ready ordering, and podman unit wiring are all generated from this
+  ## descriptor.
+  homefree.containers.jellyfin = lib.mkIf enable {
+    image = "lscr.io/linuxserver/jellyfin:${version}";
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.jellyfin.enable {
-    jellyfin = {
-      image = "lscr.io/linuxserver/jellyfin:${version}";
+    ## LinuxServer PUID/PGID: s6-overlay starts as root then drops to
+    ## PUID:PGID. The platform creates the dedicated system user/group
+    ## and injects PUID/PGID env automatically.
+    runAs = { mode = "linuxserver"; uid = jellyfinUid; gid = jellyfinGid; };
+    dataDir = containerDataPath;
 
-      autoStart = true;
+    ## Marker-gated full-tree chown to the dedicated jellyfin UID.
+    ## The LSIO entrypoint chowns /config on first start when PUID
+    ## changes, but its chown has been observed to miss deep
+    ## descendants (jellyfin.db left at uid 911 after switching
+    ## PUID=811 in Phase 3, breaking the SQLite write path). A
+    ## host-side chown -R once per UID change is the reliable fix.
+    ## Marker file gates so subsequent boots are a no-op even on a
+    ## multi-TB library; remove the marker to force re-chown.
+    preStartInit = ''
+      mkdir -p ${containerDataPath}/media
+      if [ ! -f ${containerDataPath}/.chowned-${toString jellyfinUid} ]; then
+        chown -R ${toString jellyfinUid}:${toString jellyfinGid} ${containerDataPath}
+        touch ${containerDataPath}/.chowned-${toString jellyfinUid}
+      fi
+    '';
 
-      extraOptions = [
-        # "--pull=always"
-        ## 1GB of memory, reduces SSD/SD Card wear
-        "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
-        "--device=/dev/dri:/dev/dri"
-        "--cap-add=CAP_PERFMON" # For GPU statistics
-        # "--privileged"
-        ## Supplementary groups so the Jellyfin process can access
-        ## /dev/dri/card0 (video) and /dev/dri/renderD128 (render).
-        ## Looked up from NixOS's config — falls back gracefully if a
-        ## group isn't declared on this box.
-        "--group-add=${toString config.users.groups.video.gid}"
-        "--group-add=${toString (config.users.groups.render.gid or 303)}"
-      ];
+    extraOptions = [
+      ## 1GB of memory, reduces SSD/SD Card wear
+      "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
+      "--device=/dev/dri:/dev/dri"
+      "--cap-add=CAP_PERFMON" # For GPU statistics
+      ## Supplementary groups so the Jellyfin process can access
+      ## /dev/dri/card0 (video) and /dev/dri/renderD128 (render).
+      ## Looked up from NixOS's config — falls back gracefully if a
+      ## group isn't declared on this box.
+      "--group-add=${toString config.users.groups.video.gid}"
+      "--group-add=${toString (config.users.groups.render.gid or 303)}"
+    ];
 
-      ports = [
-        ## HTTP
-        "0.0.0.0:${toString port}:8096"
-        ## HTTPS
-        # "0.0.0.0:8920:8920" #optional
-        ## Jellyfin client auto-discovery (7359/udp) and DLNA SSDP
-        ## (1900/udp) are deliberately omitted. 1900/udp conflicts
-        ## with Home Assistant's SSDP integration, which binds 1900
-        ## by default for device discovery. Modern Jellyfin clients
-        ## connect via HTTPS to the reverse-proxied subdomain rather
-        ## than discovering over UDP, so these mappings are dead
-        ## weight on a HomeFree box. Re-enable in a downstream
-        ## override only if you explicitly need DLNA broadcasting
-        ## to legacy smart-TV menus.
-      ];
+    ports = [
+      ## HTTP
+      "0.0.0.0:${toString port}:8096"
+      ## HTTPS
+      # "0.0.0.0:8920:8920" #optional
+      ## Jellyfin client auto-discovery (7359/udp) and DLNA SSDP
+      ## (1900/udp) are deliberately omitted. 1900/udp conflicts
+      ## with Home Assistant's SSDP integration, which binds 1900
+      ## by default for device discovery. Modern Jellyfin clients
+      ## connect via HTTPS to the reverse-proxied subdomain rather
+      ## than discovering over UDP, so these mappings are dead
+      ## weight on a HomeFree box. Re-enable in a downstream
+      ## override only if you explicitly need DLNA broadcasting
+      ## to legacy smart-TV menus.
+    ];
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:/config"
-        "${media-path}:/data"
-      ];
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}:/config"
+      "${media-path}:/data"
+    ];
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
-        JELLYFIN_PublishedServerUrl = "https://media.${config.homefree.system.domain}";
-        ## LinuxServer PUID/PGID — see comment in let block.
-        PUID = toString jellyfinUid;
-        PGID = toString jellyfinGid;
-      };
-    };
-  };
-
-  systemd.services.podman-jellyfin = lib.mkIf config.homefree.service-options.jellyfin.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "jellyfin-prestart" preStart}" ];
+    environment = {
+      TZ = config.homefree.system.timeZone;
+      JELLYFIN_PublishedServerUrl = "https://media.${config.homefree.system.domain}";
     };
   };
 

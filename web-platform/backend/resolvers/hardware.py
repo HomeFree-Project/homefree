@@ -96,6 +96,23 @@ class HardwareResolver:
                 # memory / other — no threshold concept here, leave
                 # warn_c / err_c absent so the UI knows to skip.
                 continue
+            # NVMe auxiliary thermistors (Sensor 1 / Sensor 2 — controller
+            # die, NAND array) carry no firmware-published limit: both
+            # `_crit` and `_max` come back None. The alert source
+            # (SensorTemperatureSource.evaluate) deliberately SKIPS these
+            # — only Composite carries the spec-mandated WCTEMP/CCTEMP, and
+            # NAND under sustained writes routinely sits at 80-90 °C without
+            # the drive considering itself in danger. If we resolved a
+            # threshold here, the cascade would hand back the defensive
+            # `NVME_DEFAULT_NO_LIMITS` (70, 80) static fallback and the
+            # Hardware page would paint those auxiliaries warn/err while the
+            # Alerts page stays clear — the exact mismatch this guard
+            # prevents. Leave warn_c/err_c absent so the UI surfaces the
+            # raw reading without false severity coloring (frontend skips
+            # coloring when warn_c/err_c is null). See
+            # docs/agent-notes/nvme-threshold-cascade.md.
+            if kind == "nvme" and s.get("crit_c") is None and s.get("max_c") is None:
+                continue
             user_warn, user_err = overrides_by_kind[kind]
             warn, err = hw_buckets.resolve_thresholds_with_overrides(
                 kind, s.get("crit_c"), s.get("max_c"), user_warn, user_err,

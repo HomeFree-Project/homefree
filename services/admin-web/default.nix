@@ -1,28 +1,21 @@
-{ config, lib, pkgs, options, ... }:
+{ config, lib, pkgs, options, homefree-inputs, ... }:
 
 with lib;
 
 let
   cfg = config.homefree;
 
-  # Path to web-platform directory in this repository
-  # This works because the whole homefree repo is in the nix store when building
-  installerWebPath = ../../web-platform;
+  # web-platform source, consumed via its own flake input rather than a
+  # `../../web-platform` relative path import. `.source` is the input's
+  # git-clean filtered tree (web-platform/flake.nix drops __pycache__/*.pyc
+  # etc.), so what we serve is byte-identical to the old path import but
+  # decoupled from this repo's directory layout.
+  installerWebPath = homefree-inputs.web-platform.legacyPackages.${pkgs.system}.source;
 
-  # Python environment with required packages
-  pythonEnv = pkgs.python3.withPackages (ps: with ps; [
-    fastapi
-    uvicorn
-    psutil
-    pyudev
-    pydantic
-    pyyaml
-    babel
-    httpx
-    ## GeoIP lookups for the Abuse Blocking page's traffic-source
-    ## table. Reads the DB-IP mmdb maintained by modules/geoip.nix.
-    geoip2
-  ]);
+  # Python environment with required packages. The dependency set is factored
+  # into web-platform/backend/python-env.nix so the backend import-all gate
+  # (checks/default.nix) builds the SAME closure this service runs under.
+  pythonEnv = pkgs.python3.withPackages (import (installerWebPath + "/backend/python-env.nix"));
 
   # Admin backend service package
   # Uses the same web-platform backend, but in admin mode
@@ -55,6 +48,19 @@ let
     exec ${pythonEnv}/bin/python drive_temp_sampler.py
   '';
 
+  # App-versions refresher. Walks the container catalog and queries
+  # each container image's upstream registry for the latest semver
+  # tag. Backs the Advanced -> App Versions page. Outbound-network
+  # only (no privileged operations), so the systemd unit is sandboxed
+  # but still runs as root to share write access to
+  # /var/lib/homefree-admin/app-versions-cache.json with the admin-api
+  # (which is the manual-refresh writer for the same file).
+  app-versions-refresher = pkgs.writeShellScriptBin "homefree-app-versions-refresher" ''
+    #!/usr/bin/env bash
+    cd ${installerWebPath}/backend
+    exec ${pythonEnv}/bin/python app_versions_refresh.py
+  '';
+
   # SQLite DB shared by the sampler (writer) and admin-api (reader).
   dashboardDbDir = "/var/lib/homefree-dashboard";
   dashboardDbPath = "${dashboardDbDir}/history.db";
@@ -79,14 +85,56 @@ let
   # Generate service metadata map for ALL services (enabled or not)
   # This maps service labels to their display names and project names
   # First, get metadata from service-config for enabled services
+  ## version-tracking carries `command`/`update-command` paths; coerce
+  ## them to store strings (or null) so the JSON encoder + the backend
+  ## resolver get plain strings. The resolver consumes this descriptor to
+  ## override its default image-derived version detection per app, and
+  ## the upgrade endpoint runs `update-command` in place of the generic
+  ## pin rewriter.
+  projectVersionTracking = vt: vt // {
+    command = if vt.command == null then null else toString vt.command;
+    update-command =
+      if vt.update-command == null then null else toString vt.update-command;
+  };
+
+  ## The version-detection resolver keys enabled rows on the CONTAINER
+  ## name, but version-tracking + project-name are declared per service
+  ## LABEL — and the two differ for some apps (unifi's container is
+  ## `unifi-os`, label `unifi`). So we ALSO alias the metadata under each
+  ## container name that shares the entry's PRIMARY (first) container's
+  ## image. That single rule covers two cases at once:
+  ##   * name != label (unifi-os -> unifi), and
+  ##   * blue/green pairs that share one image (oauth2-proxy-blue +
+  ##     oauth2-proxy-green both resolve oauth2proxy's descriptor).
+  ## Matching on IMAGE (not just "all containers") keeps a genuine sidecar
+  ## with a DIFFERENT image (immich-redis, postgres-vectorchord) OUT of the
+  ## alias, so it stays on the default strategy instead of inheriting the
+  ## app's upstream.
+  ociContainers = config.virtualisation.oci-containers.containers or {};
+  containerImageOf = cname: (ociContainers.${cname} or {}).image or null;
+  entryContainers = sc:
+    map (lib.removePrefix "podman-")
+      (lib.filter (lib.hasPrefix "podman-") sc.systemd-service-names);
+  primaryImageContainers = sc:
+    let conts = entryContainers sc;
+    in if conts == [] then []
+       else let primImg = containerImageOf (lib.head conts);
+            in lib.optionals (primImg != null)
+                 (lib.filter (c: containerImageOf c == primImg) conts);
+
   service-config-map = builtins.listToAttrs (
-    map (sc: {
-      name = sc.label;
-      value = {
-        name = sc.name;
-        project-name = sc.project-name;
-      };
-    }) cfg.service-config
+    lib.concatMap (sc:
+      let
+        value = {
+          name = sc.name;
+          project-name = sc.project-name;
+          version-tracking = projectVersionTracking sc.version-tracking;
+        };
+        aliases = lib.filter (c: c != sc.label) (primaryImageContainers sc);
+      in
+        [ { name = sc.label; inherit value; } ]
+        ++ map (c: { name = c; inherit value; }) aliases
+    ) cfg.service-config
   );
 
   # Generate metadata for ALL services from service-options
@@ -114,6 +162,82 @@ let
   # Merge: prefer service-config metadata, fall back to defaults
   all-service-metadata = default-service-metadata // service-config-map;
   service-metadata-json = (pkgs.formats.json {}).generate "service-metadata.json" all-service-metadata;
+
+  # Host-app catalog for the App Versions page: NON-container apps
+  # (headscale/headplane, opensprinkler, ...) that declare a
+  # version-tracking strategy but ship no OCI image, so they appear in
+  # neither image catalog above and would otherwise be invisible.
+  #   * non-container = no `podman-*` systemd unit, AND
+  #   * opted in      = a strategy other than the default "image"
+  # (an app keeps the default "image" strategy only when it HAS an image,
+  # so a non-container app on the default is genuinely untrackable and is
+  # deliberately omitted rather than shown as a perpetual "unknown").
+  hostAppHasContainer = sc:
+    lib.any (n: lib.hasPrefix "podman-" n) sc.systemd-service-names;
+  host-apps-list = map (sc: {
+    label = sc.label;
+    name = sc.name;
+    project-name = sc.project-name;
+    enabled = sc.enable;
+    version-tracking = projectVersionTracking sc.version-tracking;
+  }) (lib.filter
+        (sc: !(hostAppHasContainer sc)
+             && sc.version-tracking.strategy != "image")
+        cfg.service-config);
+  host-apps-json = (pkgs.formats.json {})
+    .generate "host-apps.json" host-apps-list;
+
+  # Provenance for the App Versions page: which containers are declared
+  # by THIS repo's tree vs. an external module (a plugin flake, or
+  # something dropped into /etc/nixos). External apps' version pins live
+  # in their own repository — `scripts/upgrade-apps.py` (the page's
+  # Update button) only edits this repo's checkout, so the UI must not
+  # offer Update on rows it can never bump, and the pending-rebuild
+  # overlay must not match them against this repo's pins.
+  #
+  # Detection is by definition LOCATION, not heuristics: a container is
+  # external when every file that defines it lives outside this repo's
+  # source tree. Checked on BOTH declaration surfaces — raw
+  # `virtualisation.oci-containers.containers` AND the app-platform
+  # registry `homefree.containers` (whose generator would otherwise make
+  # every registry app look like it came from modules/app-platform.nix).
+  homefreeSourceRoot = toString ../..;
+  containerDefLocations =
+    (options.virtualisation.oci-containers.containers.definitionsWithLocations or [])
+    ++ (options.homefree.containers.definitionsWithLocations or []);
+  internallyDefinedContainers = lib.unique (lib.concatMap
+    (d: if lib.hasPrefix homefreeSourceRoot (toString d.file)
+        then lib.attrNames d.value
+        else [])
+    containerDefLocations);
+
+  # Container catalog for the Advanced -> App Versions page. Iterates
+  # every container declared via virtualisation.oci-containers and
+  # emits its name + image string + provenance. Image-string parsing
+  # (registry / repo / tag split) is done in Python — keeping this
+  # aggregator dumb avoids brittle Nix string surgery and lets the
+  # resolver evolve without a rebuild.
+  container-images-list = lib.mapAttrsToList (name: c: {
+    inherit name;
+    image = c.image;
+    external = !(lib.elem name internallyDefinedContainers);
+  }) (config.virtualisation.oci-containers.containers or {});
+  container-images-json = (pkgs.formats.json {})
+    .generate "container-images.json" container-images-list;
+
+  # Full app-image catalog for the App Versions page, INCLUDING apps
+  # that are currently disabled — those never declare an oci-container,
+  # so container-images-json (above) can't see them. Built at BUILD time
+  # by scanning every apps/<x>/ and services/<x>/ default.nix for its
+  # image pin, using the same parser scripts/upgrade-apps.py relies on
+  # (shared in resolvers/app_source_index.py). Emitting it here keeps the
+  # /api/apps/versions endpoint a fast, no-filesystem-scan read at
+  # request time. Output shape: [{app, image}].
+  all-app-images-json = pkgs.runCommand "all-app-images.json" {} ''
+    ${pythonEnv}/bin/python \
+      ${installerWebPath}/backend/resolvers/app_source_index.py \
+      scan ${../../apps} ${../../services} > $out
+  '';
 
   # Generate secrets schema for all services
   # This extracts secrets options from service-options for each service
@@ -482,6 +606,9 @@ let
     ${pkgs.coreutils}/bin/cp ${config-json} /run/homefree/admin/config.json
     ${pkgs.coreutils}/bin/cp ${all-services-json} /run/homefree/admin/all-services.json
     ${pkgs.coreutils}/bin/cp ${service-metadata-json} /run/homefree/admin/service-metadata.json
+    ${pkgs.coreutils}/bin/cp ${container-images-json} /run/homefree/admin/container-images.json
+    ${pkgs.coreutils}/bin/cp ${all-app-images-json} /run/homefree/admin/all-app-images.json
+    ${pkgs.coreutils}/bin/cp ${host-apps-json} /run/homefree/admin/host-apps.json
     ${pkgs.coreutils}/bin/cp ${secrets-schema-json} /run/homefree/admin/service-secrets-schema.json
     ${pkgs.coreutils}/bin/cp ${service-options-schema-json} /run/homefree/admin/service-options-schema.json
 
@@ -1085,6 +1212,55 @@ in
     ## oauth2-proxy). The flip's pointer files are unchanged:
     ## /var/lib/homefree-admin/{active-color,active-closure,
     ## admin-api-flip-failed.json}.
+
+    ## App-versions refresher — periodic outbound fetch of each
+    ## container image's latest semver tag from its upstream registry.
+    ## Backs the Advanced -> App Versions page. Oneshot (no daemon);
+    ## the timer runs it daily + the admin-api can kick the same
+    ## refresh in-process via POST /api/apps/versions/refresh.
+    ##
+    ## Runs as root to share write access with the admin-api (also
+    ## root) for /var/lib/homefree-admin/app-versions-cache.json. The
+    ## work itself is purely network + file write, so the unit is
+    ## otherwise locked down via the systemd sandbox directives below.
+    systemd.services.homefree-app-versions-refresh = {
+      description = "Refresh upstream container image versions";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = "root";
+        Group = "root";
+        StateDirectory = "homefree-admin";
+        WorkingDirectory = "/var/lib/homefree-admin";
+        ExecStart = "${app-versions-refresher}/bin/homefree-app-versions-refresher";
+        ## Sandbox — outbound network + writing one file in
+        ## /var/lib/homefree-admin is all this needs.
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        SystemCallFilter = [ "@system-service" ];
+      };
+    };
+
+    systemd.timers.homefree-app-versions-refresh = {
+      description = "Daily refresh of upstream container image versions";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        ## First run shortly after boot so the page has data the first
+        ## time it's opened on a freshly-installed box; recur daily.
+        OnBootSec = "10min";
+        OnUnitActiveSec = "24h";
+        Persistent = true;
+        RandomizedDelaySec = "30m";
+      };
+    };
   }
   ];
 }

@@ -5,6 +5,7 @@ let
   wan-interface = config.homefree.network.wan-interface;
   lan-interface = config.homefree.network.lan-interface;
   lan-address = config.homefree.network.lan-address;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
@@ -62,6 +63,27 @@ let
     ''iifname { "${gn.id}" } accept comment "Allow ${gn.id} VLAN to access the router"''
   ) guest-networks);
 
+  ## Extra trusted interfaces (homefree.network.extra-trusted-
+  ## interfaces): host bridges carrying operator-owned workloads that
+  ## apps register (apps/cockpit pushes libvirt's virbr0 when its VM
+  ## support is enabled). Same trust class as the podman bridges:
+  ## input accept (guests need the host's DHCP/DNS on the bridge) and
+  ## forward to/from LAN and WAN. NAT for such bridges is owned by
+  ## whoever creates them (libvirt masquerades its NAT network from
+  ## its own nftables table), not by this ruleset.
+  extra-trusted-interfaces = config.homefree.network.extra-trusted-interfaces;
+  extra-trusted-input-rules = lib.concatStringsSep "\n" (lib.map (i:
+    ''iifname "${i}" accept comment "Allow trusted ${i} to access the router"''
+  ) extra-trusted-interfaces);
+  extra-trusted-forward-rules = lib.concatStringsSep "\n" (lib.map (i: ''
+            ## Extra trusted interface (registered via
+            ## homefree.network.extra-trusted-interfaces)
+            iifname "${i}" oifname { "${wan-interface}" } accept comment "Allow trusted ${i} to WAN"
+            iifname { "${wan-interface}" } oifname "${i}" ct state established, related accept comment "Allow established back to ${i}"
+            iifname "${i}" oifname { "${lan-interface}" } accept comment "Allow trusted ${i} to LAN"
+            iifname { "${lan-interface}" } oifname "${i}" accept comment "Allow trusted LAN to ${i}"
+  '') extra-trusted-interfaces);
+
   ## Static abuse blocklist for the abusive_nets4 / abusive_nets6
   ## nftables sets. Fully driven by config.homefree.network.
   ## abuseBlockCidrs — a user-owned list (seeded once with Alibaba
@@ -102,16 +124,19 @@ let
     '';
 
   # Firewall rules to open up ports for services
-  public-service-configs = lib.filter (service-config: service-config.reverse-proxy.enable == true && service-config.reverse-proxy.public == true) config.homefree.service-config;
+  # Read the generic ingress registry (reverse-proxy + firewall), not
+  # homefree.service-config directly — decoupled from the service-config schema
+  # (module.nix projects it; shared with caddy + unbound).
+  public-service-configs = lib.filter (vhost: vhost.reverse-proxy.enable == true && vhost.reverse-proxy.public == true) config.homefree.internal.ingress-vhosts;
   service-input-rules = lib.concatStringsSep "\n" (lib.map (service-config:
     lib.concatStringsSep "\n" (lib.map (tcp-port: "tcp dport { ${toString tcp-port} } ct state new accept;") service-config.firewall.open-ports.tcp)
     +
     lib.concatStringsSep "\n" (lib.map (udp-port: "udp dport { ${toString udp-port} } ct state new accept;") service-config.firewall.open-ports.udp)
   ) public-service-configs);
   service-forward-rules = lib.concatStringsSep "\n" (lib.map (service-config:
-    lib.concatStringsSep "\n" (lib.map (tcp-port: ''iifname "${wan-interface}" oifname "podman0" tcp dport ${toString tcp-port} ct state new accept;'') service-config.firewall.open-ports.tcp)
+    lib.concatStringsSep "\n" (lib.map (tcp-port: ''iifname "${wan-interface}" oifname "podman*" tcp dport ${toString tcp-port} ct state new accept;'') service-config.firewall.open-ports.tcp)
     +
-    lib.concatStringsSep "\n" (lib.map (udp-port: ''iifname "${wan-interface}" oifname "podman0" udp dport ${toString udp-port} ct state new accept;'') service-config.firewall.open-ports.udp)
+    lib.concatStringsSep "\n" (lib.map (udp-port: ''iifname "${wan-interface}" oifname "podman*" udp dport ${toString udp-port} ct state new accept;'') service-config.firewall.open-ports.udp)
   ) public-service-configs);
 in
 {
@@ -211,7 +236,7 @@ in
         vlan = map (gn: gn.id) guest-networks;
         networkConfig = {
           Description = "LAN link";
-          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "fd01::1/64" ];
+          Address = [ "${lan-address}/${builtins.elemAt (lib.splitString "/" lan-subnet) 1}" "${lan-address-v6}/64" ];
           LinkLocalAddressing = "yes";
           IPv6AcceptRA = "no";
           # Announce a prefix here and act as a router.
@@ -397,7 +422,19 @@ in
             iifname { "${lan-interface}" } accept comment "Allow local network to access the router"
             iifname { "tailscale0" } accept comment "Allow tailscale network to access the router"
             iifname { "wt0" } accept comment "Allow netbird network to access the router"
-            iifname { "podman0" } accept comment "Allow podman network to access the router"
+            ## "podman*" (nft trailing-asterisk prefix match), NOT the
+            ## literal podman0: netavark names every ADDITIONAL podman
+            ## network's bridge podman1, podman2, ... (e.g. nomad's
+            ## project-nomad_default). With only podman0 trusted, a
+            ## container on a second network can't even reach its own
+            ## aardvark-dns gateway (10.89.0.1:53 lands in this input
+            ## chain) and LAN->published-port DNAT into that bridge is
+            ## dropped in forward — observed as a completely dead app.
+            ## All podman bridges carry HomeFree-managed workloads, so
+            ## they share one trust class. Same wildcard applied to all
+            ## podman forward/NAT rules below.
+            iifname "podman*" accept comment "Allow podman networks to access the router"
+            ${extra-trusted-input-rules}
             ${guest-network-input-rules}
 
             ## Per-IP concurrent-connection cap on web ports.
@@ -455,20 +492,22 @@ in
             iifname { "${wan-interface}" } oifname { "${lan-interface}" } ct state established, related accept comment "Allow established back to LANs"
 
             ## podman-LAN
-            iifname { "podman0" } oifname { "${lan-interface}" } accept comment "Allow trusted podman to LAN"
-            iifname { "${lan-interface}" } oifname { "podman0" } ct state established, related accept comment "Allow established back to podman"
+            iifname "podman*" oifname { "${lan-interface}" } accept comment "Allow trusted podman to LAN"
+            iifname { "${lan-interface}" } oifname "podman*" ct state established, related accept comment "Allow established back to podman"
 
             ## LAN-podman - Needed for SSH to git/forgejo
-            iifname { "${lan-interface}" } oifname { "podman0" } accept comment "Allow trusted LAN to podman"
-            iifname { "podman0" } oifname {  "${lan-interface}" } ct state established, related accept comment "Allow established back to LAN"
+            iifname { "${lan-interface}" } oifname "podman*" accept comment "Allow trusted LAN to podman"
+            iifname "podman*" oifname {  "${lan-interface}" } ct state established, related accept comment "Allow established back to LAN"
 
             ## podman-WAN
-            iifname { "podman0" } oifname { "${wan-interface}" } accept comment "Allow trusted podman to WAN"
-            iifname { "${wan-interface}" } oifname { "podman0" } ct state established, related accept comment "Allow established back to podman"
+            iifname "podman*" oifname { "${wan-interface}" } accept comment "Allow trusted podman to WAN"
+            iifname { "${wan-interface}" } oifname "podman*" ct state established, related accept comment "Allow established back to podman"
+
+            ${extra-trusted-forward-rules}
 
             ## WAN-Podman
             ${service-forward-rules}
-            iifname { "podman0" } oifname { "${wan-interface}" } ct state established, related accept comment "Allow established back to podman"
+            iifname "podman*" oifname { "${wan-interface}" } ct state established, related accept comment "Allow established back to podman"
 
             ## @TODO: Confirm which, if any, of these are needed.
 
@@ -489,12 +528,12 @@ in
             iifname { "tailscale0" } oifname { "${lan-interface}" } ct state established, related accept comment "Allow established back to lan"
 
             ## Podman-Headscale
-            iifname { "podman0" } oifname { "tailscale0" } accept comment "Allow trusted podman to tailscale"
-            iifname { "tailscale0" } oifname { "podman0" } ct state established, related accept comment "Allow established back to podman"
+            iifname "podman*" oifname { "tailscale0" } accept comment "Allow trusted podman to tailscale"
+            iifname { "tailscale0" } oifname "podman*" ct state established, related accept comment "Allow established back to podman"
 
             ## Headscale-Podman
-            iifname { "tailscale0" } oifname { "podman0" } accept comment "Allow trusted tailscale to podman"
-            iifname { "podman0" } oifname { "tailscale0" } ct state established, related accept comment "Allow established back to tailscale"
+            iifname { "tailscale0" } oifname "podman*" accept comment "Allow trusted tailscale to podman"
+            iifname "podman*" oifname { "tailscale0" } ct state established, related accept comment "Allow established back to tailscale"
 
             ## Netbird-WAN
             iifname { "wt0" } oifname { "${wan-interface}" } accept comment "Allow trusted netbird to WAN"
@@ -509,12 +548,12 @@ in
             iifname { "wt0" } oifname { "${lan-interface}" } ct state established, related accept comment "Allow established back to lan"
 
             ## Podman-Netbird
-            iifname { "podman0" } oifname { "wt0" } accept comment "Allow trusted podman to netbird"
-            iifname { "wt0" } oifname { "podman0" } ct state established, related accept comment "Allow established back to netbird"
+            iifname "podman*" oifname { "wt0" } accept comment "Allow trusted podman to netbird"
+            iifname { "wt0" } oifname "podman*" ct state established, related accept comment "Allow established back to netbird"
 
             ## Netbird-Podman
-            iifname { "wt0" } oifname { "podman0" } accept comment "Allow trusted netbird to podman"
-            iifname { "podman0" } oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
+            iifname { "wt0" } oifname "podman*" accept comment "Allow trusted netbird to podman"
+            iifname "podman*" oifname { "wt0" } ct state established, related accept comment "Allow established back to netbird"
 
             ## Per-guest-network isolation policy (internet-access /
             ## lan-access / inter-network-access). Generated from

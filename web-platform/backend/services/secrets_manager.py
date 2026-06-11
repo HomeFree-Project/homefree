@@ -70,6 +70,87 @@ class SecretsManager:
             return None
 
     @staticmethod
+    def get_user_ssh_public_keys() -> List[str]:
+        """
+        Get ALL user SSH public keys from homefree config (system.authorizedKeys).
+
+        Every authorized key becomes a SOPS/age recipient (native ssh form), so any
+        one of the operator's private keys can decrypt the secrets offsite — e.g. to
+        recover a backup on fresh hardware after the box host key is gone. Boot-time
+        decryption still uses only the host key, so adding user recipients never
+        affects the boot path.
+
+        Returns:
+            List of authorized SSH public key strings (possibly empty)
+        """
+        if not CONFIG_FILE.exists():
+            return []
+
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            keys = config.get('system', {}).get('authorizedKeys', [])
+            return [k for k in keys if isinstance(k, str) and k.strip()]
+        except Exception as e:
+            print(f"Error reading user SSH public keys from config: {e}")
+            return []
+
+    # age can natively encrypt to these SSH key types. ssh-to-age (the host
+    # path) only converts ed25519; age's NATIVE ssh recipients additionally
+    # support ssh-rsa — which is how a user RSA key becomes a recipient.
+    # ecdsa/dss are not supported by age and are skipped (host-only fallback).
+    _SSH_RECIPIENT_TYPES = ('ssh-ed25519', 'ssh-rsa')
+
+    @staticmethod
+    def _normalize_ssh_recipient(public_key: str) -> Optional[str]:
+        """
+        Canonicalize an SSH public key to 'type base64' (comment dropped) for use
+        as a native age recipient. Dropping the comment gives a stable string so the
+        migration's "is this key already a recipient?" check compares cleanly.
+
+        Returns None if the key type is not one age can encrypt to.
+        """
+        parts = (public_key or "").split()
+        if len(parts) < 2 or parts[0] not in SecretsManager._SSH_RECIPIENT_TYPES:
+            return None
+        return f"{parts[0]} {parts[1]}"
+
+    @staticmethod
+    def _build_age_recipients(system_key: str, user_keys: List[str]) -> str:
+        """
+        Build the comma-separated age recipient list for `sops --age`.
+
+        HOST: the system ssh host key converted to a native age key (age1…) via
+        ssh-to-age — UNCHANGED. This is the recipient the box decrypts with at boot,
+        so it is always present and listed first; if its conversion ever failed we
+        raise rather than write a file the box cannot open.
+
+        USERS: each authorized key as a NATIVE age ssh recipient (raw 'ssh-rsa …' /
+        'ssh-ed25519 …'), so RSA keys work too. Unsupported key types are skipped.
+        """
+        system_age_key = SecretsManager.ssh_to_age(system_key)
+        if not system_age_key:
+            # The host recipient is mandatory: without it the box cannot decrypt
+            # secrets.yaml at boot. Never produce a host-less recipient set.
+            raise Exception(
+                "Failed to convert system host key to age; refusing to encrypt "
+                "secrets without the host recipient (the box could not boot-decrypt)."
+            )
+
+        recipients = [system_age_key]
+        for uk in user_keys:
+            rcpt = SecretsManager._normalize_ssh_recipient(uk)
+            if rcpt:
+                recipients.append(rcpt)
+            else:
+                ktype = (uk or "").split()[:1]
+                print(f"Warning: SSH key {ktype} is not ssh-ed25519/ssh-rsa; "
+                      f"age cannot encrypt to it, skipping as a recipient.")
+
+        return ','.join(recipients)
+
+    @staticmethod
     def validate_ssh_public_key(key: str) -> Tuple[bool, Optional[str]]:
         """
         Validate SSH public key format
@@ -152,34 +233,29 @@ class SecretsManager:
             return None
 
     @staticmethod
-    def create_sops_config(system_key: str, user_key: Optional[str] = None):
+    def create_sops_config(system_key: str, user_keys=None):
         """
         Create or update .sops.yaml configuration file
 
         Args:
             system_key: System SSH host public key
-            user_key: Optional user SSH public key
+            user_keys: Optional list of user SSH public keys (a single string is
+                       also accepted for back-compat). The host is encoded as a
+                       native age key (age1…) and each user key as a native age
+                       ssh recipient.
         """
-        # Convert SSH keys to age format
-        age_keys = []
+        if user_keys is None:
+            user_keys = []
+        elif isinstance(user_keys, str):
+            user_keys = [user_keys]
 
-        system_age_key = SecretsManager.ssh_to_age(system_key)
-        if system_age_key:
-            age_keys.append(system_age_key)
-
-        if user_key:
-            user_age_key = SecretsManager.ssh_to_age(user_key)
-            if user_age_key:
-                age_keys.append(user_age_key)
-
-        if not age_keys:
-            raise Exception("Failed to convert any SSH keys to age format")
+        age_recipients_str = SecretsManager._build_age_recipients(system_key, user_keys)
 
         sops_config = {
             'creation_rules': [
                 {
                     'path_regex': r'.*/secrets/.*\.yaml$',
-                    'age': ','.join(age_keys)
+                    'age': age_recipients_str
                 }
             ]
         }
@@ -263,29 +339,20 @@ class SecretsManager:
         if not system_key:
             return False, "System SSH host key not found"
 
-        user_key = SecretsManager.get_user_ssh_public_key()
-        if not user_key:
+        user_keys = SecretsManager.get_user_ssh_public_keys()
+        if not user_keys:
             return False, "No SSH authorized keys configured. Please add an SSH key in System settings to manage secrets."
 
-        # Convert SSH keys to age format
-        system_age_key = SecretsManager.ssh_to_age(system_key)
-        if not system_age_key:
-            return False, "Failed to convert system SSH key to age format"
-
-        age_recipients = [system_age_key]
-
-        # Try to convert user key, but don't fail if it's not ed25519
-        user_age_key = SecretsManager.ssh_to_age(user_key)
-        if user_age_key:
-            age_recipients.append(user_age_key)
-        else:
-            print(f"Warning: User SSH key is not ed25519, skipping. Only ed25519 keys are supported for secrets encryption.")
-
-        age_recipients_str = ','.join(age_recipients)
+        # Build the age recipient list: host (age1, via ssh-to-age) + every
+        # authorized key as a native age ssh recipient (rsa or ed25519).
+        try:
+            age_recipients_str = SecretsManager._build_age_recipients(system_key, user_keys)
+        except Exception as e:
+            return False, str(e)
 
         # Ensure infrastructure exists
         SecretsManager.ensure_secrets_dir()
-        SecretsManager.create_sops_config(system_key, user_key)
+        SecretsManager.create_sops_config(system_key, user_keys)
 
         # Key format for sops: service/secretKey
         sops_key = f"{service_label}/{secret_key}"
@@ -362,25 +429,16 @@ class SecretsManager:
         if not system_key:
             return False, "System SSH host key not found"
 
-        user_key = SecretsManager.get_user_ssh_public_key()
-        if not user_key:
+        user_keys = SecretsManager.get_user_ssh_public_keys()
+        if not user_keys:
             return False, "No SSH authorized keys configured"
 
-        # Convert SSH keys to age format
-        system_age_key = SecretsManager.ssh_to_age(system_key)
-        if not system_age_key:
-            return False, "Failed to convert system SSH key to age format"
-
-        age_recipients = [system_age_key]
-
-        # Try to convert user key, but don't fail if it's not ed25519
-        user_age_key = SecretsManager.ssh_to_age(user_key)
-        if user_age_key:
-            age_recipients.append(user_age_key)
-        else:
-            print(f"Warning: User SSH key is not ed25519, skipping. Only ed25519 keys are supported for secrets encryption.")
-
-        age_recipients_str = ','.join(age_recipients)
+        # Build the age recipient list: host (age1) + every authorized key as a
+        # native age ssh recipient (rsa or ed25519).
+        try:
+            age_recipients_str = SecretsManager._build_age_recipients(system_key, user_keys)
+        except Exception as e:
+            return False, str(e)
 
         sops_key = f"{service_label}/{secret_key}"
 
@@ -459,9 +517,9 @@ class SecretsManager:
                     f.write('\n')
                 os.replace(tmp_path, CONFIG_FILE)
 
-            # Regenerate .sops.yaml with system + first user key as recipients.
+            # Regenerate .sops.yaml with system + ALL user keys as recipients.
             SecretsManager.ensure_secrets_dir()
-            SecretsManager.create_sops_config(system_key, keys[0])
+            SecretsManager.create_sops_config(system_key, keys)
 
             # If secrets already exist, re-encrypt them so the file carries
             # the new recipient set. We do NOT use `sops updatekeys` here:
@@ -476,15 +534,12 @@ class SecretsManager:
                 if not age_private_key:
                     return False, "Failed to convert system SSH private key to age format"
 
-                # Build the age recipient list: system host key + user key.
-                system_age_key = SecretsManager.ssh_to_age(system_key)
-                if not system_age_key:
-                    return False, "Failed to convert system SSH key to age format"
-                age_recipients = [system_age_key]
-                user_age_key = SecretsManager.ssh_to_age(keys[0])
-                if user_age_key:
-                    age_recipients.append(user_age_key)
-                age_recipients_str = ','.join(age_recipients)
+                # Build the age recipient list: host (age1) + every authorized
+                # key as a native age ssh recipient (rsa or ed25519).
+                try:
+                    age_recipients_str = SecretsManager._build_age_recipients(system_key, keys)
+                except Exception as e:
+                    return False, str(e)
 
                 env = os.environ.copy()
                 env['SOPS_AGE_KEY'] = age_private_key

@@ -103,6 +103,9 @@
       tpm2-tools      # TPM2 probing and key sealing
       sbctl           # Secure Boot key management (lanzaboote opt-in)
       coreutils       # dd, cp for keyfile generation
+      restic          # restore-from-backup: read backup repos during finish-setup
+      sops            # restore-from-backup: re-key secrets.yaml (also used by SecretsManager)
+      ssh-to-age      # restore-from-backup: SSH<->age key conversion
     ];
 
     serviceConfig = {

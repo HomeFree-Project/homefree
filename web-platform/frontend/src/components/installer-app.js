@@ -17,6 +17,7 @@ class InstallerApp extends LitElement {
     currentStep: { type: Number },
     installData: { type: Object },
     installationComplete: { type: Boolean },
+    committing: { type: Boolean },
   };
 
   static styles = css`
@@ -136,6 +137,7 @@ class InstallerApp extends LitElement {
     super();
     this.currentStep = 0;
     this.installationComplete = false;
+    this.committing = false;
     this.installData = {
       hostname: '',
       wanInterface: '',
@@ -186,10 +188,30 @@ class InstallerApp extends LitElement {
     return ((this.currentStep + 1) / this.steps.length) * 100;
   }
 
-  nextStep() {
-    if (this.currentStep < this.steps.length - 1) {
-      this.currentStep++;
+  async nextStep() {
+    if (this.currentStep >= this.steps.length - 1 || this.committing) {
+      return;
     }
+
+    // A step that needs its data delivered to the backend exposes
+    // commit(); the wizard only advances once that save is confirmed.
+    // The local field checks in isNextDisabled are not enough on their
+    // own: the install reads the backend's in-memory config, so a step
+    // whose save never landed must block here (with the step showing
+    // the error) rather than fail midway through the install.
+    const stepEl = this.shadowRoot.querySelector(this.steps[this.currentStep].component);
+    if (stepEl && typeof stepEl.commit === 'function') {
+      this.committing = true;
+      try {
+        if (!(await stepEl.commit())) {
+          return;
+        }
+      } finally {
+        this.committing = false;
+      }
+    }
+
+    this.currentStep++;
   }
 
   previousStep() {
@@ -234,6 +256,9 @@ class InstallerApp extends LitElement {
 
   isNextDisabled() {
     const step = this.currentStep;
+
+    // A commit() round-trip to the backend is in flight
+    if (this.committing) return true;
 
     // Welcome step - no validation needed
     if (step === 0) return false;

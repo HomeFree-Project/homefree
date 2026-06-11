@@ -45,59 +45,7 @@ let
     then userSuppliedMysqlPassword
     else "${secretsDir}/mysql-password";
 
-  preStart = ''
-    mkdir -p ${containerDataPath}
-    mkdir -p ${secretsDir}
-
-    ${anchor.preamble}
-
-    ${lib.optionalString (userSuppliedMysqlPassword == null) (anchor.anchorSecret {
-      service = "snipe-it";
-      key = "mysql-password";
-      dir = secretsDir;
-      generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
-    })}
-
-    ## Laravel APP_KEY — required by Snipe-IT's bootstrapping or the
-    ## container exits with "Please re-run with $APP_KEY". Regenerating
-    ## it invalidates every encrypted DB column and signed cookie, so
-    ## it is anchored into encrypted /etc/nixos/secrets to survive a
-    ## restore. Format: literal "base64:" prefix + 32 raw bytes of
-    ## openssl-emitted base64, matching `php artisan key:generate`.
-    ${anchor.anchorSecret {
-      service = "snipe-it";
-      key = "app-key";
-      dir = secretsDir;
-      generate = "sh -c 'printf \"base64:%s\" \"$(${pkgs.openssl}/bin/openssl rand -base64 32)\"'";
-    }}
-
-    ## Synthesize the env file the container reads. Carries the two
-    ## secrets that the container's Laravel bootstrap requires every
-    ## boot. The user-provided secrets.env is still mounted (below)
-    ## and overrides on top — last one wins.
-    install -m 600 /dev/null ${containerDataPath}/runtime.env
-    {
-      echo "APP_KEY=$(cat ${secretsDir}/app-key)"
-      echo "DB_PASSWORD=$(cat ${mysqlPasswordFile})"
-    } > ${containerDataPath}/runtime.env
-
-    MYSQL_PASSWORD=$(cat ${mysqlPasswordFile})
-
-    ## Snipe-IT only needs full access to its own database — never
-    ## *.*. The unconditional REVOKE ON *.* below cleans up the
-    ## historical over-grant on existing boxes (was Phase 4's
-    ## documented @TODO); idempotent on already-converged boxes.
-    ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
-    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'localhost'"
-    ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
-    ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
-    ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'%'"
-    ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
-  '';
-
-  version = "v8.4.1";
+  version = "v8.6.1";
 
   port = config.homefree.allocPort "snipe-it";
 in
@@ -143,236 +91,298 @@ in
     ];
   };
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.snipe-it.enable {
-    snipe-it = {
-      image = "snipe/snipe-it:${version}";
+  ## Container via the app-platform primitive (modules/app-platform.nix).
+  ## The dns-ready podman unit ordering and ExecStartPre are generated;
+  ## this declares only the snipe-it-specific data.
+  homefree.containers.snipe-it = lib.mkIf config.homefree.service-options.snipe-it.enable {
+    ## snipe/snipe-it image runs as root internally (Laravel/Apache
+    ## stack; image does not expose a non-root mode).
+    runAs = {
+      mode = "root";
+      reason = "snipe/snipe-it image runs as root (Laravel/Apache); no non-root mode exposed";
+    };
+    image = "snipe/snipe-it:${version}";
 
-      autoStart = true;
+    ## preStart anchors secrets + provisions the MySQL user, so the
+    ## full preStart goes in preStartInit (dataDir = null).
+    dataDir = null;
+    preStartInit = ''
+      mkdir -p ${containerDataPath}
+      mkdir -p ${secretsDir}
 
-      extraOptions = [
-        # "--pull=always"
-      ];
+      ${anchor.preamble}
 
-      ports = [
-        "0.0.0.0:${toString port}:80"
-      ];
+      ${lib.optionalString (userSuppliedMysqlPassword == null) (anchor.anchorSecret {
+        service = "snipe-it";
+        key = "mysql-password";
+        dir = secretsDir;
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32";
+      })}
 
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}:/var/lib/snipeit"
-        ## Bind-mount the host MariaDB socket directory so the
-        ## container can reach the DB without a LAN-routable TCP
-        ## listener. DB_SOCKET below points at the exact socket file.
-        ## Pairs with services/mysql dropping its lan-address bind.
-        "/run/mysqld:/run/mysqld"
-      ];
+      ## Laravel APP_KEY — required by Snipe-IT's bootstrapping or the
+      ## container exits with "Please re-run with $APP_KEY". Regenerating
+      ## it invalidates every encrypted DB column and signed cookie, so
+      ## it is anchored into encrypted /etc/nixos/secrets to survive a
+      ## restore. Format: literal "base64:" prefix + 32 raw bytes of
+      ## openssl-emitted base64, matching `php artisan key:generate`.
+      ${anchor.anchorSecret {
+        service = "snipe-it";
+        key = "app-key";
+        dir = secretsDir;
+        ## NO `sh -c` wrapper. anchorSecret runs `generate` inside the
+        ## prestart's bash, whose systemd PATH is minimal and does NOT
+        ## include `sh` — so `sh -c '...'` fails with "sh: command not
+        ## found", the command substitution yields empty, and APP_KEY ends
+        ## up blank (snipe-it then exits with "re-run with $APP_KEY" → 502).
+        ## `printf` is a bash builtin and openssl is a full store path, so
+        ## this form needs nothing on PATH.
+        generate = "printf 'base64:%s' \"$(${pkgs.openssl}/bin/openssl rand -base64 32)\"";
+      }}
 
-      ## runtime.env carries auto-generated APP_KEY + DB_PASSWORD. The
-      ## user-supplied secrets.env (if set) is loaded after and can
-      ## override either value.
-      environmentFiles = [ "${containerDataPath}/runtime.env" ]
-        ++ lib.optional
-          (config.homefree.service-options.snipe-it.secrets.env or null != null)
-          config.homefree.service-options.snipe-it.secrets.env;
+      ## Synthesize the env file the container reads. Carries the two
+      ## secrets that the container's Laravel bootstrap requires every
+      ## boot. The user-provided secrets.env is still mounted (below)
+      ## and overrides on top — last one wins.
+      install -m 600 /dev/null ${containerDataPath}/runtime.env
+      {
+        echo "APP_KEY=$(cat ${secretsDir}/app-key)"
+        echo "DB_PASSWORD=$(cat ${mysqlPasswordFile})"
+      } > ${containerDataPath}/runtime.env
 
-      environment = {
-        TZ = config.homefree.system.timeZone;
+      MYSQL_PASSWORD=$(cat ${mysqlPasswordFile})
 
-        # --------------------------------------------
-        # REQUIRED: DOCKER SPECIFIC SETTINGS
-        # --------------------------------------------
-        APP_VERSION = version;
-        APP_PORT = toString port;
+      ## Snipe-IT only needs full access to its own database — never
+      ## *.*. The unconditional REVOKE ON *.* below cleans up the
+      ## historical over-grant on existing boxes (was Phase 4's
+      ## documented @TODO); idempotent on already-converged boxes.
+      ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
+      ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
+      ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'localhost'"
+      ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'localhost'"
+      ${pkgs.mariadb}/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
+      ${pkgs.mariadb}/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
+      ${pkgs.mariadb}/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'%'"
+      ${pkgs.mariadb}/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
+    '';
 
-        # --------------------------------------------
-        # REQUIRED: BASIC APP SETTINGS
-        # --------------------------------------------
-        APP_ENV = "production";
-        APP_DEBUG = "false";
-        ## Please regenerate the APP_KEY value by calling `docker compose run --rm snipeit php artisan key:generate --show`. Copy paste the value here
-        # APP_KEY = "base64:lorempipsum";
-        APP_URL = "https://snipeit.${config.homefree.system.domain}";
-        # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones - TZ identifier
-        APP_TIMEZONE = config.homefree.system.timeZone;
-        ## Doesn't handle the module.nix local, with has the ".UTF-8" extension
-        ## split off the first part before the dot
-        APP_LOCALE = builtins.head (builtins.split "." config.homefree.system.defaultLocale);
-        MAX_RESULTS = "500";
+    ports = [
+      "0.0.0.0:${toString port}:80"
+    ];
 
-        # --------------------------------------------
-        # REQUIRED: UPLOADED FILE STORAGE SETTINGS
-        # --------------------------------------------
-        PRIVATE_FILESYSTEM_DISK = "local";
-        PUBLIC_FILESYSTEM_DISK = "local_public";
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}:/var/lib/snipeit"
+      ## Bind-mount the host MariaDB socket directory so the
+      ## container can reach the DB without a LAN-routable TCP
+      ## listener. DB_SOCKET below points at the exact socket file.
+      ## Pairs with services/mysql dropping its lan-address bind.
+      "/run/mysqld:/run/mysqld"
+    ];
 
-        # --------------------------------------------
-        # REQUIRED: DATABASE SETTINGS
-        # --------------------------------------------
-        DB_CONNECTION = "mysql";
-        ## Connect via UNIX socket instead of TCP — see the
-        ## /run/mysqld bind-mount in volumes above. Laravel's PDO
-        ## mysql driver reads DB_SOCKET and uses it as `unix_socket`
-        ## (which takes precedence over host/port). DB_HOST kept as
-        ## "localhost" for any logging/UI that surfaces it, but is
-        ## not used for the actual connection.
-        DB_HOST = "localhost";
-        DB_SOCKET = "/run/mysqld/mysqld.sock";
-        DB_DATABASE = "snipeit";
-        DB_PORT = "3306";
-        DB_USERNAME = "snipeit";
-        DB_PREFIX = "null";
-        DB_DUMP_PATH = "'/usr/bin'";
-        DB_CHARSET = "utf8mb4";
-        DB_COLLATION = "utf8mb4_unicode_ci";
+    ## runtime.env carries auto-generated APP_KEY + DB_PASSWORD. The
+    ## user-supplied secrets.env (if set) is loaded after and can
+    ## override either value.
+    environmentFiles = [ "${containerDataPath}/runtime.env" ]
+      ++ lib.optional
+        (config.homefree.service-options.snipe-it.secrets.env or null != null)
+        config.homefree.service-options.snipe-it.secrets.env;
 
-        # --------------------------------------------
-        # OPTIONAL: SSL DATABASE SETTINGS
-        # --------------------------------------------
-        DB_SSL = "false";
-        DB_SSL_IS_PAAS = "false";
-        DB_SSL_KEY_PATH = "null";
-        DB_SSL_CERT_PATH = "null";
-        DB_SSL_CA_PATH = "null";
-        DB_SSL_CIPHER = "null";
-        DB_SSL_VERIFY_SERVER = "null";
+    environment = {
+      TZ = config.homefree.system.timeZone;
 
-        # --------------------------------------------
-        # REQUIRED: OUTGOING MAIL SERVER SETTINGS
-        # --------------------------------------------
-        MAIL_MAILER = "smtp";
-        MAIL_HOST = "mailhog";
-        MAIL_PORT = "1025";
-        MAIL_USERNAME = "null";
-        MAIL_PASSWORD = "null";
-        MAIL_TLS_VERIFY_PEER = "true";
-        MAIL_FROM_ADDR = "you@example.com";
-        MAIL_FROM_NAME = "'Snipe-IT'";
-        MAIL_REPLYTO_ADDR = "you@example.com";
-        MAIL_REPLYTO_NAME = "'Snipe-IT'";
-        MAIL_AUTO_EMBED_METHOD = "'attachment'";
+      # --------------------------------------------
+      # REQUIRED: DOCKER SPECIFIC SETTINGS
+      # --------------------------------------------
+      APP_VERSION = version;
+      APP_PORT = toString port;
 
-        # --------------------------------------------
-        # REQUIRED: DATA PROTECTION
-        # --------------------------------------------
-        ALLOW_BACKUP_DELETE = "false";
-        ALLOW_DATA_PURGE = "false";
+      # --------------------------------------------
+      # REQUIRED: BASIC APP SETTINGS
+      # --------------------------------------------
+      APP_ENV = "production";
+      APP_DEBUG = "false";
+      ## Please regenerate the APP_KEY value by calling `docker compose run --rm snipeit php artisan key:generate --show`. Copy paste the value here
+      # APP_KEY = "base64:lorempipsum";
+      APP_URL = "https://snipeit.${config.homefree.system.domain}";
+      # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones - TZ identifier
+      APP_TIMEZONE = config.homefree.system.timeZone;
+      ## Doesn't handle the module.nix local, with has the ".UTF-8" extension
+      ## split off the first part before the dot
+      APP_LOCALE = builtins.head (builtins.split "." config.homefree.system.defaultLocale);
+      MAX_RESULTS = "500";
 
-        # --------------------------------------------
-        # REQUIRED: IMAGE LIBRARY
-        # This should be gd or imagick
-        # --------------------------------------------
-        IMAGE_LIB = "gd";
+      # --------------------------------------------
+      # REQUIRED: UPLOADED FILE STORAGE SETTINGS
+      # --------------------------------------------
+      PRIVATE_FILESYSTEM_DISK = "local";
+      PUBLIC_FILESYSTEM_DISK = "local_public";
 
-        # --------------------------------------------
-        # OPTIONAL: BACKUP SETTINGS
-        # --------------------------------------------
-        MAIL_BACKUP_NOTIFICATION_DRIVER = "null";
-        MAIL_BACKUP_NOTIFICATION_ADDRESS = "null";
-        BACKUP_ENV = "true";
+      # --------------------------------------------
+      # REQUIRED: DATABASE SETTINGS
+      # --------------------------------------------
+      DB_CONNECTION = "mysql";
+      ## Connect via UNIX socket instead of TCP — see the
+      ## /run/mysqld bind-mount in volumes above. Laravel's PDO
+      ## mysql driver reads DB_SOCKET and uses it as `unix_socket`
+      ## (which takes precedence over host/port). DB_HOST kept as
+      ## "localhost" for any logging/UI that surfaces it, but is
+      ## not used for the actual connection.
+      DB_HOST = "localhost";
+      DB_SOCKET = "/run/mysqld/mysqld.sock";
+      DB_DATABASE = "snipeit";
+      DB_PORT = "3306";
+      DB_USERNAME = "snipeit";
+      DB_PREFIX = "null";
+      DB_DUMP_PATH = "'/usr/bin'";
+      DB_CHARSET = "utf8mb4";
+      DB_COLLATION = "utf8mb4_unicode_ci";
 
-        # --------------------------------------------
-        # OPTIONAL: SESSION SETTINGS
-        # --------------------------------------------
-        SESSION_LIFETIME = "12000";
-        EXPIRE_ON_CLOSE = "false";
-        ENCRYPT = "false";
-        COOKIE_NAME = "snipeit_session";
-        COOKIE_DOMAIN = "null";
-        SECURE_COOKIES = "false";
-        API_TOKEN_EXPIRATION_YEARS = "40";
+      # --------------------------------------------
+      # OPTIONAL: SSL DATABASE SETTINGS
+      # --------------------------------------------
+      DB_SSL = "false";
+      DB_SSL_IS_PAAS = "false";
+      DB_SSL_KEY_PATH = "null";
+      DB_SSL_CERT_PATH = "null";
+      DB_SSL_CA_PATH = "null";
+      DB_SSL_CIPHER = "null";
+      DB_SSL_VERIFY_SERVER = "null";
 
-        # --------------------------------------------
-        # OPTIONAL: SECURITY HEADER SETTINGS
-        # --------------------------------------------
-        APP_TRUSTED_PROXIES = "192.168.1.1,${config.homefree.network.lan-address},172.16.0.0/12";
-        ALLOW_IFRAMING = "false";
-        REFERRER_POLICY = "same-origin";
-        ENABLE_CSP = "false";
-        CORS_ALLOWED_ORIGINS = "null";
-        ENABLE_HSTS = "false";
+      # --------------------------------------------
+      # REQUIRED: OUTGOING MAIL SERVER SETTINGS
+      # --------------------------------------------
+      MAIL_MAILER = "smtp";
+      MAIL_HOST = "mailhog";
+      MAIL_PORT = "1025";
+      MAIL_USERNAME = "null";
+      MAIL_PASSWORD = "null";
+      MAIL_TLS_VERIFY_PEER = "true";
+      MAIL_FROM_ADDR = "you@example.com";
+      MAIL_FROM_NAME = "'Snipe-IT'";
+      MAIL_REPLYTO_ADDR = "you@example.com";
+      MAIL_REPLYTO_NAME = "'Snipe-IT'";
+      MAIL_AUTO_EMBED_METHOD = "'attachment'";
 
-        # --------------------------------------------
-        # OPTIONAL: CACHE SETTINGS
-        # --------------------------------------------
-        CACHE_DRIVER = "file";
-        SESSION_DRIVER = "file";
-        QUEUE_DRIVER = "sync";
-        CACHE_PREFIX = "snipeit";
+      # --------------------------------------------
+      # REQUIRED: DATA PROTECTION
+      # --------------------------------------------
+      ALLOW_BACKUP_DELETE = "false";
+      ALLOW_DATA_PURGE = "false";
 
-        # --------------------------------------------
-        # OPTIONAL: REDIS SETTINGS
-        # --------------------------------------------
-        REDIS_HOST = "null";
-        REDIS_PASSWORD = "null";
-        REDIS_PORT = "6379";
+      # --------------------------------------------
+      # REQUIRED: IMAGE LIBRARY
+      # This should be gd or imagick
+      # --------------------------------------------
+      IMAGE_LIB = "gd";
 
-        # --------------------------------------------
-        # OPTIONAL: MEMCACHED SETTINGS
-        # --------------------------------------------
-        MEMCACHED_HOST = "null";
-        MEMCACHED_PORT = "null";
+      # --------------------------------------------
+      # OPTIONAL: BACKUP SETTINGS
+      # --------------------------------------------
+      MAIL_BACKUP_NOTIFICATION_DRIVER = "null";
+      MAIL_BACKUP_NOTIFICATION_ADDRESS = "null";
+      BACKUP_ENV = "true";
 
-        # --------------------------------------------
-        # OPTIONAL: PUBLIC S3 Settings
-        # --------------------------------------------
-        PUBLIC_AWS_SECRET_ACCESS_KEY = "null";
-        PUBLIC_AWS_ACCESS_KEY_ID = "null";
-        PUBLIC_AWS_DEFAULT_REGION = "null";
-        PUBLIC_AWS_BUCKET = "null";
-        PUBLIC_AWS_URL = "null";
-        PUBLIC_AWS_BUCKET_ROOT = "null";
+      # --------------------------------------------
+      # OPTIONAL: SESSION SETTINGS
+      # --------------------------------------------
+      SESSION_LIFETIME = "12000";
+      EXPIRE_ON_CLOSE = "false";
+      ENCRYPT = "false";
+      COOKIE_NAME = "snipeit_session";
+      COOKIE_DOMAIN = "null";
+      SECURE_COOKIES = "false";
+      API_TOKEN_EXPIRATION_YEARS = "40";
 
-        # --------------------------------------------
-        # OPTIONAL: PRIVATE S3 Settings
-        # --------------------------------------------
-        PRIVATE_AWS_ACCESS_KEY_ID = "null";
-        PRIVATE_AWS_SECRET_ACCESS_KEY = "null";
-        PRIVATE_AWS_DEFAULT_REGION = "null";
-        PRIVATE_AWS_BUCKET = "null";
-        PRIVATE_AWS_URL = "null";
-        PRIVATE_AWS_BUCKET_ROOT = "null";
+      # --------------------------------------------
+      # OPTIONAL: SECURITY HEADER SETTINGS
+      # --------------------------------------------
+      APP_TRUSTED_PROXIES = "192.168.1.1,${config.homefree.network.lan-address},172.16.0.0/12";
+      ALLOW_IFRAMING = "false";
+      REFERRER_POLICY = "same-origin";
+      ENABLE_CSP = "false";
+      CORS_ALLOWED_ORIGINS = "null";
+      ENABLE_HSTS = "false";
 
-        # --------------------------------------------
-        # OPTIONAL: AWS Settings
-        # --------------------------------------------
-        AWS_ACCESS_KEY_ID = "null";
-        AWS_SECRET_ACCESS_KEY = "null";
-        AWS_DEFAULT_REGION = "null";
+      # --------------------------------------------
+      # OPTIONAL: CACHE SETTINGS
+      # --------------------------------------------
+      CACHE_DRIVER = "file";
+      SESSION_DRIVER = "file";
+      QUEUE_DRIVER = "sync";
+      CACHE_PREFIX = "snipeit";
 
-        # --------------------------------------------
-        # OPTIONAL: LOGIN THROTTLING
-        # --------------------------------------------
-        LOGIN_MAX_ATTEMPTS = "5";
-        LOGIN_LOCKOUT_DURATION = "60";
-        RESET_PASSWORD_LINK_EXPIRES = "900";
+      # --------------------------------------------
+      # OPTIONAL: REDIS SETTINGS
+      # --------------------------------------------
+      REDIS_HOST = "null";
+      REDIS_PASSWORD = "null";
+      REDIS_PORT = "6379";
 
-        # --------------------------------------------
-        # OPTIONAL: MISC
-        # --------------------------------------------
-        LOG_CHANNEL = "stderr";
-        LOG_MAX_DAYS = "10";
-        APP_LOCKED = "false";
-        APP_CIPHER = "AES-256-CBC";
-        APP_FORCE_TLS = "false";
-        GOOGLE_MAPS_API = "";
-        LDAP_MEM_LIM = "500M";
-        LDAP_TIME_LIM = "600";
-      };
+      # --------------------------------------------
+      # OPTIONAL: MEMCACHED SETTINGS
+      # --------------------------------------------
+      MEMCACHED_HOST = "null";
+      MEMCACHED_PORT = "null";
+
+      # --------------------------------------------
+      # OPTIONAL: PUBLIC S3 Settings
+      # --------------------------------------------
+      PUBLIC_AWS_SECRET_ACCESS_KEY = "null";
+      PUBLIC_AWS_ACCESS_KEY_ID = "null";
+      PUBLIC_AWS_DEFAULT_REGION = "null";
+      PUBLIC_AWS_BUCKET = "null";
+      PUBLIC_AWS_URL = "null";
+      PUBLIC_AWS_BUCKET_ROOT = "null";
+
+      # --------------------------------------------
+      # OPTIONAL: PRIVATE S3 Settings
+      # --------------------------------------------
+      PRIVATE_AWS_ACCESS_KEY_ID = "null";
+      PRIVATE_AWS_SECRET_ACCESS_KEY = "null";
+      PRIVATE_AWS_DEFAULT_REGION = "null";
+      PRIVATE_AWS_BUCKET = "null";
+      PRIVATE_AWS_URL = "null";
+      PRIVATE_AWS_BUCKET_ROOT = "null";
+
+      # --------------------------------------------
+      # OPTIONAL: AWS Settings
+      # --------------------------------------------
+      AWS_ACCESS_KEY_ID = "null";
+      AWS_SECRET_ACCESS_KEY = "null";
+      AWS_DEFAULT_REGION = "null";
+
+      # --------------------------------------------
+      # OPTIONAL: LOGIN THROTTLING
+      # --------------------------------------------
+      LOGIN_MAX_ATTEMPTS = "5";
+      LOGIN_LOCKOUT_DURATION = "60";
+      RESET_PASSWORD_LINK_EXPIRES = "900";
+
+      # --------------------------------------------
+      # OPTIONAL: MISC
+      # --------------------------------------------
+      LOG_CHANNEL = "stderr";
+      LOG_MAX_DAYS = "10";
+      APP_LOCKED = "false";
+      APP_CIPHER = "AES-256-CBC";
+      APP_FORCE_TLS = "false";
+      GOOGLE_MAPS_API = "";
+      LDAP_MEM_LIM = "500M";
+      LDAP_TIME_LIM = "600";
     };
   };
 
+  ## Extra ordering for the mysql dependency, merged with the
+  ## generated dns-ready ordering from the primitive. The partOf
+  ## re-binds /run/mysqld on mariadb restarts (socket orphan fix).
   systemd.services.podman-snipe-it = lib.mkIf config.homefree.service-options.snipe-it.enable {
-    after = [ "dns-ready.service" "mysql.service" ];
-    wants = [ "dns-ready.service" ];
+    after = [ "mysql.service" ];
     ## Re-bind /run/mysqld when mariadb restarts. The container
     ## bind-mounts the host MariaDB socket dir (Phase 4 socket-switch);
     ## a postgres-style mount-orphan happens when mariadb is restarted,
     ## breaking DB access until snipe-it is restarted. Same pattern as
     ## the existing postgres-socket mount fix in nextcloud/freshrss.
     partOf = [ "mysql.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "snipe-it-prestart" preStart}" ];
-    };
   };
 
     homefree.service-config = [{

@@ -150,14 +150,6 @@ let
 
   config-yaml = (pkgs.formats.yaml {}).generate "frigate-config.yaml" frigate-config;
 
-  preStart = ''
-    mkdir -p ${containerDataPath}/config
-    mkdir -p ${mediaPath}
-
-    ## @TODO: just mount this directly as readonly, no need to copy
-    cp ${config-yaml} ${containerDataPath}/config/config.yaml
-  '';
-
   userOptions = {
     enable = lib.mkOption {
       type = lib.types.bool;
@@ -349,58 +341,65 @@ in
     pkgs.libedgetpu
   ];
 
-  virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.service-options.frigate.enable {
-    frigate = {
-      image = "ghcr.io/blakeblackshear/frigate:${version}";
+  ## Container workload via the app-platform primitive
+  ## (modules/app-platform.nix). The podman dns-ready unit and
+  ## ExecStartPre are generated; this declares only the frigate-specific data.
+  homefree.containers.frigate = lib.mkIf config.homefree.service-options.frigate.enable {
+    image = "ghcr.io/blakeblackshear/frigate:${version}";
 
-      autoStart = true;
-
-      extraOptions = [
-        # "--pull=always"
-        ## 1GB of memory, reduces SSD/SD Card wear
-        "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
-        "--shm-size=512M"
-        # "--network=bridge"
-        "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
-        # "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
-        # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
-        "--device=/dev/dri:/dev/dri"
-        "--cap-add=CAP_PERFMON" # For GPU statistics
-        ## --privileged removed: the GPU device (/dev/dri), Coral TPU
-        ## (/dev/bus/usb), and GPU statistics capability (CAP_PERFMON)
-        ## are already declared explicitly above, which is what
-        ## --privileged was implicitly providing. If a particular
-        ## hardware setup needs more (e.g., camera USB devices), add
-        ## the specific --device=/--cap-add= rather than restoring the
-        ## blanket --privileged.
-      ];
-
-      ports = [
-        "0.0.0.0:${toString container-external-port}:${toString unauthenticated-port}"
-        "${toString rtsp-port}:8554" # RTSP feeds
-        "${toString webrtc-port}:8555/tcp" # WebRTC over tcp
-        "${toString webrtc-port}:8555/udp" # WebRTC over udp
-      ];
-
-      volumes = [
-        "/etc/localtime:/etc/localtime:ro"
-        "${containerDataPath}/config:/config"
-        ## @TODO: make this configurable
-        "${mediaPath}:/media/frigate"
-      ];
-
-      environment = {
-        TZ = config.homefree.system.timeZone;
-      };
+    ## --privileged removed: the GPU device (/dev/dri), Coral TPU
+    ## (/dev/bus/usb), and GPU statistics capability (CAP_PERFMON)
+    ## are already declared explicitly, which is what --privileged
+    ## was implicitly providing. If a particular hardware setup needs
+    ## more (e.g., camera USB devices), add the specific
+    ## --device=/--cap-add= rather than restoring the blanket --privileged.
+    runAs = {
+      mode = "root";
+      reason = "frigate requires device access (GPU/Coral TPU) and runs as root upstream";
     };
-  };
 
-  systemd.services.podman-frigate = lib.mkIf config.homefree.service-options.frigate.enable {
-    after = [ "dns-ready.service" ];
-    wants = [ "dns-ready.service" ];
-    serviceConfig = {
-      ExecStartPre = [ "!${pkgs.writeShellScript "frigate-prestart" preStart}" ];
+    ## frigate does its own mkdir + cp — use dataDir=null so no
+    ## generated mkdir/chown runs; all setup goes in preStartInit.
+    dataDir = null;
+
+    ports = [
+      "0.0.0.0:${toString container-external-port}:${toString unauthenticated-port}"
+      "${toString rtsp-port}:8554" # RTSP feeds
+      "${toString webrtc-port}:8555/tcp" # WebRTC over tcp
+      "${toString webrtc-port}:8555/udp" # WebRTC over udp
+    ];
+
+    volumes = [
+      "/etc/localtime:/etc/localtime:ro"
+      "${containerDataPath}/config:/config"
+      ## @TODO: make this configurable
+      "${mediaPath}:/media/frigate"
+    ];
+
+    environment = {
+      TZ = config.homefree.system.timeZone;
     };
+
+    extraOptions = [
+      # "--pull=always"
+      ## 1GB of memory, reduces SSD/SD Card wear
+      "--mount=type=tmpfs,target=/tmp/cache,tmpfs-size=1000000000"
+      "--shm-size=512M"
+      # "--network=bridge"
+      "--device=/dev/bus/usb:/dev/bus/usb"  # Passes the USB Coral, needs to be modified for other versions
+      # "--device=/dev/dri/card1:/dev/dri/card1" # For intel hwaccel, needs to be updated for your hardware
+      # "--device=/dev/dri/renderD128:/dev/dri/renderD128" # For intel hwaccel, needs to be updated for your hardware
+      "--device=/dev/dri:/dev/dri"
+      "--cap-add=CAP_PERFMON" # For GPU statistics
+    ];
+
+    ## @TODO: just mount this directly as readonly, no need to copy
+    preStartInit = ''
+      mkdir -p ${containerDataPath}/config
+      mkdir -p ${mediaPath}
+
+      cp ${config-yaml} ${containerDataPath}/config/config.yaml
+    '';
   };
 
   systemd.services.frigate-cleanup-old-data = lib.mkIf (retain != null && retain > 0) {
@@ -516,4 +515,3 @@ in
     }];
   };
 }
-

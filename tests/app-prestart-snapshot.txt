@@ -1,0 +1,3224 @@
+### podman-adguardhome [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f adguardhome || true
+rm -f /run/adguardhome/ctr-id
+
+### podman-adguardhome [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/adguardhome-podman/conf
+mkdir -p /var/lib/adguardhome-podman/work
+mkdir -p /var/lib/homefree-secrets/adguard
+chmod 700 /var/lib/homefree-secrets/adguard
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/adguard/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_adguard_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "adguard/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 400 "$_anchor_tmp" "/var/lib/homefree-secrets/adguard/admin-password"
+elif [ -s "/var/lib/homefree-secrets/adguard/admin-password" ]; then
+_anchor_set "adguard/admin-password" "/var/lib/homefree-secrets/adguard/admin-password"
+chmod 400 "/var/lib/homefree-secrets/adguard/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "adguard/admin-password" "$_anchor_tmp"
+install -m 400 "$_anchor_tmp" "/var/lib/homefree-secrets/adguard/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 400 "/var/lib/homefree-secrets/adguard/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_adguard_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ ! -s /var/lib/homefree-secrets/adguard/admin-password.bcrypt ]; then
+HASH=$(/nix/store/apache-httpd-2.4.67/bin/htpasswd -bnBC 10 "" \
+"$(cat /var/lib/homefree-secrets/adguard/admin-password)" \
+| tr -d '\n' \
+| sed 's/^://')
+printf '%s' "$HASH" > /var/lib/homefree-secrets/adguard/admin-password.bcrypt
+chmod 400 /var/lib/homefree-secrets/adguard/admin-password.bcrypt
+fi
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+HASH=$(cat /var/lib/homefree-secrets/adguard/admin-password.bcrypt)
+ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
+/nix/store/gnused-4.9/bin/sed \
+"s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
+/nix/store/AdGuardHome.yaml > /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
+chmod 600 /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
+systemctl restart --no-block caddy-adguard-basic-auth.service \
+2>/dev/null || true
+systemctl reload --no-block caddy.service 2>/dev/null || true
+systemctl start adguardhome-dns-proxy.service
+trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
+sleep 1
+/nix/store/podman-5.8.2/bin/podman pull adguard/adguardhome:v0.108.0-b.88
+systemctl stop adguardhome-dns-proxy.service
+
+### podman-azuracast [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f azuracast || true
+rm -f /run/azuracast/ctr-id
+
+### podman-azuracast [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/azuracast/station_data
+mkdir -p /var/lib/azuracast/backups
+mkdir -p /var/lib/azuracast/db_data
+mkdir -p /var/lib/azuracast/www_uploads
+mkdir -p /var/lib/azuracast/shoutcast2_install
+mkdir -p /var/lib/azuracast/stereo_tool_install
+mkdir -p /var/lib/azuracast/rsas_install
+mkdir -p /var/lib/azuracast/geolite_install
+mkdir -p /var/lib/azuracast/sftpgo_data
+mkdir -p /var/lib/azuracast/acme
+AZURACAST_UID=$(/nix/store/podman-5.8.2/bin/podman run --rm --entrypoint id ghcr.io/azuracast/azuracast:0.23.6 -u azuracast)
+AZURACAST_GID=$(/nix/store/podman-5.8.2/bin/podman run --rm --entrypoint id ghcr.io/azuracast/azuracast:0.23.6 -g azuracast)
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/station_data
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/backups
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/db_data
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/www_uploads
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/shoutcast2_install
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/stereo_tool_install
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/rsas_install
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/geolite_install
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/sftpgo_data
+chown -R "$AZURACAST_UID:$AZURACAST_GID" /var/lib/azuracast/acme
+
+### podman-baikal [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f baikal || true
+rm -f /run/baikal/ctr-id
+
+### podman-baikal [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/baikal/config
+mkdir -p /var/lib/baikal/Specific
+
+### podman-cryptpad [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f cryptpad || true
+rm -f /run/cryptpad/ctr-id
+
+### podman-cryptpad [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/cryptpad-podman/config
+mkdir -p /var/lib/cryptpad-podman/data/blob
+mkdir -p /var/lib/cryptpad-podman/data/block
+mkdir -p /var/lib/cryptpad-podman/data/data
+mkdir -p /var/lib/cryptpad-podman/data/files
+mkdir -p /var/lib/cryptpad-podman/customize
+mkdir -p /var/lib/cryptpad-podman/onlyoffice-dist
+mkdir -p /var/lib/cryptpad-podman/onlyoffice-conf
+mkdir -p /var/lib/homefree-secrets/cryptpad
+cp /nix/store/cryptpad-config.js /var/lib/cryptpad-podman/config/config.js
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/cryptpad-podman/ca-bundle.crt
+chmod 644 /var/lib/cryptpad-podman/ca-bundle.crt
+if [ -s /var/lib/homefree-secrets/cryptpad/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/cryptpad/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/cryptpad/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/cryptpad/oidc-client-secret)
+cat > /var/lib/cryptpad-podman/config/sso.js <<EOF
+module.exports = {
+enabled: true,
+enforced: true,
+cpPassword: false,
+forceCpPassword: false,
+list: [
+{
+name: 'zitadel',
+type: 'oidc',
+url: 'https://sso.homefree.host',
+client_id: '$CID',
+client_secret: '$CSEC',
+jwt_alg: 'RS256',
+username_claim: 'preferred_username',
+}
+]
+};
+EOF
+else
+cat > /var/lib/cryptpad-podman/config/sso.js <<'EOF'
+module.exports = {
+enabled: false,
+enforced: false,
+cpPassword: false,
+forceCpPassword: false,
+list: []
+};
+EOF
+fi
+chmod 644 /var/lib/cryptpad-podman/config/sso.js
+chown -R 4001:4001 /var/lib/cryptpad-podman
+
+### podman-forgejo [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f forgejo || true
+rm -f /run/forgejo/ctr-id
+
+### podman-forgejo [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/forgejo
+mkdir -p /var/lib/homefree-secrets/forgejo
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/forgejo
+chmod 700 /var/lib/homefree-secrets/forgejo
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/forgejo/secret-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_forgejo_secret_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "forgejo/secret-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/secret-key"
+elif [ -s "/var/lib/homefree-secrets/forgejo/secret-key" ]; then
+_anchor_set "forgejo/secret-key" "/var/lib/homefree-secrets/forgejo/secret-key"
+chmod 600 "/var/lib/homefree-secrets/forgejo/secret-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 32 )" > "$_anchor_tmp"
+_anchor_set "forgejo/secret-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/secret-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/forgejo/secret-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_forgejo_secret_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/forgejo
+chmod 700 /var/lib/homefree-secrets/forgejo
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/forgejo/internal-token
+ANCHOR_SECRET_FRESH=0
+_anchor_section_forgejo_internal_token() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "forgejo/internal-token" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/internal-token"
+elif [ -s "/var/lib/homefree-secrets/forgejo/internal-token" ]; then
+_anchor_set "forgejo/internal-token" "/var/lib/homefree-secrets/forgejo/internal-token"
+chmod 600 "/var/lib/homefree-secrets/forgejo/internal-token"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 96 | /nix/store/coreutils-9.11/bin/tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "forgejo/internal-token" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/internal-token"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/forgejo/internal-token"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_forgejo_internal_token \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/forgejo
+chmod 700 /var/lib/homefree-secrets/forgejo
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/forgejo/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_forgejo_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "forgejo/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/admin-password"
+elif [ -s "/var/lib/homefree-secrets/forgejo/admin-password" ]; then
+_anchor_set "forgejo/admin-password" "/var/lib/homefree-secrets/forgejo/admin-password"
+chmod 600 "/var/lib/homefree-secrets/forgejo/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 )" > "$_anchor_tmp"
+_anchor_set "forgejo/admin-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/forgejo/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/forgejo/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_forgejo_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/forgejo/ca-bundle.crt
+chmod 644 /var/lib/forgejo/ca-bundle.crt
+
+### podman-freshrss [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f freshrss || true
+rm -f /run/freshrss/ctr-id
+
+### podman-freshrss [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/freshrss-podman/data
+mkdir -p /var/lib/freshrss-podman/extensions
+mkdir -p /var/lib/homefree-secrets/freshrss
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres <<'PGEOF' || true
+DO $$
+BEGIN
+IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'freshrss') THEN
+CREATE ROLE freshrss LOGIN;
+END IF;
+END
+$$;
+PGEOF
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres -tc \
+"SELECT 1 FROM pg_database WHERE datname = 'freshrss'" \
+| /nix/store/gnugrep-3.12/bin/grep -q 1 \
+|| /nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres \
+-c "CREATE DATABASE freshrss WITH OWNER freshrss ENCODING 'UTF8' TEMPLATE template0"
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres -d freshrss <<'PGEOF' || true
+ALTER DATABASE freshrss OWNER TO freshrss;
+ALTER SCHEMA public OWNER TO freshrss;
+DO $$
+DECLARE r record;
+BEGIN
+FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+EXECUTE format('ALTER TABLE public.%I OWNER TO freshrss', r.tablename);
+END LOOP;
+FOR r IN SELECT sequence_name FROM information_schema.sequences
+WHERE sequence_schema = 'public' LOOP
+EXECUTE format('ALTER SEQUENCE public.%I OWNER TO freshrss', r.sequence_name);
+END LOOP;
+FOR r IN SELECT table_name FROM information_schema.views
+WHERE table_schema = 'public' LOOP
+EXECUTE format('ALTER VIEW public.%I OWNER TO freshrss', r.table_name);
+END LOOP;
+END
+$$;
+GRANT ALL PRIVILEGES ON DATABASE freshrss TO freshrss;
+GRANT ALL ON SCHEMA public TO freshrss;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO freshrss;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO freshrss;
+PGEOF
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/freshrss-podman/ca-bundle.crt
+chmod 644 /var/lib/freshrss-podman/ca-bundle.crt
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/freshrss
+chmod 700 /var/lib/homefree-secrets/freshrss
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/freshrss/oidc-crypto-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_freshrss_oidc_crypto_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "freshrss/oidc-crypto-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/oidc-crypto-key"
+elif [ -s "/var/lib/homefree-secrets/freshrss/oidc-crypto-key" ]; then
+_anchor_set "freshrss/oidc-crypto-key" "/var/lib/homefree-secrets/freshrss/oidc-crypto-key"
+chmod 600 "/var/lib/homefree-secrets/freshrss/oidc-crypto-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 32 )" > "$_anchor_tmp"
+_anchor_set "freshrss/oidc-crypto-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/oidc-crypto-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/freshrss/oidc-crypto-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_freshrss_oidc_crypto_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/freshrss
+chmod 700 /var/lib/homefree-secrets/freshrss
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/freshrss/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_freshrss_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "freshrss/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/admin-password"
+elif [ -s "/var/lib/homefree-secrets/freshrss/admin-password" ]; then
+_anchor_set "freshrss/admin-password" "/var/lib/homefree-secrets/freshrss/admin-password"
+chmod 600 "/var/lib/homefree-secrets/freshrss/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24 )" > "$_anchor_tmp"
+_anchor_set "freshrss/admin-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/freshrss/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_freshrss_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/freshrss
+chmod 700 /var/lib/homefree-secrets/freshrss
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/freshrss/admin-api-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_freshrss_admin_api_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "freshrss/admin-api-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/admin-api-password"
+elif [ -s "/var/lib/homefree-secrets/freshrss/admin-api-password" ]; then
+_anchor_set "freshrss/admin-api-password" "/var/lib/homefree-secrets/freshrss/admin-api-password"
+chmod 600 "/var/lib/homefree-secrets/freshrss/admin-api-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 | tr -d '/+=' | head -c 24 )" > "$_anchor_tmp"
+_anchor_set "freshrss/admin-api-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/freshrss/admin-api-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/freshrss/admin-api-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_freshrss_admin_api_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+FRESHRSS_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/freshrss/admin-password)
+FRESHRSS_ADMIN_API_PASSWORD=$(cat /var/lib/homefree-secrets/freshrss/admin-api-password)
+install -m 600 /dev/null /var/lib/freshrss-podman/runtime.env
+{
+printf 'FRESHRSS_INSTALL=--api-enabled --base-url=%s --db-base=%s --db-host=%s --db-password=%s --db-type=pgsql --db-user=%s --default-user=%s --language=en\n' \
+"/" "freshrss" "/run/postgresql" "" "freshrss" "homefree"
+printf 'FRESHRSS_USER=--api-password=%s --email=%s --language=en --password=%s --user=%s\n' \
+"$FRESHRSS_ADMIN_API_PASSWORD" "homefree@homefree.host" "$FRESHRSS_ADMIN_PASSWORD" "homefree"
+} > /var/lib/freshrss-podman/runtime.env
+install -m 600 /dev/null /var/lib/freshrss-podman/sso.env
+if [ -s /var/lib/homefree-secrets/freshrss/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/freshrss/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/freshrss/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/freshrss/oidc-client-secret)
+KEY=$(cat /var/lib/homefree-secrets/freshrss/oidc-crypto-key)
+{
+echo "OIDC_ENABLED=1"
+echo "OIDC_PROVIDER_METADATA_URL=https://sso.homefree.host/.well-known/openid-configuration"
+echo "OIDC_CLIENT_ID=$CID"
+echo "OIDC_CLIENT_SECRET=$CSEC"
+echo "OIDC_CLIENT_CRYPTO_KEY=$KEY"
+echo "OIDC_REMOTE_USER_CLAIM=preferred_username"
+echo "OIDC_SCOPES=openid profile email"
+echo "OIDC_X_FORWARDED_HEADERS=X-Forwarded-Host X-Forwarded-Proto"
+} > /var/lib/freshrss-podman/sso.env
+else
+: > /var/lib/freshrss-podman/sso.env
+fi
+chmod 600 /var/lib/freshrss-podman/sso.env
+
+### podman-frigate [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f frigate || true
+rm -f /run/frigate/ctr-id
+
+### podman-frigate [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/frigate/config
+mkdir -p /var/lib/frigate/media
+cp /nix/store/frigate-config.yaml /var/lib/frigate/config/config.yaml
+
+### podman-grocy [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f grocy || true
+rm -f /run/grocy/ctr-id
+
+### podman-grocy [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/grocy
+
+### podman-homeassistant [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f homeassistant || true
+rm -f /run/homeassistant/ctr-id
+
+### podman-homeassistant [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/homeassistant/config
+mkdir -p /var/lib/homeassistant/config/custom_components
+mkdir -p /var/lib/homefree-secrets/home-assistant
+ln -sfn /nix/store/python3.14-christaangoossens-auth_oidc-1.1.0/custom_components/auth_oidc \
+/var/lib/homeassistant/config/custom_components/auth_oidc
+[ -L /var/lib/homeassistant/config/custom_components/hacs ] && \
+rm -f /var/lib/homeassistant/config/custom_components/hacs
+true
+CID="PLACEHOLDER_AWAITING_PROVISION"
+CSEC="PLACEHOLDER_AWAITING_PROVISION"
+if [ -s /var/lib/homefree-secrets/home-assistant/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/home-assistant/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/home-assistant/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/home-assistant/oidc-client-secret)
+fi
+/nix/store/gnused-4.9/bin/sed \
+-e "s|@@OIDC_CLIENT_ID@@|$CID|g" \
+-e "s|@@OIDC_CLIENT_SECRET@@|$CSEC|g" \
+/nix/store/configuration.yaml.tmpl \
+> /var/lib/homeassistant/config/configuration.yaml
+for f in automations.yaml scripts.yaml scenes.yaml groups.yaml; do
+[ -f "/var/lib/homeassistant/config/$f" ] || \
+touch "/var/lib/homeassistant/config/$f"
+done
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/home-assistant
+chmod 700 /var/lib/homefree-secrets/home-assistant
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/home-assistant/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_home-assistant_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "home-assistant/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/home-assistant/admin-password"
+elif [ -s "/var/lib/homefree-secrets/home-assistant/admin-password" ]; then
+_anchor_set "home-assistant/admin-password" "/var/lib/homefree-secrets/home-assistant/admin-password"
+chmod 600 "/var/lib/homefree-secrets/home-assistant/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 )" > "$_anchor_tmp"
+_anchor_set "home-assistant/admin-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/home-assistant/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/home-assistant/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_home-assistant_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+secrets_dir=/var/lib/homefree-secrets/home-assistant/secrets
+if [ -d "$secrets_dir" ]; then
+: > /var/lib/homeassistant/config/secrets.yaml
+chmod 600 /var/lib/homeassistant/config/secrets.yaml
+for f in "$secrets_dir"/*; do
+[ -f "$f" ] || continue
+k=$(basename "$f")
+v=$(cat "$f")
+printf '%s: "%s"\n' "$k" "${v//\"/\\\"}" \
+>> /var/lib/homeassistant/config/secrets.yaml
+done
+fi
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/homeassistant/config/ca-bundle.crt
+chmod 644 /var/lib/homeassistant/config/ca-bundle.crt
+
+### podman-homebox [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f homebox || true
+rm -f /run/homebox/ctr-id
+
+### podman-homebox [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/homebox-podman
+install -m 600 /dev/null /var/lib/homebox-podman/sso.env
+if [ ! -f /var/lib/homebox-podman/.chowned-807 ]; then
+chown -R 807:807 /var/lib/homebox-podman
+touch /var/lib/homebox-podman/.chowned-807
+fi
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/homebox-podman/ca-bundle.crt
+chmod 644 /var/lib/homebox-podman/ca-bundle.crt
+if [ -s /var/lib/homefree-secrets/homebox/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/homebox/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/homebox/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/homebox/oidc-client-secret)
+{
+echo "HBOX_OIDC_ENABLED=true"
+echo "HBOX_OIDC_CLIENT_ID=$CID"
+echo "HBOX_OIDC_CLIENT_SECRET=$CSEC"
+echo "HBOX_OIDC_ISSUER_URL=https://sso.homefree.host"
+echo "HBOX_OIDC_BUTTON_TEXT=Sign in with HomeFree SSO"
+echo "HBOX_OIDC_GROUP_CLAIM=urn:zitadel:iam:org:project:roles"
+echo "HBOX_OIDC_SCOPE=openid profile email urn:zitadel:iam:org:project:roles"
+echo "HBOX_OIDC_NAME_CLAIM=name"
+echo "HBOX_OIDC_EMAIL_CLAIM=email"
+echo "HBOX_OPTIONS_ALLOW_LOCAL_LOGIN=false"
+} > /var/lib/homebox-podman/sso.env
+else
+: > /var/lib/homebox-podman/sso.env
+fi
+chmod 600 /var/lib/homebox-podman/sso.env
+
+### podman-immich-machine-learning [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f immich-machine-learning || true
+rm -f /run/immich-machine-learning/ctr-id
+
+### podman-immich-machine-learning [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/cache/immich
+mkdir -p /var/lib/immich
+
+### podman-immich-redis [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f immich-redis || true
+rm -f /run/immich-redis/ctr-id
+
+### podman-immich-server [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f immich-server || true
+rm -f /run/immich-server/ctr-id
+
+### podman-immich-server [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/immich/backups
+mkdir -p /var/lib/immich/encoded-video
+mkdir -p /var/lib/immich/library
+mkdir -p /var/lib/immich/profile
+mkdir -p /var/lib/immich/thumbs
+mkdir -p /var/lib/immich/upload
+mkdir -p /var/cache/immich
+mkdir -p /var/lib/homefree-secrets/immich
+for d in backups encoded-video library profile thumbs upload; do
+touch "/var/lib/immich/$d/.immich"
+done
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/immich
+chmod 700 /var/lib/homefree-secrets/immich
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/immich/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_immich_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "immich/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/immich/admin-password"
+elif [ -s "/var/lib/homefree-secrets/immich/admin-password" ]; then
+_anchor_set "immich/admin-password" "/var/lib/homefree-secrets/immich/admin-password"
+chmod 600 "/var/lib/homefree-secrets/immich/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 )" > "$_anchor_tmp"
+_anchor_set "immich/admin-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/immich/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/immich/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_immich_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/immich
+chmod 700 /var/lib/homefree-secrets/immich
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/immich/db-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_immich_db_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "immich/db-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/immich/db-password"
+elif [ -s "/var/lib/homefree-secrets/immich/db-password" ]; then
+_anchor_set "immich/db-password" "/var/lib/homefree-secrets/immich/db-password"
+chmod 600 "/var/lib/homefree-secrets/immich/db-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "immich/db-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/immich/db-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/immich/db-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_immich_db_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/immich/runtime.env
+printf 'DB_PASSWORD=%s\n' "$(cat /var/lib/homefree-secrets/immich/db-password)" \
+> /var/lib/immich/runtime.env
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/immich/ca-bundle.crt
+chmod 644 /var/lib/immich/ca-bundle.crt
+
+### podman-jellyfin [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f jellyfin || true
+rm -f /run/jellyfin/ctr-id
+
+### podman-jellyfin [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/jellyfin-podman
+mkdir -p /var/lib/jellyfin-podman/media
+if [ ! -f /var/lib/jellyfin-podman/.chowned-811 ]; then
+chown -R 811:811 /var/lib/jellyfin-podman
+touch /var/lib/jellyfin-podman/.chowned-811
+fi
+
+### podman-joplin [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f joplin || true
+rm -f /run/joplin/ctr-id
+
+### podman-lidarr [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f lidarr || true
+rm -f /run/lidarr/ctr-id
+
+### podman-lidarr [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/lidarr/config
+mkdir -p /var/lib/lidarr/media
+mkdir -p /var/lib/lidarr/downloads
+
+### podman-linkwarden [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f linkwarden || true
+rm -f /run/linkwarden/ctr-id
+
+### podman-linkwarden [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/linkwarden-podman/linkwarden
+mkdir -p /var/lib/linkwarden-podman/meili
+mkdir -p /var/lib/homefree-secrets/linkwarden
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/linkwarden-podman/ca-bundle.crt
+chmod 644 /var/lib/linkwarden-podman/ca-bundle.crt
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/nextauth-secret
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_nextauth_secret() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/nextauth-secret" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/nextauth-secret" ]; then
+_anchor_set "linkwarden/nextauth-secret" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "linkwarden/nextauth-secret" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_nextauth_secret \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/db-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_db_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/db-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/db-password"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/db-password" ]; then
+_anchor_set "linkwarden/db-password" "/var/lib/homefree-secrets/linkwarden/db-password"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/db-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "linkwarden/db-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/db-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/db-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_db_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/meili-master-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_meili_master_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/meili-master-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/meili-master-key" ]; then
+_anchor_set "linkwarden/meili-master-key" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "linkwarden/meili-master-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_meili_master_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+LINKWARDEN_DB_PASSWORD=$(cat /var/lib/homefree-secrets/linkwarden/db-password)
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+DO \$do\$
+BEGIN
+IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'linkwarden') THEN
+EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'linkwarden', '$LINKWARDEN_DB_PASSWORD');
+END IF;
+END
+\$do\$;
+PGEOF
+install -m 600 /dev/null /var/lib/linkwarden-podman/runtime.env
+{
+echo "NEXTAUTH_SECRET=$(cat /var/lib/homefree-secrets/linkwarden/nextauth-secret)"
+echo "MEILI_MASTER_KEY=$(cat /var/lib/homefree-secrets/linkwarden/meili-master-key)"
+printf 'DATABASE_URL=postgresql://%s:%s@%s:5432/%s?sslmode=disable\n' \
+"linkwarden" "$LINKWARDEN_DB_PASSWORD" \
+"10.0.0.1" "linkwarden"
+} > /var/lib/linkwarden-podman/runtime.env
+install -m 600 /dev/null /var/lib/linkwarden-podman/meili.env
+echo "MEILI_MASTER_KEY=$(cat /var/lib/homefree-secrets/linkwarden/meili-master-key)" > /var/lib/linkwarden-podman/meili.env
+install -m 600 /dev/null /var/lib/linkwarden-podman/sso.env
+if [ -s /var/lib/homefree-secrets/linkwarden/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/linkwarden/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/linkwarden/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/linkwarden/oidc-client-secret)
+{
+echo "NEXT_PUBLIC_ZITADEL_ENABLED=true"
+echo "ZITADEL_CUSTOM_NAME=HomeFree SSO"
+echo "ZITADEL_ISSUER=https://sso.homefree.host"
+echo "ZITADEL_CLIENT_ID=$CID"
+echo "ZITADEL_CLIENT_SECRET=$CSEC"
+echo "NEXT_PUBLIC_CREDENTIALS_ENABLED=false"
+echo "NEXT_PUBLIC_DISABLE_REGISTRATION=true"
+} > /var/lib/linkwarden-podman/sso.env
+else
+: > /var/lib/linkwarden-podman/sso.env
+fi
+chmod 600 /var/lib/linkwarden-podman/sso.env
+
+### podman-matrix-synapse [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f matrix-synapse || true
+rm -f /run/matrix-synapse/ctr-id
+
+### podman-matrix-synapse [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/matrix-synapse-podman/media_store
+mkdir -p /var/lib/homefree-secrets/matrix
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/matrix
+chmod 700 /var/lib/homefree-secrets/matrix
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/matrix/registration-shared-secret
+ANCHOR_SECRET_FRESH=0
+_anchor_section_matrix_registration_shared_secret() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "matrix/registration-shared-secret" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/registration-shared-secret"
+elif [ -s "/var/lib/homefree-secrets/matrix/registration-shared-secret" ]; then
+_anchor_set "matrix/registration-shared-secret" "/var/lib/homefree-secrets/matrix/registration-shared-secret"
+chmod 600 "/var/lib/homefree-secrets/matrix/registration-shared-secret"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 32 )" > "$_anchor_tmp"
+_anchor_set "matrix/registration-shared-secret" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/registration-shared-secret"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/matrix/registration-shared-secret"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_matrix_registration_shared_secret \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+install -m 600 "$ANCHOR_SECRET_FILE" \
+/var/lib/matrix-synapse-podman/registration-shared-secret
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/matrix
+chmod 700 /var/lib/homefree-secrets/matrix
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/matrix/admin-account-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_matrix_admin_account_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "matrix/admin-account-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/admin-account-password"
+elif [ -s "/var/lib/homefree-secrets/matrix/admin-account-password" ]; then
+_anchor_set "matrix/admin-account-password" "/var/lib/homefree-secrets/matrix/admin-account-password"
+chmod 600 "/var/lib/homefree-secrets/matrix/admin-account-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 | tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "matrix/admin-account-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/admin-account-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/matrix/admin-account-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_matrix_admin_account_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+if [ ! -s /var/lib/homefree-secrets/matrix/homeserver-signing-key ] \
+&& [ -s /var/lib/matrix-synapse-podman/homeserver.signing.key ]; then
+install -m 600 /var/lib/matrix-synapse-podman/homeserver.signing.key \
+/var/lib/homefree-secrets/matrix/homeserver-signing-key
+fi
+mkdir -p /var/lib/homefree-secrets/matrix
+chmod 700 /var/lib/homefree-secrets/matrix
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/matrix/homeserver-signing-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_matrix_homeserver_signing_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "matrix/homeserver-signing-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/homeserver-signing-key"
+elif [ -s "/var/lib/homefree-secrets/matrix/homeserver-signing-key" ]; then
+_anchor_set "matrix/homeserver-signing-key" "/var/lib/homefree-secrets/matrix/homeserver-signing-key"
+chmod 600 "/var/lib/homefree-secrets/matrix/homeserver-signing-key"
+else
+printf '%s' "$( /nix/store/matrix-signing-key-gen )" > "$_anchor_tmp"
+_anchor_set "matrix/homeserver-signing-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/matrix/homeserver-signing-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/matrix/homeserver-signing-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_matrix_homeserver_signing_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+install -m 600 "$ANCHOR_SECRET_FILE" \
+/var/lib/matrix-synapse-podman/homeserver.signing.key
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+chown -R 991:991 /var/lib/matrix-synapse-podman
+/nix/store/postgresql-17.10/bin/psql -X -U postgres <<'EOF'
+DO $do$ BEGIN
+IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'matrix-synapse') THEN
+CREATE ROLE "matrix-synapse" WITH LOGIN;
+END IF;
+END $do$;
+EOF
+/nix/store/postgresql-17.10/bin/psql -U postgres \
+-tc "SELECT 1 FROM pg_database WHERE datname = 'matrix-synapse'" \
+| /nix/store/gnugrep-3.12/bin/grep -q 1 \
+|| /nix/store/postgresql-17.10/bin/psql -U postgres -c \
+"CREATE DATABASE \"matrix-synapse\" WITH OWNER \"matrix-synapse\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+/nix/store/postgresql-17.10/bin/psql -U postgres -c \
+'GRANT ALL PRIVILEGES ON DATABASE "matrix-synapse" TO "matrix-synapse"'
+
+### podman-meilisearch [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f meilisearch || true
+rm -f /run/meilisearch/ctr-id
+
+### podman-meilisearch [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/linkwarden-podman/linkwarden
+mkdir -p /var/lib/linkwarden-podman/meili
+mkdir -p /var/lib/homefree-secrets/linkwarden
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/linkwarden-podman/ca-bundle.crt
+chmod 644 /var/lib/linkwarden-podman/ca-bundle.crt
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/nextauth-secret
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_nextauth_secret() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/nextauth-secret" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/nextauth-secret" ]; then
+_anchor_set "linkwarden/nextauth-secret" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "linkwarden/nextauth-secret" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/nextauth-secret"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_nextauth_secret \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/db-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_db_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/db-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/db-password"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/db-password" ]; then
+_anchor_set "linkwarden/db-password" "/var/lib/homefree-secrets/linkwarden/db-password"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/db-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "linkwarden/db-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/db-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/db-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_db_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/linkwarden
+chmod 700 /var/lib/homefree-secrets/linkwarden
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/linkwarden/meili-master-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_linkwarden_meili_master_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "linkwarden/meili-master-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+elif [ -s "/var/lib/homefree-secrets/linkwarden/meili-master-key" ]; then
+_anchor_set "linkwarden/meili-master-key" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "linkwarden/meili-master-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/linkwarden/meili-master-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_linkwarden_meili_master_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+LINKWARDEN_DB_PASSWORD=$(cat /var/lib/homefree-secrets/linkwarden/db-password)
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+DO \$do\$
+BEGIN
+IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'linkwarden') THEN
+EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'linkwarden', '$LINKWARDEN_DB_PASSWORD');
+END IF;
+END
+\$do\$;
+PGEOF
+install -m 600 /dev/null /var/lib/linkwarden-podman/runtime.env
+{
+echo "NEXTAUTH_SECRET=$(cat /var/lib/homefree-secrets/linkwarden/nextauth-secret)"
+echo "MEILI_MASTER_KEY=$(cat /var/lib/homefree-secrets/linkwarden/meili-master-key)"
+printf 'DATABASE_URL=postgresql://%s:%s@%s:5432/%s?sslmode=disable\n' \
+"linkwarden" "$LINKWARDEN_DB_PASSWORD" \
+"10.0.0.1" "linkwarden"
+} > /var/lib/linkwarden-podman/runtime.env
+install -m 600 /dev/null /var/lib/linkwarden-podman/meili.env
+echo "MEILI_MASTER_KEY=$(cat /var/lib/homefree-secrets/linkwarden/meili-master-key)" > /var/lib/linkwarden-podman/meili.env
+install -m 600 /dev/null /var/lib/linkwarden-podman/sso.env
+if [ -s /var/lib/homefree-secrets/linkwarden/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/linkwarden/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/linkwarden/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/linkwarden/oidc-client-secret)
+{
+echo "NEXT_PUBLIC_ZITADEL_ENABLED=true"
+echo "ZITADEL_CUSTOM_NAME=HomeFree SSO"
+echo "ZITADEL_ISSUER=https://sso.homefree.host"
+echo "ZITADEL_CLIENT_ID=$CID"
+echo "ZITADEL_CLIENT_SECRET=$CSEC"
+echo "NEXT_PUBLIC_CREDENTIALS_ENABLED=false"
+echo "NEXT_PUBLIC_DISABLE_REGISTRATION=true"
+} > /var/lib/linkwarden-podman/sso.env
+else
+: > /var/lib/linkwarden-podman/sso.env
+fi
+chmod 600 /var/lib/linkwarden-podman/sso.env
+
+### podman-netbird-coturn [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f netbird-coturn || true
+rm -f /run/netbird-coturn/ctr-id
+
+### podman-netbird-dashboard [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f netbird-dashboard || true
+rm -f /run/netbird-dashboard/ctr-id
+
+### podman-netbird-dashboard [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/netbird
+install -m 600 /dev/null /var/lib/netbird/dashboard.env
+{
+CLIENT_ID=$(cat /var/lib/homefree-secrets/netbird/oidc-client-id)
+echo "AUTH_AUDIENCE=$CLIENT_ID"
+echo "AUTH_CLIENT_ID=$CLIENT_ID"
+} > /var/lib/netbird/dashboard.env
+
+### podman-netbird-management [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f netbird-management || true
+rm -f /run/netbird-management/ctr-id
+
+### podman-netbird-management [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/netbird
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/netbird/ca-bundle.crt
+chmod 644 /var/lib/netbird/ca-bundle.crt
+cd /var/lib/netbird
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+ANCHOR_SECRET_FILE=/var/lib/netbird/turn-secret
+ANCHOR_SECRET_FRESH=0
+_anchor_section_netbird_turn_secret() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "netbird/turn-secret" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/turn-secret"
+elif [ -s "/var/lib/netbird/turn-secret" ]; then
+_anchor_set "netbird/turn-secret" "/var/lib/netbird/turn-secret"
+chmod 600 "/var/lib/netbird/turn-secret"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 32 )" > "$_anchor_tmp"
+_anchor_set "netbird/turn-secret" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/turn-secret"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/netbird/turn-secret"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_netbird_turn_secret \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+ANCHOR_SECRET_FILE=/var/lib/netbird/turn-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_netbird_turn_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "netbird/turn-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/turn-password"
+elif [ -s "/var/lib/netbird/turn-password" ]; then
+_anchor_set "netbird/turn-password" "/var/lib/netbird/turn-password"
+chmod 600 "/var/lib/netbird/turn-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 16 )" > "$_anchor_tmp"
+_anchor_set "netbird/turn-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/turn-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/netbird/turn-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_netbird_turn_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+ANCHOR_SECRET_FILE=/var/lib/netbird/relay-secret
+ANCHOR_SECRET_FRESH=0
+_anchor_section_netbird_relay_secret() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "netbird/relay-secret" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/relay-secret"
+elif [ -s "/var/lib/netbird/relay-secret" ]; then
+_anchor_set "netbird/relay-secret" "/var/lib/netbird/relay-secret"
+chmod 600 "/var/lib/netbird/relay-secret"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -hex 32 )" > "$_anchor_tmp"
+_anchor_set "netbird/relay-secret" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/netbird/relay-secret"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/netbird/relay-secret"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_netbird_relay_secret \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/netbird/management.json
+/nix/store/gnused-4.9/bin/sed \
+-e "s|@@OIDC_CLIENT_ID@@|$(cat /var/lib/homefree-secrets/netbird/oidc-client-id)|g" \
+-e "s|@@OIDC_CLIENT_SECRET@@|$(cat /var/lib/homefree-secrets/netbird/oidc-client-secret)|g" \
+-e "s|@@MGMT_MACHINE_TOKEN@@|$(cat /var/lib/homefree-secrets/netbird/mgmt-machine-token)|g" \
+-e "s|@@DATA_STORE_ENC_KEY@@|$(cat /var/lib/homefree-secrets/netbird/data-store-encryption-key)|g" \
+-e "s|@@TURN_SECRET@@|$(cat /var/lib/netbird/turn-secret)|g" \
+-e "s|@@TURN_PASSWORD@@|$(cat /var/lib/netbird/turn-password)|g" \
+-e "s|@@RELAY_SECRET@@|$(cat /var/lib/netbird/relay-secret)|g" \
+-e "s|@@NETBIRD_DOMAIN@@|netbird.homefree.host|g" \
+-e "s|@@NETBIRD_STUN_PORT@@|3479|g" \
+-e "s|@@NETBIRD_RELAY_PORT@@|33080|g" \
+-e "s|@@ZITADEL_DOMAIN@@|sso.homefree.host|g" \
+/nix/store/management.json.tmpl \
+> /var/lib/netbird/management.json
+
+### podman-netbird-relay [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f netbird-relay || true
+rm -f /run/netbird-relay/ctr-id
+
+### podman-netbird-relay [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+install -m 600 /dev/null /var/lib/netbird/relay.env
+echo "NB_AUTH_SECRET=$(cat /var/lib/netbird/relay-secret)" \
+> /var/lib/netbird/relay.env
+
+### podman-netbird-signal [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f netbird-signal || true
+rm -f /run/netbird-signal/ctr-id
+
+### podman-netbird-signal [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/netbird-signal
+
+### podman-nextcloud [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nextcloud || true
+rm -f /run/nextcloud/ctr-id
+
+### podman-nextcloud [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nextcloud-podman/html
+mkdir -p /var/lib/nextcloud-podman/config
+mkdir -p /var/lib/nextcloud-podman/data
+mkdir -p /var/lib/homefree-secrets/nextcloud
+cp -f /nix/store/override.config.php /var/lib/nextcloud-podman/config/override.config.php
+chown -R 33:33 /var/lib/nextcloud-podman/data || true
+chown -R 33:33 /var/lib/nextcloud-podman/config || true
+chmod o+rx /var/lib/nextcloud-podman
+if [ ! -f /var/lib/nextcloud-podman/harp-pw.txt ]; then
+HARP_PASSWORD=$(/nix/store/coreutils-9.11/bin/dd if=/dev/urandom bs=12 count=1 2>/dev/null | /nix/store/coreutils-9.11/bin/base64 | /nix/store/coreutils-9.11/bin/tr -d -- '\n' | /nix/store/coreutils-9.11/bin/tr -- '+/' '-_' ; echo)
+echo "$HARP_PASSWORD" > /var/lib/nextcloud-podman/harp-pw.txt
+echo "HP_SHARED_KEY=$HARP_PASSWORD" > /var/lib/nextcloud-podman/harp-env.txt
+fi
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/nextcloud
+chmod 700 /var/lib/homefree-secrets/nextcloud
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nextcloud/admin-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nextcloud_admin_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nextcloud/admin-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nextcloud/admin-password"
+elif [ -s "/var/lib/homefree-secrets/nextcloud/admin-password" ]; then
+_anchor_set "nextcloud/admin-password" "/var/lib/homefree-secrets/nextcloud/admin-password"
+chmod 600 "/var/lib/homefree-secrets/nextcloud/admin-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 24 )" > "$_anchor_tmp"
+_anchor_set "nextcloud/admin-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nextcloud/admin-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nextcloud/admin-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nextcloud_admin_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/nextcloud
+chmod 700 /var/lib/homefree-secrets/nextcloud
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nextcloud/db-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nextcloud_db_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nextcloud/db-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nextcloud/db-password"
+elif [ -s "/var/lib/homefree-secrets/nextcloud/db-password" ]; then
+_anchor_set "nextcloud/db-password" "/var/lib/homefree-secrets/nextcloud/db-password"
+chmod 600 "/var/lib/homefree-secrets/nextcloud/db-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nextcloud/db-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nextcloud/db-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nextcloud/db-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nextcloud_db_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/nextcloud-podman/runtime.env
+{
+echo "POSTGRES_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)"
+echo "NEXTCLOUD_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/admin-password)"
+} > /var/lib/nextcloud-podman/runtime.env
+NEXTCLOUD_DB_PASSWORD=$(cat /var/lib/homefree-secrets/nextcloud/db-password)
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -p 5432 -U postgres << EOF
+DO
+\$do\$
+BEGIN
+IF EXISTS (
+SELECT FROM pg_catalog.pg_roles
+WHERE  rolname = 'nextcloud') THEN
+RAISE NOTICE 'Role "nextcloud" already exists. Skipping.';
+ELSE
+BEGIN   -- nested block
+CREATE ROLE "nextcloud" WITH LOGIN PASSWORD '$NEXTCLOUD_DB_PASSWORD';
+EXCEPTION
+WHEN duplicate_object THEN
+RAISE NOTICE 'Role "nextcloud" was just created by a concurrent transaction. Skipping.';
+END;
+END IF;
+END
+\$do\$;
+EOF
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -p 5432 -U postgres \
+-c "ALTER ROLE \"nextcloud\" WITH PASSWORD '$NEXTCLOUD_DB_PASSWORD'"
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -p 5432 -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'nextcloud'" | /nix/store/gnugrep-3.12/bin/grep -q 1 || /nix/store/postgresql-17.10/bin/psql -h /run/postgresql -p 5432 -U postgres -c "CREATE DATABASE \"nextcloud\" WITH OWNER \"nextcloud\" ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0"
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -p 5432 -X -U postgres << EOF
+DO
+\$do\$
+BEGIN
+GRANT ALL PRIVILEGES ON DATABASE "nextcloud" to "nextcloud";
+END
+\$do\$;
+EOF
+
+### podman-nextcloud-cron [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nextcloud-cron || true
+rm -f /run/nextcloud-cron/ctr-id
+
+### podman-nextcloud-redis [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nextcloud-redis || true
+rm -f /run/nextcloud-redis/ctr-id
+
+### podman-nomad [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad || true
+rm -f /run/nomad/ctr-id
+
+### podman-nomad [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad
+mkdir -p /var/lib/nomad/update-shared
+mkdir -p /var/lib/nomad/storage
+mkdir -p /var/lib/homefree-secrets/nomad
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/app-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_app_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/app-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/app-key"
+elif [ -s "/var/lib/homefree-secrets/nomad/app-key" ]; then
+_anchor_set "nomad/app-key" "/var/lib/homefree-secrets/nomad/app-key"
+chmod 600 "/var/lib/homefree-secrets/nomad/app-key"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/app-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/app-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/app-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_app_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-password" ]; then
+_anchor_set "nomad/mysql-password" "/var/lib/homefree-secrets/nomad/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+APP_KEY=$(cat /var/lib/homefree-secrets/nomad/app-key)
+DB_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-password)
+install -m 600 /dev/null /var/lib/nomad/admin.env
+{
+printf 'APP_KEY=%s\n' "$APP_KEY"
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
+} > /var/lib/nomad/admin.env
+for _i in $(seq 1 30); do
+MYSQL_IP=$(/nix/store/podman-5.8.2/bin/podman inspect nomad-mysql \
+--format '{{(index .NetworkSettings.Networks "project-nomad_default").IPAddress}}' 2>/dev/null || true)
+REDIS_IP=$(/nix/store/podman-5.8.2/bin/podman inspect nomad-redis \
+--format '{{(index .NetworkSettings.Networks "project-nomad_default").IPAddress}}' 2>/dev/null || true)
+if [ -n "$MYSQL_IP" ] && [ -n "$REDIS_IP" ] \
+&& timeout 1 /nix/store/bash-interactive-5.3p9/bin/bash -c "exec 3<>/dev/tcp/$MYSQL_IP/3306" 2>/dev/null \
+&& timeout 1 /nix/store/bash-interactive-5.3p9/bin/bash -c "exec 3<>/dev/tcp/$REDIS_IP/6379" 2>/dev/null; then
+break
+fi
+sleep 2
+done
+
+### podman-nomad-mysql [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad-mysql || true
+rm -f /run/nomad-mysql/ctr-id
+
+### podman-nomad-mysql [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad/mysql
+mkdir -p /var/lib/nomad
+mkdir -p /var/lib/homefree-secrets/nomad
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-root-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_root_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-root-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-root-password" ]; then
+_anchor_set "nomad/mysql-root-password" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-root-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-root-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-root-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-root-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_root_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/nomad
+chmod 700 /var/lib/homefree-secrets/nomad
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/nomad/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_nomad_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "nomad/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/nomad/mysql-password" ]; then
+_anchor_set "nomad/mysql-password" "/var/lib/homefree-secrets/nomad/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "nomad/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/nomad/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/nomad/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_nomad_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+MYSQL_ROOT_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-root-password)
+MYSQL_PASSWORD=$(cat /var/lib/homefree-secrets/nomad/mysql-password)
+install -m 600 /dev/null /var/lib/nomad/mysql.env
+{
+printf 'MYSQL_ROOT_PASSWORD=%s\n' "$MYSQL_ROOT_PASSWORD"
+printf 'MYSQL_PASSWORD=%s\n' "$MYSQL_PASSWORD"
+} > /var/lib/nomad/mysql.env
+
+### podman-nomad-redis [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nomad-redis || true
+rm -f /run/nomad-redis/ctr-id
+
+### podman-nomad-redis [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nomad/redis
+if [ ! -f /var/lib/nomad/redis/.chowned-813 ]; then
+chown -R 813:813 /var/lib/nomad/redis
+touch /var/lib/nomad/redis/.chowned-813
+fi
+
+### podman-nzbget [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f nzbget || true
+rm -f /run/nzbget/ctr-id
+
+### podman-nzbget [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/nzbget/config
+mkdir -p /var/lib/nzbget/downloads
+
+### podman-oauth2-proxy-blue [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f oauth2-proxy-blue || true
+rm -f /run/oauth2-proxy-blue/ctr-id
+
+### podman-oauth2-proxy-blue [1]
+#!/nix/store/bash-5.3p9/bin/bash
+for f in oauth2-cookie-secret oidc-client-id oidc-client-secret; do
+if [ ! -s "/var/lib/homefree-secrets/zitadel/$f" ]; then
+echo "oauth2-proxy: /var/lib/homefree-secrets/zitadel/$f missing or empty — refusing to start" >&2
+exit 1
+fi
+done
+
+### podman-oauth2-proxy-blue [2]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/oauth2-proxy
+{
+if [ -s "/var/lib/homefree-secrets/zitadel/oauth2-cookie-secret" ]; then
+echo "OAUTH2_PROXY_COOKIE_SECRET=$(cat "/var/lib/homefree-secrets/zitadel/oauth2-cookie-secret")"
+fi
+if [ -s "/var/lib/homefree-secrets/zitadel/oidc-client-id" ]; then
+echo "OAUTH2_PROXY_CLIENT_ID=$(cat "/var/lib/homefree-secrets/zitadel/oidc-client-id")"
+fi
+if [ -s "/var/lib/homefree-secrets/zitadel/oidc-client-secret" ]; then
+echo "OAUTH2_PROXY_CLIENT_SECRET=$(cat "/var/lib/homefree-secrets/zitadel/oidc-client-secret")"
+fi
+} > "/var/lib/oauth2-proxy/env"
+chmod 600 "/var/lib/oauth2-proxy/env"
+
+### podman-oauth2-proxy-green [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f oauth2-proxy-green || true
+rm -f /run/oauth2-proxy-green/ctr-id
+
+### podman-oauth2-proxy-green [1]
+#!/nix/store/bash-5.3p9/bin/bash
+for f in oauth2-cookie-secret oidc-client-id oidc-client-secret; do
+if [ ! -s "/var/lib/homefree-secrets/zitadel/$f" ]; then
+echo "oauth2-proxy: /var/lib/homefree-secrets/zitadel/$f missing or empty — refusing to start" >&2
+exit 1
+fi
+done
+
+### podman-oauth2-proxy-green [2]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/oauth2-proxy
+{
+if [ -s "/var/lib/homefree-secrets/zitadel/oauth2-cookie-secret" ]; then
+echo "OAUTH2_PROXY_COOKIE_SECRET=$(cat "/var/lib/homefree-secrets/zitadel/oauth2-cookie-secret")"
+fi
+if [ -s "/var/lib/homefree-secrets/zitadel/oidc-client-id" ]; then
+echo "OAUTH2_PROXY_CLIENT_ID=$(cat "/var/lib/homefree-secrets/zitadel/oidc-client-id")"
+fi
+if [ -s "/var/lib/homefree-secrets/zitadel/oidc-client-secret" ]; then
+echo "OAUTH2_PROXY_CLIENT_SECRET=$(cat "/var/lib/homefree-secrets/zitadel/oidc-client-secret")"
+fi
+} > "/var/lib/oauth2-proxy/env"
+chmod 600 "/var/lib/oauth2-proxy/env"
+
+### podman-odoo [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f odoo || true
+rm -f /run/odoo/ctr-id
+
+### podman-odoo [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/odoo-podman/data
+mkdir -p /var/lib/odoo-podman/config
+mkdir -p /var/lib/odoo-podman/addons
+if [ ! -f /var/lib/odoo-podman/config/odoo.conf ]; then
+cat > /var/lib/odoo-podman/config/odoo.conf << 'EOF'
+[options]
+addons_path = /mnt/extra-addons
+data_dir = /var/lib/odoo
+EOF
+fi
+chown -R 100:101 /var/lib/odoo-podman/data || true
+chown -R 100:101 /var/lib/odoo-podman/config || true
+chown -R 100:101 /var/lib/odoo-podman/addons || true
+
+### podman-ollama-webui [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f ollama-webui || true
+rm -f /run/ollama-webui/ctr-id
+
+### podman-ollama-webui [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/ollama-webui
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/ollama-webui/ca-bundle.crt
+chmod 644 /var/lib/ollama-webui/ca-bundle.crt
+install -m 600 /dev/null /var/lib/ollama-webui/sso.env
+if [ -s /var/lib/homefree-secrets/ollama/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/ollama/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/ollama/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/ollama/oidc-client-secret)
+{
+echo "ENABLE_OAUTH_SIGNUP=true"
+echo "OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true"
+echo "OAUTH_PROVIDER_NAME=HomeFree SSO"
+echo "OAUTH_CLIENT_ID=$CID"
+echo "OAUTH_CLIENT_SECRET=$CSEC"
+echo "OPENID_PROVIDER_URL=https://sso.homefree.host/.well-known/openid-configuration"
+echo "OPENID_REDIRECT_URI=https://ollama.homefree.host/oauth/oidc/callback"
+echo "OAUTH_SCOPES=openid email profile urn:zitadel:iam:org:project:roles"
+echo "OAUTH_USERNAME_CLAIM=preferred_username"
+echo "OAUTH_EMAIL_CLAIM=email"
+echo "OAUTH_PICTURE_CLAIM=picture"
+echo "ENABLE_OAUTH_ROLE_MANAGEMENT=true"
+echo "OAUTH_ROLES_CLAIM=urn:zitadel:iam:org:project:roles"
+echo "OAUTH_ADMIN_ROLES=homefree-admin"
+echo "OAUTH_ALLOWED_ROLES=homefree-admin,user"
+echo "DEFAULT_USER_ROLE=user"
+echo "ENABLE_LOGIN_FORM=False"
+echo "ENABLE_SIGNUP=False"
+} > /var/lib/ollama-webui/sso.env
+else
+: > /var/lib/ollama-webui/sso.env
+fi
+chmod 600 /var/lib/ollama-webui/sso.env
+
+### podman-postgres-vectorchord [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f postgres-vectorchord || true
+rm -f /run/postgres-vectorchord/ctr-id
+
+### podman-postgres-vectorchord [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/postgres-vectorchord-podman/pgdata
+mkdir -p /var/lib/homefree-secrets/postgres-vectorchord
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/postgres-vectorchord
+chmod 700 /var/lib/homefree-secrets/postgres-vectorchord
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/postgres-vectorchord/superuser-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_postgres-vectorchord_superuser_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "postgres-vectorchord/superuser-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password"
+elif [ -s "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password" ]; then
+_anchor_set "postgres-vectorchord/superuser-password" "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password"
+chmod 600 "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "postgres-vectorchord/superuser-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/postgres-vectorchord/superuser-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_postgres-vectorchord_superuser_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/postgres-vectorchord-podman/runtime.env
+printf 'POSTGRES_PASSWORD=%s\n' "$(cat /var/lib/homefree-secrets/postgres-vectorchord/superuser-password)" \
+> /var/lib/postgres-vectorchord-podman/runtime.env
+
+### podman-radicale [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f radicale || true
+rm -f /run/radicale/ctr-id
+
+### podman-radicale [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/radicale-podman
+mkdir -p /var/lib/radicale-podman/collections
+chown -R 2999:2999 /var/lib/radicale-podman || true
+install -m 644 /nix/store/radicale-config /var/lib/radicale-podman/config
+
+### podman-radicle-httpd [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f radicle-httpd || true
+podman load -i /nix/store/radicle.tar.gz
+rm -f /run/radicle-httpd/ctr-id
+
+### podman-radicle-node [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f radicle-node || true
+podman load -i /nix/store/radicle.tar.gz
+rm -f /run/radicle-node/ctr-id
+
+### podman-radicle-node [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/radicle/keys /var/lib/radicle/storage /var/lib/radicle/node
+chmod 700 /var/lib/radicle /var/lib/radicle/keys
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/radicle
+chmod 700 /var/lib/homefree-secrets/radicle
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/radicle/passphrase
+ANCHOR_SECRET_FRESH=0
+_anchor_section_radicle_passphrase() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "radicle/passphrase" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/radicle/passphrase"
+elif [ -s "/var/lib/homefree-secrets/radicle/passphrase" ]; then
+_anchor_set "radicle/passphrase" "/var/lib/homefree-secrets/radicle/passphrase"
+chmod 600 "/var/lib/homefree-secrets/radicle/passphrase"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | /nix/store/coreutils-9.11/bin/tr -d '\n' )" > "$_anchor_tmp"
+_anchor_set "radicle/passphrase" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/radicle/passphrase"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/radicle/passphrase"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_radicle_passphrase \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/radicle
+chmod 700 /var/lib/homefree-secrets/radicle
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/radicle/radicle
+ANCHOR_SECRET_FRESH=0
+_anchor_section_radicle_private_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "radicle/private-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/radicle/radicle"
+elif [ -s "/var/lib/homefree-secrets/radicle/radicle" ]; then
+_anchor_set "radicle/private-key" "/var/lib/homefree-secrets/radicle/radicle"
+chmod 600 "/var/lib/homefree-secrets/radicle/radicle"
+else
+printf '%s' "$( _tmpdir=$(mktemp -d)
+_pass=$(cat /var/lib/homefree-secrets/radicle/passphrase)
+/nix/store/openssh-10.3p1/bin/ssh-keygen -t ed25519 -N "$_pass" -C "radicle" -f "$_tmpdir/k" -q
+cat "$_tmpdir/k"
+rm -rf "$_tmpdir"
+)" > "$_anchor_tmp"
+_anchor_set "radicle/private-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/radicle/radicle"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/radicle/radicle"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_radicle_private_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ -n "$(/nix/store/coreutils-9.11/bin/tail -c1 "$ANCHOR_SECRET_FILE")" ]; then
+printf '\n' >> "$ANCHOR_SECRET_FILE"
+/nix/store/coreutils-9.11/bin/chmod 600 "$ANCHOR_SECRET_FILE"
+fi
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+_pass=$(cat /var/lib/homefree-secrets/radicle/passphrase)
+/nix/store/openssh-10.3p1/bin/ssh-keygen -y -P "$_pass" -f /var/lib/homefree-secrets/radicle/radicle \
+> /var/lib/homefree-secrets/radicle/radicle.pub
+chmod 644 /var/lib/homefree-secrets/radicle/radicle.pub
+install -m 600 /var/lib/homefree-secrets/radicle/radicle /var/lib/radicle/keys/radicle
+install -m 644 /var/lib/homefree-secrets/radicle/radicle.pub /var/lib/radicle/keys/radicle.pub
+install -m 644 /nix/store/radicle-config.json /var/lib/radicle/config.json
+install -m 600 /dev/null /var/lib/radicle/runtime.env
+printf 'RAD_PASSPHRASE=%s\n' "$_pass" > /var/lib/radicle/runtime.env
+chmod 600 /var/lib/radicle/runtime.env
+
+### podman-screeenly [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f screeenly || true
+rm -f /run/screeenly/ctr-id
+
+### podman-screeenly [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/screeenly
+mkdir -p /var/lib/homefree-secrets/screeenly
+if [ ! -e /var/lib/screeenly/env.txt ]; then
+APP_KEY=$(/nix/store/podman-5.8.2/bin/podman run --rm hadogenes/screeenly@sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f php artisan key:generate --show | tail -n 1 | tr -d '\r')
+echo "APP_KEY=$APP_KEY" > "/var/lib/screeenly/env.txt"
+fi
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/screeenly
+chmod 700 /var/lib/homefree-secrets/screeenly
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/screeenly/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_screeenly_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "screeenly/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/screeenly/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/screeenly/mysql-password" ]; then
+_anchor_set "screeenly/mysql-password" "/var/lib/homefree-secrets/screeenly/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/screeenly/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "screeenly/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/screeenly/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/screeenly/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_screeenly_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+MYSQL_PASSWORD=$(cat /var/lib/homefree-secrets/screeenly/mysql-password)
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "CREATE USER IF NOT EXISTS 'screeenly'@'localhost'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "ALTER USER 'screeenly'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "GRANT ALL PRIVILEGES ON screeenly.* TO 'screeenly'@'localhost'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "CREATE USER IF NOT EXISTS 'screeenly'@'%'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "ALTER USER 'screeenly'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "GRANT ALL PRIVILEGES ON screeenly.* TO 'screeenly'@'%'"
+install -m 600 /dev/null /var/lib/screeenly/runtime.env
+printf 'DB_PASSWORD=%s\n' "$MYSQL_PASSWORD" > /var/lib/screeenly/runtime.env
+
+### podman-snipe-it [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f snipe-it || true
+rm -f /run/snipe-it/ctr-id
+
+### podman-snipe-it [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/snipeit
+mkdir -p /var/lib/homefree-secrets/snipe-it
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/snipe-it
+chmod 700 /var/lib/homefree-secrets/snipe-it
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/snipe-it/mysql-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_snipe-it_mysql_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "snipe-it/mysql-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/snipe-it/mysql-password"
+elif [ -s "/var/lib/homefree-secrets/snipe-it/mysql-password" ]; then
+_anchor_set "snipe-it/mysql-password" "/var/lib/homefree-secrets/snipe-it/mysql-password"
+chmod 600 "/var/lib/homefree-secrets/snipe-it/mysql-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "snipe-it/mysql-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/snipe-it/mysql-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/snipe-it/mysql-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_snipe-it_mysql_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+mkdir -p /var/lib/homefree-secrets/snipe-it
+chmod 700 /var/lib/homefree-secrets/snipe-it
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/snipe-it/app-key
+ANCHOR_SECRET_FRESH=0
+_anchor_section_snipe-it_app_key() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "snipe-it/app-key" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/snipe-it/app-key"
+elif [ -s "/var/lib/homefree-secrets/snipe-it/app-key" ]; then
+_anchor_set "snipe-it/app-key" "/var/lib/homefree-secrets/snipe-it/app-key"
+chmod 600 "/var/lib/homefree-secrets/snipe-it/app-key"
+else
+printf '%s' "$( printf 'base64:%s' "$(/nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32)" )" > "$_anchor_tmp"
+_anchor_set "snipe-it/app-key" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/snipe-it/app-key"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/snipe-it/app-key"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_snipe-it_app_key \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/snipeit/runtime.env
+{
+echo "APP_KEY=$(cat /var/lib/homefree-secrets/snipe-it/app-key)"
+echo "DB_PASSWORD=$(cat /var/lib/homefree-secrets/snipe-it/mysql-password)"
+} > /var/lib/snipeit/runtime.env
+MYSQL_PASSWORD=$(cat /var/lib/homefree-secrets/snipe-it/mysql-password)
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'localhost'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "ALTER USER 'snipeit'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'";
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'localhost'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'localhost'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "CREATE USER IF NOT EXISTS 'snipeit'@'%'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "ALTER USER 'snipeit'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'snipeit'@'%'"
+/nix/store/mariadb-server-11.4.9/bin/mysql -e "GRANT ALL PRIVILEGES ON snipeit.* TO 'snipeit'@'%'"
+
+### podman-trilium [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f trilium || true
+rm -f /run/trilium/ctr-id
+
+### podman-trilium [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/trilium-podman
+
+### podman-unifi-os [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f unifi-os || true
+rm -f /run/unifi-os/ctr-id
+
+### podman-unifi-os [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/unifi-os-podman/data
+mkdir -p /var/lib/unifi-os-podman/unifi
+mkdir -p /var/lib/unifi-os-podman/mongodb
+mkdir -p /var/lib/unifi-os-podman/logs
+mkdir -p /var/lib/unifi-os-podman/persistent
+mkdir -p /var/lib/unifi-os-podman/journal
+mkdir -p /var/lib/unifi-os-podman/rabbitmq-ssl
+mkdir -p /var/lib/unifi-os-podman/unifi-tmp
+
+### podman-vaultwarden [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f vaultwarden || true
+rm -f /run/vaultwarden/ctr-id
+
+### podman-vaultwarden [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/vaultwarden-podman
+if [ ! -f /var/lib/vaultwarden-podman/.chowned-801 ]; then
+chown -R 801:801 /var/lib/vaultwarden-podman
+touch /var/lib/vaultwarden-podman/.chowned-801
+fi
+{
+cat /etc/ssl/certs/ca-certificates.crt
+if [ -r /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt ]; then
+echo
+cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+fi
+} > /var/lib/vaultwarden-podman/ca-bundle.crt
+chmod 644 /var/lib/vaultwarden-podman/ca-bundle.crt
+install -m 600 /dev/null /var/lib/vaultwarden-podman/sso.env
+if [ -s /var/lib/homefree-secrets/vaultwarden/oidc-client-id ] \
+&& [ -s /var/lib/homefree-secrets/vaultwarden/oidc-client-secret ]; then
+CID=$(cat /var/lib/homefree-secrets/vaultwarden/oidc-client-id)
+CSEC=$(cat /var/lib/homefree-secrets/vaultwarden/oidc-client-secret)
+{
+echo "SSO_ENABLED=true"
+echo "SSO_AUTHORITY=https://sso.homefree.host"
+echo "SSO_CLIENT_ID=$CID"
+echo "SSO_CLIENT_SECRET=$CSEC"
+echo "SSO_SCOPES=email profile urn:zitadel:iam:org:project:roles"
+echo "SSO_ONLY=true"
+echo "SSO_SIGNUPS_MATCH_EMAIL=true"
+echo "SSO_PKCE=true"
+echo "SSO_AUDIENCE_TRUSTED=^[0-9]{15,20}$"
+echo "SSO_AUTH_ONLY_NOT_SESSION=true"
+echo "REFRESH_VALIDITY_SECS=31536000"
+} > /var/lib/vaultwarden-podman/sso.env
+else
+: > /var/lib/vaultwarden-podman/sso.env
+fi
+chmod 600 /var/lib/vaultwarden-podman/sso.env
+
+### podman-webdav [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f webdav || true
+rm -f /run/webdav/ctr-id
+
+### podman-webdav [1]
+#!/nix/store/bash-5.3p9/bin/bash
+mkdir -p /var/lib/webdav/data
+if [ ! -f /var/lib/webdav/.chowned-806 ]; then
+chown -R 806:806 /var/lib/webdav
+touch /var/lib/webdav/.chowned-806
+fi
+
+### podman-zitadel [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f zitadel || true
+rm -f /run/zitadel/ctr-id
+
+### podman-zitadel [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/zitadel
+chown 1000:1000 /var/lib/zitadel
+chmod 700 /var/lib/zitadel
+mkdir -p /var/lib/zitadel/bootstrap
+chown 1000:1000 /var/lib/zitadel/bootstrap
+chmod 700 /var/lib/zitadel/bootstrap
+mkdir -p /var/lib/homefree-secrets/zitadel
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/zitadel
+chmod 700 /var/lib/homefree-secrets/zitadel
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/zitadel/db-user-password
+ANCHOR_SECRET_FRESH=0
+_anchor_section_zitadel_db_user_password() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "zitadel/db-user-password" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/zitadel/db-user-password"
+elif [ -s "/var/lib/homefree-secrets/zitadel/db-user-password" ]; then
+_anchor_set "zitadel/db-user-password" "/var/lib/homefree-secrets/zitadel/db-user-password"
+chmod 600 "/var/lib/homefree-secrets/zitadel/db-user-password"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 32 | tr -d '/+=' | head -c 32 )" > "$_anchor_tmp"
+_anchor_set "zitadel/db-user-password" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/zitadel/db-user-password"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/zitadel/db-user-password"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_zitadel_db_user_password \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
+install -m 600 /dev/null /var/lib/zitadel/env
+{
+if [ -s "/var/lib/homefree-secrets/zitadel/masterkey" ]; then
+echo "ZITADEL_MASTERKEY=$(cat /var/lib/homefree-secrets/zitadel/masterkey)"
+fi
+if [ -s "/var/lib/homefree-secrets/zitadel/admin-password" ]; then
+echo "ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD=$(cat /var/lib/homefree-secrets/zitadel/admin-password)"
+fi
+echo "ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=$(cat /var/lib/homefree-secrets/zitadel/db-user-password)"
+if [ -s /var/lib/homefree-secrets/postgres/superuser-password ]; then
+echo "ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD=$(cat /var/lib/homefree-secrets/postgres/superuser-password)"
+fi
+} > /var/lib/zitadel/env
+ZITADEL_DB_PASSWORD=$(cat /var/lib/homefree-secrets/zitadel/db-user-password)
+/nix/store/postgresql-17.10/bin/psql -h /run/postgresql -U postgres <<PGEOF || true
+DO \$do\$
+BEGIN
+IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zitadel') THEN
+EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', 'zitadel', '$ZITADEL_DB_PASSWORD');
+END IF;
+END
+\$do\$;
+PGEOF
+
+### podman-zitadel-login [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f zitadel-login || true
+rm -f /run/zitadel-login/ctr-id
+
+### podman-zwave-js-ui [0]
+#!/nix/store/bash-5.3p9/bin/bash
+set -o errexit
+set -o nounset
+set -o pipefail
+export PATH="$PATH"
+podman rm -f zwave-js-ui || true
+rm -f /run/zwave-js-ui/ctr-id
+
+### podman-zwave-js-ui [1]
+#!/nix/store/bash-5.3p9/bin/bash
+set -eu
+mkdir -p /var/lib/zwave-js-ui
+if [ ! -s /var/lib/zwave-js-ui/settings.json ] \
+&& [ -d "/var/lib/homefree-secrets/zwave-js-ui/seed" ]; then
+for f in settings.json nodes.json; do
+if [ -f "/var/lib/homefree-secrets/zwave-js-ui/seed/$f" ]; then
+cp "/var/lib/homefree-secrets/zwave-js-ui/seed/$f" "/var/lib/zwave-js-ui/$f"
+chmod 600 "/var/lib/zwave-js-ui/$f"
+fi
+done
+fi
+

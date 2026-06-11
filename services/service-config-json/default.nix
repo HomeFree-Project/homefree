@@ -63,6 +63,15 @@ let
     postgres-databases = b.postgres-databases;
   };
 
+  ## version-tracking is plain data except `command`/`update-command`,
+  ## nullOr paths coerced to /nix/store strings (or null) for the backend.
+  projectVersionTracking = vt: {
+    inherit (vt) strategy repo registry tag-prefix tag-pattern channel
+      current-version url regex;
+    command = pathToString vt.command;
+    update-command = pathToString vt.update-command;
+  };
+
   ## options-metadata is already plain data (strings/bools/null) per
   ## its submodule schema in module.nix — no projection needed beyond
   ## making sure `default` survives. Nix's toJSON handles anything.
@@ -74,6 +83,7 @@ let
     parent = e.parent;
     icon = pathToString e.icon;
     release-tracking = e.release-tracking;
+    version-tracking = projectVersionTracking e.version-tracking;
     systemd-service-names = e.systemd-service-names;
     admin = e.admin;
     firewall = e.firewall;

@@ -233,96 +233,81 @@ in
         RAD_HOME = containerDataPath;
       };
 
-    virtualisation.oci-containers.containers =
-      lib.optionalAttrs config.homefree.service-options.radicle.enable {
+    ## Two containers via the app-platform primitive (modules/app-platform.nix):
+    ## the podman dns-ready units are generated; httpd's ordering after the node
+    ## comes from dependsOn. Both run as root (keys/storage live under
+    ## /root/.radicle and the upstream image runs as root) — no chown/CA-bundle.
+    homefree.containers.radicle-node = lib.mkIf config.homefree.service-options.radicle.enable {
+      imageFile = radicleImage;
+      image = "homefree/radicle:local";
+      runAs = { mode = "root"; reason = "keys/storage live under /root/.radicle; upstream image runs as root"; };
 
-        radicle-node = {
-          imageFile = radicleImage;
-          image = "homefree/radicle:local";
+      ports = [
+        ## Radicle P2P — TCP only. WAN ingress is gated on
+        ## reverse-proxy.public via router.nix:82.
+        "0.0.0.0:${toString node-port}:${toString node-port}"
+      ];
 
-          autoStart = true;
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        "${containerDataPath}:/root/.radicle"
+      ];
 
-          ports = [
-            ## Radicle P2P — TCP only. WAN ingress is gated on
-            ## reverse-proxy.public via router.nix:82.
-            "0.0.0.0:${toString node-port}:${toString node-port}"
-          ];
+      environmentFiles = [ "${containerDataPath}/runtime.env" ];
 
-          volumes = [
-            "/etc/localtime:/etc/localtime:ro"
-            "${containerDataPath}:/root/.radicle"
-          ];
-
-          environmentFiles = [ "${containerDataPath}/runtime.env" ];
-
-          environment = {
-            TZ = config.homefree.system.timeZone;
-            RAD_HOME = "/root/.radicle";
-            RUST_LOG = "info";
-          };
-
-          cmd = [
-            "radicle-node"
-            "--force"
-            "--listen" "0.0.0.0:${toString node-port}"
-          ];
-        };
-
-        radicle-httpd = {
-          imageFile = radicleImage;
-          image = "homefree/radicle:local";
-
-          autoStart = true;
-          dependsOn = [ "radicle-node" ];
-
-          ports = [
-            ## Bind httpd to the LAN address only — Caddy
-            ## reverse-proxies from there to the public domain.
-            ## httpd is a read-only gateway over the node's
-            ## storage; exposing it on 0.0.0.0 directly would
-            ## duplicate what Caddy already does on 443.
-            "${lan-address}:${toString httpd-port}:${toString httpd-port}"
-          ];
-
-          volumes = [
-            "/etc/localtime:/etc/localtime:ro"
-            ## RW mount: httpd needs to connect() to the radicle-node
-            ## Unix control socket under $RAD_HOME/node/, and Unix-
-            ## socket connect requires WRITE permission on the socket
-            ## inode. A :ro mount strips that perm at the FS layer and
-            ## endpoints like /api/v1/stats fail with EACCES.
-            "${containerDataPath}:/root/.radicle"
-          ];
-
-          environment = {
-            TZ = config.homefree.system.timeZone;
-            RAD_HOME = "/root/.radicle";
-            RUST_LOG = "info";
-          };
-
-          cmd = [
-            "radicle-httpd"
-            "--listen" "0.0.0.0:${toString httpd-port}"
-          ];
-        };
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        RAD_HOME = "/root/.radicle";
+        RUST_LOG = "info";
       };
 
-    systemd.services.podman-radicle-node =
-      lib.mkIf config.homefree.service-options.radicle.enable {
-        after = [ "dns-ready.service" ];
-        wants = [ "dns-ready.service" ];
-        serviceConfig = {
-          ExecStartPre = [
-            "!${pkgs.writeShellScript "radicle-prestart" preStart}"
-          ];
-        };
+      cmd = [
+        "radicle-node"
+        "--force"
+        "--listen" "0.0.0.0:${toString node-port}"
+      ];
+
+      ## radicle does its own mkdir + key/passphrase anchoring; run it verbatim
+      ## (no generated mkdir/chown — root, no caBundle).
+      preStartInit = preStart;
+    };
+
+    homefree.containers.radicle-httpd = lib.mkIf config.homefree.service-options.radicle.enable {
+      imageFile = radicleImage;
+      image = "homefree/radicle:local";
+      runAs = { mode = "root"; reason = "shares radicle-node's /root/.radicle storage"; };
+      dependsOn = [ "radicle-node" ];
+
+      ports = [
+        ## Bind httpd to the LAN address only — Caddy
+        ## reverse-proxies from there to the public domain.
+        ## httpd is a read-only gateway over the node's
+        ## storage; exposing it on 0.0.0.0 directly would
+        ## duplicate what Caddy already does on 443.
+        "${lan-address}:${toString httpd-port}:${toString httpd-port}"
+      ];
+
+      volumes = [
+        "/etc/localtime:/etc/localtime:ro"
+        ## RW mount: httpd needs to connect() to the radicle-node
+        ## Unix control socket under $RAD_HOME/node/, and Unix-
+        ## socket connect requires WRITE permission on the socket
+        ## inode. A :ro mount strips that perm at the FS layer and
+        ## endpoints like /api/v1/stats fail with EACCES.
+        "${containerDataPath}:/root/.radicle"
+      ];
+
+      environment = {
+        TZ = config.homefree.system.timeZone;
+        RAD_HOME = "/root/.radicle";
+        RUST_LOG = "info";
       };
 
-    systemd.services.podman-radicle-httpd =
-      lib.mkIf config.homefree.service-options.radicle.enable {
-        after = [ "dns-ready.service" "podman-radicle-node.service" ];
-        wants = [ "dns-ready.service" ];
-      };
+      cmd = [
+        "radicle-httpd"
+        "--listen" "0.0.0.0:${toString httpd-port}"
+      ];
+    };
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.radicle) label name project-name;

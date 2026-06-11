@@ -45,7 +45,7 @@ class LocationStep extends LitElement {
     :host { display: block; }
 
     .location-container {
-      max-width: 700px;
+      max-width: 800px;
       margin: 0 auto;
     }
 

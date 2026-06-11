@@ -257,6 +257,20 @@ in
 
     homefree.service-config = [{
       inherit (config.homefree.service-options.postgres-vectorchord) label name project-name;
+      ## The immich-app/postgres tag is a non-semver compound
+      ## (`18-vectorchord0.5.3-pgvector0.8.1`). Track it with a
+      ## capture-group tag-pattern: candidates are constrained to the
+      ## SAME postgres major as the pin (derived from the version
+      ## binding, so a pg bump retunes the pattern automatically) and
+      ## compared on the captured vectorchord version; the recommended
+      ## "latest" is the full, pullable image tag, so the one-click
+      ## pin bump works.
+      version-tracking = {
+        strategy = "ghcr";
+        repo = "immich-app/postgres";
+        tag-pattern =
+          "^${lib.head (lib.splitString "-" version)}-vectorchord([0-9.]+)-pgvector[0-9.]+$";
+      };
       sso = {
         kind = "infra";
         ## Dev context (intentionally not surfaced in the admin UI):

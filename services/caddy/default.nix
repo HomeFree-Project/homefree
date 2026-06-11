@@ -1,7 +1,13 @@
 { config, lib, pkgs, ... }:
 let
   lan-address = config.homefree.network.lan-address;
-  proxiedHostConfig = lib.filter (service-config: service-config.reverse-proxy.enable == true) config.homefree.service-config;
+  lan-address-v6 = config.homefree.network.lan-address-v6;
+  ## Ingress consumer: the caddy generator reads its vhosts from the generic
+  ## homefree.internal.ingress-vhosts registry (label + reverse-proxy), NOT
+  ## homefree.service-config directly — so it is decoupled from the
+  ## service-config schema. The composition layer projects service-config into
+  ## that registry. See module.nix (homefree.internal.ingress-vhosts).
+  proxiedHostConfig = lib.filter (vhost: vhost.reverse-proxy.enable == true) config.homefree.internal.ingress-vhosts;
   proxiedDomains = config.homefree.proxied-domains;
   trimTrailingSlash = s: lib.head (lib.match "(.*[^/])[/]*" s);
 
@@ -356,7 +362,27 @@ in
     wantedBy = [ "dns-ready.service" ];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${config.services.caddy.package}/bin/caddy reload --config /etc/caddy/caddy_config --adapter caddyfile --force";
+      ## `after = caddy.service` only guarantees the unit is ACTIVE, not
+      ## that Caddy's admin API on :2019 has bound — on a rebuild that
+      ## restarts Caddy (e.g. its package changed via a nixpkgs bump),
+      ## this oneshot fires the instant caddy.service goes active and a
+      ## bare `caddy reload` races the bind, failing with "connection
+      ## refused" (a red, failed unit). Wait for :2019 to actually accept
+      ## a request first; if Caddy never comes up, skip cleanly (exit 0)
+      ## rather than fail — dns-ready re-firing will retry the reload.
+      ExecStart = pkgs.writeShellScript "caddy-acme-retry" ''
+        for _i in $(${pkgs.coreutils}/bin/seq 1 60); do
+          if ${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 \
+               http://127.0.0.1:2019/config/ 2>/dev/null; then
+            exec ${config.services.caddy.package}/bin/caddy reload \
+              --config /etc/caddy/caddy_config --adapter caddyfile --force
+          fi
+          ${pkgs.coreutils}/bin/sleep 0.5
+        done
+        echo "caddy-acme-retry: Caddy admin API (:2019) not reachable after" \
+             "30s — skipping ACME retry (dns-ready will re-run it)" >&2
+        exit 0
+      '';
     };
   };
 
@@ -495,6 +521,15 @@ in
       (lib.listToAttrs (lib.flatten (lib.map (service-config:
       let
         reverse-proxy-config = service-config.reverse-proxy;
+        ## Extra origins an operator allowed for THIS vhost only
+        ## (reverse-proxy.extra-csp-sources). Appended to the CSP fetch
+        ## directives in BOTH the reverse-proxy and static-path header
+        ## blocks below, so the widening applies whichever surface a
+        ## service uses. Empty (leading space omitted) for every vhost
+        ## that doesn't set it — HomeFree-authored pages stay same-origin.
+        cspExtra = lib.optionalString
+          ((reverse-proxy-config.extra-csp-sources or []) != [])
+          (" " + lib.concatStringsSep " " (reverse-proxy-config.extra-csp-sources or []));
         http-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "http://${subdomain}.${domain}") reverse-proxy-config.http-domains)) reverse-proxy-config.subdomains);
         https-urls = lib.flatten (lib.map (subdomain: (lib.map (domain: "https://${subdomain}.${domain}") reverse-proxy-config.https-domains)) reverse-proxy-config.subdomains);
         ## Literal site addresses appended verbatim — no subdomain cross-
@@ -517,6 +552,28 @@ in
         allHttpsUrls = https-urls ++ https-urls-root-domain;
         canonicalHttpsUrl = if allHttpsUrls != [] then lib.head allHttpsUrls else "";
         canonicalHttpsHost = lib.removePrefix "https://" canonicalHttpsUrl;
+
+        ## Cert-existence clause for the SSO gate — mirrors certRedirectConfig's
+        ## glob (below) so SSO enforcement flips on at the same instant the
+        ## cert lands (and the HTTP->HTTPS redirect activates). Until then the
+        ## service stays reachable on plain HTTP on the LAN, because SSO over
+        ## OIDC fundamentally needs a working HTTPS auth.<domain> — enforcing
+        ## the gate before the cert exists just 502s (oauth2-proxy can't
+        ## function) and locks the operator out. Empty string when the service
+        ## has no canonical HTTPS host, which leaves the sentinel-only gate
+        ## unchanged for HTTP-only services. AND-ed into the @sso_gate
+        ## condition in BOTH the static-path and reverse-proxy branches below.
+        ## NOTE: `"root": "/"` is REQUIRED. Caddy's file() matcher joins
+        ## try_files against the matcher root (default is the site's
+        ## document root / cwd, NOT /), so without an explicit "/" root
+        ## the absolute cert path resolves relative to the wrong base and
+        ## NEVER matches — silently making @sso_gate false, skipping the
+        ## SSO forward_auth, and 401-ing every /api/* call with
+        ## "missing X-Auth-Request-User". The two sentinel file() checks
+        ## in the @sso_gate expression already set "root": "/"; this MUST
+        ## match them. (The `*` glob over the ACME CA dir works fine.)
+        ssoGateCertClause = lib.optionalString (canonicalHttpsHost != "")
+          '' && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})'';
 
         ## HTTP-until-cert behaviour: while this service has no issued TLS
         ## cert, its http:// URLs serve the app directly (so a fresh box is
@@ -564,7 +621,7 @@ in
           ## gate. `file()` returns true if ANY listed path exists; we call
           ## it twice and AND the results, and the cert path uses a glob to
           ## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
-          @http_redirect_https expression {http.request.scheme} == "http" && file({"try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})
+          @http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/${canonicalHttpsHost}/${canonicalHttpsHost}.crt"]})
           redir @http_redirect_https https://${canonicalHttpsHost}{uri} 301
         '';
 
@@ -616,11 +673,21 @@ in
               # box's domain, but still rejects arbitrary off-host
               # content. 'unsafe-inline' + 'unsafe-eval' on scripts
               # cover the many third-party apps in this repo that emit
-              # inline handlers or use eval indirectly. Per-vhost
-              # overrides via extraCaddyConfig where a tighter policy
-              # is feasible. See
+              # inline handlers or use eval indirectly. worker-src
+              # needs an explicit 'blob:': without the directive,
+              # Worker creation falls back to script-src (no blob:)
+              # and every library that builds its workers from blob
+              # URLs dies silently — MapLibre (NOMAD's map viewer)
+              # parses ALL tiles in blob: workers, rendering a fully
+              # blank map while the rest of the page works. img/media/
+              # frame already allowed blob:; workers were an oversight.
+              # Per-vhost overrides via extraCaddyConfig where a
+              # tighter policy is feasible. A vhost may also set
+              # reverse-proxy.disable-csp = true to suppress this line
+              # entirely and let a well-behaved upstream (e.g. FreshRSS)
+              # serve its own, stricter CSP. See
               # docs/agent-notes/security-audit-phase-5.md M3.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              ${lib.optionalString (! (reverse-proxy-config.disable-csp or false)) ''Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"''}
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
           '' else "")
@@ -629,17 +696,25 @@ in
           ## over plain HTTP on the LAN. See certRedirectConfig above.
           + certRedirectConfig
           + (if reverse-proxy-config.public == false && !config.homefree.development then ''
-            bind ${lan-address}
+            bind ${lan-address} ${lan-address-v6}
           '' else "")
           + (if reverse-proxy-config.subdir != null then ''
             rewrite / ${trimTrailingSlash reverse-proxy-config.subdir}{uri}
           '' else "")
           ## @TODO: throw an error if more than one host is using the same port
           + (if reverse-proxy-config.static-path != null then ''
-            ${if reverse-proxy-config.oauth2 == true then ''
+            ${if reverse-proxy-config.oauth2 == true && !config.homefree.development then ''
               ## SSO gate (static-served path). Every request inside
               ## this site goes through oauth2-proxy validation via
               ## forward_auth.
+              ##
+              ## Dev-mode bypass: this whole block is omitted at build
+              ## time on a dev box (see the `&& !config.homefree.development`
+              ## guard above), mirroring admin-api's middleware dev bypass
+              ## (web-platform/backend/simple_main.py) — a dev box can't
+              ## complete a real OIDC login (internal CA, port-forwarded
+              ## redirects), so enforcing the gate would just lock the
+              ## developer out. admin-api binds loopback-only regardless.
               ##
               ## CRITICAL: `forward_auth` is a TOP-LEVEL directive,
               ## not wrapped in `handle` or `route`. Caddy's
@@ -675,7 +750,17 @@ in
               ##    sentinel — which is also the SSO-bypass contract in
               ##    admin-api's middleware. Both files are checked at
               ##    REQUEST time via CEL file(), so no rebuild flips it.
-              @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})`
+              ##  - The gate ALSO requires the service's TLS cert to exist
+              ##    (ssoGateCertClause, when the service has a canonical
+              ##    HTTPS host). SSO over OIDC needs a working HTTPS
+              ##    auth.<domain>; before the cert lands the gate would just
+              ##    502 (oauth2-proxy non-functional) and lock the operator
+              ##    out, so the service stays open on plain HTTP on the LAN
+              ##    until the cert is provisioned — the same instant the
+              ##    HTTP->HTTPS redirect (certRedirectConfig) flips on. The
+              ##    cert glob is checked at REQUEST time too, so no rebuild
+              ##    flips it.
+              @sso_gate expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]}) && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]})${ssoGateCertClause}`
               ## SSO gate — forward_auth to the active oauth2-proxy
               ## colour. `oauth2_proxy_forward_auth` is the runtime
               ## blue/green snippet (lib/blue-green.nix); it carries the
@@ -782,7 +867,7 @@ in
               # policy uniform across surfaces. Apps that need a
               # tighter or different policy override via
               # extraCaddyConfig.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
             ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''
@@ -818,22 +903,25 @@ in
               header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
             '' else ""}
           '' else (
-          (if reverse-proxy-config.oauth2 == true then ''
-            ## SSO gate (reverse-proxy site). Request-time `file`
-            ## matcher peeks at the sentinel: pre-provisioning the
-            ## gate is skipped, so the rendered config is correct
-            ## from day one of a fresh install (no double rebuild).
-            ## Post-provisioning every request runs through
-            ## oauth2-proxy /oauth2/auth via forward_auth; on 401
-            ## handle_response converts it into a 302 to
-            ## /oauth2/start. See the static-path branch above for
-            ## the full design rationale (same shape, same trade-
-            ## offs, same security properties).
+          (if reverse-proxy-config.oauth2 == true && !config.homefree.development then ''
+            ## SSO gate (reverse-proxy site). Request-time matchers peek
+            ## at the sentinel + cert: pre-provisioning the gate is
+            ## skipped, so the rendered config is correct from day one of
+            ## a fresh install (no double rebuild). Post-provisioning every
+            ## request runs through oauth2-proxy /oauth2/auth via
+            ## forward_auth; on 401 handle_response converts it into a 302
+            ## to /oauth2/start. See the static-path branch above for the
+            ## full design rationale (same shape, same trade-offs, same
+            ## security properties), including the dev-mode build-time
+            ## bypass and the cert-existence requirement.
+            ##
+            ## The sentinel + cert checks live in ONE `expression` matcher
+            ## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+            ## stay as sibling matchers in the same named set (also AND-ed).
+            ## We can't use two `file` matchers in one set — repeated
+            ## matchers of a type conflict — hence the expression.
             @sso_gate {
-              file {
-                root /
-                try_files /var/lib/homefree-secrets/.sso-provisioned
-              }
+              expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})${ssoGateCertClause}`
               ${if reverse-proxy-config.dav-bypass or false then ''
                 ## DAV bypass: skip the SSO gate for traffic that
                 ## clearly comes from a CalDAV/CardDAV client. Two
@@ -928,7 +1016,7 @@ in
                 # Pass the original host header
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-Proto is set by reverse_proxy by default.
               }
             }
 
@@ -937,7 +1025,7 @@ in
               reverse_proxy ${lan-address}:8764 {
                 header_up Host {host}
                 header_up X-Forwarded-Host {host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-Proto is set by reverse_proxy by default.
               }
             }
           '' else "")
@@ -979,6 +1067,23 @@ in
               then "                transport http {\n${body}                }\n"
               else ""
           )
+          + (if reverse-proxy-config.strip-cookies or false then ''
+                ## Drop the inbound Cookie header before forwarding to a
+                ## buffer-constrained upstream. Tiny embedded HTTP servers
+                ## (OpenSprinkler and similar appliances — same class the
+                ## disable-keepalive option targets) have a small fixed
+                ## request buffer (~2 KB). The SSO session cookie is scoped
+                ## to the parent domain (OAUTH2_PROXY_COOKIE_DOMAINS is set
+                ## to .<domain>), so the browser attaches the multi-KB,
+                ## chunked oauth2 cookie to EVERY <sub>.<domain> request —
+                ## including these non-SSO external proxies — and it
+                ## overflows the upstream's buffer, which then answers
+                ## "The request was too large". These appliances do not use
+                ## cookies (OpenSprinkler authenticates via a pw query
+                ## param), so removing the header is the root-cause fix, not
+                ## a workaround.
+                header_up -Cookie
+          '' else "")
           + (if reverse-proxy-config.oauth2 == true then ''
                 header_up Host {host}
                 header_up X-Real-IP {remote}
@@ -1055,7 +1160,7 @@ in
               output file ${config.services.caddy.logDir}/access-proxied-${log-name}.log
             '';
             extraConfig = ''
-              ${if !entry.public then "bind ${lan-address}" else ""}
+              ${if !entry.public then "bind ${lan-address} ${lan-address-v6}" else ""}
 
               ${if entry.frontend-tls && lib.hasInfix "*" entry.domain then ''
               # Use DNS-01 challenge for wildcard domains
@@ -1080,8 +1185,11 @@ in
               reverse_proxy ${backend-protocol}://${entry.host}:${toString entry.port} {
                 header_up Host {http.request.host}
                 header_up X-Real-IP {remote_host}
-                header_up X-Forwarded-For {remote_host}
-                header_up X-Forwarded-Proto {scheme}
+                # X-Forwarded-For / X-Forwarded-Proto are set by
+                # reverse_proxy by default (and its default X-Forwarded-For
+                # is trusted_proxies-aware, which a manual {remote_host}
+                # override is not — so the default is also more correct
+                # behind the optional landing-page CDN front).
                 ${if entry.backend-tls then ''
                 transport http {
                   tls
@@ -1094,6 +1202,40 @@ in
           };
         }
       ) processedProxiedDomains))
+
+      ## ── Unmatched-host catch-all on the public HTTPS listener ──────────
+      ## Any host not served on the `*:443` (public/WAN) listener gets an
+      ## honest `421 Misdirected Request` instead of Caddy's default empty
+      ## `200`. That empty 200 silently broke WebSocket/streaming clients: a
+      ## `public = false` name resolved to the box's WAN IP via an off-box
+      ## resolver lands here (the vhost binds only the LAN addresses), the
+      ## client read a 200 where it expected a 101, and looped forever (the
+      ## ntfy "works until the app is restarted" bug).
+      ##
+      ## Safe + correct by construction (verified with `caddy adapt`):
+      ##  - Host-specific sites are MORE specific and still win; only a
+      ##    genuinely unmatched host reaches this route.
+      ##  - TLS terminates with the requested host's existing cert; an
+      ##    unknown SNI has no cert and fails the handshake BEFORE HTTP, so
+      ##    scanners / OS HTTPS probes never reach this (captive-portal and
+      ##    OS-probe handling live on the separate `:80` block).
+      ##  - It lands ONLY on the `*:443` server. The LAN-bound listeners
+      ##    (lan-address / lan-address-v6) are a separate server and are
+      ##    intentionally not covered: split-horizon DNS never hands a
+      ##    public host the LAN IP/ULA, and every `public = false` vhost
+      ##    shares the LAN bind, so an unmatched *served* host can't arrive
+      ##    there — `*:443` covers every real case.
+      ##  - ACME is DNS-01, so a `:443` catch-all cannot affect issuance.
+      {
+        ":443" = {
+          logFormat = ''
+            output file ${config.services.caddy.logDir}/access-fallback-443.log
+          '';
+          extraConfig = ''
+            respond "Misdirected request: this host is not served on this interface." 421
+          '';
+        };
+      }
     ];
   };
 

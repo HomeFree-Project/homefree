@@ -1,0 +1,21 @@
+OpenSprinkler-App UI assets mirrored from https://ui.opensprinkler.com/
+Upstream: https://github.com/OpenSprinkler/OpenSprinkler-App (v2.4.1, firmware 2.0.3+)
+Fetched: 2026-06-05
+License: AGPL-3.0
+Served as static files; see default.nix. Re-mirror with the crawler in commit history when updating.
+
+IMPORTANT — sanitization applied after mirroring (re-apply on any re-mirror):
+The CDN serves its HTML through Cloudflare, which injects a tracking beacon
+(static.cloudflareinsights.com/beacon.min.js) and a challenge script into every
+HTML file, and index.html also links Google Fonts. These were STRIPPED from
+index.html and map.html to satisfy AGENTS.md rule 8 (zero external requests).
+home.js fetches index.html and uses only its <body>, so stripping the <head>
+externals does not affect the controller flow.
+
+KNOWN external dependency NOT vendored: the station-location map (js/map.js,
+loaded by map.html) and reverse-geocoding (js/modules/options.js) call Google
+Maps / Google geocoding APIs at runtime. These fire only when the operator opens
+those optional features, never on page load. Maintainer decision: KEEP these
+features (vendored JS left unmodified) as an accepted rule-8 exception. Note that
+the box's CSP still blocks the Google origins by default, so the features only
+work if those origins are allowed on the relevant vhosts (see default.nix).

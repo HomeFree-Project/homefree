@@ -37,12 +37,12 @@ let
   backup-from-paths-all =
     (lib.map (entry: {
       label = entry.label;
-      paths = entry.backup.paths
+      paths = entry.paths
         ## Add postgres database backup paths
-        ++ (if (lib.length entry.backup.postgres-databases) > 0 then [ "/var/backup/postgresql-homefree/${entry.label}" ] else [])
+        ++ (if (lib.length entry.postgres-databases) > 0 then [ "/var/backup/postgresql-homefree/${entry.label}" ] else [])
         ## Add mysql database backup paths
-        ++ (if (lib.length entry.backup.mysql-databases) > 0 then [ "/var/backup/mysql-homefree/${entry.label}" ] else []);
-    }) config.homefree.service-config)
+        ++ (if (lib.length entry.mysql-databases) > 0 then [ "/var/backup/mysql-homefree/${entry.label}" ] else []);
+    }) config.homefree.internal.backup-sources)
     ## Backup the system config
     ++ [{ label = "system-config"; paths = [ "/etc/nixos" ]; }]
     ## Backup each extra path individually. The label
@@ -80,16 +80,16 @@ let
       m = idx - ((idx / 60) * 60);
     in
       "${lib.fixedWidthNumber 2 h}:${lib.fixedWidthNumber 2 m}";
-  postgres-databases = lib.flatten (lib.map (entry: entry.backup.postgres-databases) config.homefree.service-config);
+  postgres-databases = lib.flatten (lib.map (entry: entry.postgres-databases) config.homefree.internal.backup-sources);
   service-to-postgres-databases-map  = lib.listToAttrs (lib.map (entry: {
     name = entry.label;
-    value = entry.backup.postgres-databases;
-  }) config.homefree.service-config);
-  mysql-databases = lib.flatten (lib.map (entry: entry.backup.mysql-databases) config.homefree.service-config);
+    value = entry.postgres-databases;
+  }) config.homefree.internal.backup-sources);
+  mysql-databases = lib.flatten (lib.map (entry: entry.mysql-databases) config.homefree.internal.backup-sources);
   service-to-mysql-databases-map  = lib.listToAttrs (lib.map (entry: {
     name = entry.label;
-    value = entry.backup.mysql-databases;
-  }) config.homefree.service-config);
+    value = entry.mysql-databases;
+  }) config.homefree.internal.backup-sources);
   ## Backblaze B2 is used as a NATIVE restic repository (b2:bucket:label),
   ## not a mounted filesystem. restic talks to B2 directly; offsite gets a
   ## real restic repo with its own snapshot history and retention - so a
