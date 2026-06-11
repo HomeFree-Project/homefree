@@ -49,6 +49,7 @@ in
     ./modules/geoip.nix
     ./modules/setup-state.nix
     ./modules/finish-setup-console.nix
+    ./modules/secrets-recipient-migrate.nix
     ./modules/boot-mirror.nix
     ./modules/auditd.nix
   ]

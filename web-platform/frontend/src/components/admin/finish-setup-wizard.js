@@ -11,7 +11,16 @@ import {
   getRebuildStatusWithHistory,
   getCurrentConfig,
   markFinishSetupComplete,
+  restoreOpen,
+  restoreApply,
+  restoreCancel,
+  restoreAllBackups,
+  getBackupJobCurrent,
 } from '../../api/client.js';
+
+// localStorage key — survives a reload while a restore rebuild / data-restore is
+// in flight, so the wizard reattaches instead of dropping back to the choice.
+const RESTORE_MARKER_KEY = 'hf-restore-inprogress';
 
 // SOPS service labels — must match dns-module.js and the backend's
 // write_secret_files() output paths under /var/lib/homefree-secrets/.
@@ -60,6 +69,23 @@ class FinishSetupWizard extends LitElement {
     applyState: { type: String, state: true },   // 'idle'|'running'|'done'|'failed'
     rebuildOutput: { type: String, state: true },
     reconnecting: { type: Boolean, state: true }, // poll lost the backend, retrying
+
+    // --- Restore-from-backup branch ---
+    mode: { type: String, state: true },          // ''=choose | 'fresh' | 'restore'
+    restoreStep: { type: Number, state: true },   // 0=access 1=domain 2=apply
+    restoreSource: { type: String, state: true }, // 'local' | 'backblaze'
+    resticPassword: { type: String, state: true },
+    localPath: { type: String, state: true },
+    b2Bucket: { type: String, state: true },
+    b2AccountId: { type: String, state: true },
+    b2AccountKey: { type: String, state: true },
+    privateKey: { type: String, state: true },    // pasted, transient, never stored
+    restoreSummary: { type: Object, state: true }, // backup summary from open
+    restoreSessionId: { type: String, state: true },
+    domainChoice: { type: String, state: true },  // 'keep' | 'change'
+    newDomain: { type: String, state: true },
+    dataRestoreState: { type: String, state: true }, // ''|'running'|'done'|'failed'
+    dataRestoreJob: { type: Object, state: true },
   };
 
   static styles = [themeVars, css`
@@ -266,45 +292,110 @@ class FinishSetupWizard extends LitElement {
     this.applyState = 'idle';
     this.rebuildOutput = '';
     this.reconnecting = false;
+
+    this.mode = '';
+    this.restoreStep = 0;
+    this.restoreSource = 'local';
+    this.resticPassword = '';
+    this.localPath = '/var/lib/backups';
+    this.b2Bucket = '';
+    this.b2AccountId = '';
+    this.b2AccountKey = '';
+    this.privateKey = '';
+    this.restoreSummary = null;
+    this.restoreSessionId = '';
+    this.domainChoice = 'keep';
+    this.newDomain = '';
+    this.dataRestoreState = '';
+    this.dataRestoreJob = null;
   }
 
   async connectedCallback() {
     super.connectedCallback();
+
+    // A restore rebuild / data-restore in flight survives a reload via a
+    // localStorage marker — reattach to it instead of dropping back to the
+    // mode choice (which would strand the restore nobody is watching).
+    const marker = this.readRestoreMarker();
+    if (marker) {
+      this.mode = 'restore';
+      this.restoreStep = 2;
+      this.restoreSource = marker.source || this.restoreSource;
+      this.restoreSessionId = marker.sessionId || '';
+      await this.refreshSecretsStatus();
+      this.resumeRestore(marker);
+      return;
+    }
+
     // The wizard component is destroyed and recreated whenever the user
     // navigates away from and back to the Finish-setup page. admin-app
-    // holds the last step in `initialStep` so we can resume there instead
-    // of snapping back to step 0.
+    // holds the last step in `initialStep` so we can resume there.
     //
-    // Synchronous best-guess from the props we already have, so the first
-    // paint isn't step 0 (refined below once saved state has loaded).
+    // The Restore-vs-Fresh choice is shown ONLY when the box is pristine (no
+    // SSH key yet). Once the SSH step is done the box is committed to the fresh
+    // flow, so a reload resumes there rather than re-showing the choice.
+    const pristine = this.pendingItems.includes('ssh-key');
     if (this.initialStep >= 0) {
+      this.mode = 'fresh';
       this.step = this.initialStep;
-    } else if (!this.pendingItems.includes('ssh-key')) {
-      // First mount, and the box already has an authorized key (e.g. only
-      // DNS-01 is pending) — skip straight past the SSH step.
+    } else if (!pristine) {
+      // Already past the SSH step (e.g. only DNS-01 is pending) — resume fresh.
+      this.mode = 'fresh';
       this.sshKeySaved = true;
       this.step = 1;
     }
+    // else: pristine first mount → mode '' → render the mode choice.
+
     await this.refreshSecretsStatus();
     await this.seedZonesFromConfig();
     // Now that saved state is loaded (secret presence + seeded zones),
     // resume at the first step that still needs attention — landing on the
     // Apply step when SSH, DNS-01 and ddclient are all already saved.
-    // Without this, reloading a fully-entered-but-not-yet-applied setup
-    // always dumped the user back on the DNS step (and, with the ddclient
-    // Continue fix, still forced a needless click through each step).
-    // Only on a fresh mount — never override an explicit nav-restored
-    // initialStep, and never override a rebuild recovery (handled below).
-    if (this.initialStep < 0) {
+    if (this.mode === 'fresh' && this.initialStep < 0) {
       this.step = this.computeResumeStep();
     }
-    // Recover an in-flight (or just-finished) rebuild. The finish-setup
-    // rebuild restarts admin-api, so the user may have reloaded — or the
-    // poll lost contact — while it was still running. The backend tracks
-    // the transient rebuild unit independently and persists its last
-    // status, so on mount we can reattach instead of restarting at step 0
-    // and stranding a rebuild whose result nobody is watching.
+    // Recover an in-flight (or just-finished) FRESH rebuild. The finish-setup
+    // rebuild restarts admin-api, so the user may have reloaded — or the poll
+    // lost contact — while it was still running. The backend tracks the
+    // transient rebuild unit independently, so on mount we can reattach
+    // instead of stranding a rebuild whose result nobody is watching.
     await this.recoverRebuildIfAny();
+  }
+
+  // --- Restore-in-progress marker (reload survival) ------------------------
+  readRestoreMarker() {
+    try {
+      const raw = window.localStorage.getItem(RESTORE_MARKER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  writeRestoreMarker(data) {
+    try {
+      window.localStorage.setItem(RESTORE_MARKER_KEY, JSON.stringify(data));
+    } catch (e) { /* private mode / quota — non-fatal */ }
+  }
+
+  clearRestoreMarker() {
+    try { window.localStorage.removeItem(RESTORE_MARKER_KEY); } catch (e) { /* ignore */ }
+  }
+
+  // Reattach to a restore that was already underway when the page reloaded.
+  resumeRestore(marker) {
+    if (marker.phase === 'data') {
+      // The service-data restore is a backend job — reattach by polling it.
+      this.applyState = 'done';        // the rebuild already finished
+      this.dataRestoreState = 'running';
+      this.pollDataRestore();
+    } else {
+      // The restore rebuild was running (or finished while we were away).
+      // pollRebuild handles BOTH: it polls to completion, and on success in
+      // restore mode it kicks off the data restore.
+      this.applyState = 'running';
+      this.pollRebuild();
+    }
   }
 
   // Whenever the step changes, report it up to admin-app so it survives a
@@ -328,7 +419,9 @@ class FinishSetupWizard extends LitElement {
       // increment — the user reloaded mid-build and has no prior log.
       const s = await getRebuildStatusWithHistory();
       if (s && s.running) {
-        this.step = 3;
+        if (!this.mode) this.mode = 'fresh';
+        if (this.mode === 'fresh') this.step = 3;
+        else this.restoreStep = 2;
         this.applyState = 'running';
         this.rebuildOutput = s.output || '';
         this.pollRebuild({ preserveLog: true });
@@ -605,6 +698,13 @@ class FinishSetupWizard extends LitElement {
       this._rebuildPoll = null;
       const succeeded = s.exit_code === 0 || s.partial_success === true;
       if (succeeded) {
+        if (this.mode === 'restore') {
+          // Config + secrets restored and the box rebuilt — now restore the
+          // service DATA, then mark setup complete (in startDataRestore).
+          this.applyState = 'done';
+          this.startDataRestore();
+          return;
+        }
         // Mark setup complete ONLY now — after a successful rebuild. This
         // writes the .setup-complete sentinel, which closes the auth bypass
         // and the captive portal, and arms the HTTP->HTTPS redirect. A
@@ -629,6 +729,7 @@ class FinishSetupWizard extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._rebuildPoll) clearTimeout(this._rebuildPoll);
+    if (this._dataPoll) clearTimeout(this._dataPoll);
   }
 
   finishWizard() {
@@ -644,6 +745,8 @@ class FinishSetupWizard extends LitElement {
 
   // --- Render --------------------------------------------------------------
   render() {
+    if (this.mode === '') return this.renderModeChoice();
+    if (this.mode === 'restore') return this.renderRestore();
     return html`
       <div class="wizard">
         <h1>Finish setting up HomeFree</h1>
@@ -1007,6 +1110,455 @@ class FinishSetupWizard extends LitElement {
         ` : ''}
       </div>
     `;
+  }
+
+  // === Mode choice: Restore vs Fresh ======================================
+  renderModeChoice() {
+    return html`
+      <div class="wizard">
+        <h1>Set up HomeFree</h1>
+        <p class="subtitle">
+          Is this a brand-new HomeFree, or are you restoring an existing one
+          from a backup?
+        </p>
+        <div class="card">
+          <h2>Start fresh</h2>
+          <p style="color:var(--hf-text-muted);font-size:13px;line-height:1.5;margin:0 0 14px;">
+            Set up this box from scratch — add your SSH key, a wildcard
+            certificate, and dynamic DNS.
+          </p>
+          <div class="actions">
+            <span></span>
+            <button class="primary" @click=${() => this.chooseMode('fresh')}>
+              Start fresh
+            </button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <h2>Restore from a backup</h2>
+          <p style="color:var(--hf-text-muted);font-size:13px;line-height:1.5;margin:0 0 14px;">
+            Rebuild this box from an existing HomeFree backup — recovers your
+            settings, secrets, and (optionally) all service data. You will need
+            your restic repository password and the SSH private key for the
+            backed-up box.
+          </p>
+          <div class="actions">
+            <span></span>
+            <button class="primary" @click=${() => this.chooseMode('restore')}>
+              Restore from backup
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  chooseMode(mode) {
+    this.error = '';
+    this.mode = mode;
+    if (mode === 'fresh') {
+      this.step = this.computeResumeStep();
+    } else {
+      this.restoreStep = 0;
+    }
+  }
+
+  // === Restore flow =======================================================
+  renderRestore() {
+    return html`
+      <div class="wizard">
+        <h1>Restore from backup</h1>
+        <p class="subtitle">
+          ${this.restoreStep === 0 ? 'Point HomeFree at your backup and unlock it.'
+            : this.restoreStep === 1 ? 'Choose the domain this restored box will use.'
+            : 'Restoring your HomeFree.'}
+        </p>
+        <div class="steps">
+          ${[0, 1, 2].map((i) => html`
+            <div class="step-pip ${i < this.restoreStep ? 'done' : i === this.restoreStep ? 'active' : ''}"></div>
+          `)}
+        </div>
+        ${this.restoreStep === 0 ? this.renderRestoreAccess()
+          : this.restoreStep === 1 ? this.renderRestoreDomain()
+          : this.renderRestoreApply()}
+      </div>
+    `;
+  }
+
+  renderRestoreAccess() {
+    const isB2 = this.restoreSource === 'backblaze';
+    const canOpen = this.resticPassword.trim() && this.privateKey.trim()
+      && (isB2 ? (this.b2Bucket.trim() && this.b2AccountId.trim() && this.b2AccountKey.trim())
+               : this.localPath.trim());
+    return html`
+      <div class="card">
+        <h2>1. Unlock your backup</h2>
+        <div class="consequence">
+          HomeFree reads your backup's saved settings and secrets. Nothing on
+          this box changes until you confirm on the next steps.
+        </div>
+
+        <label>Backup location</label>
+        <div style="display:flex;gap:8px;margin-bottom:4px;">
+          <button class=${this.restoreSource === 'local' ? 'primary' : ''}
+            @click=${() => { this.restoreSource = 'local'; }}>Local disk / USB</button>
+          <button class=${isB2 ? 'primary' : ''}
+            @click=${() => { this.restoreSource = 'backblaze'; }}>Backblaze B2</button>
+        </div>
+
+        ${isB2 ? html`
+          <label>B2 bucket</label>
+          <input type="text" .value=${this.b2Bucket}
+            @input=${(e) => { this.b2Bucket = e.target.value; }} />
+          <label>B2 key ID</label>
+          <input type="text" .value=${this.b2AccountId}
+            @input=${(e) => { this.b2AccountId = e.target.value; }} />
+          <label>B2 application key</label>
+          <input type="password" autocomplete="off" .value=${this.b2AccountKey}
+            @input=${(e) => { this.b2AccountKey = e.target.value; }} />
+        ` : html`
+          <label>Local backup path</label>
+          <input type="text" placeholder="/var/lib/backups" .value=${this.localPath}
+            @input=${(e) => { this.localPath = e.target.value; }} />
+        `}
+
+        <label>Restic repository password</label>
+        <input type="password" autocomplete="off" placeholder="your restic password"
+          .value=${this.resticPassword}
+          @input=${(e) => { this.resticPassword = e.target.value; }} />
+
+        <label>Your SSH private key</label>
+        <textarea placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+          .value=${this.privateKey}
+          @input=${(e) => { this.privateKey = e.target.value; }}></textarea>
+        <p style="font-size:12px;color:var(--hf-text-subtle);margin:6px 0 0;">
+          The private key matching an authorized key on the backed-up box. Used
+          once, in memory, to decrypt your secrets — it is never saved to disk.
+        </p>
+
+        ${this.error ? html`<div class="error">${this.error}</div>` : ''}
+        <div class="actions">
+          <button class="link" @click=${() => { this.mode = ''; this.error = ''; }}>Back</button>
+          <button class="primary" ?disabled=${this.busy || !canOpen}
+            @click=${this.openRestoreBackup}>
+            ${this.busy ? 'Unlocking…' : 'Unlock backup'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  async openRestoreBackup() {
+    this.error = '';
+    this.busy = true;
+    try {
+      const payload = {
+        source: this.restoreSource,
+        restic_password: this.resticPassword,
+        private_key: this.privateKey,
+      };
+      if (this.restoreSource === 'backblaze') {
+        payload.b2_bucket = this.b2Bucket.trim();
+        payload.b2_account_id = this.b2AccountId.trim();
+        payload.b2_account_key = this.b2AccountKey;
+      } else {
+        payload.local_path = this.localPath.trim();
+      }
+      const summary = await restoreOpen(payload);
+      this.restoreSummary = summary;
+      this.restoreSessionId = summary.session_id || '';
+      this.domainChoice = 'keep';
+      this.newDomain = '';
+      this.restoreStep = 1;
+    } catch (e) {
+      this.error = e.message || 'Could not open the backup.';
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async backToRestoreAccess() {
+    this.error = '';
+    if (this.restoreSessionId) {
+      try { await restoreCancel(this.restoreSessionId); } catch (e) { /* ignore */ }
+      this.restoreSessionId = '';
+      this.restoreSummary = null;
+    }
+    this.restoreStep = 0;
+  }
+
+  chooseChangeDomain() {
+    this.domainChoice = 'change';
+    if (this.ddnsZones.length === 0) {
+      this.ddnsZones = [{ zone: this.newDomain || '', protocol: 'hetzner',
+        username: '', domains: '@ *', key: 'password', password: '' }];
+    }
+  }
+
+  renderRestoreDomain() {
+    const summary = this.restoreSummary || {};
+    const dom = summary.domain || '(unknown)';
+    const changing = this.domainChoice === 'change';
+    // For a new domain we need at least the wildcard-cert token; ddclient is
+    // optional (public access only).
+    const canContinue = !changing || (this.newDomain.trim() && this.dnsToken.trim());
+    return html`
+      <div class="card">
+        <h2>2. Domain</h2>
+        <div class="consequence">
+          This backup is configured for <strong>${dom}</strong>. Keeping it makes
+          THIS box take over that domain — its public DNS is repointed here and
+          its certificates are reissued. Choose a different domain if the old box
+          is still running, or you want this box on another name.
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+          <input type="radio" name="domchoice" ?checked=${!changing}
+            @change=${() => { this.domainChoice = 'keep'; }} />
+          Keep <strong>${dom}</strong>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+          <input type="radio" name="domchoice" ?checked=${changing}
+            @change=${this.chooseChangeDomain} />
+          Use a different domain
+        </label>
+
+        ${changing ? html`
+          <label>New domain</label>
+          <input type="text" placeholder="example.com" .value=${this.newDomain}
+            @input=${(e) => { this.newDomain = e.target.value; }} />
+
+          <label>DNS provider (for the wildcard certificate)</label>
+          <input type="text" placeholder="hetzner" .value=${this.dnsProvider}
+            @input=${(e) => { this.dnsProvider = e.target.value; }} />
+          <label>DNS provider API token</label>
+          <input type="password" autocomplete="off" placeholder="paste your API token"
+            .value=${this.dnsToken}
+            @input=${(e) => { this.dnsToken = e.target.value; }} />
+
+          <p style="font-size:12px;color:var(--hf-text-subtle);margin:14px 0 4px;">
+            Dynamic DNS keeps your new domain pointed at this box (optional —
+            only for pages you want reachable from the internet).
+          </p>
+          ${this.ddnsZones.map((z, i) => html`
+            <div class="zone-block">
+              <div class="zone-row">
+                <div><label>Zone</label>
+                  <input type="text" placeholder="example.com" .value=${z.zone}
+                    @input=${(e) => this.updateZone(i, 'zone', e.target.value)} /></div>
+                <div><label>Protocol</label>
+                  <input type="text" .value=${z.protocol}
+                    @input=${(e) => this.updateZone(i, 'protocol', e.target.value)} /></div>
+                <div><label>Username</label>
+                  <input type="text" .value=${z.username}
+                    @input=${(e) => this.updateZone(i, 'username', e.target.value)} /></div>
+                <div><label>Domains</label>
+                  <input type="text" placeholder="@ *" .value=${z.domains}
+                    @input=${(e) => this.updateZone(i, 'domains', e.target.value)} /></div>
+              </div>
+              <label>Password / API token</label>
+              <input type="password" autocomplete="off" .value=${z.password || ''}
+                @input=${(e) => this.updateZone(i, 'password', e.target.value)} />
+              <div style="margin-top:10px;">
+                <button class="link" @click=${() => this.removeZone(i)}>Remove zone</button>
+              </div>
+            </div>
+          `)}
+          <button @click=${this.addZone}>+ Add zone</button>
+        ` : ''}
+
+        ${this.error ? html`<div class="error">${this.error}</div>` : ''}
+        <div class="actions">
+          <button class="link" @click=${this.backToRestoreAccess}>Back</button>
+          <button class="primary" ?disabled=${!canContinue}
+            @click=${() => { this.error = ''; this.restoreStep = 2; }}>
+            Continue
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  renderRestoreApply() {
+    const idle = this.applyState === 'idle' && this.dataRestoreState === '';
+    return html`
+      <div class="card">
+        <h2>3. Restore</h2>
+        <p style="color:var(--hf-text-muted);font-size:13px;line-height:1.5;">
+          This re-keys your secrets to this box, applies your restored settings,
+          rebuilds, and then restores your service data. It can take a while —
+          keep this page open.
+        </p>
+
+        ${idle ? html`
+          <div class="actions">
+            <button class="link" @click=${() => { this.restoreStep = 1; }}>Back</button>
+            <button class="primary" @click=${this.applyRestoreFlow}>
+              Start restore
+            </button>
+          </div>
+        ` : ''}
+
+        ${this.applyState === 'running' ? html`
+          ${this.reconnecting ? html`
+            <div class="ok" style="color:#f5bf42;">
+              Reconnecting… HomeFree restarts itself partway through — that's
+              normal. Keep this page open.
+            </div>
+          ` : html`<div class="ok">Applying your settings and rebuilding…</div>`}
+          <div class="log">${this.rebuildOutput || 'Starting…'}</div>
+        ` : ''}
+
+        ${this.dataRestoreState === 'running' ? html`
+          <div class="ok">Restoring service data…</div>
+          <div class="log">${this.renderDataRestoreProgress()}</div>
+        ` : ''}
+
+        ${this.dataRestoreState === 'done' ? html`
+          <div class="ok">✓ Restore complete! Your HomeFree and its data are back.</div>
+          <div class="actions">
+            <span></span>
+            <button class="primary" @click=${this.finishRestore}>
+              Go to the admin dashboard
+            </button>
+          </div>
+        ` : ''}
+
+        ${this.dataRestoreState === 'failed' ? html`
+          <div class="error">${this.error}</div>
+          <div class="log">${this.renderDataRestoreProgress()}</div>
+          <p style="font-size:12px;color:var(--hf-text-subtle);">
+            Your settings and secrets were restored. You can retry the data
+            restore now, or finish and run it later from the Backups page.
+          </p>
+          <div class="actions">
+            <button @click=${this.startDataRestore}>Retry data restore</button>
+            <button class="primary" @click=${this.finishRestore}>Finish anyway</button>
+          </div>
+        ` : ''}
+
+        ${this.applyState === 'failed' ? html`
+          <div class="error">${this.error}</div>
+          <div class="log">${this.rebuildOutput || ''}</div>
+          <div class="actions">
+            <button @click=${() => { this.applyState = 'idle'; }}>Try again</button>
+            <span></span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  renderDataRestoreProgress() {
+    const job = this.dataRestoreJob;
+    if (!job) return 'Starting…';
+    const repos = job.repos || [];
+    const done = repos.filter((r) => r.state === 'done').length;
+    const lines = repos.map((r) => {
+      const mark = r.state === 'done' ? '✓' : r.state === 'failed' ? '✗' : '…';
+      return mark + ' ' + r.name + (r.error ? ' — ' + r.error : '');
+    });
+    return done + '/' + repos.length + ' services restored\n' + lines.join('\n');
+  }
+
+  async applyRestoreFlow() {
+    this.error = '';
+    this.applyState = 'running';
+    this.rebuildOutput = '';
+    this.writeRestoreMarker({ phase: 'rebuild', source: this.restoreSource,
+      sessionId: this.restoreSessionId });
+    try {
+      const changing = this.domainChoice === 'change';
+      const payload = {
+        session_id: this.restoreSessionId,
+        private_key: this.privateKey,
+        change_domain: changing,
+        new_domain: this.newDomain.trim(),
+        dns_provider: this.dnsProvider.trim(),
+        dns_token: this.dnsToken.trim(),
+        ddclient_zones: (changing ? this.ddnsZones : []).map((z) => ({
+          zone: (z.zone || '').trim() || this.newDomain.trim(),
+          protocol: (z.protocol || 'hetzner').trim(),
+          username: (z.username || '').trim(),
+          domains: (z.domains || '@ *').split(/\s+/).filter(Boolean),
+          password_secret_key: (z.key || 'password').trim(),
+          password: (z.password || '').trim(),
+        })),
+      };
+      const res = await restoreApply(payload);
+      // The private key has done its job — drop it from memory immediately.
+      this.privateKey = '';
+      if (res && res.success === false) {
+        this.applyState = 'failed';
+        this.error = res.message || 'Failed to start the restore.';
+        this.clearRestoreMarker();
+        return;
+      }
+      this.pollRebuild();
+    } catch (e) {
+      this.applyState = 'failed';
+      this.error = e.message || 'Failed to start the restore.';
+      this.clearRestoreMarker();
+    }
+  }
+
+  async startDataRestore() {
+    this.error = '';
+    this.dataRestoreState = 'running';
+    this.dataRestoreJob = null;
+    this.writeRestoreMarker({ phase: 'data', source: this.restoreSource,
+      sessionId: this.restoreSessionId });
+    try {
+      await restoreAllBackups({ source: this.restoreSource, include_system_config: false });
+    } catch (e) {
+      // 409 = a restore job is already running (e.g. a resumed restore) — just
+      // poll the existing one. Any other error is fatal for this attempt.
+      if (e.status !== 409) {
+        this.dataRestoreState = 'failed';
+        this.error = e.message || 'Failed to start the data restore.';
+        return;
+      }
+    }
+    this.pollDataRestore();
+  }
+
+  pollDataRestore() {
+    if (this._dataPoll) clearTimeout(this._dataPoll);
+    const tick = async () => {
+      let res;
+      try {
+        res = await getBackupJobCurrent();
+      } catch (e) {
+        this._dataPoll = setTimeout(tick, 2500);
+        return;
+      }
+      const job = res && res.job;
+      if (job) this.dataRestoreJob = job;
+      this.requestUpdate();
+      const state = job && job.state;
+      if (!job || state === 'queued' || state === 'running') {
+        this._dataPoll = setTimeout(tick, 2500);
+        return;
+      }
+      this._dataPoll = null;
+      if (state === 'failed') {
+        this.dataRestoreState = 'failed';
+        this.error = 'Some services could not be restored — see the list below.';
+        return;
+      }
+      this.dataRestoreState = 'done';
+      this.clearRestoreMarker();
+      try { await markFinishSetupComplete(); } catch (e) { console.warn(e); }
+    };
+    tick();
+  }
+
+  async finishRestore() {
+    // Idempotent — also covers the "Finish anyway" path after a data-restore
+    // failure (the box is bootstrapped even if some data did not restore).
+    try { await markFinishSetupComplete(); } catch (e) { /* ignore */ }
+    this.clearRestoreMarker();
+    this.finishWizard();
   }
 }
 

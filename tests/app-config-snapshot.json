@@ -233,7 +233,7 @@
       },
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "codeberg.org/forgejo/forgejo:15.0.2",
+      "image": "codeberg.org/forgejo/forgejo:15.0.3",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9007:9007",
@@ -730,7 +730,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/management:0.72.2",
+      "image": "netbirdio/management:0.72.3",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33073:80"
@@ -758,7 +758,7 @@
         "/var/lib/netbird/relay.env"
       ],
       "extraOptions": [],
-      "image": "netbirdio/relay:0.72.2",
+      "image": "netbirdio/relay:0.72.3",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33080:33080"
@@ -780,7 +780,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/signal:0.72.2",
+      "image": "netbirdio/signal:0.72.3",
       "imageFile": null,
       "ports": [
         "0.0.0.0:10000:80"

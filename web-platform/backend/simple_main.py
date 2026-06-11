@@ -3142,6 +3142,67 @@ async def mark_finish_setup_complete():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _require_restore_allowed():
+    """Restore re-keys the secrets store and triggers a rebuild — only allow it
+    while initial setup is still pending (.setup-complete absent). On an already
+    configured box it would be a dangerous, SSO-bypassing operation."""
+    if Path("/var/lib/homefree-secrets/.setup-complete").exists():
+        raise HTTPException(
+            status_code=403,
+            detail="Restore from backup is only available during initial setup.")
+
+
+@app.post("/api/finish-setup/restore/open")
+async def finish_setup_restore_open(request: dict):
+    """Open a backup for restore: pull + summarize its system-config snapshot and
+    verify the operator's SSH private key can decrypt the backed-up secrets."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService, RestoreSetupError
+        try:
+            summary = RestoreSetupService.open_backup(request or {})
+        except RestoreSetupError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse(content=summary)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"restore/open error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to open the backup.")
+
+
+@app.post("/api/finish-setup/restore/apply")
+async def finish_setup_restore_apply(request: dict):
+    """Re-key the backed-up secrets to this box's host key, merge the backup's
+    logical config (optionally onto a new domain), and start a rebuild."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService, RestoreSetupError
+        try:
+            result = RestoreSetupService.apply_restore(request or {})
+        except RestoreSetupError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse(content=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"restore/apply error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to apply the restore.")
+
+
+@app.post("/api/finish-setup/restore/cancel")
+async def finish_setup_restore_cancel(request: dict):
+    """Drop a restore staging session (operator backed out of the restore)."""
+    _require_restore_allowed()
+    try:
+        from services.restore_setup import RestoreSetupService
+        RestoreSetupService.cancel((request or {}).get("session_id", ""))
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        logger.error(f"restore/cancel error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel restore.")
+
+
 @app.get("/api/config/current")
 async def get_current_config():
     """Get current NixOS configuration (admin mode only)"""

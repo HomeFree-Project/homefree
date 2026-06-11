@@ -493,6 +493,24 @@ export const setSecret = (serviceLabel, secretKey, value) =>
 export const markFinishSetupComplete = () =>
   post('/api/finish-setup/complete', {});
 
+// --- Restore from backup (Finish Setup) -------------------------------------
+// Open a backup: pull + summarize its system-config snapshot and verify the
+// pasted SSH private key can decrypt it. May restic-restore for a few seconds,
+// so it opts out of the client wall-clock timeout.
+export const restoreOpen = (payload) =>
+  post('/api/finish-setup/restore/open', payload, { timeoutMs: 0 });
+// Re-key secrets + merge config (optionally new domain) + start the rebuild.
+export const restoreApply = (payload) =>
+  post('/api/finish-setup/restore/apply', payload, { timeoutMs: 0 });
+// Drop a restore staging session (operator backed out).
+export const restoreCancel = (sessionId) =>
+  post('/api/finish-setup/restore/cancel', { session_id: sessionId });
+// Inline service-DATA restore after the restore rebuild succeeds. Reuses the
+// existing backups job API; poll getBackupJobCurrent for progress.
+export const restoreAllBackups = (payload) =>
+  post('/api/backups/restore-all', payload, { timeoutMs: 0 });
+export const getBackupJobCurrent = () => get('/api/backups/jobs/current');
+
 // Services
 export const getServices = () => get('/api/services');
 export const getServiceOptionsSchema = () => get('/api/services/options/schema');
