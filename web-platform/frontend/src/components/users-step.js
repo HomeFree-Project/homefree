@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { setUser } from '../api/client.js';
+import { setUser, setHostname } from '../api/client.js';
 import { validatePassword } from '../shared/password-policy.js';
 import './shared/password-input.js';
 
@@ -141,12 +141,28 @@ class UsersStep extends LitElement {
     this.error = '';
   }
 
+  willUpdate(changedProperties) {
+    // The wizard owns the canonical copy of the form in installData and
+    // passes it back down as .data. Re-seed the local fields from it so
+    // that navigating Back to this step shows the values the user
+    // already entered instead of an empty form whose Next button is
+    // still enabled by the parent's stale copy.
+    if (changedProperties.has('data') && this.data) {
+      this.username = this.data.username ?? this.username;
+      this.fullname = this.data.fullname ?? this.fullname;
+      this.email = this.data.email ?? this.email;
+      this.password = this.data.password ?? this.password;
+      this.confirmPassword = this.data.confirmPassword ?? this.confirmPassword;
+      this.hostname = this.data.hostname || this.hostname;
+    }
+  }
+
   get passwordError() {
     // Routes through the shared validator; same rules as Zitadel +
     // the Linux-side mkpasswd/chpasswd constraints. The strength
     // meter is drawn by <password-input> itself, so this only needs
     // to return an error string for the parent-side validation
-    // (isNextDisabled / saveUserConfig).
+    // (isNextDisabled / commit).
     return validatePassword(this.password).error;
   }
 
@@ -178,26 +194,38 @@ class UsersStep extends LitElement {
     }));
   }
 
-  async saveUserConfig() {
-    // Only save if all required fields are filled and the password is valid
-    if (this.username.length >= 3 && this.fullname.length >= 2 && this.password.length >= 8 && !this.passwordError) {
-      try {
-        await setUser(this.username, this.fullname, this.email, this.password);
-        console.log('User config saved:', { username: this.username, fullname: this.fullname, email: this.email });
+  async commit() {
+    // Called by the wizard before advancing past this step. The install
+    // itself reads only the backend's in-memory config, so the account
+    // data must be confirmed delivered here: a save that silently
+    // failed used to surface only mid-install as "No password
+    // configured", after the disks had already been repartitioned.
+    // Returns true when the backend has acknowledged both saves.
+    this.error = '';
 
-        // Also save hostname
-        const response = await fetch('/api/config/hostname', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hostname: this.hostname })
-        });
-        if (response.ok) {
-          console.log('Hostname saved:', this.hostname);
-        }
-      } catch (error) {
-        console.error('Failed to save user config:', error);
-      }
+    if (!this.isValid) {
+      this.error = 'Please complete all required fields before continuing.';
+      return false;
     }
+
+    try {
+      const userResult = await setUser(this.username, this.fullname, this.email, this.password);
+      if (!userResult || userResult.success === false) {
+        this.error = (userResult && userResult.message) || 'Failed to save the user account.';
+        return false;
+      }
+
+      const hostnameResult = await setHostname(this.hostname);
+      if (!hostnameResult || hostnameResult.success === false) {
+        this.error = (hostnameResult && hostnameResult.message) || 'Failed to save the hostname.';
+        return false;
+      }
+    } catch (err) {
+      this.error = 'Failed to save the user account: ' + err.message;
+      return false;
+    }
+
+    return true;
   }
 
   render() {
@@ -309,9 +337,6 @@ class UsersStep extends LitElement {
             @input=${(e) => {
               this.confirmPassword = e.detail.value;
               this.notifyParent();
-              if (this.password === e.detail.value && this.password.length >= 8 && !this.passwordError) {
-                this.saveUserConfig();
-              }
             }}
           ></password-input>
           ${this.confirmPassword

@@ -2134,6 +2134,18 @@ install -m 600 /dev/null /var/lib/nomad/admin.env
 printf 'APP_KEY=%s\n' "$APP_KEY"
 printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
 } > /var/lib/nomad/admin.env
+for _i in $(seq 1 30); do
+MYSQL_IP=$(/nix/store/podman-5.8.2/bin/podman inspect nomad-mysql \
+--format '{{(index .NetworkSettings.Networks "project-nomad_default").IPAddress}}' 2>/dev/null || true)
+REDIS_IP=$(/nix/store/podman-5.8.2/bin/podman inspect nomad-redis \
+--format '{{(index .NetworkSettings.Networks "project-nomad_default").IPAddress}}' 2>/dev/null || true)
+if [ -n "$MYSQL_IP" ] && [ -n "$REDIS_IP" ] \
+&& timeout 1 /nix/store/bash-interactive-5.3p9/bin/bash -c "exec 3<>/dev/tcp/$MYSQL_IP/3306" 2>/dev/null \
+&& timeout 1 /nix/store/bash-interactive-5.3p9/bin/bash -c "exec 3<>/dev/tcp/$REDIS_IP/6379" 2>/dev/null; then
+break
+fi
+sleep 2
+done
 
 ### podman-nomad-mysql [0]
 #!/nix/store/bash-5.3p9/bin/bash

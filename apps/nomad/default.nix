@@ -17,14 +17,32 @@
 ## container API directly — it bind-mounts the podman docker-compat socket
 ## (same pattern as nextcloud's HaRP container). Containers it spawns are
 ## OUTSIDE Nix management by design and publish FIXED host ports straight
-## on the LAN: 8090 (Kiwix), 6333/6334 (Qdrant), 11434 (Ollama), 8100
-## (ProtoMaps), 8200 (CyberChef), 8300 (FlatNotes). Two consequences:
+## on the LAN (per upstream's service_seeder.ts): 8090 (Kiwix), 6333/6334
+## (Qdrant), 11434 (Ollama), 8100 (CyberChef), 8200 (FlatNotes), 8300
+## (Kolibri); ProtoMaps is served by the admin itself.
+##
+## NETWORK. The admin HARDCODES the docker network it attaches spawned
+## containers to: 'project-nomad_default' (docker_service.ts
+## NOMAD_NETWORK — the name docker-compose derives from upstream's
+## `-p project-nomad`; no env override). Spawn fails with "network not
+## found" without it. In production the admin also reaches spawned
+## services BY CONTAINER NAME over that network (getServiceURL →
+## http://nomad_qdrant:6333), so all three managed containers join it
+## too (container-name DNS is on by default for netavark custom
+## networks — that also covers admin→nomad-mysql/nomad-redis). The
+## nomad-network oneshot below creates it idempotently.
+##
+## Two consequences of the spawned-container model:
 ##   - If the HomeFree ollama app is also enabled, NOMAD's "AI Assistant"
 ##     service will fail to start (host port 11434 is taken). Use one or
 ##     the other.
 ##   - The content services are unauthenticated on raw LAN ports (upstream
 ##     design — offline LAN appliance). They are NOT reachable from WAN
 ##     (only Caddy's 443 is exposed); the Command Center itself is SSO-gated.
+##     The browser-facing ones additionally get SSO-gated HTTPS vhosts
+##     (contentServices below) and NOMAD's tiles are pointed at those by
+##     the nomad-ui-links oneshot — required because the platform HSTS
+##     (includeSubdomains) breaks plain-HTTP port links on the same domain.
 ##
 ## Upstream compose services deliberately NOT shipped:
 ##   - dozzle          — a second unauthenticated web UI with socket access,
@@ -42,10 +60,16 @@
 ## point it at a data pool). It is both bind-mounted into the Command
 ## Center (/app/storage) and exported as NOMAD_STORAGE_PATH, the
 ## HOST-absolute prefix the Command Center bakes into the bind mounts of
-## the content containers it spawns. NOTE: the path is baked into NOMAD's
-## seeded service rows on first boot — changing it after content services
-## are installed requires reinstalling them from NOMAD's UI (and moving
-## the data).
+## the content containers it spawns. NOTE: set storage-path BEFORE first
+## enabling the app. NOMAD's service seeder runs at every admin start but
+## is INSERT-ONLY (service_seeder.ts filters out existing rows), so the
+## path is frozen into the seeded service rows at FIRST boot and a later
+## storage-path change is never picked up — not even by the UI's
+## force-reinstall, which reuses the stored container config. Recovering
+## from a late change means moving the content dir, then resetting the
+## Command Center DB (stop podman-nomad*, remove <stateDir>/mysql,
+## restart) so it re-seeds with the new path; downloaded content is
+## re-indexed from disk, but Command Center settings/history are lost.
 let
   version = "1.32.1";
   port = config.homefree.allocPort "nomad";
@@ -62,6 +86,37 @@ let
 
   nomadRedisUid = 813;
   nomadRedisGid = 813;
+
+  ## Hardcoded in upstream's docker_service.ts (NOMAD_NETWORK) — the
+  ## compose-derived network name spawned content containers attach to.
+  nomadNetwork = "project-nomad_default";
+
+  ## Browser-facing content services NOMAD spawns, each fronted by an
+  ## HTTPS vhost (https://<subdomain>.<domain> → the FIXED host port the
+  ## spawned container publishes, per upstream's service_seeder.ts).
+  ## Without these, the home-page tiles link to http://nomad.<domain>:<port>
+  ## — and the platform HSTS header (includeSubdomains) makes the browser
+  ## force https onto that plain-HTTP port, which dies with an SSL
+  ## record-length error. The nomad-ui-links oneshot below points NOMAD's
+  ## `ui_location` rows at these vhosts (its getServiceLink passes a full
+  ## URL through verbatim; the port form is only a fallback).
+  ## Qdrant/Ollama are deliberately ABSENT: they are backend APIs whose
+  ## ui_location feeds getServiceURL on the SERVER side — a vhost URL
+  ## there would route the admin's own API calls into the SSO gate.
+  contentServices = [
+    { label = "nomad-kiwix"; cname = "Information Library (Kiwix)";
+      project = "Kiwix"; subdomain = "kiwix"; port = 8090;
+      svc = "nomad_kiwix_server"; }
+    { label = "nomad-kolibri"; cname = "Education Platform (Kolibri)";
+      project = "Kolibri"; subdomain = "kolibri"; port = 8300;
+      svc = "nomad_kolibri"; }
+    { label = "nomad-cyberchef"; cname = "CyberChef";
+      project = "CyberChef"; subdomain = "cyberchef"; port = 8100;
+      svc = "nomad_cyberchef"; }
+    { label = "nomad-flatnotes"; cname = "FlatNotes";
+      project = "FlatNotes"; subdomain = "flatnotes"; port = 8200;
+      svc = "nomad_flatnotes"; }
+  ];
 
   enable = config.homefree.service-options.nomad.enable;
 
@@ -126,6 +181,37 @@ in
   };
 
   config = {
+    ## ── project-nomad_default network ─────────────────────────────────
+    ## Declarative-in-effect: NixOS has no first-class podman-network
+    ## resource, so the app declares this idempotent oneshot
+    ## (`--ignore` = no-op when the network already exists) and the three
+    ## podman units order/require it below. Re-asserted on every start
+    ## request (no RemainAfterExit, per the repo's oneshot-bootstrap
+    ## pattern), so a pruned network heals on the next container start.
+    systemd.services.nomad-network = lib.mkIf enable {
+      description = "Create the ${nomadNetwork} podman network for Project NOMAD";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.podman}/bin/podman network create --ignore ${nomadNetwork}";
+      };
+    };
+
+    ## Escape-hatch merges onto the generated podman units (snapshot-
+    ## invisible): the network must exist before any of the three
+    ## containers start with --network=${nomadNetwork}.
+    systemd.services.podman-nomad = lib.mkIf enable {
+      after = [ "nomad-network.service" ];
+      requires = [ "nomad-network.service" ];
+    };
+    systemd.services.podman-nomad-mysql = lib.mkIf enable {
+      after = [ "nomad-network.service" ];
+      requires = [ "nomad-network.service" ];
+    };
+    systemd.services.podman-nomad-redis = lib.mkIf enable {
+      after = [ "nomad-network.service" ];
+      requires = [ "nomad-network.service" ];
+    };
+
     ## ── Command Center (admin/portal UI) ─────────────────────────────
     homefree.containers.nomad = lib.mkIf enable {
       image = "ghcr.io/crosstalk-solutions/project-nomad:${version}";
@@ -222,15 +308,44 @@ in
       environmentFiles = [ adminEnvFile ];
 
       ## Upstream's host.docker.internal alias (used for user-entered
-      ## service URLs that point back at the host).
+      ## service URLs that point back at the host) + the shared network
+      ## the admin reaches spawned content services on (see header).
       extraOptions = [
         "--add-host=host.docker.internal:host-gateway"
+        "--network=${nomadNetwork}"
       ];
 
-      ## Ordering only — NOT readiness. On first boot mysql's init takes a
-      ## while after the unit is up; the admin retries (and the global
-      ## Restart=always policy re-runs it) until the DB accepts connections.
+      ## Ordering only — NOT readiness (mysql's first-boot init runs well
+      ## past unit-active). dependsOn + the bounded gate in preStartFinal
+      ## below cover startup; the global Restart=always policy remains the
+      ## safety net for anything past the gate's timeout.
       dependsOn = [ "nomad-mysql" "nomad-redis" ];
+
+      ## Bounded readiness gate (~60s, then fall through): don't launch
+      ## the admin until MySQL and Redis actually ACCEPT connections.
+      ## AdonisJS exits hard when its DB/Redis are unreachable at boot, so
+      ## an admin started the instant the mysql UNIT is up (first-boot
+      ## init still running) or before a switch's nftables reload lands
+      ## fails the unit — and a unit failing DURING a switch fails the
+      ## whole rebuild (status 4), with all the skipped-restart fallout
+      ## that entails. Same pattern as the oauth2-proxy OIDC readiness
+      ## gate: probe the dependency SERVING, not merely started. Probes
+      ## use bash /dev/tcp against the containers' current IPs on the
+      ## shared network (no published ports to probe instead).
+      preStartFinal = ''
+        for _i in $(seq 1 30); do
+          MYSQL_IP=$(${pkgs.podman}/bin/podman inspect nomad-mysql \
+            --format '{{(index .NetworkSettings.Networks "${nomadNetwork}").IPAddress}}' 2>/dev/null || true)
+          REDIS_IP=$(${pkgs.podman}/bin/podman inspect nomad-redis \
+            --format '{{(index .NetworkSettings.Networks "${nomadNetwork}").IPAddress}}' 2>/dev/null || true)
+          if [ -n "$MYSQL_IP" ] && [ -n "$REDIS_IP" ] \
+            && timeout 1 ${pkgs.bash}/bin/bash -c "exec 3<>/dev/tcp/$MYSQL_IP/3306" 2>/dev/null \
+            && timeout 1 ${pkgs.bash}/bin/bash -c "exec 3<>/dev/tcp/$REDIS_IP/6379" 2>/dev/null; then
+            break
+          fi
+          sleep 2
+        done
+      '';
     };
 
     ## ── MySQL ─────────────────────────────────────────────────────────
@@ -248,8 +363,9 @@ in
       };
       dataDir = "${stateDir}/mysql";
 
-      ## No published ports — reachable only as nomad-mysql on the podman
+      ## No published ports — reachable only as nomad-mysql on the shared
       ## network (upstream publishes nothing either).
+      extraOptions = [ "--network=${nomadNetwork}" ];
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${stateDir}/mysql:/var/lib/mysql"
@@ -304,9 +420,10 @@ in
       runAs = { mode = "rootless"; uid = nomadRedisUid; gid = nomadRedisGid; };
       dataDir = "${stateDir}/redis";
 
-      ## No published ports — reachable only as nomad-redis on the podman
-      ## network. Unauthenticated (upstream default), but only other
-      ## HomeFree-managed containers share that bridge.
+      ## No published ports — reachable only as nomad-redis on the shared
+      ## network. Unauthenticated (upstream default), but only the NOMAD
+      ## stack and its spawned content containers share that network.
+      extraOptions = [ "--network=${nomadNetwork}" ];
       volumes = [
         "/etc/localtime:/etc/localtime:ro"
         "${stateDir}/redis:/data"
@@ -393,6 +510,77 @@ in
           description = "Whether to backup downloaded offline content (re-downloadable; can be hundreds of GB)";
         }
       ];
-    }];
+    }]
+    ## HTTPS vhosts for the spawned content services (see contentServices).
+    ## Vhost-only entries: no containers/units of their own (the workloads
+    ## are NOMAD-managed), hidden from the HomeFree admin catalog, and the
+    ## fixed upstream port is PINNED as the port-request so the allocator
+    ## reserves it instead of shifting the auto-allocation pool.
+    ++ (map (cs: {
+      label = cs.label;
+      name = cs.cname;
+      project-name = cs.project;
+      port-request = cs.port;
+      enable = enable;
+      systemd-service-names = [ ];
+      admin.show = false;
+      sso = {
+        kind = "caddy_gated";
+        ## Dev context: the spawned services ship zero auth (see the
+        ## header) — the Caddy gate is the only auth layer on the vhost.
+        ## The raw LAN port stays open underneath (NOMAD owns it).
+      };
+      reverse-proxy = {
+        enable = enable;
+        subdomains = [ cs.subdomain ];
+        http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
+        https-domains = [ config.homefree.system.domain ];
+        host = config.homefree.network.lan-address;
+        port = cs.port;
+        public = config.homefree.service-options.nomad.public;
+        oauth2 = config.homefree.sso.per-service.nomad.enable or true;
+      };
+      backup = { paths = [ ]; };
+    }) contentServices);
+
+    ## ── nomad-ui-links — point NOMAD's tiles at the HTTPS vhosts ──────
+    ## NOMAD's service rows carry ui_location (seeded as a bare port,
+    ## insert-only — never refreshed). The frontend's getServiceLink uses
+    ## a full URL verbatim, so converge each browser-facing row onto its
+    ## vhost URL. Idempotent and conservative: only rewrites a value that
+    ## is still the seeded bare port or one of OUR previous vhost URLs
+    ## (domain changes converge; an operator's custom value is preserved).
+    ## Bounded wait: rows appear only after the admin container seeds its
+    ## DB on first start; if that hasn't happened within ~3 min, exit
+    ## cleanly — partOf podman-nomad re-runs this on the next restart.
+    systemd.services.nomad-ui-links = lib.mkIf enable {
+      description = "Point NOMAD service tiles at the HTTPS vhosts";
+      after = [ "podman-nomad.service" ];
+      partOf = [ "podman-nomad.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.writeShellScript "nomad-ui-links" ''
+          set -eu
+          MYSQL_PWD=$(cat ${secretsDir}/mysql-password)
+          run_sql() {
+            ${pkgs.podman}/bin/podman exec -e MYSQL_PWD="$MYSQL_PWD" nomad-mysql \
+              mysql -u nomad_user -N -B nomad -e "$1"
+          }
+          for _i in $(seq 1 36); do
+            if n=$(run_sql "SELECT COUNT(*) FROM services;" 2>/dev/null) && [ "''${n:-0}" -gt 0 ]; then
+              ${lib.concatMapStringsSep "\n" (cs: ''
+                run_sql "UPDATE services SET ui_location='https://${cs.subdomain}.${domain}' WHERE service_name='${cs.svc}' AND ui_location <> 'https://${cs.subdomain}.${domain}' AND (ui_location REGEXP '^[0-9]+$' OR ui_location LIKE 'https://${cs.subdomain}.%');"
+              '') contentServices}
+              echo "nomad-ui-links: service tile URLs converged."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "nomad-ui-links: NOMAD service table not seeded yet; will retry on next podman-nomad restart." >&2
+          exit 0
+        ''}";
+      };
+    };
   };
 }

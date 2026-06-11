@@ -926,7 +926,8 @@
         "/var/lib/nomad/admin.env"
       ],
       "extraOptions": [
-        "--add-host=host.docker.internal:host-gateway"
+        "--add-host=host.docker.internal:host-gateway",
+        "--network=project-nomad_default"
       ],
       "image": "ghcr.io/crosstalk-solutions/project-nomad:1.32.1",
       "imageFile": null,
@@ -955,7 +956,9 @@
       "environmentFiles": [
         "/var/lib/nomad/mysql.env"
       ],
-      "extraOptions": [],
+      "extraOptions": [
+        "--network=project-nomad_default"
+      ],
       "image": "docker.io/library/mysql:8.0",
       "imageFile": null,
       "ports": [],
@@ -975,7 +978,9 @@
         "TZ": "Etc/UTC"
       },
       "environmentFiles": [],
-      "extraOptions": [],
+      "extraOptions": [
+        "--network=project-nomad_default"
+      ],
       "image": "docker.io/library/redis:7-alpine",
       "imageFile": null,
       "ports": [],
@@ -5381,6 +5386,346 @@
     },
     {
       "admin": {
+        "show": false,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
+        "paths": [],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "nomad-cyberchef",
+      "name": "CyberChef",
+      "options-metadata": [],
+      "parent": null,
+      "port-request": 8100,
+      "project-name": "CyberChef",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 8100,
+        "public": false,
+        "require-admin-role": false,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "cyberchef"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
+        "show": false,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
+        "paths": [],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "nomad-flatnotes",
+      "name": "FlatNotes",
+      "options-metadata": [],
+      "parent": null,
+      "port-request": 8200,
+      "project-name": "FlatNotes",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 8200,
+        "public": false,
+        "require-admin-role": false,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "flatnotes"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
+        "show": false,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
+        "paths": [],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "nomad-kiwix",
+      "name": "Information Library (Kiwix)",
+      "options-metadata": [],
+      "parent": null,
+      "port-request": 8090,
+      "project-name": "Kiwix",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 8090,
+        "public": false,
+        "require-admin-role": false,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "kiwix"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
+        "show": false,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
+        "paths": [],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "nomad-kolibri",
+      "name": "Education Platform (Kolibri)",
+      "options-metadata": [],
+      "parent": null,
+      "port-request": 8300,
+      "project-name": "Kolibri",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 8300,
+        "public": false,
+        "require-admin-role": false,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "kolibri"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "",
+        "regex": "",
+        "registry": "",
+        "repo": "",
+        "strategy": "image",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
         "show": true,
         "urlPathOverride": null
       },
@@ -7661,6 +8006,10 @@
         "https://trilium.homefree.host/",
         "https://screeenly.homefree.host/",
         "https://nomad.homefree.host/",
+        "https://kiwix.homefree.host/",
+        "https://kolibri.homefree.host/",
+        "https://cyberchef.homefree.host/",
+        "https://flatnotes.homefree.host/",
         "https://nvr.homefree.host/",
         "https://frigate.homefree.host/",
         "https://baikal.homefree.host/",

@@ -673,11 +673,18 @@ in
               # box's domain, but still rejects arbitrary off-host
               # content. 'unsafe-inline' + 'unsafe-eval' on scripts
               # cover the many third-party apps in this repo that emit
-              # inline handlers or use eval indirectly. Per-vhost
-              # overrides via extraCaddyConfig where a tighter policy
-              # is feasible. See
+              # inline handlers or use eval indirectly. worker-src
+              # needs an explicit 'blob:': without the directive,
+              # Worker creation falls back to script-src (no blob:)
+              # and every library that builds its workers from blob
+              # URLs dies silently — MapLibre (NOMAD's map viewer)
+              # parses ALL tiles in blob: workers, rendering a fully
+              # blank map while the rest of the page works. img/media/
+              # frame already allowed blob:; workers were an oversight.
+              # Per-vhost overrides via extraCaddyConfig where a
+              # tighter policy is feasible. See
               # docs/agent-notes/security-audit-phase-5.md M3.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
           '' else "")
@@ -857,7 +864,7 @@ in
               # policy uniform across surfaces. Apps that need a
               # tighter or different policy override via
               # extraCaddyConfig.
-              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
+              Content-Security-Policy "default-src 'self' https://*.${config.homefree.system.domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.${config.homefree.system.domain}${cspExtra}; worker-src 'self' blob: https://*.${config.homefree.system.domain}${cspExtra}; style-src 'self' 'unsafe-inline' https://*.${config.homefree.system.domain}${cspExtra}; img-src 'self' data: blob: https://*.${config.homefree.system.domain}${cspExtra}; media-src 'self' data: blob: https://*.${config.homefree.system.domain}; font-src 'self' data: https://*.${config.homefree.system.domain}${cspExtra}; connect-src 'self' https://*.${config.homefree.system.domain} wss://*.${config.homefree.system.domain}${cspExtra}; frame-src 'self' https://*.${config.homefree.system.domain} blob:; frame-ancestors 'self' https://*.${config.homefree.system.domain}; base-uri 'self'; form-action 'self' https://*.${config.homefree.system.domain}"
               Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
             }
             ${if reverse-proxy-config.staticCachePolicy == "vendor-hashed" then ''

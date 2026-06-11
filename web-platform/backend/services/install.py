@@ -385,6 +385,26 @@ class InstallationService:
             logger.warning("Installation already in progress")
             return False
 
+        # Pre-flight: the install thread reads everything from
+        # ConfigService's in-memory state, and its first action is to
+        # repartition the target disks. Refuse to start if a required
+        # field never reached the backend (a frontend save that failed,
+        # or a backend restart since the step was completed) so the
+        # failure surfaces before any disk is touched.
+        config = ConfigService.get_config()
+        if not config.get('password'):
+            raise Exception(
+                "The installer backend has no admin password configured. "
+                "Go back to the Users step, re-enter the account details, "
+                "and try again."
+            )
+        if not config.get('partitioning'):
+            raise Exception(
+                "The installer backend has no partitioning configuration. "
+                "Go back to the Partitioning step, select the target "
+                "disk(s), and try again."
+            )
+
         InstallationService._running = True
         InstallationService._status = {
             'step': 'Starting installation...',

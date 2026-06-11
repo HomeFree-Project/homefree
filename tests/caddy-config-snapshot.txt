@@ -96,11 +96,18 @@ http://adguard.homefree.lan, http://adguard.lan, https://adguard.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -428,7 +435,7 @@ http://admin.homefree.lan, http://admin.lan, https://admin.homefree.host, http:/
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 
@@ -490,11 +497,18 @@ http://auth.homefree.lan, http://auth.lan, https://auth.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -560,11 +574,18 @@ http://azuracast.homefree.lan, http://azuracast.lan, https://azuracast.homefree.
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -631,11 +652,18 @@ http://baikal.homefree.lan, http://baikal.lan, https://baikal.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -743,11 +771,18 @@ http://canary.homefree.lan, http://canary.lan, https://canary.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -792,6 +827,113 @@ http://canary.homefree.lan, http://canary.lan, https://canary.homefree.host {
 	}
 }
 
+http://cyberchef.homefree.lan, http://cyberchef.lan, https://cyberchef.homefree.host {
+	log {
+		output file /var/log/caddy/access-nomad-cyberchef.log
+	}
+
+	header {
+		# Add general security headers
+		Strict-Transport-Security "max-age=31536000; includeSubdomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-XSS-Protection "1; mode=block"
+		# Phase 5 M3 — CSP + Permissions-Policy baselines.
+		# Default-src is same-origin only. Apps that legitimately
+		# embed OTHER HomeFree apps (the AI catalog iframes the
+		# individual app surfaces; CryptPad uses a separate
+		# docs-sandbox.<domain> origin for its sandboxed renderer)
+		# need cross-subdomain frame/script/style/connect. The
+		# *.<domain> source list permits any subdomain of this
+		# box's domain, but still rejects arbitrary off-host
+		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
+		# cover the many third-party apps in this repo that emit
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
+		# docs/agent-notes/security-audit-phase-5.md M3.
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
+	}
+	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+	## Three conditions, all required (AND):
+	##
+	## 1. scheme is http:// — never redirect an https:// request onto
+	##    itself (that would loop).
+	##
+	## 2. .setup-complete exists — the finish-setup wizard has
+	##    finished. The wizard is served over plain HTTP on the LAN
+	##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+	##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+	##    issued (which happens DURING that rebuild's activation), the
+	##    wizard's in-flight poll would be 301'd to https://<host> — a
+	##    host the laptop may not resolve and a cert it may not yet
+	##    trust — and the wizard would freeze on "Starting…" never
+	##    seeing the terminal status. Gating on .setup-complete keeps
+	##    the HTTP origin stable for the whole wizard lifetime; the
+	##    wizard's final step writes that sentinel, so the redirect
+	##    goes live on the very next request — exactly when it's safe.
+	##
+	## 3. the cert file exists — Caddy has issued the cert for the
+	##    canonical host. The glob covers any ACME CA directory name
+	##    (LE prod/staging, ZeroSSL).
+	##
+	## All three conditions live in ONE `expression` matcher so they
+	## are AND-ed and the `redir` stays a top-level directive — it
+	## simply does nothing when the matcher is false and the request
+	## falls through to file_server / reverse_proxy as normal. (A
+	## `handle`/`route` wrapper would instead SWALLOW non-matching
+	## requests and return an empty 200.) CEL's `file()` function
+	## does request-time existence checks, so no rebuild flips the
+	## gate. `file()` returns true if ANY listed path exists; we call
+	## it twice and AND the results, and the cert path uses a glob to
+	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/cyberchef.homefree.host/cyberchef.homefree.host.crt"]})
+	redir @http_redirect_https https://cyberchef.homefree.host{uri} 301
+	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/cyberchef.homefree.host/cyberchef.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+
+	handle {
+		reverse_proxy http://10.0.0.1:8100 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}
+
 http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, http://docs-sandbox.lan, https://docs.homefree.host, https://docs-sandbox.homefree.host {
 	log {
 		output file /var/log/caddy/access-cryptpad.log
@@ -814,11 +956,18 @@ http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, htt
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -863,6 +1012,113 @@ http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, htt
 	}
 }
 
+http://flatnotes.homefree.lan, http://flatnotes.lan, https://flatnotes.homefree.host {
+	log {
+		output file /var/log/caddy/access-nomad-flatnotes.log
+	}
+
+	header {
+		# Add general security headers
+		Strict-Transport-Security "max-age=31536000; includeSubdomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-XSS-Protection "1; mode=block"
+		# Phase 5 M3 — CSP + Permissions-Policy baselines.
+		# Default-src is same-origin only. Apps that legitimately
+		# embed OTHER HomeFree apps (the AI catalog iframes the
+		# individual app surfaces; CryptPad uses a separate
+		# docs-sandbox.<domain> origin for its sandboxed renderer)
+		# need cross-subdomain frame/script/style/connect. The
+		# *.<domain> source list permits any subdomain of this
+		# box's domain, but still rejects arbitrary off-host
+		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
+		# cover the many third-party apps in this repo that emit
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
+		# docs/agent-notes/security-audit-phase-5.md M3.
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
+	}
+	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+	## Three conditions, all required (AND):
+	##
+	## 1. scheme is http:// — never redirect an https:// request onto
+	##    itself (that would loop).
+	##
+	## 2. .setup-complete exists — the finish-setup wizard has
+	##    finished. The wizard is served over plain HTTP on the LAN
+	##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+	##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+	##    issued (which happens DURING that rebuild's activation), the
+	##    wizard's in-flight poll would be 301'd to https://<host> — a
+	##    host the laptop may not resolve and a cert it may not yet
+	##    trust — and the wizard would freeze on "Starting…" never
+	##    seeing the terminal status. Gating on .setup-complete keeps
+	##    the HTTP origin stable for the whole wizard lifetime; the
+	##    wizard's final step writes that sentinel, so the redirect
+	##    goes live on the very next request — exactly when it's safe.
+	##
+	## 3. the cert file exists — Caddy has issued the cert for the
+	##    canonical host. The glob covers any ACME CA directory name
+	##    (LE prod/staging, ZeroSSL).
+	##
+	## All three conditions live in ONE `expression` matcher so they
+	## are AND-ed and the `redir` stays a top-level directive — it
+	## simply does nothing when the matcher is false and the request
+	## falls through to file_server / reverse_proxy as normal. (A
+	## `handle`/`route` wrapper would instead SWALLOW non-matching
+	## requests and return an empty 200.) CEL's `file()` function
+	## does request-time existence checks, so no rebuild flips the
+	## gate. `file()` returns true if ANY listed path exists; we call
+	## it twice and AND the results, and the cert path uses a glob to
+	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/flatnotes.homefree.host/flatnotes.homefree.host.crt"]})
+	redir @http_redirect_https https://flatnotes.homefree.host{uri} 301
+	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/flatnotes.homefree.host/flatnotes.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+
+	handle {
+		reverse_proxy http://10.0.0.1:8200 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}
+
 http://freshrss.homefree.lan, http://freshrss.lan, https://freshrss.homefree.host {
 	log {
 		output file /var/log/caddy/access-freshrss.log
@@ -885,11 +1141,18 @@ http://freshrss.homefree.lan, http://freshrss.lan, https://freshrss.homefree.hos
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -956,11 +1219,18 @@ http://git.homefree.lan, http://git.lan, http://forgejo.homefree.lan, http://for
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1044,11 +1314,18 @@ http://grocy.homefree.lan, http://grocy.lan, https://grocy.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1283,7 +1560,7 @@ http://home.homefree.lan, http://home.lan, https://home.homefree.host {
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 
@@ -1343,11 +1620,18 @@ http://homeassistant.homefree.lan, http://homeassistant.lan, http://ha.homefree.
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1416,11 +1700,18 @@ http://homebox.homefree.lan, http://homebox.lan, https://homebox.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1487,11 +1778,18 @@ http://joplin.homefree.lan, http://joplin.lan, https://joplin.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1536,6 +1834,220 @@ http://joplin.homefree.lan, http://joplin.lan, https://joplin.homefree.host {
 	}
 }
 
+http://kiwix.homefree.lan, http://kiwix.lan, https://kiwix.homefree.host {
+	log {
+		output file /var/log/caddy/access-nomad-kiwix.log
+	}
+
+	header {
+		# Add general security headers
+		Strict-Transport-Security "max-age=31536000; includeSubdomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-XSS-Protection "1; mode=block"
+		# Phase 5 M3 — CSP + Permissions-Policy baselines.
+		# Default-src is same-origin only. Apps that legitimately
+		# embed OTHER HomeFree apps (the AI catalog iframes the
+		# individual app surfaces; CryptPad uses a separate
+		# docs-sandbox.<domain> origin for its sandboxed renderer)
+		# need cross-subdomain frame/script/style/connect. The
+		# *.<domain> source list permits any subdomain of this
+		# box's domain, but still rejects arbitrary off-host
+		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
+		# cover the many third-party apps in this repo that emit
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
+		# docs/agent-notes/security-audit-phase-5.md M3.
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
+	}
+	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+	## Three conditions, all required (AND):
+	##
+	## 1. scheme is http:// — never redirect an https:// request onto
+	##    itself (that would loop).
+	##
+	## 2. .setup-complete exists — the finish-setup wizard has
+	##    finished. The wizard is served over plain HTTP on the LAN
+	##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+	##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+	##    issued (which happens DURING that rebuild's activation), the
+	##    wizard's in-flight poll would be 301'd to https://<host> — a
+	##    host the laptop may not resolve and a cert it may not yet
+	##    trust — and the wizard would freeze on "Starting…" never
+	##    seeing the terminal status. Gating on .setup-complete keeps
+	##    the HTTP origin stable for the whole wizard lifetime; the
+	##    wizard's final step writes that sentinel, so the redirect
+	##    goes live on the very next request — exactly when it's safe.
+	##
+	## 3. the cert file exists — Caddy has issued the cert for the
+	##    canonical host. The glob covers any ACME CA directory name
+	##    (LE prod/staging, ZeroSSL).
+	##
+	## All three conditions live in ONE `expression` matcher so they
+	## are AND-ed and the `redir` stays a top-level directive — it
+	## simply does nothing when the matcher is false and the request
+	## falls through to file_server / reverse_proxy as normal. (A
+	## `handle`/`route` wrapper would instead SWALLOW non-matching
+	## requests and return an empty 200.) CEL's `file()` function
+	## does request-time existence checks, so no rebuild flips the
+	## gate. `file()` returns true if ANY listed path exists; we call
+	## it twice and AND the results, and the cert path uses a glob to
+	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kiwix.homefree.host/kiwix.homefree.host.crt"]})
+	redir @http_redirect_https https://kiwix.homefree.host{uri} 301
+	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kiwix.homefree.host/kiwix.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+
+	handle {
+		reverse_proxy http://10.0.0.1:8090 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}
+
+http://kolibri.homefree.lan, http://kolibri.lan, https://kolibri.homefree.host {
+	log {
+		output file /var/log/caddy/access-nomad-kolibri.log
+	}
+
+	header {
+		# Add general security headers
+		Strict-Transport-Security "max-age=31536000; includeSubdomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-XSS-Protection "1; mode=block"
+		# Phase 5 M3 — CSP + Permissions-Policy baselines.
+		# Default-src is same-origin only. Apps that legitimately
+		# embed OTHER HomeFree apps (the AI catalog iframes the
+		# individual app surfaces; CryptPad uses a separate
+		# docs-sandbox.<domain> origin for its sandboxed renderer)
+		# need cross-subdomain frame/script/style/connect. The
+		# *.<domain> source list permits any subdomain of this
+		# box's domain, but still rejects arbitrary off-host
+		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
+		# cover the many third-party apps in this repo that emit
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
+		# docs/agent-notes/security-audit-phase-5.md M3.
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
+	}
+	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
+	## Three conditions, all required (AND):
+	##
+	## 1. scheme is http:// — never redirect an https:// request onto
+	##    itself (that would loop).
+	##
+	## 2. .setup-complete exists — the finish-setup wizard has
+	##    finished. The wizard is served over plain HTTP on the LAN
+	##    and POLLS /api/config/rebuild-status across its OWN rebuild.
+	##    If we redirected HTTP->HTTPS the moment the DNS-01 cert was
+	##    issued (which happens DURING that rebuild's activation), the
+	##    wizard's in-flight poll would be 301'd to https://<host> — a
+	##    host the laptop may not resolve and a cert it may not yet
+	##    trust — and the wizard would freeze on "Starting…" never
+	##    seeing the terminal status. Gating on .setup-complete keeps
+	##    the HTTP origin stable for the whole wizard lifetime; the
+	##    wizard's final step writes that sentinel, so the redirect
+	##    goes live on the very next request — exactly when it's safe.
+	##
+	## 3. the cert file exists — Caddy has issued the cert for the
+	##    canonical host. The glob covers any ACME CA directory name
+	##    (LE prod/staging, ZeroSSL).
+	##
+	## All three conditions live in ONE `expression` matcher so they
+	## are AND-ed and the `redir` stays a top-level directive — it
+	## simply does nothing when the matcher is false and the request
+	## falls through to file_server / reverse_proxy as normal. (A
+	## `handle`/`route` wrapper would instead SWALLOW non-matching
+	## requests and return an empty 200.) CEL's `file()` function
+	## does request-time existence checks, so no rebuild flips the
+	## gate. `file()` returns true if ANY listed path exists; we call
+	## it twice and AND the results, and the cert path uses a glob to
+	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
+	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kolibri.homefree.host/kolibri.homefree.host.crt"]})
+	redir @http_redirect_https https://kolibri.homefree.host{uri} 301
+	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kolibri.homefree.host/kolibri.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+
+	handle {
+		reverse_proxy http://10.0.0.1:8300 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}
+
 http://lidarr.homefree.lan, http://lidarr.lan, https://lidarr.homefree.host {
 	log {
 		output file /var/log/caddy/access-lidarr.log
@@ -1558,11 +2070,18 @@ http://lidarr.homefree.lan, http://lidarr.lan, https://lidarr.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1629,11 +2148,18 @@ http://links.homefree.lan, http://links.lan, http://linkwarden.homefree.lan, htt
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1804,7 +2330,7 @@ http://manual.lan, https://manual.homefree.host {
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## Hashed-asset cache override (vendor-hashed policy).
@@ -1874,11 +2400,18 @@ http://matrix.homefree.lan, http://matrix.lan, https://matrix.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -1954,11 +2487,18 @@ http://media.homefree.lan, http://media.lan, http://video.homefree.lan, http://v
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2025,11 +2565,18 @@ http://netbird.homefree.lan, http://netbird.lan, https://netbird.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2108,11 +2655,18 @@ http://nextcloud.homefree.lan, http://nextcloud.lan, https://nextcloud.homefree.
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2247,11 +2801,18 @@ http://nomad.homefree.lan, http://nomad.lan, https://nomad.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2347,11 +2908,18 @@ http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http:/
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2447,11 +3015,18 @@ http://nvr.homefree.lan, http://nvr.lan, http://frigate.homefree.lan, http://fri
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2579,11 +3154,18 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2650,11 +3232,18 @@ http://odoo.homefree.lan, http://odoo.lan, http://erp.homefree.lan, http://erp.l
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2721,11 +3310,18 @@ http://ollama.homefree.lan, http://ollama.lan, https://ollama.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -2895,7 +3491,7 @@ http://opensprinkler-ui.homefree.lan, http://opensprinkler-ui.lan, https://opens
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 
@@ -2940,11 +3536,18 @@ http://photos.homefree.lan, http://photos.lan, http://immich.homefree.lan, http:
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3011,11 +3614,18 @@ http://radicale.homefree.lan, http://radicale.lan, http://dav.homefree.lan, http
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3185,7 +3795,7 @@ http://radicle.homefree.lan, http://radicle.lan, http://rad.homefree.lan, http:/
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 
@@ -3242,11 +3852,18 @@ http://screeenly.homefree.lan, http://screeenly.lan, https://screeenly.homefree.
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3347,11 +3964,18 @@ http://snipeit.homefree.lan, http://snipeit.lan, https://snipeit.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3418,11 +4042,18 @@ http://sso.homefree.lan, http://sso.lan, https://sso.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3492,11 +4123,18 @@ http://unifi.homefree.lan, http://unifi.lan, https://unifi.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3567,11 +4205,18 @@ http://vaultwarden.homefree.lan, http://vaultwarden.lan, https://vaultwarden.hom
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3638,11 +4283,18 @@ http://vpn.homefree.lan, http://vpn.lan, http://headscale.homefree.lan, http://h
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -3810,11 +4462,18 @@ http://webdav.homefree.lan, http://webdav.lan, https://webdav.homefree.host {
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
@@ -4017,7 +4676,7 @@ http://www.lan, http://homefree.lan, https://www.homefree.host, https://homefree
 		# policy uniform across surfaces. Apps that need a
 		# tighter or different policy override via
 		# extraCaddyConfig.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## Hashed-asset cache override (vendor-hashed policy).
@@ -4123,11 +4782,18 @@ http://zwave.homefree.lan, http://zwave.lan, http://zwavejs.homefree.lan, http:/
 		# box's domain, but still rejects arbitrary off-host
 		# content. 'unsafe-inline' + 'unsafe-eval' on scripts
 		# cover the many third-party apps in this repo that emit
-		# inline handlers or use eval indirectly. Per-vhost
-		# overrides via extraCaddyConfig where a tighter policy
-		# is feasible. See
+		# inline handlers or use eval indirectly. worker-src
+		# needs an explicit 'blob:': without the directive,
+		# Worker creation falls back to script-src (no blob:)
+		# and every library that builds its workers from blob
+		# URLs dies silently — MapLibre (NOMAD's map viewer)
+		# parses ALL tiles in blob: workers, rendering a fully
+		# blank map while the rest of the page works. img/media/
+		# frame already allowed blob:; workers were an oversight.
+		# Per-vhost overrides via extraCaddyConfig where a
+		# tighter policy is feasible. See
 		# docs/agent-notes/security-audit-phase-5.md M3.
-		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
+		Content-Security-Policy "default-src 'self' https://*.homefree.host; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.homefree.host; worker-src 'self' blob: https://*.homefree.host; style-src 'self' 'unsafe-inline' https://*.homefree.host; img-src 'self' data: blob: https://*.homefree.host; media-src 'self' data: blob: https://*.homefree.host; font-src 'self' data: https://*.homefree.host; connect-src 'self' https://*.homefree.host wss://*.homefree.host; frame-src 'self' https://*.homefree.host blob:; frame-ancestors 'self' https://*.homefree.host; base-uri 'self'; form-action 'self' https://*.homefree.host"
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 	## --- HTTP -> HTTPS once setup is done AND the cert exists -------
