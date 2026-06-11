@@ -51,7 +51,7 @@ let
   ## with apps/ — a new app must be added here AND have the golden regenerated,
   ## or it sits outside the snapshot's protection.
   appNames = [
-    "adguard" "azuracast" "backup-canary" "baikal" "cryptpad" "forgejo"
+    "adguard" "azuracast" "backup-canary" "baikal" "cockpit" "cryptpad" "forgejo"
     "freshrss" "frigate" "grocy" "headscale" "home-assistant" "homebox"
     "immich" "jellyfin" "joplin" "lidarr" "linkwarden" "matrix" "mediawiki"
     "minecraft" "netbird" "nextcloud" "nomad" "nzbget" "odoo" "ollama"

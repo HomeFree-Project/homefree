@@ -435,6 +435,14 @@ Situational knowledge — read the linked note when working in that area:
   / Sensor 2) deliberately omit limits — skip them in the alert source,
   surface on the Hardware page only.
   → `docs/agent-notes/nvme-threshold-cascade.md`
+- **libvirt bridges vs the router firewall** — an `accept` in another
+  nftables table can't override our default-drop forward chain (push the
+  bridge to `homefree.network.extra-trusted-interfaces` instead), and the
+  router's `flush ruleset` wipes libvirt's table on every rebuild reload
+  (nftables ExecReload/ExecStartPost must try-restart libvirtd). Also:
+  cockpit-machines is libvirt-dbus-only; the flake's test config renders
+  an EMPTY ruleset (router profile gated off).
+  → `docs/agent-notes/libvirt-bridges-and-the-router-firewall.md`
 - **Security audit — Phase 5** — Standing list of residual
   hardening findings beyond the per-app Phases 1–4 work, with
   severity, fix path, and a Status: field per item so the doc

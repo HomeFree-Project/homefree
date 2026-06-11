@@ -63,6 +63,19 @@ in
       ## Don't listen to anything on wan interface
       except-interface = wan-interface;
 
+      ## Bind per-interface addresses instead of dnsmasq's default
+      ## wildcard 0.0.0.0:67 socket. Request filtering by interface=
+      ## below was already in place — this changes only the SOCKET
+      ## scope — but the wildcard bind blocks any OTHER DHCP server on
+      ## its own bridge: libvirt's per-network dnsmasq (apps/cockpit
+      ## machines-ui) died with "failed to bind DHCP server socket:
+      ## Address already in use". bind-dynamic rather than
+      ## bind-interfaces because the guest-network VLAN sub-interfaces
+      ## (and libvirt bridges) can appear after dnsmasq starts;
+      ## bind-dynamic tracks new addresses via netlink, still subject
+      ## to the interface=/except-interface filters.
+      bind-dynamic = true;
+
       ## Never forward addresses in the non-routed address spaces (don't send bogus requests to internet)
       bogus-priv = true;
 

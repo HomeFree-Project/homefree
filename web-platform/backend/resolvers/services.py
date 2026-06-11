@@ -504,7 +504,11 @@ class ServicesResolver:
         computed over the collapsed list):
         - All units active+running  -> ("active", "running")     -> green "Running"
           (a successful Type=oneshot RemainAfterExit unit reports
-          "active/exited" and counts as healthy here, same as "active/running")
+          "active/exited" and counts as healthy here, same as "active/running";
+          an inactive unit whose triggering .socket is active — a
+          socket-activated service like cockpit, which idle-exits by
+          design — also counts as healthy: the armed listener means the
+          service is available on demand)
         - Some active, some not     -> ("active", "degraded")    -> yellow "Degraded"
         - All units failed          -> ("failed", "failed")      -> red "Failed"
         - All units inactive/dead   -> ("inactive", "dead")      -> grey "Stopped"
@@ -518,13 +522,22 @@ class ServicesResolver:
             return "unknown", "unknown", []
 
         unit_states = []
+        # Inactive units whose triggering .socket is actively listening.
+        # A socket-activated service (e.g. cockpit) is SUPPOSED to sit
+        # inactive/dead between connections — systemd starts it on demand
+        # and it idle-exits cleanly. The armed listener means the logical
+        # service is available, so the aggregate below counts these as
+        # healthy. Per-unit states still report reality, same convention
+        # as the blue/green collapse.
+        socket_armed = set()
         for service_name in service_names:
             active_state = "unknown"
             sub_state = "unknown"
+            triggered_by = []
             try:
                 result = subprocess.run(
                     ['systemctl', 'show', service_name,
-                     '--property=ActiveState,SubState,LoadState'],
+                     '--property=ActiveState,SubState,LoadState,TriggeredBy'],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -539,6 +552,8 @@ class ServicesResolver:
                             sub_state = line.split('=', 1)[1].lower()
                         elif line.startswith('LoadState='):
                             load_state = line.split('=', 1)[1].lower()
+                        elif line.startswith('TriggeredBy='):
+                            triggered_by = line.split('=', 1)[1].split()
                     # Treat a missing/not-found unit as inactive so it
                     # contributes to "degraded" rather than masking the
                     # reason. ("not-found" + active_state == "inactive"
@@ -552,6 +567,12 @@ class ServicesResolver:
                 logger.error(f"Timeout querying systemd for {service_name}")
             except Exception as e:
                 logger.error(f"Error getting status for {service_name}: {e}")
+
+            # Only inactive units can be "armed": failed means the last
+            # on-demand start crashed and must stay visible as failed.
+            if active_state == "inactive" and triggered_by:
+                if any(ServicesResolver._unit_is_active(t) for t in triggered_by):
+                    socket_armed.add(service_name)
 
             from models import UnitState
             unit_states.append(UnitState(
@@ -571,7 +592,11 @@ class ServicesResolver:
         # — count it as running so a finished oneshot doesn't drag an otherwise-up
         # app to "degraded". A *failed* oneshot reports active_state="failed", not
         # "active/exited", so this stays correct.
-        running = [u for u in agg_input if u.active_state == "active" and u.sub_state in ("running", "exited")]
+        # Socket-armed units (inactive + active triggering socket) are
+        # healthy: available on demand. See socket_armed above.
+        running = [u for u in agg_input
+                   if (u.active_state == "active" and u.sub_state in ("running", "exited"))
+                   or u.name in socket_armed]
         failed = [u for u in agg_input if u.active_state == "failed"]
         starting = [u for u in agg_input if u.active_state in ("activating", "reloading") or u.sub_state == "start"]
         # "Not running" = anything that isn't healthy: inactive, failed, unknown, etc.
@@ -597,6 +622,25 @@ class ServicesResolver:
             agg_active, agg_sub = "active", "degraded"
 
         return agg_active, agg_sub, unit_states
+
+    @staticmethod
+    def _unit_is_active(unit_name: str) -> bool:
+        """True if the unit's ActiveState is 'active'. Used by
+        _get_systemd_status to check whether an inactive service's
+        triggering .socket is armed (listening)."""
+        try:
+            result = subprocess.run(
+                ['systemctl', 'show', unit_name, '--property=ActiveState'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0 and result.stdout.strip() == 'ActiveState=active'
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout querying systemd for {unit_name}")
+        except Exception as e:
+            logger.error(f"Error getting status for {unit_name}: {e}")
+        return False
 
     @staticmethod
     def get_units_for_label(label: str) -> Optional[List[str]]:

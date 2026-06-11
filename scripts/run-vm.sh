@@ -171,7 +171,10 @@ Options:
   -v, --virtviewer          QXL/SPICE + remote-viewer (clipboard).
       --headless            SPICE server only, no viewer.
   -k, --kvm / -K, --no-kvm  Force KVM on/off (default: auto-detect).
-  -U, --no-uefi             Use legacy BIOS instead of UEFI.
+  -U, --no-uefi, --bios     Use legacy BIOS (SeaBIOS) instead of UEFI —
+                            exercises the installer's GRUB/EF02 path.
+                            Implies --no-tpm unless --tpm is passed
+                            explicitly (the emulated TPM needs UEFI).
   -l, --lan-client          Also launch a lan-client VM (implies --bridge).
   -B, --build-dir DIR       Where to find ISOs (default: ./build).
   -S, --state-dir DIR       Where to store VM disks (default: ./vm-state).
@@ -188,6 +191,7 @@ Examples:
   $SCRIPT_NAME run --no-bridge            # user-mode networking (no native LAN UI)
   $SCRIPT_NAME run -l                     # bridge + lan-client VM
   $SCRIPT_NAME run --extra-disks 0        # skip the Storage-test scratch disks
+  $SCRIPT_NAME run --bios -n 1            # legacy-BIOS single-disk install test
 EOF
 }
 
@@ -345,6 +349,7 @@ cmd_run() {
     local LAUNCH_LAN_CLIENT=false
     local USE_BRIDGE=true
     local USE_DEV=true
+    local TPM_EXPLICIT=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -382,6 +387,7 @@ cmd_run() {
                 ;;
             --tpm)
                 USE_TPM=true
+                TPM_EXPLICIT=true
                 shift
                 ;;
             --no-tpm)
@@ -416,7 +422,7 @@ cmd_run() {
                 USE_KVM="false"
                 shift
                 ;;
-            -U|--no-uefi)
+            -U|--no-uefi|--bios)
                 USE_UEFI=false
                 shift
                 ;;
@@ -478,6 +484,15 @@ cmd_run() {
     if ! [[ "$EXTRA_DISKS" =~ ^(0|[1-9][0-9]*)$ ]]; then
         log_error "--extra-disks must be a non-negative integer (got: $EXTRA_DISKS)"
         exit 1
+    fi
+
+    # BIOS mode: the emulated TPM needs OVMF (UEFI) to issue TPM2_Startup,
+    # and TPM defaults ON — silently drop the default for a --bios run so
+    # `run --bios` works out of the box. An explicit --tpm still errors
+    # below rather than being quietly ignored.
+    if [[ "$USE_UEFI" != "true" && "$USE_TPM" == "true" && "$TPM_EXPLICIT" != "true" ]]; then
+        log_info "Legacy BIOS mode: disabling the default emulated TPM2 (it requires UEFI)."
+        USE_TPM=false
     fi
 
     # --tpm needs the swtpm binary and UEFI firmware.

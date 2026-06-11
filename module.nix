@@ -370,6 +370,21 @@
         description = "Internal interface to the local network";
       };
 
+      ## Additional host interfaces granted the trusted-internal
+      ## forwarding class in the router's nftables ruleset: input
+      ## accept + forward to/from LAN and WAN with established return
+      ## paths — the same trust class as the podman bridges. Set by
+      ## modules that create host bridges carrying operator-owned
+      ## workloads (apps/cockpit pushes libvirt's "virbr0" when its
+      ## machines-ui VM support is enabled); not a homefree-config.json
+      ## binding. Values support nftables trailing-asterisk prefix
+      ## matches ("virbr*").
+      extra-trusted-interfaces = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "Extra interfaces the firewall treats as trusted internal networks";
+      };
+
       # QEMU User-Mode Network Details:
       # - Guest IP: Always 10.0.2.15
       # - Gateway/Host: Always 10.0.2.2

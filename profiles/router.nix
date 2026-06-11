@@ -63,6 +63,27 @@ let
     ''iifname { "${gn.id}" } accept comment "Allow ${gn.id} VLAN to access the router"''
   ) guest-networks);
 
+  ## Extra trusted interfaces (homefree.network.extra-trusted-
+  ## interfaces): host bridges carrying operator-owned workloads that
+  ## apps register (apps/cockpit pushes libvirt's virbr0 when its VM
+  ## support is enabled). Same trust class as the podman bridges:
+  ## input accept (guests need the host's DHCP/DNS on the bridge) and
+  ## forward to/from LAN and WAN. NAT for such bridges is owned by
+  ## whoever creates them (libvirt masquerades its NAT network from
+  ## its own nftables table), not by this ruleset.
+  extra-trusted-interfaces = config.homefree.network.extra-trusted-interfaces;
+  extra-trusted-input-rules = lib.concatStringsSep "\n" (lib.map (i:
+    ''iifname "${i}" accept comment "Allow trusted ${i} to access the router"''
+  ) extra-trusted-interfaces);
+  extra-trusted-forward-rules = lib.concatStringsSep "\n" (lib.map (i: ''
+            ## Extra trusted interface (registered via
+            ## homefree.network.extra-trusted-interfaces)
+            iifname "${i}" oifname { "${wan-interface}" } accept comment "Allow trusted ${i} to WAN"
+            iifname { "${wan-interface}" } oifname "${i}" ct state established, related accept comment "Allow established back to ${i}"
+            iifname "${i}" oifname { "${lan-interface}" } accept comment "Allow trusted ${i} to LAN"
+            iifname { "${lan-interface}" } oifname "${i}" accept comment "Allow trusted LAN to ${i}"
+  '') extra-trusted-interfaces);
+
   ## Static abuse blocklist for the abusive_nets4 / abusive_nets6
   ## nftables sets. Fully driven by config.homefree.network.
   ## abuseBlockCidrs — a user-owned list (seeded once with Alibaba
@@ -413,6 +434,7 @@ in
             ## they share one trust class. Same wildcard applied to all
             ## podman forward/NAT rules below.
             iifname "podman*" accept comment "Allow podman networks to access the router"
+            ${extra-trusted-input-rules}
             ${guest-network-input-rules}
 
             ## Per-IP concurrent-connection cap on web ports.
@@ -480,6 +502,8 @@ in
             ## podman-WAN
             iifname "podman*" oifname { "${wan-interface}" } accept comment "Allow trusted podman to WAN"
             iifname { "${wan-interface}" } oifname "podman*" ct state established, related accept comment "Allow established back to podman"
+
+            ${extra-trusted-forward-rules}
 
             ## WAN-Podman
             ${service-forward-rules}

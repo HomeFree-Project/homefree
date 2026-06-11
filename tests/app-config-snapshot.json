@@ -2462,6 +2462,146 @@
       },
       "backup": {
         "mysql-databases": [],
+        "paths": [],
+        "postgres-databases": []
+      },
+      "enable": true,
+      "firewall": {
+        "open-ports": {
+          "tcp": [],
+          "udp": []
+        }
+      },
+      "icon": null,
+      "label": "cockpit",
+      "name": "Cockpit",
+      "options-metadata": [
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Enable the Cockpit host system-management UI",
+          "enum-values": null,
+          "nullable": false,
+          "path": "enable",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Make Cockpit accessible from WAN",
+          "enum-values": null,
+          "nullable": false,
+          "path": "public",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": true,
+          "description": "Bundle the cockpit-podman container-management plugin",
+          "enum-values": null,
+          "nullable": false,
+          "path": "podman-ui",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Bundle the cockpit-machines VM plugin plus the libvirt/QEMU/KVM stack (turns the box into a VM host)",
+          "enum-values": null,
+          "nullable": false,
+          "path": "machines-ui",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        }
+      ],
+      "parent": null,
+      "port-request": 9090,
+      "project-name": "Cockpit Project",
+      "release-tracking": {
+        "project": "",
+        "type": "github"
+      },
+      "reverse-proxy": {
+        "basic-auth": false,
+        "dav-bypass": false,
+        "description": "",
+        "disable-keepalive": false,
+        "enable": true,
+        "extra-csp-sources": [],
+        "extra-http-hosts": [],
+        "extraCaddyConfig": null,
+        "host": "10.0.0.1",
+        "http-domains": [
+          "homefree.lan",
+          "lan"
+        ],
+        "https-domains": [
+          "homefree.host"
+        ],
+        "inject-basic-auth-env": null,
+        "oauth2": true,
+        "port": 9090,
+        "public": false,
+        "require-admin-role": true,
+        "rootDomain": false,
+        "ssl": false,
+        "ssl-no-verify": false,
+        "sso-bypass-paths": [],
+        "static-path": null,
+        "staticCachePolicy": "no-store",
+        "strip-cookies": false,
+        "subdir": null,
+        "subdomains": [
+          "cockpit"
+        ],
+        "upstream-logout-paths": [],
+        "upstream-snippet": null
+      },
+      "sso": {
+        "applicable": true,
+        "kind": "caddy_gated",
+        "notes": "",
+        "secrets-dir": null
+      },
+      "systemd-service-names": [
+        "cockpit"
+      ],
+      "version-tracking": {
+        "channel": "stable",
+        "command": null,
+        "current-version": "362",
+        "regex": "",
+        "registry": "",
+        "repo": "cockpit-project/cockpit",
+        "strategy": "nixpkgs",
+        "tag-pattern": "",
+        "tag-prefix": "",
+        "update-command": null,
+        "url": ""
+      }
+    },
+    {
+      "admin": {
+        "show": true,
+        "urlPathOverride": null
+      },
+      "backup": {
+        "mysql-databases": [],
         "paths": [
           "/var/lib/cryptpad-podman"
         ],
@@ -8012,6 +8152,7 @@
         "https://flatnotes.homefree.host/",
         "https://nvr.homefree.host/",
         "https://frigate.homefree.host/",
+        "https://cockpit.homefree.host/",
         "https://baikal.homefree.host/",
         "https://adguard.homefree.host/",
         "https://admin.homefree.host/",
