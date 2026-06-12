@@ -10,6 +10,7 @@ __pycache__
 web-platform/frontend/node_modules
 web-platform/frontend/package-lock.json
 vm-state
-.claude
+.claude/settings.local.json
+.claude/worktrees/
 CLAUDE.md
 result-installer

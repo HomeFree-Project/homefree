@@ -17,12 +17,10 @@ let
       lib.concatStringsSep "." (lib.sublist (if len > 2 then len - 2 else 0) 2 cleanParts)
   ) (lib.flatten (lib.map (dm: dm.domains) proxiedDomains)));
 
-  # Split DNS: only LAN-only internal TLDs (.lan, .homefree.lan).
-  # The public domain (cypy.at) is intentionally excluded so that *.cypy.at
-  # resolves via public DNS on any network — no VPN or LAN access required.
-  # Private services (photos, music, etc.) are accessible via .lan names over VPN,
-  # or directly on home WiFi where 10.0.0.1 is reachable.
-  all-split-domains = lib.filter (d: d != cfg.system.domain) (lib.unique ([ cfg.system.localDomain ] ++ cfg.system.additionalDomains));
+  # All domains that need split DNS: system domains + proxied domains.
+  # These resolve through the box's resolver (lan-address) over the VPN
+  # so internal/proxied services get split-horizon (LAN IP) + ad-blocking.
+  all-split-domains = search-domains ++ proxiedBaseDomains;
   ## See: https://headscale.net/stable/ref/acls/
   ## @TODO: Doesn't seem to work, may even block all traffic not explicitly approved.
   policy = pkgs.writeText "headscale-policy.json" ''
@@ -421,11 +419,14 @@ in
       # policy.path = policy;
       dns = {
         magic_dns = true;
-        ## true = Tailscale definitively owns ALL DNS on the device, always
-        ## routing through the engine. Global nameservers (Quad9/Cloudflare)
-        ## handle public domains; split zones handle .lan. No dependency on
-        ## carrier DNS or override_local_dns inconsistency across Android versions.
-        override_local_dns = true;
+        ## false = Tailscale intercepts only the split zones (internal /
+        ## proxied domains, routed to the box resolver for split-horizon +
+        ## ad-blocking). All other (public) DNS uses the device's own
+        ## carrier/system resolver, so public domains keep resolving even
+        ## when the box is unreachable on mobile data, instead of funnelling
+        ## every query through the box. Set explicitly (not unset) so the
+        ## behaviour does not depend on headscale's default.
+        override_local_dns = false;
         ## Must be different from server domain
         base_domain = "homefree.vpn";
         # search_domains = search-domains;

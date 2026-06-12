@@ -74,22 +74,10 @@ class UserApp extends LitElement {
          — they get the old behavior, no regression. */
       height: 100vh;
       height: 100dvh;
-
-      /* dash.cypy.at-style indigo accent for the per-user dashboard
-         only — overrides the emerald admin accent from themeVars.
-         CSS custom properties cascade, so this wins for every
-         descendant (including <app-card>) without touching the
-         shared admin palette. */
-      --hf-accent:       #7c8cf8;
-      --hf-accent-hover: #6573e8;
-      --hf-accent-soft:  rgba(124, 140, 248, 0.15);
-      --hf-accent-glow:  rgba(124, 140, 248, 0.28);
-      --hf-focus-ring:   rgba(124, 140, 248, 0.4);
     }
     *, *::before, *::after { box-sizing: border-box; }
 
-    /* App launcher grid — tiles are the shared <app-card> (compact).
-       minmax(220px, ...) matches the dash.cypy.at tile grid. */
+    /* App launcher grid — tiles are the shared <app-card> (compact). */
     .app-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -101,7 +89,9 @@ class UserApp extends LitElement {
       padding: 24px 0;
     }
 
-    /* Access badges — same palette as the dash.cypy.at landing page. */
+    /* Access badges — colour-coded by exposure using the shared design
+       tokens: sso = accent, public = warn, lan = muted. No hardcoded
+       colours so the badges follow the HomeFree palette. */
     .badge {
       font-size: 0.6rem;
       font-weight: 700;
@@ -109,10 +99,11 @@ class UserApp extends LitElement {
       text-transform: uppercase;
       padding: 2px 6px;
       border-radius: 4px;
+      border: 1px solid var(--hf-border-2);
     }
-    .badge.sso    { background: #1a1a2a; color: #818cf8; border: 1px solid #2a2a4a; }
-    .badge.public { background: #1a1a2a; color: #818cf8; border: 1px solid #2a2a4a; }
-    .badge.lan    { background: #1a2a1a; color: #4ade80; border: 1px solid #2a4a2a; }
+    .badge.sso    { background: var(--hf-accent-soft); color: var(--hf-accent); }
+    .badge.public { background: var(--hf-warn-soft);   color: var(--hf-warn); }
+    .badge.lan    { background: var(--hf-surface-3);   color: var(--hf-text-muted); }
 
     /* Cards (Profile page) */
     .card {
@@ -435,8 +426,7 @@ class UserApp extends LitElement {
   _renderTile(s) {
     // Presentation (icon + fallback + titles) lives in the shared
     // <app-card>; the whole card is a link to the app. The access
-    // badge (sso/public/lan) slots into app-card's status cell,
-    // styled to match the dash.cypy.at landing page.
+    // badge (sso/public/lan) slots into app-card's status cell.
     return html`
       <app-card
         compact
