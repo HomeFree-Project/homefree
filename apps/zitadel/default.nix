@@ -176,6 +176,9 @@ let
       OAUTH2_PROXY_REVERSE_PROXY = "true";
       OAUTH2_PROXY_COOKIE_SECURE = "true";
       OAUTH2_PROXY_COOKIE_HTTPONLY = "true";
+      ## Default CSRF cookie lifetime is 15m, which is too short for
+      ## users going through a forced password-change flow at the IdP.
+      OAUTH2_PROXY_COOKIE_CSRF_EXPIRE = "1h";
       OAUTH2_PROXY_SCOPE = "openid email profile urn:zitadel:iam:org:project:roles";
       OAUTH2_PROXY_OIDC_GROUPS_CLAIM = "urn:zitadel:iam:org:project:roles";
       ## See the long note in the prior single-container definition:
