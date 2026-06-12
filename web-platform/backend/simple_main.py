@@ -1418,9 +1418,10 @@ async def get_services_visible_to_me(request: Request):
         the caller has the homefree-admin role
       - service has admin.show != false (filters out admin-api etc.)
 
-    Returns {label, name, url, icon} per entry — a deliberately
-    narrow shape, no systemd state, no config internals. The admin
-    UI uses /api/services for the fuller picture.
+    Returns {label, name, url, icon, access} per entry — a
+    deliberately narrow shape, no systemd state, no config internals.
+    `access` is "sso", "public", or "lan" (see badge logic below). The
+    admin UI uses /api/services for the fuller picture.
     """
     import json
     groups = getattr(request.state, "auth_groups", set()) or set()
@@ -1493,6 +1494,17 @@ async def get_services_visible_to_me(request: Request):
         if rp.get("require-admin-role") and not is_admin:
             continue
 
+        # Access badge for the dashboard tile: "sso" (oauth2-gated,
+        # works from anywhere with login), "public" (no auth, reachable
+        # from the internet), or "lan" (neither — only reachable on the
+        # local network / VPN).
+        if rp.get("oauth2"):
+            access = "sso"
+        elif rp.get("public"):
+            access = "public"
+        else:
+            access = "lan"
+
         out.append({
             "label": label,
             # `name` is the function (e.g. "Ad Block"). `project_name`
@@ -1503,6 +1515,7 @@ async def get_services_visible_to_me(request: Request):
             "project_name": sc.get("project-name") or "",
             "url": url,
             "icon": sc.get("icon"),
+            "access": access,
         })
 
     # Stable alphabetical order by display name.
