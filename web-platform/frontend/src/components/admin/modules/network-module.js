@@ -84,7 +84,13 @@ class NetworkModule extends LitElement {
         'static-ip-enable': false,
         'static-ip-interface': '',
         'static-ip-gateway': '',
-        'static-ip-nameservers': []
+        'static-ip-nameservers': [],
+        // Static WAN IP for router mode (HomeFree behind another router /
+        // double-NAT). Default DHCP on the WAN port unless enabled.
+        'wan-static-enable': false,
+        'wan-static-address': '',
+        'wan-static-prefix-length': 24,
+        'wan-static-gateway': ''
       }
     };
     this.interfaces = [];
@@ -229,6 +235,58 @@ class NetworkModule extends LitElement {
             </div>
           ` : ''}
         </config-section>
+
+        <!-- WAN Static IP (router mode only — behind another router / double-NAT) -->
+        ${network['router-enable'] ? html`
+          <config-section
+            title="WAN Static IP"
+            description="The WAN port uses DHCP by default. Set a static WAN IP if HomeFree sits behind another router (double-NAT) that port-forwards to it."
+          >
+            <form-field
+              label="Use a Static WAN IP"
+              type="boolean"
+              .value=${network['wan-static-enable']}
+              help="Off = the WAN port gets its address from the upstream router via DHCP."
+              ?undeployed=${this._undeployed('network.wan-static-enable')}
+              @field-change=${(e) => this.handleFieldChange('network.wan-static-enable', e.detail.value)}
+            ></form-field>
+
+            ${network['wan-static-enable'] ? html`
+              <div class="field-row">
+                <form-field
+                  label="WAN IP Address"
+                  type="text"
+                  .value=${network['wan-static-address']}
+                  placeholder="192.168.1.50"
+                  help="The fixed address on the upstream router's network."
+                  required
+                  ?undeployed=${this._undeployed('network.wan-static-address')}
+                  @field-change=${(e) => this.handleFieldChange('network.wan-static-address', e.detail.value)}
+                ></form-field>
+
+                <form-field
+                  label="Prefix Length"
+                  type="number"
+                  .value=${network['wan-static-prefix-length']}
+                  placeholder="24"
+                  help="The upstream subnet's prefix, e.g. 24."
+                  ?undeployed=${this._undeployed('network.wan-static-prefix-length')}
+                  @field-change=${(e) => this.handleFieldChange('network.wan-static-prefix-length', e.detail.value ? parseInt(e.detail.value) : 24)}
+                ></form-field>
+              </div>
+
+              <form-field
+                label="Gateway"
+                type="text"
+                .value=${network['wan-static-gateway']}
+                placeholder="192.168.1.1"
+                help="The upstream router's IP — the box's default route."
+                ?undeployed=${this._undeployed('network.wan-static-gateway')}
+                @field-change=${(e) => this.handleFieldChange('network.wan-static-gateway', e.detail.value)}
+              ></form-field>
+            ` : ''}
+          </config-section>
+        ` : ''}
 
         <!-- LAN Configuration (router mode only — the box is the DHCP server) -->
         ${network['router-enable'] ? html`

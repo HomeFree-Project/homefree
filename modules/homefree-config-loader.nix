@@ -118,6 +118,16 @@ in
         nameservers = jsonData.network.static-ip-nameservers or [];
       };
 
+      # Static IP for the WAN interface in router mode (double-NAT behind
+      # another router). `or` defaults so older homefree-config.json files
+      # still evaluate (rule 11). Consumed by profiles/router.nix.
+      wan-static = {
+        enable        = jsonData.network.wan-static-enable or false;
+        address       = jsonData.network.wan-static-address or "";
+        prefix-length = jsonData.network.wan-static-prefix-length or 24;
+        gateway       = jsonData.network.wan-static-gateway or "";
+      };
+
       # Static IPs conversion. `network` is the optional guest-network
       # ID a reservation belongs to; null/missing = main LAN, so older
       # homefree-config.json files predating guest networks evaluate

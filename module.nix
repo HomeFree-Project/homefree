@@ -719,6 +719,35 @@
           description = "Upstream DNS servers for the box";
         };
       };
+
+      ## Static IP for the WAN interface in ROUTER mode (HomeFree behind
+      ## another router — double-NAT with an upstream port-forward). By
+      ## default the WAN port takes its address via DHCP; set this to pin
+      ## it. No effect when router mode is off — there the box's single
+      ## address is homefree.network.static.*. Consumed by
+      ## profiles/router.nix.
+      wan-static = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Give the WAN interface a static IP in router mode (default: DHCP)";
+        };
+        address = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "Static WAN IPv4 address, e.g. 192.168.1.50";
+        };
+        prefix-length = lib.mkOption {
+          type = lib.types.int;
+          default = 24;
+          description = "WAN IPv4 prefix length, e.g. 24";
+        };
+        gateway = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "Upstream router IP (the box's default route)";
+        };
+      };
     };
 
     ## ─── Privacy / external-services ────────────────────────────────

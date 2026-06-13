@@ -7,6 +7,14 @@ let
   lan-address = config.homefree.network.lan-address;
   lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
+
+  ## Static WAN IP (router mode behind another router — double-NAT with an
+  ## upstream port-forward). Falls back to DHCP unless enabled AND given an
+  ## address, so a half-filled config can't brick the rebuild (rule 10; LAN
+  ## admin stays reachable regardless of a WAN misconfig).
+  wan-static = config.homefree.network.wan-static;
+  wan-static-active = wan-static.enable && wan-static.address != "";
+
   static-ip-config = config.homefree.network.static-ips;
   blocked-ips = lib.filter (ip-config: ip-config.wan-access == false) static-ip-config;
   blocked-ip-rules = lib.concatStrings (lib.map (entry: ''
@@ -415,6 +423,14 @@ in
     useDHCP = false;
     nameservers = [ lan-address ];
 
+    ## Static WAN default route — only when a static WAN IP is set; with
+    ## the default DHCP WAN the lease supplies the route. See
+    ## homefree.network.wan-static.
+    defaultGateway = lib.mkIf (wan-static-active && wan-static.gateway != "") {
+      address = wan-static.gateway;
+      interface = wan-interface;
+    };
+
     ## VLAN sub-interfaces — one per homefree.network.guest-networks
     ## entry. Each is an 802.1Q-tagged sub-interface on the LAN NIC.
     ## Reaching client devices on a given VLAN still requires an
@@ -430,9 +446,19 @@ in
     }) guest-networks);
 
     interfaces = {
-      ${wan-interface} = {
-        useDHCP = true;
-      };
+      ## WAN: DHCP by default; a static internal IP when wan-static is set
+      ## (HomeFree behind another router). The default route is set via
+      ## networking.defaultGateway below in the static case.
+      ${wan-interface} =
+        if wan-static-active then {
+          useDHCP = false;
+          ipv4.addresses = [{
+            address = wan-static.address;
+            prefixLength = wan-static.prefix-length;
+          }];
+        } else {
+          useDHCP = true;
+        };
       ${lan-interface} = {
         useDHCP = false;
         ipv4.addresses = [{
@@ -736,6 +762,17 @@ in
     };
    })
   ];
+
+  ## Soft warnings for an incomplete WAN-static config — never an assertion
+  ## (rule 10): a WAN misconfig must not brick the rebuild, and LAN admin
+  ## access stays up regardless.
+  warnings =
+    lib.optional (wan-static.enable && !config.homefree.network.router.enable)
+      "homefree.network.wan-static is ignored while router mode is off; the box's address comes from homefree.network.static.* instead."
+    ++ lib.optional (config.homefree.network.router.enable && wan-static.enable && wan-static.address == "")
+      "homefree.network.wan-static.enable is set but wan-static-address is empty; the WAN interface stays on DHCP."
+    ++ lib.optional (config.homefree.network.router.enable && wan-static-active && wan-static.gateway == "")
+      "homefree.network.wan-static has no gateway (wan-static-gateway); the box will have no default route via the WAN.";
 
   #-----------------------------------------------------------------------------------------------------
   # Performance Tuning
