@@ -578,6 +578,13 @@ in
       enable = e.enable or true;
       label = e.label;
       name = e.name or e.label;
+      ## Home-dashboard grouping + tagline for this external proxy, set
+      ## per-deployment in the External Proxies admin form. Optional —
+      ## absent => ungrouped ("Misc"), no tagline. (Instance-specific by
+      ## nature, so it lives here in instance config, never in shared
+      ## code like dashboard-catalog.nix.)
+      category = e.category or "";
+      description = e.description or "";
       reverse-proxy = {
         enable    = e.enable or true;
         subdomains = e.subdomains or [ e.label ];

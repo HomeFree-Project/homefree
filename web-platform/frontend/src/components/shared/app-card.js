@@ -34,9 +34,12 @@ class AppCard extends LitElement {
     label: { type: String },
     name: { type: String },
     subtitle: { type: String },
+    host: { type: String },          // Home launcher: host line under the name
+    description: { type: String },   // Home launcher: tile tagline
     href: { type: String },
     enabled: { type: Boolean, reflect: true },
     compact: { type: Boolean, reflect: true },
+    muted: { type: Boolean, reflect: true },       // Home launcher: a hidden app revealed via "Show hidden"
     undeployed: { type: Boolean, reflect: true },  // has unapplied config changes
     _hasBody: { type: Boolean, state: true },
     _hasHeader: { type: Boolean, state: true },
@@ -89,6 +92,19 @@ class AppCard extends LitElement {
       background: var(--hf-warn-soft);
       border-color: var(--hf-warn);
       box-shadow: inset 3px 0 0 0 var(--hf-warn);
+    }
+
+    /* A hidden app revealed via the Home "Show hidden" toggle — a clear
+       dark-purple outline (+ faint wash) so it reads distinctly as
+       normally-hidden. Solid, not dashed; the purple persists on hover. */
+    :host([muted]) .card {
+      border-color: #7c3aed;
+      box-shadow: inset 0 0 0 1px #7c3aed;
+      background: rgba(124, 58, 237, 0.08);
+    }
+    :host([muted]) a.card:hover {
+      border-color: #7c3aed;
+      background: rgba(124, 58, 237, 0.14);
     }
 
     /* Link mode (Home launcher) — lift slightly on hover. */
@@ -235,6 +251,36 @@ class AppCard extends LitElement {
       min-width: 0;
     }
 
+    /* Home launcher: the service host (e.g. photos.homefree.host),
+       monospace, on its own line below the name. flex:0 0 100% breaks
+       it under the title in the wrapping .titles row. Only the Home
+       launcher sets host; admin cards leave it empty. */
+    .host {
+      flex: 0 0 100%;
+      min-width: 0;
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.72rem;
+      color: var(--hf-text-subtle);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Home launcher: the app tagline below the head row. Clamped to
+       three lines so cards in a row stay close in height. */
+    .desc {
+      margin: 10px 0 0;
+      font-size: 0.8rem;
+      line-height: 1.4;
+      color: var(--hf-text-muted);
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+      line-clamp: 3;
+      overflow: hidden;
+    }
+
     /* Slotted admin content (status, toggles, buttons) sits below the
        header. On the Home launcher nothing is slotted, so the body is
        not rendered at all (see _hasBody / slotchange). */
@@ -248,9 +294,12 @@ class AppCard extends LitElement {
     this.label = '';
     this.name = '';
     this.subtitle = '';
+    this.host = '';
+    this.description = '';
     this.href = '';
     this.enabled = false;
     this.compact = false;
+    this.muted = false;
     this._hasBody = false;
     this._hasHeader = false;
     this._hasStatus = false;
@@ -321,6 +370,7 @@ class AppCard extends LitElement {
         </div>
         <div class="titles">
           <p class="name">${this.name || this.label}</p>
+          ${this.host ? html`<p class="host">${this.host}</p>` : ''}
           ${sub ? html`<p class="sub">${sub}</p>` : ''}
           <slot name="subtitle"></slot>
         </div>
@@ -328,6 +378,7 @@ class AppCard extends LitElement {
           <slot name="header" @slotchange=${this._onHeaderSlotChange}></slot>
         </div>
       </div>
+      ${this.description ? html`<p class="desc">${this.description}</p>` : ''}
       <div class="body" style=${this._hasBody ? '' : 'margin-top: 0;'}>
         <slot @slotchange=${this._onSlotChange}></slot>
       </div>

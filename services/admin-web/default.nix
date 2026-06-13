@@ -460,6 +460,20 @@ let
           # Prefer service-options metadata, fall back to service-config
           hasMetadata = hasMetadataInOpts || hasMetadataInConfig;
           metadata = if metadataFromOpts != [] then metadataFromOpts else metadataFromConfig;
+
+          # Synthetic, generic toggle injected into EVERY app's config form:
+          # hide the app from the home dashboard. Its default comes from the
+          # dashboard catalog's `hidden` (true only for OpenSprinkler UI); the
+          # backend (visible-to-me) reads the same default via `hidden-default`
+          # merged into service-config below. Persisted generically as
+          # `services.<label>.hide-from-dashboard` by the config-save round-trip.
+          hideFromDashboardSchema = metadataToSchema {
+            path = "hide-from-dashboard";
+            type = "bool";
+            default = ((dashboardCatalog.${label} or {}).hidden or false);
+            category = "basic";
+            description = "Hide this app from the home dashboard app grid";
+          };
         in
         # Only include services that have an enable option
         if service-opts-def ? enable then
@@ -467,12 +481,12 @@ let
             # Use options-metadata (for Frigate, MediaWiki, Minecraft, etc.)
             {
               name = label;
-              value = builtins.listToAttrs (
+              value = (builtins.listToAttrs (
                 map (opt: {
                   name = opt.path;
                   value = metadataToSchema opt;
                 }) metadata
-              );
+              )) // { "hide-from-dashboard" = hideFromDashboardSchema; };
             }
           else
             # Auto-extract from option definitions (for simpler services)
@@ -484,24 +498,26 @@ let
                 in !(opt.internal or false) && name != "secrets" && name != "_module"
               ) optNames;
             in
-            if visibleOpts != [] then
-              {
-                name = label;
-                value = builtins.listToAttrs (
-                  map (optName: {
-                    name = optName;
-                    value = optionToSchema service-opts-def.${optName};
-                  }) visibleOpts
-                );
-              }
-            else
-              null
+            {
+              name = label;
+              value = (builtins.listToAttrs (
+                map (optName: {
+                  name = optName;
+                  value = optionToSchema service-opts-def.${optName};
+                }) visibleOpts
+              )) // { "hide-from-dashboard" = hideFromDashboardSchema; };
+            }
         else
           null
       ) all-service-option-names
     )
   );
   service-options-schema-json = (pkgs.formats.json {}).generate "service-options-schema.json" service-options-schema;
+
+  # Home-dashboard grouping + taglines, keyed by service label. Merged
+  # into each service-config entry below as a DEFAULT (an app that sets
+  # its own category/description wins).
+  dashboardCatalog = import ./dashboard-catalog.nix;
 
   # Generate service configuration JSON
   admin-config = {
@@ -526,9 +542,19 @@ let
           else ""
         ) else "";
         url = if hasReverseProxyConfig && domain != "" then ''https://${subdomain}.${domain}${path}'' else "";
+        # Dashboard category/tagline default for this entry — exact label
+        # match, else the parent's entry (mediawiki_*, minecraft_*), else {}.
+        catEntry = dashboardCatalog.${service-config.label}
+          or (if service-config.parent != null then (dashboardCatalog.${service-config.parent} or {}) else {});
       in
       {
-        service-config = service-config;
+        service-config = service-config // {
+          category = if service-config.category != "" then service-config.category else (catEntry.category or "");
+          description = if service-config.description != "" then service-config.description else (catEntry.description or "");
+          # Default for the "Hide from dashboard" toggle, read by the backend
+          # (visible-to-me) when services.<label>.hide-from-dashboard is unset.
+          hidden-default = catEntry.hidden or false;
+        };
         url = url;
       }
     ) sorted;

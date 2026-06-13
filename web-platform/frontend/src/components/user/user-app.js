@@ -45,6 +45,35 @@ const MODULES = [
   { id: ROUTE_PROFILE, title: 'Profile', section: 'Account' },
 ];
 
+// Dashboard grouping. The backend tags each tile with a `category`;
+// these constants set the display ORDER of the groups. AI_CATEGORY is
+// pinned first (the user's own AI-built apps — kept in sync with
+// simple_main.py AI_APPS_CATEGORY); UNCATEGORIZED sweeps everything with
+// no category to the end; CATEGORY_ORDER fixes the order of the known
+// groups in between. An unknown category sorts after the known ones
+// (alphabetically) but before the uncategorised catch-all.
+const AI_CATEGORY = 'My Apps';
+const UNCATEGORIZED = 'Misc';
+const CATEGORY_ORDER = [
+  'Media',
+  'Smart Home',
+  'Office & Productivity',
+  'Communication',
+  'Security & Identity',
+  'Games',
+  'AI',
+  'Network & VPN',
+  'Developer',
+  'Infrastructure',
+];
+
+function categoryRank(cat) {
+  if (cat === AI_CATEGORY) return -1;
+  if (!cat || cat === UNCATEGORIZED) return 1000;
+  const i = CATEGORY_ORDER.indexOf(cat);
+  return i === -1 ? 500 : i;
+}
+
 class UserApp extends LitElement {
   static properties = {
     route: { type: String },
@@ -61,6 +90,7 @@ class UserApp extends LitElement {
     profileMessage: { type: Object, state: true },
     passwordSaving: { type: Boolean, state: true },
     passwordMessage: { type: Object, state: true },
+    showHidden: { type: Boolean, state: true },
   };
 
   static styles = [themeVars, userMenuStyles, surfaceSwitcherStyles, shellStyles, css`
@@ -77,11 +107,58 @@ class UserApp extends LitElement {
     }
     *, *::before, *::after { box-sizing: border-box; }
 
+    /* Category section — one per dashboard group, stacked vertically. */
+    .app-group {
+      margin-bottom: 28px;
+    }
+    .app-group:last-of-type {
+      margin-bottom: 0;
+    }
+    /* Group heading — small, muted, letter-spaced caps (the FAMILY /
+       INFRASTRUCTURE style section labels). */
+    .group-title {
+      margin: 0 0 12px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--hf-text-subtle);
+    }
+
     /* App launcher grid — tiles are the shared <app-card> (compact). */
     .app-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+    }
+
+    /* "Show hidden" toolbar — right-aligned above the groups; only shown
+       when at least one app is hidden. Secondary/quiet styling (no bright
+       fill); turns accent when active. */
+    .apps-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 16px;
+    }
+    .toggle-hidden {
+      font-family: inherit;
+      font-size: 0.78rem;
+      color: var(--hf-text-muted);
+      background: var(--hf-surface);
+      border: 1px solid var(--hf-border-2);
+      border-radius: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .toggle-hidden:hover {
+      color: var(--hf-text);
+      border-color: var(--hf-accent);
+    }
+    .toggle-hidden.on {
+      color: var(--hf-text);
+      border-color: var(--hf-accent);
+      background: var(--hf-surface-2);
     }
     .empty {
       color: var(--hf-text-muted);
@@ -101,9 +178,9 @@ class UserApp extends LitElement {
       border-radius: 4px;
       border: 1px solid var(--hf-border-2);
     }
-    .badge.sso    { background: var(--hf-accent-soft); color: var(--hf-accent); }
-    .badge.public { background: var(--hf-warn-soft);   color: var(--hf-warn); }
-    .badge.lan    { background: var(--hf-surface-3);   color: var(--hf-text-muted); }
+    /* Only public (internet-reachable) apps are badged — SSO/LAN tags
+       were dropped as noise. */
+    .badge.public { background: var(--hf-warn-soft); color: var(--hf-warn); }
 
     /* Cards (Profile page) */
     .card {
@@ -228,6 +305,7 @@ class UserApp extends LitElement {
     this.profileMessage = null;
     this.passwordSaving = false;
     this.passwordMessage = null;
+    this.showHidden = false;
     // Mobile breakpoint mirrors admin-app's behavior: the sidebar
     // starts collapsed on mobile (hidden overlay) and open on
     // desktop. matchMedia keeps the two in sync if the viewport
@@ -416,27 +494,74 @@ class UserApp extends LitElement {
     if (this.services.length === 0) {
       return html`<p class="empty">No apps are available yet.</p>`;
     }
+    const hiddenCount = this.services.filter(s => s.hidden).length;
+    const visible = this.showHidden
+      ? this.services
+      : this.services.filter(s => !s.hidden);
     return html`
-      <div class="app-grid">
-        ${this.services.map(s => this._renderTile(s))}
-      </div>
+      ${hiddenCount > 0 ? html`
+        <div class="apps-toolbar">
+          <button
+            class="toggle-hidden ${this.showHidden ? 'on' : ''}"
+            @click=${this._toggleShowHidden}
+            aria-pressed=${this.showHidden}
+          >
+            ${this.showHidden
+              ? 'Hide hidden apps'
+              : 'Show hidden apps (' + hiddenCount + ')'}
+          </button>
+        </div>
+      ` : ''}
+      ${this._groupServices(visible).map(g => html`
+        <section class="app-group">
+          <h2 class="group-title">${g.category}</h2>
+          <div class="app-grid">
+            ${g.services.map(s => this._renderTile(s))}
+          </div>
+        </section>
+      `)}
     `;
   }
 
+  _toggleShowHidden() {
+    this.showHidden = !this.showHidden;
+  }
+
+  // Bucket the flat services list into ordered category groups (see
+  // categoryRank): My Apps first, the known set in CATEGORY_ORDER, then
+  // any unknown category, then the uncategorised catch-all last. The
+  // backend's alphabetical-by-name order is preserved within a group.
+  _groupServices(services) {
+    const byCat = new Map();
+    for (const s of services) {
+      const cat = s.category || UNCATEGORIZED;
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push(s);
+    }
+    return [...byCat.entries()]
+      .map(([category, svcs]) => ({ category, services: svcs }))
+      .sort((a, b) => {
+        const d = categoryRank(a.category) - categoryRank(b.category);
+        return d !== 0 ? d : a.category.localeCompare(b.category);
+      });
+  }
+
   _renderTile(s) {
-    // Presentation (icon + fallback + titles) lives in the shared
-    // <app-card>; the whole card is a link to the app. The access
-    // badge (sso/public/lan) slots into app-card's status cell.
+    // Presentation (icon + fallback + titles + host + tagline) lives in
+    // the shared <app-card>; the whole card is a link to the app. The
+    // access badge (sso/public/lan) sits top-right in the header slot.
     return html`
       <app-card
         compact
+        ?muted=${s.hidden}
         .label=${s.label}
         .name=${s.name || s.label || '?'}
-        .subtitle=${s.project_name || ''}
+        .host=${s.host || ''}
+        .description=${s.description || ''}
         .href=${s.url}
       >
-        ${s.access ? html`
-          <span slot="status" class="badge ${s.access}">${s.access}</span>
+        ${s.access === 'public' ? html`
+          <span slot="header" class="badge public">public</span>
         ` : ''}
       </app-card>
     `;

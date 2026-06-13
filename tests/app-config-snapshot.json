@@ -1681,6 +1681,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -1798,6 +1800,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -1877,6 +1881,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -1969,6 +1975,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2056,6 +2064,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2144,6 +2154,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2227,6 +2239,8 @@
           "backup_canary"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2358,6 +2372,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2473,6 +2489,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2616,6 +2634,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2747,6 +2767,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2878,6 +2900,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -2961,6 +2985,8 @@
           "freshrss"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3078,6 +3104,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3170,6 +3198,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3249,6 +3279,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3330,6 +3362,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3447,6 +3481,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3653,6 +3689,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3732,6 +3770,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3824,6 +3864,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -3968,6 +4010,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4098,6 +4142,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4219,6 +4265,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4351,6 +4399,8 @@
           "joplin"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4466,6 +4516,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4557,6 +4609,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4715,6 +4769,8 @@
           "linkwarden"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4833,6 +4889,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -4924,6 +4982,8 @@
           "matrix-synapse"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5066,6 +5126,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5148,6 +5210,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5291,6 +5355,8 @@
           "nextcloud"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5425,6 +5491,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5568,6 +5636,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5654,6 +5724,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5740,6 +5812,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5826,6 +5900,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -5914,6 +5990,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6055,6 +6133,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6148,6 +6228,8 @@
           "odoo"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6240,6 +6322,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6356,6 +6440,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6499,6 +6585,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6609,6 +6697,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6730,6 +6820,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6888,6 +6980,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -6969,6 +7063,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7088,6 +7184,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7206,6 +7304,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7297,6 +7397,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7387,6 +7489,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7504,6 +7608,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7623,6 +7729,8 @@
           "zitadel"
         ]
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7741,6 +7849,8 @@
         "paths": [],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {
@@ -7824,6 +7934,8 @@
         ],
         "postgres-databases": []
       },
+      "category": "",
+      "description": "",
       "enable": true,
       "firewall": {
         "open-ports": {

@@ -88,6 +88,10 @@ class ExtraProxiesModule extends LitElement {
       // toggle in the same representation.
       if (entry.enable !== false) delete entry.enable;
       if (!entry.public) delete entry.public;
+      // Dashboard metadata is optional — omit when blank so an unset
+      // category/description isn't read as an undeployed change.
+      if (!entry.category) delete entry.category;
+      if (!entry.description) delete entry.description;
       return entry;
     });
 
@@ -127,6 +131,25 @@ class ExtraProxiesModule extends LitElement {
         description: 'Unique short identifier for this entry.' },
       { key: 'name', label: 'Display Name', type: 'text', placeholder: 'Enphase Solar',
         description: 'Friendly name shown in the app catalog.' },
+      // Keep these options in sync with CATEGORY_ORDER in
+      // web-platform/frontend/src/components/user/user-app.js.
+      { key: 'category', label: 'Category', type: 'select',
+        options: [
+          { value: '', label: 'Misc (ungrouped)' },
+          { value: 'Media', label: 'Media' },
+          { value: 'Smart Home', label: 'Smart Home' },
+          { value: 'Office & Productivity', label: 'Office & Productivity' },
+          { value: 'Communication', label: 'Communication' },
+          { value: 'Security & Identity', label: 'Security & Identity' },
+          { value: 'Games', label: 'Games' },
+          { value: 'AI', label: 'AI' },
+          { value: 'Network & VPN', label: 'Network & VPN' },
+          { value: 'Developer', label: 'Developer' },
+          { value: 'Infrastructure', label: 'Infrastructure' },
+        ],
+        description: 'Home-dashboard group for this entry. Leave as Misc to leave it ungrouped.' },
+      { key: 'description', label: 'Description', type: 'text', placeholder: 'Remote KVM-over-IP console',
+        description: 'Short tagline shown on this entry’s tile in the home dashboard.' },
       { key: 'host', label: 'Backend Host', type: 'text', placeholder: 'envoy.lan or 10.0.0.43',
         description: 'Hostname or IP of the device on your network.' },
       { key: 'port', label: 'Port', type: 'text', placeholder: '80',

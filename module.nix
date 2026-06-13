@@ -2499,6 +2499,21 @@
             description = "Official project name of application";
           };
 
+          ## Dashboard grouping + display copy for the home.<domain>
+          ## app launcher. Both optional (rule 11): an app that omits
+          ## them falls into the catch-all group with no tagline.
+          category = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "Home-dashboard group the app tile sorts into (e.g. \"Media\", \"Smart Home\"). Empty = ungrouped.";
+          };
+
+          description = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "Short one-line tagline shown on the app tile in the home dashboard.";
+          };
+
           parent = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
