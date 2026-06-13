@@ -52,6 +52,7 @@ in
     ./modules/secrets-recipient-migrate.nix
     ./modules/boot-mirror.nix
     ./modules/auditd.nix
+    ./modules/lan-static-ip.nix
   ]
   ## Infrastructure modules (system services shared by apps; not
   ## user-facing). Discovered from services/.

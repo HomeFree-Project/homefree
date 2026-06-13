@@ -77,7 +77,14 @@ class NetworkModule extends LitElement {
         'enable-unbound-adblock': false,
         'wan-bitrate-mbps-down': null,
         'wan-bitrate-mbps-up': null,
-        'static-ips': []
+        'static-ips': [],
+        // Static IP for the box itself in non-router mode. Address/subnet
+        // reuse LAN Address / LAN Subnet above (they are the box's own IP
+        // everywhere); these add the gateway + upstream DNS + which NIC.
+        'static-ip-enable': false,
+        'static-ip-interface': '',
+        'static-ip-gateway': '',
+        'static-ip-nameservers': []
       }
     };
     this.interfaces = [];
@@ -137,9 +144,36 @@ class NetworkModule extends LitElement {
     }));
   }
 
+  // Router-mode toggle. Enabling router mode makes the static-IP settings
+  // inert (the router profile owns the interfaces), so clear the opt-in in
+  // the same change — otherwise a hidden, stale `static-ip-enable: true`
+  // lingers in the saved config and only surfaces as a build-time warning.
+  handleRouterToggle(value) {
+    const newConfig = { ...this.config, network: { ...this.config.network } };
+    newConfig.network['router-enable'] = value;
+    if (value) newConfig.network['static-ip-enable'] = false;
+
+    this.config = newConfig;
+    this.modified = true;
+    this.dispatchEvent(new CustomEvent('config-change', {
+      detail: { config: newConfig },
+      bubbles: true,
+      composed: true
+    }));
+  }
+
   // True when `path` (a dotted config path) holds a change not yet deployed.
   _undeployed(path) {
     return this.undeployedPaths?.has(path) || false;
+  }
+
+  // Comma-separated text field -> trimmed, non-empty array (for the
+  // nameservers list, which the loader expects as an array).
+  _parseList(value) {
+    return (value || '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
   }
 
   render() {
@@ -164,117 +198,199 @@ class NetworkModule extends LitElement {
             .value=${network['router-enable']}
             help="Enable HomeFree to act as a router with NAT and firewall"
             ?undeployed=${this._undeployed('network.router-enable')}
-            @field-change=${(e) => this.handleFieldChange('network.router-enable', e.detail.value)}
+            @field-change=${(e) => this.handleRouterToggle(e.detail.value)}
           ></form-field>
 
-          <div class="field-row">
-            <form-field
-              label="WAN Interface"
-              type="select"
-              .value=${network['wan-interface']}
-              .options=${this.interfaces}
-              placeholder="Select WAN interface..."
-              help="Interface connected to your modem/ISP"
-              required
-              ?undeployed=${this._undeployed('network.wan-interface')}
-              @field-change=${(e) => this.handleFieldChange('network.wan-interface', e.detail.value)}
-            ></form-field>
+          ${network['router-enable'] ? html`
+            <div class="field-row">
+              <form-field
+                label="WAN Interface"
+                type="select"
+                .value=${network['wan-interface']}
+                .options=${this.interfaces}
+                placeholder="Select WAN interface..."
+                help="Interface connected to your modem/ISP"
+                required
+                ?undeployed=${this._undeployed('network.wan-interface')}
+                @field-change=${(e) => this.handleFieldChange('network.wan-interface', e.detail.value)}
+              ></form-field>
 
-            <form-field
-              label="LAN Interface"
-              type="select"
-              .value=${network['lan-interface']}
-              .options=${this.interfaces}
-              placeholder="Select LAN interface..."
-              help="Interface connected to your local network"
-              required
-              ?undeployed=${this._undeployed('network.lan-interface')}
-              @field-change=${(e) => this.handleFieldChange('network.lan-interface', e.detail.value)}
-            ></form-field>
-          </div>
+              <form-field
+                label="LAN Interface"
+                type="select"
+                .value=${network['lan-interface']}
+                .options=${this.interfaces}
+                placeholder="Select LAN interface..."
+                help="Interface connected to your local network"
+                required
+                ?undeployed=${this._undeployed('network.lan-interface')}
+                @field-change=${(e) => this.handleFieldChange('network.lan-interface', e.detail.value)}
+              ></form-field>
+            </div>
+          ` : ''}
         </config-section>
 
-        <!-- LAN Configuration -->
-        <config-section
-          title="LAN Configuration"
-          description="Configure the local network address and DHCP server"
-        >
-          <div class="field-row">
+        <!-- LAN Configuration (router mode only — the box is the DHCP server) -->
+        ${network['router-enable'] ? html`
+          <config-section
+            title="LAN Configuration"
+            description="Configure the local network address and DHCP server"
+          >
+            <div class="field-row">
+              <form-field
+                label="LAN Address"
+                type="text"
+                .value=${network['lan-address']}
+                placeholder="10.0.0.1"
+                help="IP address of this router on the LAN"
+                required
+                ?undeployed=${this._undeployed('network.lan-address')}
+                @field-change=${(e) => this.handleFieldChange('network.lan-address', e.detail.value)}
+              ></form-field>
+
+              <form-field
+                label="LAN Subnet"
+                type="text"
+                .value=${network['lan-subnet']}
+                placeholder="10.0.0.0/24"
+                help="Network subnet in CIDR notation"
+                required
+                ?undeployed=${this._undeployed('network.lan-subnet')}
+                @field-change=${(e) => this.handleFieldChange('network.lan-subnet', e.detail.value)}
+              ></form-field>
+            </div>
+
+            <div class="field-row">
+              <form-field
+                label="DHCP Range Start"
+                type="text"
+                .value=${network['dhcp-range-start']}
+                placeholder="10.0.0.100"
+                help="First IP in DHCP pool"
+                required
+                ?undeployed=${this._undeployed('network.dhcp-range-start')}
+                @field-change=${(e) => this.handleFieldChange('network.dhcp-range-start', e.detail.value)}
+              ></form-field>
+
+              <form-field
+                label="DHCP Range End"
+                type="text"
+                .value=${network['dhcp-range-end']}
+                placeholder="10.0.0.200"
+                help="Last IP in DHCP pool"
+                required
+                ?undeployed=${this._undeployed('network.dhcp-range-end')}
+                @field-change=${(e) => this.handleFieldChange('network.dhcp-range-end', e.detail.value)}
+              ></form-field>
+            </div>
+          </config-section>
+        ` : ''}
+
+        <!-- Static IP (non-router mode only — the box is a server on someone else's LAN) -->
+        ${!network['router-enable'] ? html`
+          <config-section
+            title="Static IP"
+            description="Network configuration for this box when it runs behind your own router (router mode off)."
+          >
             <form-field
-              label="LAN Address"
-              type="text"
-              .value=${network['lan-address']}
-              placeholder="10.0.0.1"
-              help="IP address of this router on the LAN"
-              required
-              ?undeployed=${this._undeployed('network.lan-address')}
-              @field-change=${(e) => this.handleFieldChange('network.lan-address', e.detail.value)}
+              label="Use a Static IP"
+              type="boolean"
+              .value=${network['static-ip-enable']}
+              help="Off = the box takes its address from your router via DHCP."
+              ?undeployed=${this._undeployed('network.static-ip-enable')}
+              @field-change=${(e) => this.handleFieldChange('network.static-ip-enable', e.detail.value)}
             ></form-field>
 
-            <form-field
-              label="LAN Subnet"
-              type="text"
-              .value=${network['lan-subnet']}
-              placeholder="10.0.0.0/24"
-              help="Network subnet in CIDR notation"
-              required
-              ?undeployed=${this._undeployed('network.lan-subnet')}
-              @field-change=${(e) => this.handleFieldChange('network.lan-subnet', e.detail.value)}
-            ></form-field>
-          </div>
+            ${network['static-ip-enable'] ? html`
+              <form-field
+                label="Interface"
+                type="select"
+                .value=${network['static-ip-interface']}
+                .options=${this.interfaces}
+                placeholder="Select interface..."
+                help="The NIC connected to your LAN (defaults to the LAN interface)."
+                ?undeployed=${this._undeployed('network.static-ip-interface')}
+                @field-change=${(e) => this.handleFieldChange('network.static-ip-interface', e.detail.value)}
+              ></form-field>
 
-          <div class="field-row">
-            <form-field
-              label="DHCP Range Start"
-              type="text"
-              .value=${network['dhcp-range-start']}
-              placeholder="10.0.0.100"
-              help="First IP in DHCP pool"
-              required
-              ?undeployed=${this._undeployed('network.dhcp-range-start')}
-              @field-change=${(e) => this.handleFieldChange('network.dhcp-range-start', e.detail.value)}
-            ></form-field>
+              <div class="field-row">
+                <form-field
+                  label="IP Address"
+                  type="text"
+                  .value=${network['lan-address']}
+                  placeholder="192.168.1.50"
+                  help="This box's fixed address on your LAN."
+                  required
+                  ?undeployed=${this._undeployed('network.lan-address')}
+                  @field-change=${(e) => this.handleFieldChange('network.lan-address', e.detail.value)}
+                ></form-field>
 
-            <form-field
-              label="DHCP Range End"
-              type="text"
-              .value=${network['dhcp-range-end']}
-              placeholder="10.0.0.200"
-              help="Last IP in DHCP pool"
-              required
-              ?undeployed=${this._undeployed('network.dhcp-range-end')}
-              @field-change=${(e) => this.handleFieldChange('network.dhcp-range-end', e.detail.value)}
-            ></form-field>
-          </div>
-        </config-section>
+                <form-field
+                  label="Subnet"
+                  type="text"
+                  .value=${network['lan-subnet']}
+                  placeholder="192.168.1.0/24"
+                  help="Your LAN subnet in CIDR notation."
+                  required
+                  ?undeployed=${this._undeployed('network.lan-subnet')}
+                  @field-change=${(e) => this.handleFieldChange('network.lan-subnet', e.detail.value)}
+                ></form-field>
+              </div>
 
-        <!-- Traffic Control -->
-        <config-section
-          title="Traffic Control"
-          description="Optional bandwidth limits for QoS (leave empty to disable)"
-        >
-          <div class="field-row">
-            <form-field
-              label="WAN Download Speed (Mbps)"
-              type="number"
-              .value=${network['wan-bitrate-mbps-down']}
-              placeholder="100"
-              help="Your ISP's download speed (optional)"
-              ?undeployed=${this._undeployed('network.wan-bitrate-mbps-down')}
-              @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-down', e.detail.value ? parseInt(e.detail.value) : null)}
-            ></form-field>
+              <div class="field-row">
+                <form-field
+                  label="Gateway"
+                  type="text"
+                  .value=${network['static-ip-gateway']}
+                  placeholder="192.168.1.1"
+                  help="Your router's LAN address."
+                  ?undeployed=${this._undeployed('network.static-ip-gateway')}
+                  @field-change=${(e) => this.handleFieldChange('network.static-ip-gateway', e.detail.value)}
+                ></form-field>
 
-            <form-field
-              label="WAN Upload Speed (Mbps)"
-              type="number"
-              .value=${network['wan-bitrate-mbps-up']}
-              placeholder="20"
-              help="Your ISP's upload speed (optional)"
-              ?undeployed=${this._undeployed('network.wan-bitrate-mbps-up')}
-              @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-up', e.detail.value ? parseInt(e.detail.value) : null)}
-            ></form-field>
-          </div>
-        </config-section>
+                <form-field
+                  label="DNS Servers"
+                  type="text"
+                  .value=${(network['static-ip-nameservers'] || []).join(', ')}
+                  placeholder="192.168.1.1"
+                  help="Comma-separated upstream DNS servers."
+                  ?undeployed=${this._undeployed('network.static-ip-nameservers')}
+                  @field-change=${(e) => this.handleFieldChange('network.static-ip-nameservers', this._parseList(e.detail.value))}
+                ></form-field>
+              </div>
+            ` : ''}
+          </config-section>
+        ` : ''}
+
+        <!-- Traffic Control (router mode only — shapes the box's WAN link) -->
+        ${network['router-enable'] ? html`
+          <config-section
+            title="Traffic Control"
+            description="Optional bandwidth limits for QoS (leave empty to disable)"
+          >
+            <div class="field-row">
+              <form-field
+                label="WAN Download Speed (Mbps)"
+                type="number"
+                .value=${network['wan-bitrate-mbps-down']}
+                placeholder="100"
+                help="Your ISP's download speed (optional)"
+                ?undeployed=${this._undeployed('network.wan-bitrate-mbps-down')}
+                @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-down', e.detail.value ? parseInt(e.detail.value) : null)}
+              ></form-field>
+
+              <form-field
+                label="WAN Upload Speed (Mbps)"
+                type="number"
+                .value=${network['wan-bitrate-mbps-up']}
+                placeholder="20"
+                help="Your ISP's upload speed (optional)"
+                ?undeployed=${this._undeployed('network.wan-bitrate-mbps-up')}
+                @field-change=${(e) => this.handleFieldChange('network.wan-bitrate-mbps-up', e.detail.value ? parseInt(e.detail.value) : null)}
+              ></form-field>
+            </div>
+          </config-section>
+        ` : ''}
 
         <!-- Ad Blocking -->
         <config-section

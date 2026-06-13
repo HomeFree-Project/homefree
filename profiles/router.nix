@@ -139,6 +139,101 @@ let
     lib.concatStringsSep "\n" (lib.map (udp-port: ''iifname "${wan-interface}" oifname "podman*" udp dport ${toString udp-port} ct state new accept;'') service-config.firewall.open-ports.udp)
   ) public-service-configs);
 
+  ## Host firewall for NON-router mode: HomeFree is a server on someone
+  ## else's LAN (behind their router). A trimmed sibling of the router
+  ## ruleset below — INPUT chain only, no forward chain, no NAT, no
+  ## WAN-specific rules. There is no WAN interface here; inbound from the
+  ## internet arrives NATed on the same NIC as LAN traffic, so trust is by
+  ## SOURCE SUBNET, and the serving ports are opened to any source. It:
+  ##   - enables nftables (the ONLY other thing that does is the router
+  ##     branch, so without this modules/abuse-blocking.nix's
+  ##     `networking.nftables.enable` assertion fails and the rebuild
+  ##     bricks on a non-router box);
+  ##   - declares + drops the same abusive_nets* / f2b_banned* sets, so
+  ##     fail2ban (modules/abuse-blocking.nix) works UNCHANGED;
+  ##   - opens 80/443 + per-app public ports (service-input-rules) so a
+  ##     port-forward / DMZ from the upstream router reaches Caddy;
+  ##   - trusts the LAN by source subnet plus tailscale/netbird/podman;
+  ##   - opens SSH + Eternal Terminal from any source so a wrong/empty
+  ##     lan-subnet can't lock the operator out (rule 10) — the box is
+  ##     behind the user's router, so this is only LAN-reachable unless
+  ##     they explicitly forward it.
+  ## The set declarations + ICMP lines mirror the router ruleset's
+  ## `table inet filter`; they are re-stated (not shared) because the two
+  ## rulesets live in mutually-exclusive branches.
+  nonRouterFirewallRuleset = ''
+    flush ruleset
+
+    table inet filter {
+      set abusive_nets4 {
+        type ipv4_addr
+        flags interval${lib.optionalString (enabled-abuse-cidrs4 != []) "\n        elements = { ${abuse-cidrs4-str} }"}
+      }
+      set abusive_nets6 {
+        type ipv6_addr
+        flags interval${lib.optionalString (enabled-abuse-cidrs6 != []) "\n        elements = { ${abuse-cidrs6-str} }"}
+      }
+      set f2b_banned4 {
+        type ipv4_addr
+        flags timeout
+      }
+      set f2b_banned6 {
+        type ipv6_addr
+        flags timeout
+      }
+
+      chain output {
+        type filter hook output priority 100; policy accept;
+      }
+
+      chain input {
+        type filter hook input priority 0; policy drop;
+
+        ## Loopback + return traffic
+        iifname "lo" accept comment "Allow loopback"
+        ct state established, related accept comment "Allow established/related"
+        ct state invalid drop comment "Drop invalid"
+
+        ## Drop statically- and dynamically-banned sources (the same sets
+        ## fail2ban populates). No WAN-iface qualifier — apply to all.
+        ip saddr @abusive_nets4 counter drop comment "Static abuse block"
+        ip6 saddr @abusive_nets6 counter drop comment "Static abuse block v6"
+        ip saddr @f2b_banned4 counter drop comment "fail2ban v4"
+        ip6 saddr @f2b_banned6 counter drop comment "fail2ban v6"
+
+        ## ICMP (required, especially IPv6 ND/MLD)
+        icmpv6 type { echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, ind-neighbor-solicit, ind-neighbor-advert, router-renumbering, mld-listener-query, mld-listener-report, mld-listener-done, mld-listener-reduction, mld2-listener-report } accept;
+        icmpv6 type nd-redirect ip6 saddr fe80::/10 accept comment "ND redirect — link-local source only"
+        meta l4proto ipv6-icmp accept comment "Accept ICMPv6"
+        meta l4proto icmp accept comment "Accept ICMP"
+        ip protocol igmp accept comment "Accept IGMP"
+
+        ## DHCP client: when static IP is off the box gets its address from
+        ## the upstream router via DHCP, and the offer/ack responses are not
+        ## reliably matched as established — accept them explicitly or the
+        ## default-drop input chain would break the box's own networking.
+        udp sport 67 udp dport 68 accept comment "Allow DHCPv4 client"
+        ip6 saddr fe80::/10 ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment "Allow DHCPv6 client"
+
+        ## Trusted networks: the LAN by source subnet (forwarded internet
+        ## traffic shares the NIC, so we can't trust by iifname), plus the
+        ## VPN and podman bridges. The LAN rule is omitted if lan-subnet is
+        ## not a valid CIDR, so a blank field can't make nft reject the set.
+        ${lib.optionalString (lib.hasInfix "/" lan-subnet) ''ip saddr ${lan-subnet} accept comment "Allow LAN clients full access"''}
+        iifname { "tailscale0", "wt0" } accept comment "Allow tailscale/netbird"
+        iifname "podman*" accept comment "Allow podman networks"
+
+        ## Admin access from any source (recovery-safe — see header note).
+        tcp dport { 22, 2022 } ct state new accept comment "SSH + Eternal Terminal"
+
+        ## Public serving: HTTP/HTTPS + per-app public ports, forwarded to
+        ## the box by the upstream router.
+        tcp dport { http, https } ct state new accept comment "HTTP/HTTPS"
+        ${service-input-rules}
+      }
+    }
+  '';
+
   ## IPv6 prefix-delegation anchor — see docs/agent-notes/ipv6-prefix-delegation.md.
   ## Some ISPs (AT&T BGW in passthrough, some Spectrum gateways) delegate a /64 via
   ## DHCPv6-PD with preferred-lifetime 0: a permanently-DEPRECATED prefix that still
@@ -311,7 +406,8 @@ in
     };
   };
 
-  networking = lib.optionalAttrs config.homefree.network.router.enable {
+  networking = lib.mkMerge [
+   (lib.optionalAttrs config.homefree.network.router.enable {
     #-----------------------------------------------------------------------------------------------------
     # Interface config
     #-----------------------------------------------------------------------------------------------------
@@ -629,7 +725,17 @@ in
         }
       '';
     };
-  };
+   })
+   ## Host firewall for NON-router mode (HomeFree behind someone else's
+   ## router). See nonRouterFirewallRuleset in the let block for the rationale.
+   (lib.mkIf (!config.homefree.network.router.enable) {
+    firewall.enable = false;
+    nftables = {
+      enable = true;
+      ruleset = nonRouterFirewallRuleset;
+    };
+   })
+  ];
 
   #-----------------------------------------------------------------------------------------------------
   # Performance Tuning

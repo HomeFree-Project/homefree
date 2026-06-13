@@ -306,6 +306,17 @@ Situational knowledge — read the linked note when working in that area:
   the service `public`, or keep it LAN-only and point the client's
   resolver at the box.
   → `docs/agent-notes/lan-only-vhost-ipv6-split-horizon.md`
+- **Non-router mode — serving apps behind someone else's router** — with
+  `router.enable = false` the box is a LAN server; TLS (DNS-01), ddclient,
+  and unbound split-horizon are router-independent, but the firewall was
+  not: `router.nix` opens 80/443 + per-app public ports and declares the
+  fail2ban/abuse nftables sets only in the router-gated block. A non-router
+  `lib.mkMerge` branch now adds a trimmed host firewall (input-only, no
+  NAT) that unbricks the abuse-blocking `nftables.enable` assertion, opens
+  the serving ports, and trusts the LAN by source subnet. LAN name
+  resolution stays operator-side (point the upstream router's DHCP DNS at
+  the box, or use NAT hairpin). Includes the operator setup walkthrough.
+  → `docs/agent-notes/non-router-serve-apps.md`
 - **IPv6 prefix delegation — deprecated-prefix trap** — some ISP
   gateways (AT&T BGW passthrough, some Spectrum) delegate the LAN `/64`
   with `preferred_lft 0` (permanently deprecated): it still routes, but

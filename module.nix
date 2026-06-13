@@ -682,6 +682,43 @@
           description = "enable router functionality";
         };
       };
+
+      ## Static IP for the box itself when running in NON-router mode
+      ## (behind someone else's router). Has no effect when router.enable
+      ## is on — there profiles/router.nix owns the interfaces. Emitted by
+      ## modules/lan-static-ip.nix; without it the box falls back to
+      ## systemd-networkd DHCP.
+      ##
+      ## The box's ADDRESS and SUBNET come from lan-address / lan-subnet
+      ## (NOT a field here): lan-address is "the box's own LAN IP" used
+      ## pervasively in non-router mode too — Caddy binds private vhosts to
+      ## it (services/caddy), unbound advertises internal names at it, and
+      ## the dns-ready gate waits for it on the interface. A separate
+      ## static address would desync from all of those. So these options
+      ## carry only the bits router mode never needs: the gateway and the
+      ## upstream resolvers, plus which NIC to put lan-address on.
+      static = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Assign a static IP (lan-address/lan-subnet) to the box in non-router mode";
+        };
+        interface = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "NIC to configure (defaults to lan-interface if empty)";
+        };
+        gateway = lib.mkOption {
+          type = lib.types.str;
+          default = "";
+          description = "Default gateway (the upstream router)";
+        };
+        nameservers = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [];
+          description = "Upstream DNS servers for the box";
+        };
+      };
     };
 
     ## ─── Privacy / external-services ────────────────────────────────

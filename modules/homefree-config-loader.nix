@@ -105,6 +105,19 @@ in
       wan-bitrate-mbps-down = jsonData.network.wan-bitrate-mbps-down;
       wan-bitrate-mbps-up = jsonData.network.wan-bitrate-mbps-up;
 
+      # Static IP for the box in non-router mode. Address/subnet come from
+      # lan-address/lan-subnet above (see module.nix); these are only the
+      # gateway + upstream resolvers + which NIC. `or` defaults so older
+      # homefree-config.json files predating these keys still evaluate
+      # (rule 11, backwards-compatible — no migration). Consumed by
+      # modules/lan-static-ip.nix.
+      static = {
+        enable      = jsonData.network.static-ip-enable or false;
+        interface   = jsonData.network.static-ip-interface or "";
+        gateway     = jsonData.network.static-ip-gateway or "";
+        nameservers = jsonData.network.static-ip-nameservers or [];
+      };
+
       # Static IPs conversion. `network` is the optional guest-network
       # ID a reservation belongs to; null/missing = main LAN, so older
       # homefree-config.json files predating guest networks evaluate

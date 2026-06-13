@@ -51,7 +51,13 @@ let
 in
 {
   services.dnsmasq = {
-    enable = true;
+    ## Router mode only. dnsmasq here is the LAN DHCP server + IPv6-RA
+    ## emitter; on a non-router box (HomeFree behind someone else's
+    ## router) running it would put a rogue DHCP/RA server on that LAN.
+    ## DNS is owned by unbound (port = 0 below), so gating this off in
+    ## non-router mode loses nothing. Ordering-only `after` deps
+    ## (apps/cockpit) tolerate the unit being absent.
+    enable = config.homefree.network.router.enable;
 
     settings = {
       ## @TODO
