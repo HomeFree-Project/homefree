@@ -442,6 +442,10 @@ http://admin.homefree.lan, http://admin.lan, https://admin.homefree.host, http:/
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=(), interest-cohort=()"
 	}
 
+	# Strip Alt-Svc so browsers never upgrade to HTTP/3 on this site.
+	# Chrome QUIC state can get stuck and block the admin UI from loading.
+	header -Alt-Svc
+
 	# Service state endpoint - always available (served directly by Caddy)
 	handle /api/service-state {
 		root * /var/lib/homefree-admin

@@ -138,6 +138,55 @@ let
     +
     lib.concatStringsSep "\n" (lib.map (udp-port: ''iifname "${wan-interface}" oifname "podman*" udp dport ${toString udp-port} ct state new accept;'') service-config.firewall.open-ports.udp)
   ) public-service-configs);
+
+  ## IPv6 prefix-delegation anchor — see docs/agent-notes/ipv6-prefix-delegation.md.
+  ## Some ISPs (AT&T BGW in passthrough, some Spectrum gateways) delegate a /64 via
+  ## DHCPv6-PD with preferred-lifetime 0: a permanently-DEPRECATED prefix that still
+  ## routes fine but that LAN clients refuse to use as a source, so global IPv6
+  ## silently dies while the ULA (fd01::/64) keeps working. This oneshot pins a
+  ## preferred <prefix>::1 on any delegated global /64 that currently has no usable
+  ## address, so dnsmasq's constructor RA advertises the prefix as usable again.
+  ##
+  ## Strict no-op unless a delegated prefix is actually deprecated: instances with
+  ## healthy IPv6, with no PD at all, or that aren't routers are untouched (the loop
+  ## finds nothing to do). The anchor self-expires after LIFE if the service stops,
+  ## and is removed automatically once the ISP sends a sane lifetime or the prefix
+  ## rotates away — so it can never leave a stale address behind.
+  ipv6PdAnchor = pkgs.writers.writePython3 "ipv6-pd-anchor" { flakeIgnore = [ "E501" ]; } ''
+    import ipaddress
+    import subprocess
+
+    IFACE = "${lan-interface}"
+    IP = "${pkgs.iproute2}/bin/ip"
+    ANCHOR_ID = 1
+    LIFE = "7200"  # refreshed every 60s by the timer; self-expires if the service stops
+
+    out = subprocess.run([IP, "-6", "-o", "addr", "show", "dev", IFACE, "scope", "global"], capture_output=True, text=True).stdout
+
+    prefixes = {}  # delegated global /64 -> does it already have a usable (non-deprecated) address?
+    anchors = {}   # anchors we added on a previous run:  /64 -> "addr/64"
+    for line in out.splitlines():
+        f = line.split()
+        if "inet6" not in f:
+            continue
+        addr = ipaddress.ip_interface(f[f.index("inet6") + 1])
+        if addr.network.prefixlen != 64 or not addr.ip.is_global:  # global unicast only; skips ULA + link-local
+            continue
+        net = ipaddress.IPv6Network((addr.network.network_address, 64))
+        host_id = int(addr.ip) & ((1 << 64) - 1)
+        if "dynamic" in f:  # an ISP / PD-derived address
+            prefixes[net] = prefixes.get(net, False) or ("deprecated" not in f)
+        elif host_id == ANCHOR_ID:  # an anchor we added on a previous run
+            anchors[net] = str(addr)
+
+    need = {net for net, ok in prefixes.items() if not ok}  # delegated but NO usable address
+    for net in need:
+        a = ipaddress.IPv6Address(int(net.network_address) + ANCHOR_ID)
+        subprocess.run([IP, "-6", "addr", "replace", f"{a}/64", "dev", IFACE, "preferred_lft", LIFE, "valid_lft", LIFE])
+    for net, cidr in anchors.items():  # drop anchors no longer needed (ISP fixed lifetimes, or prefix rotated away)
+        if net not in need:
+            subprocess.run([IP, "-6", "addr", "del", cidr, "dev", IFACE])
+  '';
 in
 {
 
@@ -641,6 +690,31 @@ in
       # set rps for lan interface
       echo $rps2 > /sys/class/net/${lan-interface}/queues/rx-0/rps_cpus
     '';
+  };
+
+  #-----------------------------------------------------------------------------------------------------
+  # IPv6 prefix-delegation anchor
+  #-----------------------------------------------------------------------------------------------------
+
+  ## Keeps a usable address on an ISP-deprecated DHCPv6-PD prefix (see the
+  ## ipv6PdAnchor let-binding and docs/agent-notes/ipv6-prefix-delegation.md).
+  ## Uses lib.mkIf (not the file's usual optionalAttrs) so non-router instances
+  ## define no unit at all, rather than an empty no-ExecStart stub.
+  systemd.services.ipv6-pd-anchor = lib.mkIf config.homefree.network.router.enable {
+    description = "Anchor a usable address on a deprecated DHCPv6-PD prefix so RAs advertise it";
+    after = [ "systemd-networkd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${ipv6PdAnchor}";
+    };
+  };
+  systemd.timers.ipv6-pd-anchor = lib.mkIf config.homefree.network.router.enable {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "20s";
+      OnUnitActiveSec = "60s";
+      AccuracySec = "5s";
+    };
   };
 
   #-----------------------------------------------------------------------------------------------------

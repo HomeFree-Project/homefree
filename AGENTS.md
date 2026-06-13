@@ -306,6 +306,14 @@ Situational knowledge — read the linked note when working in that area:
   the service `public`, or keep it LAN-only and point the client's
   resolver at the box.
   → `docs/agent-notes/lan-only-vhost-ipv6-split-horizon.md`
+- **IPv6 prefix delegation — deprecated-prefix trap** — some ISP
+  gateways (AT&T BGW passthrough, some Spectrum) delegate the LAN `/64`
+  with `preferred_lft 0` (permanently deprecated): it still routes, but
+  clients won't source from it, so global v6 dies while the ULA works.
+  The `ipv6-pd-anchor` oneshot pins a preferred `<prefix>::1` to fix it,
+  strict no-op unless a delegated prefix is actually deprecated. Does NOT
+  cover "PD never arrives" (branch B) — left unhardened on purpose.
+  → `docs/agent-notes/ipv6-prefix-delegation.md`
 - **systemd unit patterns** — restart policy applied to all catalog
   services (a disabled app must set `service-config.enable` or it leaks
   a no-`ExecStart` stub unit that fails the rebuild); oneshot bootstrap
