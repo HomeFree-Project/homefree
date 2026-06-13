@@ -481,6 +481,7 @@ in
       label = instance-id;
       name = "Minecraft - ${instance.name}";
       project-name = "Minecraft";
+      icon = ./icon.svg;
       port-request = initialPort + index;
       parent = "minecraft";  # Mark this as a child of the parent service
       sso = {

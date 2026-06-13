@@ -716,6 +716,7 @@ virtualisation.oci-containers.containers = lib.optionalAttrs config.homefree.ser
     label = site-id;
     name = "MediaWiki - ${site.name}";
     project-name = "MediaWiki";
+    icon = ./icon.svg;
     parent = "mediawiki";
     systemd-service-names = [
       "podman-${site-id}"
