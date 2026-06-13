@@ -1438,6 +1438,78 @@ def _ai_built_service_labels() -> set:
     return labels
 
 
+def _dynamic_app_tiles(sources, me: str) -> list:
+    """Dashboard tiles contributed by plugins via the generic
+    `homefree.dashboard.dynamic-app-sources` option.
+
+    Each source is a path to a plugin-written JSON file holding a list of
+    tile dicts for apps that are NOT NixOS services (e.g. runtime
+    containers a plugin manages itself). This is deliberately
+    plugin-agnostic: core knows nothing about any particular plugin's data
+    layout — it just reads the published tile schema and filters by the
+    caller. Best-effort: an unreadable file or malformed entry is skipped,
+    never fatal.
+
+    Per-entry schema (all keys optional except `url`):
+        {label, name, project_name, url, icon, category, description,
+         access: "sso"|"public"|"lan",
+         visibility: {mode: "public"|"authenticated"|"owner", owner: str}}
+
+    `visibility` is the access filter, expressed in generic terms:
+      - public        -> shown to everyone
+      - authenticated -> shown to any signed-in user (the default)
+      - owner         -> shown only when the caller == visibility.owner
+    Unknown modes fail closed (hidden). `me` is the caller's username
+    (request.state.auth_user); empty hides everything non-public.
+    """
+    import json
+    from urllib.parse import urlparse
+    tiles = []
+    for path in (sources or []):
+        try:
+            with open(path) as f:
+                entries = json.load(f) or []
+        except Exception:
+            continue
+        if not isinstance(entries, list):
+            continue
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            url = (e.get("url") or "").strip()
+            if not url:
+                continue
+            vis = e.get("visibility") or {}
+            mode = vis.get("mode") or "authenticated"
+            if mode == "public":
+                pass
+            elif mode == "authenticated":
+                if not me or me == "anonymous":
+                    continue
+            elif mode == "owner":
+                if not me or me != (vis.get("owner") or ""):
+                    continue
+            else:
+                continue  # unknown visibility -> fail closed
+            try:
+                host = urlparse(url).hostname or ""
+            except Exception:
+                host = ""
+            tiles.append({
+                "label": e.get("label") or url,
+                "name": e.get("name") or e.get("label") or host,
+                "project_name": e.get("project_name") or "",
+                "url": url,
+                "icon": e.get("icon"),
+                "access": e.get("access") or "sso",
+                "category": e.get("category") or "",
+                "description": e.get("description") or "",
+                "host": host,
+                "hidden": bool(e.get("hidden", False)),
+            })
+    return tiles
+
+
 @app.get("/api/services/visible-to-me")
 async def get_services_visible_to_me(request: Request):
     """List of services the authenticated user can launch from their
@@ -1492,6 +1564,10 @@ async def get_services_visible_to_me(request: Request):
     # "My Apps" group at the top of the dashboard (overriding whatever
     # category the generated app declared for itself).
     ai_labels = _ai_built_service_labels()
+
+    # Caller identity, used to filter plugin-contributed dynamic tiles
+    # (homefree.dashboard.dynamic-app-sources) by their visibility.
+    me = getattr(request.state, "auth_user", "") or ""
 
     # Metaservices that power the homefree shell itself — not "apps
     # to launch" from the user's perspective, so don't show them in
@@ -1596,6 +1672,13 @@ async def get_services_visible_to_me(request: Request):
             "host": host,
             "hidden": hidden,
         })
+
+    # Plugin-contributed dynamic apps (not NixOS services) — appended via
+    # the generic homefree.dashboard.dynamic-app-sources hook, filtered by
+    # the caller's visibility. The plugin sets each tile's category (e.g.
+    # "My Apps"); the frontend groups by category as usual.
+    out.extend(_dynamic_app_tiles(
+        (cfg.get("dashboard") or {}).get("dynamic-app-sources") or [], me))
 
     # Stable alphabetical order by display name; the frontend groups
     # by category and orders the groups itself.

@@ -523,6 +523,10 @@ let
   admin-config = {
     wanInterface = cfg.network.wan-interface;
     lanInterface = cfg.network.lan-interface;
+    # Generic plugin extension: paths to JSON files of dynamic dashboard
+    # tiles (apps that aren't NixOS services). Read at request time by the
+    # home dashboard backend. See homefree.dashboard.dynamic-app-sources.
+    dashboard.dynamic-app-sources = cfg.dashboard.dynamic-app-sources;
     services =
     let
       # Include all service-configs that should be shown in admin UI

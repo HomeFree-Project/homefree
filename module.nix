@@ -341,6 +341,26 @@
       };
     };
 
+    ## Generic extension point for plugins. Each entry is a path to a JSON
+    ## file (written by a plugin at runtime) holding a list of dynamic
+    ## dashboard tiles for apps that are NOT NixOS services — e.g. runtime
+    ## containers a plugin manages on its own. The home dashboard backend
+    ## reads these at request time. `listOf` means any number of plugins
+    ## can append their own path; core stays plugin-agnostic.
+    dashboard = {
+      dynamic-app-sources = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = ''
+          Paths to JSON files contributed by plugins, each a list of dynamic
+          dashboard tiles for apps that are not NixOS services. Schema per
+          entry: { label, name, url, category, description, icon,
+          access ("sso"|"public"|"lan"),
+          visibility { mode ("public"|"authenticated"|"owner"), owner } }.
+        '';
+      };
+    };
+
     ## @TODO: This section doesn't make sense. Some network config is in "system" above
     ##        and some is in separate services, e.g. unbound and ddns
     network = {
