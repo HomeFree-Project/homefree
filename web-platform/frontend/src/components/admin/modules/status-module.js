@@ -12,7 +12,8 @@ class StatusModule extends LitElement {
     systemHealth: { type: String },
     logsCollapsed: { type: Boolean },
     pendingChanges: { type: Array },        // [{page, detail}] not yet applied
-    hasUnappliedChanges: { type: Boolean }
+    hasUnappliedChanges: { type: Boolean },
+    drift: { type: Object }                  // /etc/nixos divergence (advisory)
   };
 
   static styles = css`
@@ -82,6 +83,66 @@ class StatusModule extends LitElement {
       font-size: 14px;
       color: var(--hf-text-muted);
       margin: 0;
+    }
+
+    /* Divergence notice — files in /etc/nixos HomeFree does not manage.
+       Advisory warning card; matches the house warning-box treatment
+       (soft amber surface + amber left rule). */
+    .drift-warning {
+      background: var(--hf-warn-soft);
+      border-left: 4px solid var(--hf-warn);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--hf-shadow);
+    }
+    .drift-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--hf-text);
+      margin-bottom: 6px;
+    }
+    .drift-icon {
+      color: var(--hf-warn);
+      font-size: 18px;
+    }
+    .drift-body {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--hf-text-muted);
+    }
+    .drift-group {
+      margin-top: 12px;
+    }
+    .drift-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--hf-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-bottom: 6px;
+    }
+    .drift-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+    }
+    .drift-list code {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 12px;
+      color: var(--hf-text);
+      background: var(--hf-surface);
+      border-radius: 6px;
+      padding: 2px 8px;
+      word-break: break-all;
     }
 
     /* Pending-changes list (everything that will deploy on the next Apply). */
@@ -248,6 +309,53 @@ class StatusModule extends LitElement {
     this.logsCollapsed = true; // Default to collapsed
     this.pendingChanges = [];
     this.hasUnappliedChanges = false;
+    this.drift = null;
+  }
+
+  // Advisory notice when /etc/nixos carries files HomeFree doesn't manage
+  // (hand-added .nix modules, extra configuration.nix imports). Renders
+  // nothing when the layout is clean. Detection is in the backend
+  // (instance_layout.detect_drift), surfaced via /api/config/dirty.
+  _renderDriftWarning() {
+    const d = this.drift;
+    if (!d || d.ok) return '';
+    const files = d.unmanaged_files || [];
+    const imports = d.unmanaged_imports || [];
+    const missing = d.missing_managed || [];
+    if (!files.length && !imports.length && !missing.length) return '';
+    return html`
+      <div class="drift-warning" role="status">
+        <div class="drift-title">
+          <span class="drift-icon">⚠</span> Unmanaged changes in /etc/nixos
+        </div>
+        <p class="drift-body">
+          HomeFree does not manage these entries. <code>/etc/nixos</code> is
+          instance state — extend HomeFree with a Custom Flake on the Plugins
+          page instead of editing files here. The build never deletes them.
+        </p>
+        ${files.length ? html`
+          <div class="drift-group">
+            <span class="drift-label">Unmanaged files</span>
+            <ul class="drift-list">
+              ${files.map(f => html`<li><code>${f}</code></li>`)}
+            </ul>
+          </div>` : ''}
+        ${imports.length ? html`
+          <div class="drift-group">
+            <span class="drift-label">configuration.nix imports</span>
+            <ul class="drift-list">
+              ${imports.map(f => html`<li><code>${f}</code></li>`)}
+            </ul>
+          </div>` : ''}
+        ${missing.length ? html`
+          <div class="drift-group">
+            <span class="drift-label">Missing managed files</span>
+            <ul class="drift-list">
+              ${missing.map(f => html`<li><code>${f}</code></li>`)}
+            </ul>
+          </div>` : ''}
+      </div>
+    `;
   }
 
   toggleLogsCollapsed() {
@@ -352,6 +460,8 @@ class StatusModule extends LitElement {
   render() {
     return html`
       <div class="module-container">
+        ${this._renderDriftWarning()}
+
         <!-- Status Header -->
         <div class="status-header">
           <div class="status-indicator ${this.systemHealth}">

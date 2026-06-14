@@ -3714,11 +3714,23 @@ async def get_config_dirty():
         if not ModeService.is_admin():
             raise HTTPException(status_code=400, detail="Only available in admin mode")
 
+        # Divergence in /etc/nixos (unmanaged files, leaked configuration.nix
+        # imports). ADVISORY: attached to every response below, but it never
+        # forces `dirty` — the build re-materializes its own managed files and
+        # unmanaged files are warn-only (the Build & Logs page renders this;
+        # it does not gate Apply). Best-effort; detect_drift never raises.
+        from services import instance_layout
+        drift = instance_layout.detect_drift()
+
+        def _resp(payload):
+            payload["drift"] = drift
+            return JSONResponse(content=payload)
+
         config_path = Path("/etc/nixos/homefree-config.json")
         applied_path = Path("/var/lib/homefree-admin/applied-config.json")
 
         if not config_path.exists():
-            return JSONResponse(content={"dirty": False, "reason": "no config file", "changedPaths": []})
+            return _resp({"dirty": False, "reason": "no config file", "changedPaths": []})
 
         current = config_path.read_text()
 
@@ -3728,17 +3740,17 @@ async def get_config_dirty():
         try:
             current_json = json.loads(current)
         except json.JSONDecodeError:
-            return JSONResponse(content={"dirty": True, "reason": "config parse error", "changedPaths": []})
+            return _resp({"dirty": True, "reason": "config parse error", "changedPaths": []})
 
         if not applied_path.exists():
             # No applied marker yet — assume dirty so the user can apply once.
-            return JSONResponse(content={"dirty": True, "reason": "no applied marker", "changedPaths": []})
+            return _resp({"dirty": True, "reason": "no applied marker", "changedPaths": []})
 
         try:
             applied_json = json.loads(applied_path.read_text())
         except json.JSONDecodeError:
             # Corrupt applied marker — treat as not-yet-applied so Apply works.
-            return JSONResponse(content={"dirty": True, "reason": "no applied marker", "changedPaths": []})
+            return _resp({"dirty": True, "reason": "no applied marker", "changedPaths": []})
 
         # Compare SEMANTICALLY (parsed), not as raw text. A no-op round-trip —
         # adding then removing a list row, a key reorder, or a re-serialization
@@ -3752,14 +3764,14 @@ async def get_config_dirty():
         # would falsely flag that.
         changed_paths = NixOperations.compute_changed_paths(current_json, applied_json)
         if changed_paths:
-            return JSONResponse(content={"dirty": True, "reason": "differs", "changedPaths": changed_paths})
+            return _resp({"dirty": True, "reason": "differs", "changedPaths": changed_paths})
 
         # Config matches applied, but the flake build inputs (the flake source /
         # custom flakes) may have diverged — e.g. a direct hand-edit to
         # flake.nix or custom-flakes.nix. Those are not in homefree-config.json.
         flake_reason = NixOperations.build_inputs_dirty()
         if flake_reason:
-            return JSONResponse(content={"dirty": True, "reason": flake_reason, "changedPaths": changed_paths})
+            return _resp({"dirty": True, "reason": flake_reason, "changedPaths": changed_paths})
 
         # Config matches the last applied snapshot — but if the most recent
         # rebuild attempt failed, the system isn't actually in the desired
@@ -3770,7 +3782,7 @@ async def get_config_dirty():
                 status = json.loads(latest_status_path.read_text())
                 exit_code = status.get("exit_code")
                 if exit_code is not None and exit_code != 0:
-                    return JSONResponse(content={
+                    return _resp({
                         "dirty": True,
                         "reason": "last rebuild failed",
                         "changedPaths": changed_paths,
@@ -3789,7 +3801,7 @@ async def get_config_dirty():
             if sys_current and applied_rev_path.exists():
                 applied_rev = applied_rev_path.read_text().strip()
                 if applied_rev and applied_rev != sys_current["rev"]:
-                    return JSONResponse(content={
+                    return _resp({
                         "dirty": True,
                         "reason": "system update pending",
                         "changedPaths": changed_paths,
@@ -3797,7 +3809,7 @@ async def get_config_dirty():
         except Exception as e:
             logger.warning(f"Could not check flake rev dirty state: {e}")
 
-        return JSONResponse(content={"dirty": False, "reason": "in sync", "changedPaths": []})
+        return _resp({"dirty": False, "reason": "in sync", "changedPaths": []})
 
     except HTTPException:
         raise
@@ -4151,6 +4163,34 @@ async def save_homefree_base(req: HomefreeBaseOverrideRequest):
         raise
     except Exception as e:
         logger.error(f"Error saving alternate HomeFree base: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/developers/homefree-base/clone")
+async def clone_homefree_base():
+    """
+    Clone the official HomeFree repository to the admin user's home directory
+    (/home/<user>/homefree) if it isn't there yet — owned by that user — and
+    enable it as the alternate base. Idempotent: an existing checkout is just
+    enabled. Rewrites /etc/nixos/flake.nix; does NOT rebuild.
+    """
+    try:
+        from services.mode import ModeService
+        from services.plugins import PluginsService
+
+        if not ModeService.is_admin():
+            raise HTTPException(status_code=400, detail="Only available in admin mode")
+
+        # The clone can take a while over the network; run it off the event
+        # loop so the admin-api stays responsive to other requests.
+        result = await asyncio.to_thread(PluginsService.clone_and_enable_base)
+        status = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cloning alternate HomeFree base: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

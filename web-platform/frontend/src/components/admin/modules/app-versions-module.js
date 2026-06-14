@@ -5,6 +5,7 @@ import {
   upgradeApps,
   getHomefreeBase,
   saveHomefreeBase,
+  cloneHomefreeBase,
   validateHomefreeBase,
   updateHomefreeBaseFlakes,
   getHomefreeBaseNixpkgs,
@@ -66,6 +67,10 @@ class AppVersionsModule extends LitElement {
     baseErrors: { type: Array, state: true },
     baseWarnings: { type: Array, state: true },
     baseBrowserOpen: { type: Boolean, state: true },
+    // Clone-official-repo-&-enable quick action.
+    baseCloning: { type: Boolean, state: true },
+    baseCloneError: { type: String, state: true },
+    baseCloneMessage: { type: String, state: true },
     // Update Apps button state.
     upgrading: { type: Boolean, state: true },
     upgradeResult: { type: Object, state: true },
@@ -711,6 +716,9 @@ class AppVersionsModule extends LitElement {
     this.baseErrors = [];
     this.baseWarnings = [];
     this.baseBrowserOpen = false;
+    this.baseCloning = false;
+    this.baseCloneError = '';
+    this.baseCloneMessage = '';
     this.upgrading = false;
     this.upgradeResult = null;
     this.upgradeError = '';
@@ -851,6 +859,15 @@ class AppVersionsModule extends LitElement {
     return !this.baseEnabled || !!(this._activeBaseUrl || '').trim();
   }
 
+  // The "Clone official repo & enable" shortcut bootstraps a local checkout.
+  // It sits in the action row and is disabled once an alternate LOCAL repo is
+  // already enabled + configured (there's nothing to bootstrap).
+  get _localBaseConfigured() {
+    return this.baseEnabled
+      && this.baseType === 'local'
+      && !!(this.baseLocalUrl || '').trim();
+  }
+
   async _persistBase() {
     if (!this._baseReadyToPersist) return;
     this.baseSaving = true;
@@ -903,6 +920,36 @@ class AppVersionsModule extends LitElement {
 
   _onBaseUrlCommit() {
     this._persistBase();
+  }
+
+  // One-click: clone the official HomeFree repo to /home/<you>/homefree
+  // (owned by you) if it isn't there yet, then enable it as the build
+  // source. The backend handles clone + ownership + flake.nix scaffold +
+  // safe.directory + ACL; we just reflect the result.
+  async _cloneAndEnableBase() {
+    this.baseCloning = true;
+    this.baseCloneError = '';
+    this.baseCloneMessage = '';
+    this.baseErrors = [];
+    this.baseWarnings = [];
+    try {
+      const result = await cloneHomefreeBase();
+      // Refresh the panel so the Enable toggle + local path reflect the
+      // now-enabled alternate base.
+      await this.loadBaseOverride();
+      this.baseWarnings = result.warnings || [];
+      this.baseCloneMessage = result.message || 'Cloned and enabled.';
+      this.dispatchEvent(new CustomEvent('updates-applied', {
+        bubbles: true, composed: true,
+      }));
+    } catch (e) {
+      this.baseCloneError =
+        (e.body && (e.body.message || (e.body.errors && e.body.errors[0])))
+        || e.message
+        || 'Could not clone the official HomeFree repository.';
+    } finally {
+      this.baseCloning = false;
+    }
   }
 
   async _probeBase() {
@@ -1348,32 +1395,52 @@ class AppVersionsModule extends LitElement {
 
         ${this._renderBaseProbe()}
 
-        ${this.baseEnabled
-          ? html`
-            <div class="actions">
+        <div class="actions">
+          <button
+            class="btn"
+            ?disabled=${this.baseCloning || this._localBaseConfigured}
+            title="Clone the official HomeFree repository to /home/<you>/homefree (if it isn't already there), owned by you, and build from it. Disabled once a local repository is enabled."
+            @click=${this._cloneAndEnableBase}
+          >
+            ${this.baseCloning
+              ? html`<span class="inline-spinner"></span>Cloning…`
+              : 'Clone official repo & enable'}
+          </button>
+          ${this.baseEnabled
+            ? html`
               <button
                 class="btn"
                 ?disabled=${this.baseProbing || !this._activeBaseUrl}
                 @click=${this._probeBase}
               >${this.baseProbing ? 'Validating…' : 'Validate'}</button>
-              ${this._canUpgradeApps
-                ? html`
-                  <button
-                    class="btn"
-                    ?disabled=${this.flakeUpdating}
-                    title="Runs 'nix flake update' in the local checkout to bump its flake.lock inputs (nixpkgs, etc.). Rebuild after to deploy."
-                    @click=${this.runUpdateFlakes}
-                  >
-                    ${this.flakeUpdating
-                      ? html`<span class="inline-spinner"></span>Updating flakes…`
-                      : 'Update flakes'}
-                  </button>
-                `
-                : ''}
-              ${this.baseSaving
-                ? html`<span class="muted" style="align-self:center">Saving…</span>`
-                : ''}
-            </div>
+            `
+            : ''}
+          ${this.baseEnabled && this._canUpgradeApps
+            ? html`
+              <button
+                class="btn"
+                ?disabled=${this.flakeUpdating}
+                title="Runs 'nix flake update' in the local checkout to bump its flake.lock inputs (nixpkgs, etc.). Rebuild after to deploy."
+                @click=${this.runUpdateFlakes}
+              >
+                ${this.flakeUpdating
+                  ? html`<span class="inline-spinner"></span>Updating flakes…`
+                  : 'Update flakes'}
+              </button>
+            `
+            : ''}
+          ${this.baseSaving
+            ? html`<span class="muted" style="align-self:center">Saving…</span>`
+            : ''}
+        </div>
+        ${this.baseCloneError
+          ? html`<div class="error" style="margin-top:10px">${this.baseCloneError}</div>`
+          : ''}
+        ${this.baseCloneMessage
+          ? html`<div class="notice" style="margin-top:10px">${this.baseCloneMessage}</div>`
+          : ''}
+        ${this.baseEnabled
+          ? html`
             ${this.flakeUpdateError
               ? html`<div class="error" style="margin-top:12px">${this.flakeUpdateError}</div>`
               : ''}

@@ -281,6 +281,52 @@ class AlertsModule extends LitElement {
       word-break: break-word;
     }
 
+    /* config-divergence bespoke body — grouped, multi-line, colored list
+       of the unmanaged entries. Far more readable than the one-line
+       summary. */
+    .divergence-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 4px;
+    }
+    .divergence-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--hf-warn);
+      margin-bottom: 6px;
+    }
+    .divergence-items {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .divergence-items code {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 13px;
+      color: var(--hf-text);
+      background: var(--hf-warn-soft);
+      border-radius: 6px;
+      padding: 2px 8px;
+      word-break: break-all;
+      align-self: flex-start;
+    }
+    .divergence-help {
+      margin: 2px 0 0 0;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--hf-text-muted);
+    }
+    .divergence-ok {
+      font-size: 13px;
+      color: var(--hf-text-muted);
+    }
+
     .field-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -919,14 +965,54 @@ class AlertsModule extends LitElement {
           </div>
         </summary>
         <div class="source-body">
-          ${state.message
-            ? html`<div class="source-message">${state.message}</div>`
-            : html`<div class="hint">Waiting for the first engine tick — the source's status will appear here on the next poll.</div>`}
-          ${readings && readings.length
-            ? this._renderReadingsBars(readings, src)
-            : this._renderMeter(meter)}
+          ${src.id === 'config-divergence'
+            ? this._renderDivergenceBody(state)
+            : html`
+              ${state.message
+                ? html`<div class="source-message">${state.message}</div>`
+                : html`<div class="hint">Waiting for the first engine tick — the source's status will appear here on the next poll.</div>`}
+              ${readings && readings.length
+                ? this._renderReadingsBars(readings, src)
+                : this._renderMeter(meter)}
+            `}
         </div>
       </details>
+    `;
+  }
+
+  // Bespoke Active-tab body for config-divergence: a grouped, colored,
+  // multi-line list of the unmanaged entries (one group per kind). Reads
+  // the source's structured `readings`. Falls back to a clean OK line when
+  // nothing diverges. Deliberately human-facing — no AGENTS.md reference.
+  _renderDivergenceBody(state) {
+    const readings = (state && state.readings) || [];
+    if (!readings.length) {
+      return html`<div class="divergence-ok">/etc/nixos matches the managed layout.</div>`;
+    }
+    const groups = [
+      { kind: 'file', label: 'Unmanaged files' },
+      { kind: 'import', label: 'configuration.nix imports' },
+      { kind: 'missing', label: 'Missing managed files' },
+    ];
+    return html`
+      <div class="divergence-list">
+        ${groups.map((g) => {
+          const items = readings.filter((r) => r.kind === g.kind);
+          if (!items.length) return '';
+          return html`
+            <div class="divergence-group">
+              <div class="divergence-label">${g.label}</div>
+              <ul class="divergence-items">
+                ${items.map((r) => html`<li><code>${r.name}</code></li>`)}
+              </ul>
+            </div>
+          `;
+        })}
+        <p class="divergence-help">
+          Extend HomeFree with a Custom Flake on the Plugins page instead of
+          editing files here. The build never deletes these.
+        </p>
+      </div>
     `;
   }
 

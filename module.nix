@@ -2073,6 +2073,32 @@
           };
         };
 
+        config-divergence = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Fire (warn) when /etc/nixos carries files HomeFree does not
+              manage — a hand-added `.nix` module, an extra
+              `configuration.nix` import, or a missing managed file.
+
+              /etc/nixos is a box's instance state; generic config dropped
+              there is invisible to every other HomeFree box (rule 12). The
+              supported way to extend a box is a Custom Flake (Plugins page).
+
+              Advisory only: severity is always `warn` (the box still builds)
+              and HomeFree never deletes the operator's files. Uses the same
+              detector that drives the Build & Logs divergence notice, so the
+              alert and that page always agree.
+            '';
+          };
+
+          channels = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ "ntfy" ];
+          };
+        };
+
         wan-accessibility = {
           enable = lib.mkOption {
             type = lib.types.bool;

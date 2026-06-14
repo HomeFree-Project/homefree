@@ -48,6 +48,7 @@ in
     ./modules/abuse-blocking.nix
     ./modules/geoip.nix
     ./modules/setup-state.nix
+    ./modules/instance-managed-docs.nix
     ./modules/finish-setup-console.nix
     ./modules/secrets-recipient-migrate.nix
     ./modules/boot-mirror.nix

@@ -469,6 +469,11 @@ export const updateDeveloperFlake = updatePluginFlake;
 // /etc/nixos/flake.nix; the user then clicks Apply.
 export const getHomefreeBase = () => get('/api/developers/homefree-base');
 export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
+// Clone the official HomeFree repo to /home/<user>/homefree (if absent) and
+// enable it as the alternate base. No client-side timeout (timeoutMs: 0) —
+// a full clone over the network can take a while.
+export const cloneHomefreeBase = () =>
+  post('/api/developers/homefree-base/clone', {}, { timeoutMs: 0 });
 // Same deep `nix flake metadata`/`show` probe as validatePluginFlake — no
 // client-side ceiling (timeoutMs: 0) so a slow cold-cache probe isn't
 // aborted before the backend's hard per-command timeout returns a result.

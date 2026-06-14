@@ -549,6 +549,11 @@ in
             journal-window = ha.journal-window or "5 min ago";
             channels       = ha.channels or [ "ntfy" ];
           };
+        sources.config-divergence =
+          let cd = src.config-divergence or {}; in {
+            enable   = cd.enable or true;
+            channels = cd.channels or [ "ntfy" ];
+          };
       };
 
     backups = {

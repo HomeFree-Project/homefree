@@ -85,6 +85,7 @@ class AdminApp extends LitElement {
     saveError: { type: String },           // First error message from a failed save, if any
     hasUnappliedChanges: { type: Boolean }, // Whether there are unapplied changes on disk
     dirtyReason: { type: String },          // Why the config is dirty (drives the Apply note)
+    drift: { type: Object },                 // /etc/nixos divergence (advisory, Build & Logs notice)
     undeployedPaths: { state: true },       // Set of dotted config paths not yet deployed
     appliedConfig: { state: true },          // Last-DEPLOYED config — baseline for per-row list highlight
     updateAvailable: { type: Boolean },    // System closure changed since page-load — UI is stale
@@ -385,6 +386,23 @@ class AdminApp extends LitElement {
     }
 
     .sidebar.collapsed .status-badge {
+      display: none;
+    }
+
+    /* Distinct drift indicator for Build & Logs — a warning triangle, NOT
+       a dot (a yellow nav dot means "undeployed changes" elsewhere). */
+    .nav-drift-icon {
+      display: inline-flex;
+      align-items: center;
+      color: var(--hf-warn);
+      flex-shrink: 0;
+      margin-left: 10px;
+    }
+    .nav-drift-icon svg {
+      width: 15px;
+      height: 15px;
+    }
+    .sidebar.collapsed .nav-drift-icon {
       display: none;
     }
 
@@ -858,6 +876,7 @@ class AdminApp extends LitElement {
     // Apply / dirty state
     this.hasUnappliedChanges = false;
     this.dirtyReason = '';
+    this.drift = null;
     // Paths (dotted) whose on-disk value differs from the last DEPLOYED
     // (built) config — from /api/config/dirty. Union'd with local unsaved
     // edits into `undeployedPaths`, which drives the per-field highlight.
@@ -1665,6 +1684,20 @@ class AdminApp extends LitElement {
     return this.systemHealth || 'healthy';
   }
 
+  // True when /etc/nixos carries files HomeFree doesn't manage. Drives
+  // the Build & Logs nav warning icon and mirrors the notice on that page.
+  // NOTE: deliberately NOT folded into the health dot — a yellow dot in
+  // the nav means "undeployed changes" everywhere else, so drift gets its
+  // own distinct warning-triangle icon instead.
+  _hasDrift() {
+    const d = this.drift;
+    return !!(d && !d.ok && (
+      (d.unmanaged_files && d.unmanaged_files.length) ||
+      (d.unmanaged_imports && d.unmanaged_imports.length) ||
+      (d.missing_managed && d.missing_managed.length)
+    ));
+  }
+
   handleConfigChange(e) {
     // Legacy handler for modules that still use config-change event
     // TODO: Migrate all modules to use specific action events
@@ -2368,6 +2401,7 @@ class AdminApp extends LitElement {
       // unconditional requestUpdate that would churn focused inputs every 5s.
       this.hasUnappliedChanges = !!result.dirty;
       this.dirtyReason = result.reason || '';
+      this.drift = result.drift || null;
       this.deployedChangedPaths = new Set(result.changedPaths || []);
       this.recomputeUndeployedPaths();
     } catch (error) {
@@ -3113,6 +3147,7 @@ class AdminApp extends LitElement {
             .buildLogs=${this.buildLogs}
             .pendingChanges=${this.pendingChanges()}
             .hasUnappliedChanges=${this.hasUnappliedChanges}
+            .drift=${this.drift}
           ></status-module>
         `;
 
@@ -3310,6 +3345,17 @@ class AdminApp extends LitElement {
                   <span class="nav-item-icon">${navIcon(module.id)}</span>
                   <span class="nav-item-text">${module.title}</span>
                   ${changedIds.has(module.id) ? html`<span class="nav-change-dot" title="Undeployed changes"></span>` : ''}
+                  ${module.id === 'build-logs' && this._hasDrift() ? html`
+                    <span class="nav-drift-icon" title="Unmanaged changes in /etc/nixos">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                           aria-hidden="true">
+                        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                      </svg>
+                    </span>
+                  ` : ''}
                   ${module.id === 'build-logs' ? html`
                     <span class="status-badge ${this.getStatusBadgeClass()}">
                       ${this.rebuildStatus.running ? html`<div class="spinner-tiny"></div>` : ''}

@@ -1556,6 +1556,69 @@ class HeadscaleAccessibilitySource:
 
 
 # ---------------------------------------------------------------------
+# config-divergence
+# ---------------------------------------------------------------------
+
+class ConfigDivergenceSource:
+    """Fires (warn) when /etc/nixos carries files HomeFree does not manage —
+    hand-added .nix modules, extra configuration.nix imports, or a missing
+    managed file.
+
+    /etc/nixos is a box's INSTANCE STATE; generic config dropped there is
+    invisible to every other HomeFree box and rots in place (rule 12). The
+    supported way to extend a box is a Custom Flake (Plugins page).
+
+    Severity is `warn`, never `err`: divergence is advisory — the box still
+    builds, and HomeFree never deletes the operator's files. Shares the
+    detector (services.instance_layout.detect_drift) with the admin Build &
+    Logs page, so the alert and that page agree by construction."""
+
+    id = "config-divergence"
+    label = "Config divergence"
+
+    def evaluate(
+        self,
+        config: Dict[str, Any],
+        was_severity: str,
+    ) -> SourceResult:
+        # Lazy import: keep the alerts engine's startup decoupled from the
+        # admin services module graph (same defensive pattern as
+        # backup-failures).
+        try:
+            from services import instance_layout
+        except Exception as e:
+            logger.warning("config-divergence: import failed: %s", e)
+            return SourceResult(
+                firing=False, value=None,
+                message="instance_layout module unavailable",
+            )
+
+        drift = instance_layout.detect_drift()
+        if drift.get("ok"):
+            return SourceResult(
+                severity="clear", value=0.0,
+                message="/etc/nixos matches the managed layout",
+            )
+
+        # Structured per-item detail so the Alerts UI can render a grouped,
+        # multi-line list (one `kind` per drift category). `message` stays a
+        # plain summary for the ntfy push and the history log.
+        readings = (
+            [{"name": f, "kind": "file"}
+             for f in (drift.get("unmanaged_files") or [])]
+            + [{"name": i, "kind": "import"}
+               for i in (drift.get("unmanaged_imports") or [])]
+            + [{"name": m, "kind": "missing"}
+               for m in (drift.get("missing_managed") or [])]
+        )
+        return SourceResult(
+            severity="warn", value=float(len(readings)),
+            message=instance_layout.summarize_drift(drift),
+            readings=readings,
+        )
+
+
+# ---------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------
 # Mapping from source id → class. The engine instantiates and dispatches
@@ -1573,4 +1636,5 @@ REGISTRY: Dict[str, type] = {
     TlsCertSource.id:                   TlsCertSource,
     WanAccessibilitySource.id:          WanAccessibilitySource,
     HeadscaleAccessibilitySource.id:    HeadscaleAccessibilitySource,
+    ConfigDivergenceSource.id:          ConfigDivergenceSource,
 }

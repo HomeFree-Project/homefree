@@ -110,6 +110,10 @@ let
         journal-window = cfg.sources.headscale-accessibility.journal-window;
         channels       = cfg.sources.headscale-accessibility.channels;
       };
+      config-divergence = {
+        enable   = cfg.sources.config-divergence.enable;
+        channels = cfg.sources.config-divergence.channels;
+      };
     };
 
     ## System-level facts the engine needs but can't derive from sysfs

@@ -35,6 +35,7 @@ that predate this feature.
 import json
 import logging
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -45,22 +46,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from services.config_reader import ConfigReader
 from services.config_writer import ConfigWriter
+# The flake.nix managed-region sentinels are defined ONCE in instance_layout
+# (the canonical layout module), so the installer's FLAKE_TEMPLATE and this
+# scaffolder reference the same strings and cannot drift. test_instance_layout
+# locks the relationship with a scaffold fixed-point test.
+from services.instance_layout import (
+    INPUTS_BEGIN,
+    INPUTS_END,
+    BASE_OVERRIDE_BEGIN,
+    BASE_OVERRIDE_END,
+    BASE_BINDING_BEGIN,
+    BASE_BINDING_END,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# Sentinel lines bracketing the managed region inside flake.nix `inputs`.
-INPUTS_BEGIN = "    # >>> homefree-developers-inputs (managed - do not edit by hand) >>>"
-INPUTS_END = "    # <<< homefree-developers-inputs <<<"
-
-# Sentinel lines for the "alternate HomeFree base repo" feature. Two managed
-# regions: the input declaration (inside `inputs = { ... }`, 4-space indent)
-# and the binding line (inside the `outputs` `let`, 2-space indent) that
-# selects which input the build uses for `homefree`.
-BASE_OVERRIDE_BEGIN = "    # >>> homefree-base-override (managed - do not edit by hand) >>>"
-BASE_OVERRIDE_END = "    # <<< homefree-base-override <<<"
-BASE_BINDING_BEGIN = "    # >>> homefree-base-binding (managed - do not edit by hand) >>>"
-BASE_BINDING_END = "    # <<< homefree-base-binding <<<"
 
 # The input name a registered alternate HomeFree repo is declared under.
 ALT_INPUT_NAME = "homefree-alt"
@@ -1173,6 +1172,121 @@ class PluginsService:
         if warnings:
             result["warnings"] = warnings
         return result
+
+    @staticmethod
+    def clone_and_enable_base() -> Dict[str, Any]:
+        """
+        Clone the official HomeFree repository to the admin user's home
+        directory (/home/<user>/homefree) if it isn't already there, owned by
+        that user, then register + enable it as the alternate HomeFree base.
+
+        Idempotent: an existing checkout is left in place and simply enabled.
+        Refuses to overwrite a non-git directory at the target. Rewrites
+        flake.nix via set_base_override (which also registers the git
+        safe.directory and applies the owner-rwX ACL); does NOT rebuild.
+
+        Returns the same shape as set_base_override plus { path, cloned }.
+        """
+        from services.config_reader import ConfigReader
+
+        cfg = ConfigReader.read_config()
+        username = ((cfg.get("system") or {}).get("adminUsername") or "").strip()
+        if not username:
+            return {
+                "success": False,
+                "message": (
+                    "No admin user is configured (system.adminUsername is "
+                    "missing), so there is nowhere to clone to."
+                ),
+                "errors": ["no admin user configured"],
+            }
+        try:
+            pw = pwd.getpwnam(username)
+        except KeyError:
+            return {
+                "success": False,
+                "message": (
+                    f"The configured admin user '{username}' does not exist "
+                    "on this system."
+                ),
+                "errors": [f"user '{username}' not found"],
+            }
+
+        target = Path(pw.pw_dir) / "homefree"
+        cloned = False
+        if (target / ".git").is_dir():
+            # Already a checkout — skip the clone, just enable it below.
+            pass
+        elif target.exists() and any(target.iterdir()):
+            return {
+                "success": False,
+                "message": (
+                    f"{target} already exists and is not a HomeFree git "
+                    "checkout; refusing to overwrite it. Remove it, or point "
+                    "the Local repository path at it manually."
+                ),
+                "errors": [f"{target} exists and is not a git checkout"],
+            }
+        else:
+            clone_url = OFFICIAL_HOMEFREE_URL
+            if clone_url.startswith("git+"):
+                clone_url = clone_url[len("git+"):]
+            ok, err = PluginsService._git_clone_as_user(clone_url, target, pw)
+            if not ok:
+                return {
+                    "success": False,
+                    "message": f"Could not clone the official HomeFree repository: {err}",
+                    "errors": [err],
+                }
+            cloned = True
+
+        # Register + enable as the alternate base — rewrites flake.nix's
+        # managed regions, registers the git safe.directory, and applies the
+        # owner-rwX ACL on .git (exactly what a manually-entered path does).
+        result = PluginsService.set_base_override({
+            "enabled": True,
+            "type": "local",
+            "localUrl": str(target),
+        })
+        result["path"] = str(target)
+        result["cloned"] = cloned
+        if result.get("success"):
+            head = (
+                f"Cloned the official HomeFree repository to {target} and enabled it."
+                if cloned else
+                f"Enabled the existing HomeFree checkout at {target}."
+            )
+            result["message"] = head + " Click Apply to rebuild from it."
+        return result
+
+    @staticmethod
+    def _git_clone_as_user(clone_url: str, target: Path, pw) -> Tuple[bool, str]:
+        """`git clone <clone_url> <target>` AS the owning user (via runuser),
+        so the working tree is owned by them. The rebuild later runs as root
+        and writes into .git; set_base_override's owner-rwX ACL keeps the user
+        able to keep working in the checkout (docs/agent-notes/local-flake-acl.md).
+        admin-api runs as root, so runuser needs no password."""
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return False, str(e)
+        env = dict(os.environ)
+        env["HOME"] = pw.pw_dir
+        try:
+            proc = subprocess.run(
+                ["runuser", "-u", pw.pw_name, "--",
+                 "git", "clone", clone_url, str(target)],
+                capture_output=True, text=True, timeout=900, env=env,
+            )
+        except FileNotFoundError as e:
+            return False, f"runuser or git not on PATH: {e}"
+        except subprocess.TimeoutExpired:
+            return False, "git clone timed out after 15 minutes"
+        except Exception as e:
+            return False, str(e)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+        return True, ""
 
     @staticmethod
     def register_or_update(entry: Dict[str, Any]) -> Dict[str, Any]:
