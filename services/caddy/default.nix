@@ -222,13 +222,68 @@ in
     '';
   };
 
+  ## ── NZBGet Basic-Auth bridge ─────────────────────────────────────
+  ## Mirrors caddy-adguard-basic-auth: builds NZBGET_BASIC_AUTH=
+  ## base64(user:pass) into a runtime env-file Caddy interpolates via
+  ## {env.NZBGET_BASIC_AUTH} to inject HTTP Basic after the SSO gate, so
+  ## the SSO'd user never sees NZBGet's own login. NZBGet has no upstream
+  ## logout endpoint (HTTP Basic), so unlike the AdGuard bridge this one
+  ## does NOT need OAUTH2_PROXY_CLIENT_ID. Gated on the secret existing —
+  ## written empty pre-provisioning so {env...} interpolation never fails.
+  systemd.services.caddy-nzbget-basic-auth = lib.mkIf
+    (config.homefree.services.nzbget.enable or false) {
+    description = "Build Caddy runtime env (NZBGet Basic-Auth bridge)";
+    wantedBy = [ "caddy.service" ];
+    before = [ "caddy.service" ];
+    after = [ "podman-nzbget.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ coreutils ];
+    script = ''
+      mkdir -p /run/caddy-secrets
+      ENV_FILE=/run/caddy-secrets/nzbget-basic-auth.env
+      ADMIN_FILE=/var/lib/homefree-admin/admin-username
+      PASS_FILE=/var/lib/homefree-secrets/nzbget/control-password
+
+      : > "$ENV_FILE"
+
+      if [ -s "$PASS_FILE" ]; then
+        # Username mirrors NZBGet's ControlUsername (set from the same
+        # admin-username, falling back to `nzbget` pre-provisioning).
+        USERNAME=$(cat "$ADMIN_FILE" 2>/dev/null || true)
+        [ -n "$USERNAME" ] || USERNAME=nzbget
+        AUTH=$(printf '%s:%s' "$USERNAME" "$(cat "$PASS_FILE")" | base64 -w0)
+        printf 'NZBGET_BASIC_AUTH=%s\n' "$AUTH" >> "$ENV_FILE"
+      else
+        # Not yet provisioned — empty value so {env.NZBGET_BASIC_AUTH}
+        # interpolation doesn't fail and Caddy starts cleanly.
+        printf 'NZBGET_BASIC_AUTH=\n' >> "$ENV_FILE"
+      fi
+
+      chown root:caddy "$ENV_FILE"
+      chmod 640 "$ENV_FILE"
+      ## NOTE: do NOT `systemctl reload caddy` here — this unit is
+      ## `before = caddy.service`, so a reload-during-start is a
+      ## dependency cycle (systemd SIGTERMs this unit). Caddy reads
+      ## EnvironmentFile fresh on every (re)start; credential ROTATION
+      ## is handled by the NZBGet side (apps/nzbget preStartInit restarts
+      ## THIS unit, then reloads caddy).
+    '';
+  };
+
   systemd.services.caddy = {
     after = [ "dns-ready.service" ]
       ++ lib.optional (config.homefree.services.adguard.enable or false)
-           "caddy-adguard-basic-auth.service";
+           "caddy-adguard-basic-auth.service"
+      ++ lib.optional (config.homefree.services.nzbget.enable or false)
+           "caddy-nzbget-basic-auth.service";
     wants = [ "dns-ready.service" ]
       ++ lib.optional (config.homefree.services.adguard.enable or false)
-           "caddy-adguard-basic-auth.service";
+           "caddy-adguard-basic-auth.service"
+      ++ lib.optional (config.homefree.services.nzbget.enable or false)
+           "caddy-nzbget-basic-auth.service";
 
     ## NB: deliberately NO `requires = [ "dns-ready.service" ]`.
     ##
@@ -258,8 +313,19 @@ in
       ## Load AdGuard Basic-Auth credential when AdGuard is enabled.
       ## The leading `-` makes the env file optional — if the bridge
       ## service hasn't run yet, Caddy still starts.
-      (lib.mkIf (config.homefree.services.adguard.enable or false)
-        { EnvironmentFile = "-/run/caddy-secrets/adguard-basic-auth.env"; })
+      ## Basic-Auth bridges (AdGuard, NZBGet) — each contributes its
+      ## injected-credential env-file. A list so multiple can coexist
+      ## without a conflicting-definition merge error. The leading `-`
+      ## makes each optional so Caddy starts before the bridge has run.
+      (lib.mkIf
+        ((config.homefree.services.adguard.enable or false)
+          || (config.homefree.services.nzbget.enable or false))
+        { EnvironmentFile =
+            lib.optional (config.homefree.services.adguard.enable or false)
+              "-/run/caddy-secrets/adguard-basic-auth.env"
+            ++ lib.optional (config.homefree.services.nzbget.enable or false)
+              "-/run/caddy-secrets/nzbget-basic-auth.env";
+        })
 
       ## Graceful reload — drop the upstream NixOS module's `--force`.
       ##

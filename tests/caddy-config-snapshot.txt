@@ -3401,8 +3401,57 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nzbget.homefree.host/nzbget.homefree.host.crt"]})
 	redir @http_redirect_https https://nzbget.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
+	## SSO gate (reverse-proxy site). Request-time matchers peek
+	## at the sentinel + cert: pre-provisioning the gate is
+	## skipped, so the rendered config is correct from day one of
+	## a fresh install (no double rebuild). Post-provisioning every
+	## request runs through oauth2-proxy /oauth2/auth via
+	## forward_auth; on 401 handle_response converts it into a 302
+	## to /oauth2/start. See the static-path branch above for the
+	## full design rationale (same shape, same trade-offs, same
+	## security properties), including the dev-mode build-time
+	## bypass and the cert-existence requirement.
+	##
+	## The sentinel + cert checks live in ONE `expression` matcher
+	## (CEL ANDs them); the dav-bypass / sso-bypass-paths matchers
+	## stay as sibling matchers in the same named set (also AND-ed).
+	## We can't use two `file` matchers in one set — repeated
+	## matchers of a type conflict — hence the expression.
+	@sso_gate {
+		expression `file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.sso-provisioned"]})&& file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nzbget.homefree.host/nzbget.homefree.host.crt"]})`
+	}
+	## SSO gate — forward_auth to the active oauth2-proxy
+	## colour via the runtime blue/green snippet. See the
+	## static-path branch above for the rationale; @sso_gate
+	## is defined just above — keep that ordering.
+	import oauth2_proxy_forward_auth
+	## Second forward_auth: enforce homefree-admin role
+	## via admin-api. See the static-path branch above
+	## for the design rationale. admin_api_admin_check is
+	## the runtime snippet pointing at the active colour.
+	import admin_api_admin_check
+
 	handle {
 		reverse_proxy http://10.0.0.1:9024 {
+			header_up Host {host}
+			header_up X-Real-IP {remote}
+			# header_up X-Forwarded-For {remote}
+			# header_up X-Forwarded-Proto {scheme}
+			## Inject HTTP Basic Auth on every upstream request.
+			## The env var holds the base64-encoded credential
+			## (see module.nix:inject-basic-auth-env). Used for
+			## services with no OIDC support, where the upstream
+			## still wants a credential but the user already
+			## passed the SSO gate.
+			##
+			## Use `header_up >Authorization` (replace, with the
+			## `>` prefix) so an inbound Authorization header from
+			## the client is overwritten rather than appended to.
+			## Plain `header_up Authorization` *adds* a second
+			## Authorization header alongside any existing one,
+			## which most servers handle by reading the first
+			## (inbound) value and ignoring ours.
+			header_up >Authorization "Basic {env.NZBGET_BASIC_AUTH}"
 		}
 	}
 }

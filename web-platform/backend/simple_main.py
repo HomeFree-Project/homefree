@@ -1403,6 +1403,11 @@ AI_PROJECTS_DIR = "/var/lib/homefree-ai-podman/data/projects"
 # Dashboard group the user's own AI-built apps are pinned into (the
 # frontend sorts this category first). Keep in sync with user-app.js.
 AI_APPS_CATEGORY = "My Apps"
+# Dashboard group for dynamic-app tiles owned by someone OTHER than the
+# caller (e.g. a housemate's household-shared app). The viewer is only
+# known here at request time, so this regrouping happens server-side.
+# Keep in sync with user-app.js.
+SHARED_APPS_CATEGORY = "Shared Apps"
 
 
 def _ai_built_service_labels() -> set:
@@ -1451,7 +1456,7 @@ def _dynamic_app_tiles(sources, me: str) -> list:
     never fatal.
 
     Per-entry schema (all keys optional except `url`):
-        {label, name, project_name, url, icon, category, description,
+        {label, name, project_name, url, icon, category, description, owner,
          access: "sso"|"public"|"lan",
          visibility: {mode: "public"|"authenticated"|"owner", owner: str}}
 
@@ -1461,6 +1466,13 @@ def _dynamic_app_tiles(sources, me: str) -> list:
       - owner         -> shown only when the caller == visibility.owner
     Unknown modes fail closed (hidden). `me` is the caller's username
     (request.state.auth_user); empty hides everything non-public.
+
+    `owner` (the creating user) is the generic grouping signal: a tile
+    whose owner is set and is NOT the caller is regrouped into
+    SHARED_APPS_CATEGORY and, if it carries no description of its own,
+    labelled "Shared by <owner>". This is viewer-relative, so it can only
+    be decided here (the plugin that writes the tile file cannot know who
+    is viewing). Tiles with no owner are untouched.
     """
     import json
     from urllib.parse import urlparse
@@ -1495,6 +1507,15 @@ def _dynamic_app_tiles(sources, me: str) -> list:
                 host = urlparse(url).hostname or ""
             except Exception:
                 host = ""
+            # Regroup apps owned by someone other than the caller into the
+            # shared section, labelled with who shared them (see docstring).
+            owner = (e.get("owner") or "").strip()
+            category = e.get("category") or ""
+            description = e.get("description") or ""
+            if owner and me and owner != me:
+                category = SHARED_APPS_CATEGORY
+                if not description:
+                    description = f"Shared by {owner}"
             tiles.append({
                 "label": e.get("label") or url,
                 "name": e.get("name") or e.get("label") or host,
@@ -1502,8 +1523,9 @@ def _dynamic_app_tiles(sources, me: str) -> list:
                 "url": url,
                 "icon": e.get("icon"),
                 "access": e.get("access") or "sso",
-                "category": e.get("category") or "",
-                "description": e.get("description") or "",
+                "category": category,
+                "description": description,
+                "owner": owner,
                 "host": host,
                 "hidden": bool(e.get("hidden", False)),
             })

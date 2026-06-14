@@ -53,6 +53,9 @@ const MODULES = [
 // groups in between. An unknown category sorts after the known ones
 // (alphabetically) but before the uncategorised catch-all.
 const AI_CATEGORY = 'My Apps';
+// Housemates' apps shared with the viewer — pinned immediately after the
+// user's own "My Apps" (kept in sync with simple_main.py SHARED_APPS_CATEGORY).
+const SHARED_CATEGORY = 'Shared Apps';
 const UNCATEGORIZED = 'Misc';
 const CATEGORY_ORDER = [
   'Media',
@@ -69,6 +72,7 @@ const CATEGORY_ORDER = [
 
 function categoryRank(cat) {
   if (cat === AI_CATEGORY) return -1;
+  if (cat === SHARED_CATEGORY) return -0.5;  // just after My Apps, before the known set
   if (!cat || cat === UNCATEGORIZED) return 1000;
   const i = CATEGORY_ORDER.indexOf(cat);
   return i === -1 ? 500 : i;

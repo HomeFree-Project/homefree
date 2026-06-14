@@ -217,6 +217,7 @@
         "FORGEJO__security__SECRET_KEY__FILE": "/run/secrets/forgejo/secret-key",
         "FORGEJO__server__DOMAIN": "git.homefree.host",
         "FORGEJO__server__HTTP_PORT": "9007",
+        "FORGEJO__server__LANDING_PAGE": "explore",
         "FORGEJO__server__MINIMUM_KEY_SIZE_CHECK": "false",
         "FORGEJO__server__ROOT_URL": "https://git.homefree.host",
         "FORGEJO__server__SSH_DOMAIN": "git.homefree.host",
@@ -1001,7 +1002,9 @@
         "PUID": "1000",
         "TZ": "Etc/UTC"
       },
-      "environmentFiles": [],
+      "environmentFiles": [
+        "/var/lib/nzbget/credentials.env"
+      ],
       "extraOptions": [],
       "image": "lscr.io/linuxserver/nzbget:version-v26.1",
       "imageFile": null,
@@ -2817,6 +2820,19 @@
           "enum-values": null,
           "nullable": false,
           "path": "disable-registration",
+          "required": false,
+          "sops-managed": false,
+          "submodule-fields": null,
+          "type": "bool",
+          "ui-hint": null
+        },
+        {
+          "category": "basic",
+          "default": false,
+          "description": "Show Forgejo's landing page; when off, the root redirects to the repository explore list",
+          "enum-values": null,
+          "nullable": false,
+          "path": "landing-page",
           "required": false,
           "sops-managed": false,
           "submodule-fields": null,
@@ -6083,11 +6099,11 @@
         "https-domains": [
           "homefree.host"
         ],
-        "inject-basic-auth-env": null,
-        "oauth2": false,
+        "inject-basic-auth-env": "NZBGET_BASIC_AUTH",
+        "oauth2": true,
         "port": 9024,
         "public": false,
-        "require-admin-role": false,
+        "require-admin-role": true,
         "rootDomain": false,
         "ssl": false,
         "ssl-no-verify": false,
@@ -6103,8 +6119,8 @@
         "upstream-snippet": null
       },
       "sso": {
-        "applicable": false,
-        "kind": "none",
+        "applicable": true,
+        "kind": "basic_auth",
         "notes": "",
         "secrets-dir": null
       },
@@ -8315,6 +8331,7 @@
         "https://notes.homefree.host/",
         "https://trilium.homefree.host/",
         "https://screeenly.homefree.host/",
+        "https://nzbget.homefree.host/",
         "https://nomad.homefree.host/",
         "https://kiwix.homefree.host/",
         "https://kolibri.homefree.host/",

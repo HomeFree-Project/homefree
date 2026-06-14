@@ -240,6 +240,12 @@ let
       default = false;
       description = "Open to public on WAN port";
     };
+
+    landing-page = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Show Forgejo's landing page; when off, the root redirects to the repository explore list";
+    };
   };
 in
 {
@@ -389,6 +395,13 @@ in
         ## External port
         FORGEJO__server__SSH_PORT = toString ssh-port;
         FORGEJO__server__ROOT_URL = "https://git.${config.homefree.system.domain}";
+
+        ## When the landing-page toggle is off (default), redirect the
+        ## root URL to the repository explore list instead of Forgejo's
+        ## default advertisement home page. Valid LANDING_PAGE values:
+        ## home | explore | organizations | login | <url>.
+        FORGEJO__server__LANDING_PAGE =
+          if config.homefree.service-options.forgejo.landing-page then "home" else "explore";
 
         ## app.ini service config
         ##
@@ -585,6 +598,12 @@ in
           type = "bool";
           default = true;
           description = "Disable user registration";
+        }
+        {
+          path = "landing-page";
+          type = "bool";
+          default = false;
+          description = "Show Forgejo's landing page; when off, the root redirects to the repository explore list";
         }
       ];
     }

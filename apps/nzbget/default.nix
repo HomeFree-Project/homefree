@@ -7,6 +7,13 @@ let
   downloadsPath = if config.homefree.service-options.nzbget.downloads-path != null
     then config.homefree.service-options.nzbget.downloads-path
     else "${containerDataPath}/downloads";
+  credentialsEnvFile = "${containerDataPath}/credentials.env";
+
+  ## Anchors auto-generated secrets into encrypted /etc/nixos/secrets
+  ## so they survive a restore — see lib/secrets-anchor.nix.
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+  nzbgetSecretsDir = "/var/lib/homefree-secrets/nzbget";
+
   preStart = ''
     mkdir -p ${configPath}
     mkdir -p ${downloadsPath}
@@ -107,9 +114,51 @@ in
       TZ = config.homefree.system.timeZone;
     };
 
+    ## NZBGET_USER/NZBGET_PASS (-> ControlUsername/ControlPassword in the
+    ## LinuxServer image's init) are carried in a runtime env-file that
+    ## preStartInit generates from the anchored control-password — keeps
+    ## the cleartext out of the world-readable Nix store. Mirrors the
+    ## snipe-it runtime.env pattern.
+    environmentFiles = [ credentialsEnvFile ];
+
     preStartInit = ''
       mkdir -p ${configPath}
       mkdir -p ${downloadsPath}
+      mkdir -p ${nzbgetSecretsDir}
+      chmod 700 ${nzbgetSecretsDir}
+
+      ${anchor.preamble}
+
+      ## Per-install NZBGet control password, anchored into encrypted
+      ## /etc/nixos/secrets so it survives a restore (replaces the
+      ## LinuxServer image's well-known default 'tegbzn6789'). Caddy
+      ## injects this as HTTP Basic after the SSO gate so the user never
+      ## sees NZBGet's own login (see services/caddy).
+      ${anchor.anchorSecret {
+        service = "nzbget";
+        key = "control-password";
+        dir = nzbgetSecretsDir;
+        mkdirMode = null;
+        mode = "400";
+        generate = "${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\\n'";
+      }}
+
+      ## Runtime env-file the container reads (NZBGET_USER/NZBGET_PASS).
+      ## Username matches the operator's admin login for emergency
+      ## direct-LAN access; falls back to 'nzbget' pre-provisioning.
+      NZBGET_CTRL_USER=$(cat /var/lib/homefree-admin/admin-username 2>/dev/null || true)
+      [ -n "$NZBGET_CTRL_USER" ] || NZBGET_CTRL_USER=nzbget
+      install -m 600 /dev/null ${credentialsEnvFile}
+      {
+        printf 'NZBGET_USER=%s\n' "$NZBGET_CTRL_USER"
+        printf 'NZBGET_PASS=%s\n' "$(cat ${nzbgetSecretsDir}/control-password)"
+      } > ${credentialsEnvFile}
+
+      ## Refresh Caddy's Basic-Auth bridge so the injected header tracks
+      ## the current credential, then reload Caddy. --no-block + no-op
+      ## guards keep this safe pre-boot / when Caddy isn't up yet.
+      systemctl restart --no-block caddy-nzbget-basic-auth.service 2>/dev/null || true
+      systemctl reload --no-block caddy.service 2>/dev/null || true
     '';
   };
 
@@ -129,14 +178,14 @@ in
         update-command = nzbgetUpdater;
       };
       sso = {
-        kind = "none";
-        applicable = false;
-        ## Dev context (intentionally not surfaced in the admin UI):
-        ## NZBGet exposes its JSON-RPC API on the same host:port as the
-        ## UI, authenticated with HTTP Basic only. *arr-stack services
-        ## and external scripts talk to that API directly — a site-wide
-        ## SSO gate would break every integration. Use NZBGet's
-        ## built-in auth.
+        kind = "basic_auth";
+        ## NZBGet has no native OIDC. Caddy's SSO gate (admin-only)
+        ## validates the user, then injects NZBGet's managed Basic
+        ## credential so the user never sees NZBGet's own login — same
+        ## model as AdGuard. The JSON-RPC API shares the UI's host:port,
+        ## so the whole vhost is gated; non-browser API clients
+        ## (Sonarr/Radarr/scripts) reach NZBGet via the direct LAN
+        ## IP:port, which bypasses Caddy entirely.
       };
       systemd-service-names = [
         "podman-nzbget"
@@ -149,10 +198,20 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.nzbget.public;
-        ## NOTE: NZBGet is intentionally NOT SSO-gated yet. UI and
-        ## API share a host; gating would 302 API calls (used by
-        ## Sonarr/Radarr) into the SSO flow. Same Phase-A treatment
-        ## needed as Lidarr: split API onto its own subdomain.
+        ## Gate the whole vhost at the Caddy layer via oauth2-proxy
+        ## (NZBGet has no native OIDC). Per-service opt-out via
+        ## homefree.sso.per-service.nzbget.enable=false.
+        oauth2 = config.homefree.sso.per-service.nzbget.enable or true;
+        ## NZBGet is an admin tool (downloader config, queue control).
+        ## Restrict to users carrying the homefree-admin role; non-admin
+        ## authenticated users hit a 403 at the Caddy gate.
+        require-admin-role = true;
+        ## After SSO succeeds, inject NZBGet's managed control credential
+        ## as HTTP Basic so the user never sees NZBGet's local login. The
+        ## env var is populated by caddy-nzbget-basic-auth.service
+        ## (services/caddy) from
+        ## /var/lib/homefree-secrets/nzbget/control-password.
+        inject-basic-auth-env = "NZBGET_BASIC_AUTH";
       };
       backup = lib.optionalAttrs config.homefree.service-options.nzbget.enable-backup-media {
         paths = [

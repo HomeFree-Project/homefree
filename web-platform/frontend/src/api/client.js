@@ -431,8 +431,14 @@ export const getPluginFlakes = () => get('/api/plugins/flakes');
 export const savePluginFlake = (entry) => post('/api/plugins/flakes', entry);
 export const deletePluginFlake = (id) =>
   fetchAPI(`/api/plugins/flakes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+// Deep-probe a candidate flake (reachable? exposes nixosModules.<attr>?).
+// The backend shells out to `nix flake metadata`/`show`, which on a cold
+// cache can take a minute or two. No client-side ceiling (timeoutMs: 0) —
+// the backend enforces a hard per-command timeout, so the request always
+// returns within a bounded time; an 8s default would abort it mid-probe
+// and the result would never render.
 export const validatePluginFlake = (probe) =>
-  post('/api/plugins/flakes/validate', probe);
+  post('/api/plugins/flakes/validate', probe, { timeoutMs: 0 });
 // Probe a registered remote flake's upstream and compare to the rev pinned
 // in flake.lock. Read-only; nothing is written. Local flakes auto-refresh
 // on every Apply, so the UI hides these for them.
@@ -463,8 +469,11 @@ export const updateDeveloperFlake = updatePluginFlake;
 // /etc/nixos/flake.nix; the user then clicks Apply.
 export const getHomefreeBase = () => get('/api/developers/homefree-base');
 export const saveHomefreeBase = (entry) => post('/api/developers/homefree-base', entry);
+// Same deep `nix flake metadata`/`show` probe as validatePluginFlake — no
+// client-side ceiling (timeoutMs: 0) so a slow cold-cache probe isn't
+// aborted before the backend's hard per-command timeout returns a result.
 export const validateHomefreeBase = (probe) =>
-  post('/api/developers/homefree-base/validate', probe);
+  post('/api/developers/homefree-base/validate', probe, { timeoutMs: 0 });
 // Runs `nix flake update` in the local alternate-base checkout to bump its
 // flake.lock inputs. Requires an enabled local base; returns
 // { success, updated: [...], output }. No client-side ceiling

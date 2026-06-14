@@ -518,9 +518,33 @@ class PluginsModule extends LitElement {
       font-weight: 600;
     }
     .hf-modal-body {
-      flex: 1;
+      /* basis auto so the body's content contributes to the modal's
+         intrinsic height (lets the edit modal grow to fit, below);
+         min-height: 0 lets it shrink under its content and scroll once
+         the modal hits its height cap. */
+      flex: 1 1 auto;
+      min-height: 0;
       overflow-y: auto;
       padding: 18px;
+      /* Make the scroll affordance visible: OS overlay scrollbars stay
+         hidden until you interact with them, which made a validate
+         notice below the fold look unreachable. Mirrors the logs panel. */
+      scrollbar-width: thin;
+      scrollbar-color: var(--hf-accent) var(--hf-surface-2);
+    }
+    .hf-modal-body::-webkit-scrollbar {
+      width: 8px;
+    }
+    .hf-modal-body::-webkit-scrollbar-track {
+      background: var(--hf-surface-2);
+      border-radius: 4px;
+    }
+    .hf-modal-body::-webkit-scrollbar-thumb {
+      background: var(--hf-accent);
+      border-radius: 4px;
+    }
+    .hf-modal-body::-webkit-scrollbar-thumb:hover {
+      background: var(--hf-accent-hover);
     }
     .hf-modal-body .directory-grid { margin-bottom: 0; }
     .hf-modal-footer {
@@ -556,9 +580,15 @@ class PluginsModule extends LitElement {
       gap: 8px;
       color: var(--hf-text);
     }
-    /* The edit modal sizes a little smaller than the store — the
-       form rarely needs 700px of vertical space. */
-    .hf-modal-form { height: min(620px, 100%); }
+    /* The edit modal grows to fit its form content rather than using a
+       fixed height, but never taller than the viewport (the backdrop's
+       16px padding leaves a small margin). Once the content exceeds that
+       cap the body scrolls with the header/footer pinned — see
+       .hf-modal-body above. */
+    .hf-modal-form {
+      height: auto;
+      max-height: 100%;
+    }
 
     /* Installed-plugins header: title + Add Custom Plugin + Plugin
        Store buttons. The button group can wrap to its own row on
