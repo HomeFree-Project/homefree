@@ -638,7 +638,7 @@ http://azuracast.homefree.lan, http://azuracast.lan, https://azuracast.homefree.
 	redir @http_redirect_https https://azuracast.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9003 {
+		reverse_proxy http://10.0.0.1:9005 {
 		}
 	}
 }
@@ -756,7 +756,7 @@ http://baikal.homefree.lan, http://baikal.lan, https://baikal.homefree.host {
 	import oauth2_proxy_forward_auth
 
 	handle {
-		reverse_proxy http://10.0.0.1:9005 {
+		reverse_proxy http://10.0.0.1:9007 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -841,7 +841,7 @@ http://canary.homefree.lan, http://canary.lan, https://canary.homefree.host {
 	redir @http_redirect_https https://canary.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9004 {
+		reverse_proxy http://10.0.0.1:9006 {
 		}
 	}
 }
@@ -1147,7 +1147,7 @@ http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, htt
 	redir @http_redirect_https https://docs.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9006 {
+		reverse_proxy http://10.0.0.1:9012 {
 		}
 	}
 }
@@ -1338,7 +1338,7 @@ http://freshrss.homefree.lan, http://freshrss.lan, https://freshrss.homefree.hos
 	redir @http_redirect_https https://freshrss.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9008 {
+		reverse_proxy http://10.0.0.1:9016 {
 		}
 	}
 }
@@ -1419,7 +1419,7 @@ http://git.homefree.lan, http://git.lan, http://forgejo.homefree.lan, http://for
 	redir @http_redirect_https https://git.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9007 {
+		reverse_proxy http://10.0.0.1:9015 {
 		}
 	}
 	## Top-level `redir` (NOT wrapped in handle/route). The
@@ -1517,7 +1517,7 @@ http://grocy.homefree.lan, http://grocy.lan, https://grocy.homefree.host {
 	redir @http_redirect_https https://grocy.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9010 {
+		reverse_proxy http://10.0.0.1:9019 {
 		}
 	}
 }
@@ -1909,7 +1909,7 @@ http://homebox.homefree.lan, http://homebox.lan, https://homebox.homefree.host {
 	redir @http_redirect_https https://homebox.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9013 {
+		reverse_proxy http://10.0.0.1:9022 {
 		}
 	}
 }
@@ -1990,7 +1990,7 @@ http://joplin.homefree.lan, http://joplin.lan, https://joplin.homefree.host {
 	redir @http_redirect_https https://joplin.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9014 {
+		reverse_proxy http://10.0.0.1:9026 {
 		}
 	}
 }
@@ -2291,7 +2291,7 @@ http://lidarr.homefree.lan, http://lidarr.lan, https://lidarr.homefree.host {
 	redir @http_redirect_https https://lidarr.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9016 {
+		reverse_proxy http://10.0.0.1:9029 {
 		}
 	}
 }
@@ -2372,7 +2372,7 @@ http://links.homefree.lan, http://links.lan, http://linkwarden.homefree.lan, htt
 	redir @http_redirect_https https://links.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9017 {
+		reverse_proxy http://10.0.0.1:9030 {
 		}
 	}
 	@nextauth_callback path /api/auth/*
@@ -2627,7 +2627,7 @@ http://matrix.homefree.lan, http://matrix.lan, https://matrix.homefree.host {
 	redir @http_redirect_https https://matrix.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9019 {
+		reverse_proxy http://10.0.0.1:9058 {
 		}
 	}
 	# Matrix Synapse settings: respond to .well-known/matrix/server
@@ -2636,9 +2636,9 @@ http://matrix.homefree.lan, http://matrix.lan, https://matrix.homefree.host {
 	# domain when migrating an existing homeserver (see the
 	# serverName comment above).
 	respond /.well-known/matrix/server `{"m.server": "matrix.homefree.host:443"}`
-	reverse_proxy /_matrix/* 10.0.0.1:9019
-	reverse_proxy /_synapse/client/* 10.0.0.1:9019
-	reverse_proxy /_synapse/admin/* 10.0.0.1:9019
+	reverse_proxy /_matrix/* 10.0.0.1:9058
+	reverse_proxy /_synapse/client/* 10.0.0.1:9058
+	reverse_proxy /_synapse/admin/* 10.0.0.1:9058
 }
 
 http://media.homefree.lan, http://media.lan, http://video.homefree.lan, http://video.lan, http://jellyfin.homefree.lan, http://jellyfin.lan, https://media.homefree.host, https://video.homefree.host, https://jellyfin.homefree.host {
@@ -2891,7 +2891,7 @@ http://nextcloud.homefree.lan, http://nextcloud.lan, https://nextcloud.homefree.
 	redir @http_redirect_https https://nextcloud.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9022 {
+		reverse_proxy http://10.0.0.1:9039 {
 		}
 	}
 	# Nextcloud specific headers
@@ -3065,7 +3065,7 @@ http://nomad.homefree.lan, http://nomad.lan, https://nomad.homefree.host {
 	import oauth2_proxy_forward_auth
 
 	handle {
-		reverse_proxy http://10.0.0.1:9023 {
+		reverse_proxy http://10.0.0.1:9040 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -3175,7 +3175,7 @@ http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http:/
 	import oauth2_proxy_forward_auth
 
 	handle {
-		reverse_proxy http://10.0.0.1:9033 {
+		reverse_proxy http://10.0.0.1:9053 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -3317,7 +3317,7 @@ http://nvr.homefree.lan, http://nvr.lan, http://frigate.homefree.lan, http://fri
 	}
 	redir @upstream_logout https://auth.homefree.host/oauth2/sign_out?rd=https%3A%2F%2Fsso.homefree.host%2Foidc%2Fv1%2Fend_session%3Fclient_id%3D{env.OAUTH2_PROXY_CLIENT_ID}%26post_logout_redirect_uri%3Dhttps%253A%252F%252F{host}%252F 302
 	handle {
-		reverse_proxy http://10.0.0.1:9009 {
+		reverse_proxy http://10.0.0.1:9017 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -3432,7 +3432,7 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 	import admin_api_admin_check
 
 	handle {
-		reverse_proxy http://10.0.0.1:9024 {
+		reverse_proxy http://10.0.0.1:9042 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -3532,7 +3532,7 @@ http://odoo.homefree.lan, http://odoo.lan, http://erp.homefree.lan, http://erp.l
 	redir @http_redirect_https https://odoo.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9026 {
+		reverse_proxy http://10.0.0.1:9044 {
 		}
 	}
 }
@@ -3613,7 +3613,7 @@ http://ollama.homefree.lan, http://ollama.lan, https://ollama.homefree.host {
 	redir @http_redirect_https https://ollama.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9027 {
+		reverse_proxy http://10.0.0.1:9045 {
 		}
 	}
 }
@@ -4061,7 +4061,7 @@ http://radicle.homefree.lan, http://radicle.lan, http://rad.homefree.lan, http:/
 	## reverse-proxy those to radicle-httpd.
 	@rad_api path /api/*
 	handle @rad_api {
-		reverse_proxy http://10.0.0.1:9030
+		reverse_proxy http://10.0.0.1:9049
 	}
 
 	## SPA fallback. radicle-explorer is a client-side-routed
@@ -4194,7 +4194,7 @@ http://screeenly.homefree.lan, http://screeenly.lan, https://screeenly.homefree.
 	import admin_api_admin_check
 
 	handle {
-		reverse_proxy http://10.0.0.1:9031 {
+		reverse_proxy http://10.0.0.1:9051 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -4279,7 +4279,7 @@ http://snipeit.homefree.lan, http://snipeit.lan, https://snipeit.homefree.host {
 	redir @http_redirect_https https://snipeit.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9032 {
+		reverse_proxy http://10.0.0.1:9052 {
 		}
 	}
 }
@@ -4529,7 +4529,7 @@ http://vaultwarden.homefree.lan, http://vaultwarden.lan, https://vaultwarden.hom
 	redir @http_redirect_https https://vaultwarden.homefree.host{uri} 301
 	bind 10.0.0.1 fd01::1
 	handle {
-		reverse_proxy http://10.0.0.1:9034 {
+		reverse_proxy http://10.0.0.1:9054 {
 		}
 	}
 }
@@ -4698,11 +4698,11 @@ http://vpn.homefree.lan, http://vpn.lan, http://headscale.homefree.lan, http://h
 	}
 
 	handle /admin* {
-		## Headplane binds on 127.0.0.1:9011
+		## Headplane binds on 127.0.0.1:9020
 		## (port comes from the central allocator so it can shift
 		## between rebuilds — must not be hardcoded). Reach it via
 		## loopback rather than 10.0.0.1 where it doesn't listen.
-		reverse_proxy http://127.0.0.1:9011
+		reverse_proxy http://127.0.0.1:9020
 	}
 
 	## Land users at the Headplane admin UI when they visit

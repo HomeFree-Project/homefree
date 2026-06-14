@@ -791,6 +791,84 @@ rm -f /run/homebox/ctr-id
 #!/nix/store/bash-5.3p9/bin/bash
 mkdir -p /var/lib/homebox-podman
 install -m 600 /dev/null /var/lib/homebox-podman/sso.env
+set -eu
+_ANCHOR_SOPS=/nix/store/sops-3.13.1/bin/sops
+_ANCHOR_SSH_TO_AGE=/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age
+_ANCHOR_SECRETS_FILE=/etc/nixos/secrets/secrets.yaml
+_ANCHOR_SOPS_CONFIG=/etc/nixos/.sops.yaml
+_ANCHOR_HOST_KEY=/etc/ssh/ssh_host_ed25519_key
+_ANCHOR_LOCK=/etc/nixos/secrets/secrets.yaml.anchor-lock
+_anchor_locked() {
+mkdir -p "$(dirname "$_ANCHOR_LOCK")"
+chmod 700 "$(dirname "$_ANCHOR_LOCK")"
+( /nix/store/util-linux-2.42-bin/bin/flock 9
+"$@"
+) 9>"$_ANCHOR_LOCK"
+}
+_anchor_export_age_key() {
+SOPS_AGE_KEY=$(/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -private-key \
+-i "$_ANCHOR_HOST_KEY")
+export SOPS_AGE_KEY
+}
+_anchor_system_recipient() {
+/nix/store/ssh-to-age-1.2.0/bin/ssh-to-age -i "$_ANCHOR_HOST_KEY.pub"
+}
+_anchor_get() {
+[ -s "$_ANCHOR_SECRETS_FILE" ] || return 1
+_anchor_export_age_key
+$_ANCHOR_SOPS --decrypt --extract "[\"$1\"]" \
+"$_ANCHOR_SECRETS_FILE" 2>/dev/null
+}
+_anchor_set() {
+_anchor_export_age_key
+local _val
+_val=$(cat "$2")
+if [ ! -s "$_ANCHOR_SECRETS_FILE" ]; then
+mkdir -p "$(dirname "$_ANCHOR_SECRETS_FILE")"
+chmod 700 "$(dirname "$_ANCHOR_SECRETS_FILE")"
+local _rcpt
+_rcpt=$(_anchor_system_recipient)
+printf '{}' > "$_ANCHOR_SECRETS_FILE.plain"
+$_ANCHOR_SOPS --age "$_rcpt" --encrypt \
+--input-type yaml --output-type yaml \
+--output "$_ANCHOR_SECRETS_FILE" "$_ANCHOR_SECRETS_FILE.plain"
+rm -f "$_ANCHOR_SECRETS_FILE.plain"
+fi
+local _path _json
+_path=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg k "$1" '[$k]')
+_json=$(/nix/store/jq-1.8.1-bin/bin/jq -nc --arg v "$_val" '$v')
+$_ANCHOR_SOPS --set "$_path $_json" "$_ANCHOR_SECRETS_FILE"
+}
+mkdir -p /var/lib/homefree-secrets/homebox
+chmod 700 /var/lib/homefree-secrets/homebox
+ANCHOR_SECRET_FILE=/var/lib/homefree-secrets/homebox/api-key-pepper
+ANCHOR_SECRET_FRESH=0
+_anchor_section_homebox_api_key_pepper() {
+_anchor_tmp=$(mktemp)
+_anchor_fresh_marker="$1"
+if _anchor_get "homebox/api-key-pepper" > "$_anchor_tmp" 2>/dev/null \
+&& [ -s "$_anchor_tmp" ]; then
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/homebox/api-key-pepper"
+elif [ -s "/var/lib/homefree-secrets/homebox/api-key-pepper" ]; then
+_anchor_set "homebox/api-key-pepper" "/var/lib/homefree-secrets/homebox/api-key-pepper"
+chmod 600 "/var/lib/homefree-secrets/homebox/api-key-pepper"
+else
+printf '%s' "$( /nix/store/openssl-3.6.2-bin/bin/openssl rand -base64 48 )" > "$_anchor_tmp"
+_anchor_set "homebox/api-key-pepper" "$_anchor_tmp"
+install -m 600 "$_anchor_tmp" "/var/lib/homefree-secrets/homebox/api-key-pepper"
+printf 1 > "$_anchor_fresh_marker"
+fi
+rm -f "$_anchor_tmp"
+chmod 600 "/var/lib/homefree-secrets/homebox/api-key-pepper"
+}
+_anchor_fresh_marker=$(mktemp)
+_anchor_locked _anchor_section_homebox_api_key_pepper \
+"$_anchor_fresh_marker"
+[ -s "$_anchor_fresh_marker" ] && ANCHOR_SECRET_FRESH=1
+rm -f "$_anchor_fresh_marker"
+if [ "$ANCHOR_SECRET_FRESH" = "1" ]; then
+:
+fi
 if [ ! -f /var/lib/homebox-podman/.chowned-807 ]; then
 chown -R 807:807 /var/lib/homebox-podman
 touch /var/lib/homebox-podman/.chowned-807
@@ -803,11 +881,13 @@ cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
 fi
 } > /var/lib/homebox-podman/ca-bundle.crt
 chmod 644 /var/lib/homebox-podman/ca-bundle.crt
+PEPPER=$(cat /var/lib/homefree-secrets/homebox/api-key-pepper)
 if [ -s /var/lib/homefree-secrets/homebox/oidc-client-id ] \
 && [ -s /var/lib/homefree-secrets/homebox/oidc-client-secret ]; then
 CID=$(cat /var/lib/homefree-secrets/homebox/oidc-client-id)
 CSEC=$(cat /var/lib/homefree-secrets/homebox/oidc-client-secret)
 {
+echo "HBOX_AUTH_API_KEY_PEPPER=$PEPPER"
 echo "HBOX_OIDC_ENABLED=true"
 echo "HBOX_OIDC_CLIENT_ID=$CID"
 echo "HBOX_OIDC_CLIENT_SECRET=$CSEC"
@@ -820,7 +900,7 @@ echo "HBOX_OIDC_EMAIL_CLAIM=email"
 echo "HBOX_OPTIONS_ALLOW_LOCAL_LOGIN=false"
 } > /var/lib/homebox-podman/sso.env
 else
-: > /var/lib/homebox-podman/sso.env
+printf 'HBOX_AUTH_API_KEY_PEPPER=%s\n' "$PEPPER" > /var/lib/homebox-podman/sso.env
 fi
 chmod 600 /var/lib/homebox-podman/sso.env
 

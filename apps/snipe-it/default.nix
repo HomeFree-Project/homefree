@@ -45,7 +45,7 @@ let
     then userSuppliedMysqlPassword
     else "${secretsDir}/mysql-password";
 
-  version = "v8.6.1";
+  version = "v8.6.2";
 
   port = config.homefree.allocPort "snipe-it";
 in

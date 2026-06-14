@@ -53,8 +53,14 @@ let
     client = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
-        description = "Run the NetBird client on this host (router as peer). Independent of server.";
+        default = true;
+        description = ''
+          Make this box the LAN routing peer when NetBird is enabled, and
+          auto-provision remote network access for it. Defaults on so
+          enabling NetBird "just works" for remote access; set false to run
+          the server only (no local routing peer). Has no effect unless the
+          NetBird server (enable) is on.
+        '';
       };
     };
   };
@@ -68,9 +74,9 @@ let
   ## Image tags. Pin all of these together — NetBird ships breaking
   ## changes in the management.json schema across minor versions, so
   ## bumping these should be a deliberate, coordinated update.
-  managementTag = "0.72.3";
-  signalTag = "0.72.3";
-  relayTag = "0.72.3";
+  managementTag = "0.72.4";
+  signalTag = "0.72.4";
+  relayTag = "0.72.4";
   dashboardTag = "v2.39.0";
   coturnTag = "4.12.0";
 
@@ -106,7 +112,10 @@ let
     && builtins.pathExists "${secretsDir}/mgmt-machine-token"
     && builtins.pathExists "${secretsDir}/data-store-encryption-key";
   deployServer = enabled && oidcConfigured;
-  deployClient = netbirdCfg.client.enable;
+  ## Routing-peer + auto-provisioning are gated on the server being enabled
+  ## too — `client.enable` defaults true, so without this gate every box
+  ## (even with NetBird off) would start the netbird client daemon.
+  deployClient = enabled && netbirdCfg.client.enable;
 
   ## Synthesize /var/lib/netbird/management.json at preStart by sed-ing
   ## the four placeholders against the on-disk secrets. Also generate
@@ -275,14 +284,16 @@ in
     client = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
+        default = true;
         description = ''
-          Run the NetBird client on this host (router as gateway).
-          Independent of the server.enable flag — you can run server-only,
-          client-only, or both. Note that running both this and the
-          tailscale client (services.tailscale, used by headscale) on the
-          same router will install two sets of netfilter rules; do not
-          enable simultaneously without testing.
+          Make this box the LAN routing peer and auto-provision remote
+          network access (the "Networks" model: a network + subnet resource
+          + routing-peer router + access policy + LAN nameserver group),
+          replacing the dashboard onboarding wizard. Defaults on with the
+          NetBird server; set false to run the server only. Gated on the
+          server being enabled. Note: running both this and the tailscale
+          client (services.tailscale, used by headscale) on the same router
+          installs two sets of netfilter rules — test before enabling both.
         '';
       };
     };
@@ -589,111 +600,270 @@ in
     };
 
 
-    ## ── NetBird router-as-peer bootstrap (declarative) ────────────────
-    ## NetBird's REST API only accepts Zitadel-issued JWTs whose `aud`
-    ## claim includes the netbird OIDC client_id. We can't get such a
-    ## token for a machine user — Zitadel's `client_credentials` /
-    ## JWT-profile flows produce tokens with aud=[project_id, machine
-    ## -user-name], never the netbird app's client_id.
+    ## ── NetBird remote-network-access provisioning (REST) ─────────────
+    ## Replaces the dashboard onboarding wizard: idempotently provisions the
+    ## "Networks" model (a network + LAN subnet resource + routing-peer
+    ## router + access policy), a reusable setup-key, and a LAN nameserver
+    ## group, then connects this box as the routing peer — all via the
+    ## NetBird REST API.
     ##
-    ## So we bootstrap via SQL surgery on netbird's own sqlite store
-    ## instead. NetBird's SetupKey row layout:
-    ##   key        = base64(sha256(plaintext_key))
-    ##   key_secret = first5chars + "****"     (HiddenKey display preview)
-    ## We generate a UUID-shaped plaintext key, hash + insert it, then
-    ## write the plaintext to /var/lib/homefree-secrets/netbird/setup-
-    ## key for `netbird up`. Idempotent: re-inserts only if the named
-    ## key is absent. We pick up the existing account_id from the
-    ## accounts table; netbird's "single account mode" guarantees
-    ## exactly one row.
+    ## Credential: the REST API accepts a PAT (`Authorization: Token`) or a
+    ## Zitadel JWT whose `aud` is the netbird client_id. We can't mint such
+    ## a JWT for a machine user, and NetBird's `/api/setup` (the only
+    ## no-login PAT bootstrap) requires NetBird's *embedded* IDP — which is
+    ## incompatible with our external Zitadel IDP and the SSO-only rule. So
+    ## we mint a PAT the one way that works with an external IDP: insert a
+    ## `personal_access_tokens` row for the owner user, reproducing exactly
+    ## the token NetBird itself would issue — `nbp_` + 30 random base62
+    ## chars + a 6-char base62 CRC32 checksum of the secret (the checksum IS
+    ## verified on use), stored as base64(sha256(full-token)). Everything
+    ## else is the supported REST API (no further SQL, no cache restart —
+    ## REST writes go live immediately).
     ##
-    ## Route creation follows the same pattern after the local peer
-    ## has registered: INSERT a routes row pointing at the peer's id.
-    systemd.services.netbird-mint-setup-key = lib.mkIf deployClient {
-      description = "Mint a NetBird setup-key for the local router peer (SQL bootstrap)";
-      after = [ "podman-netbird-management.service" ];
-      requires = [ "podman-netbird-management.service" ];
-      wantedBy = [ "netbird.service" ];
-      before = [ "netbird.service" ];
-      ## Account row is only created after the first user logs in via
-      ## SSO. On a fresh install we'll fail until that happens, then
-      ## succeed on retry. Restart=on-failure with backoff keeps us
-      ## trying without hard-burning the boot.
+    ## Bootstrap (headless): with an external IDP, NetBird creates the account
+    ## only on an interactive SSO login, and no token we can mint headlessly is
+    ## accepted (a machine-user token's `aud` is never the netbird client_id —
+    ## proven). So when no account exists, step 2 FABRICATES it directly in
+    ## store.db (mirroring newAccountWithId) — no SSO login, no wizard, ever.
+    ## Runs from a TIMER (never at `nixos-rebuild switch`) so it can't block or
+    ## fail a rebuild; exits 0 on any not-ready condition and retries; a
+    ## `.netbird-provisioned` sentinel + ConditionPathExists make it a no-op
+    ## once complete.
+    ##
+    ## Reset/restore: the sentinel lives in netbirdDataPath next to
+    ## store.db, so wiping the DB (the documented "reset NetBird" step) also
+    ## drops the sentinel and re-provisions from scratch. Every step is
+    ## idempotent + self-healing — a stale on-disk PAT/setup-key (kept under
+    ## /var/lib/homefree-secrets, which is NOT wiped with the DB) is detected
+    ## and re-minted, and pre-existing REST objects are reused. Anchoring is
+    ## intentionally skipped: the generate→anchor model does not fit these
+    ## DB-coordinated secrets (see docs/agent-notes/secrets-anchoring.md).
+    systemd.services.netbird-provision = lib.mkIf deployClient {
+      description = "Provision NetBird remote-network-access (Networks model + routing peer) via REST";
+      after = [ "podman-netbird-management.service" "netbird.service" ];
+      wants = [ "podman-netbird-management.service" "netbird.service" ];
+      ## Skip once fully provisioned (sentinel written); the timer keeps
+      ## firing but this becomes a cheap no-op.
+      unitConfig.ConditionPathExists = "!${netbirdDataPath}/.netbird-provisioned";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        Restart = "on-failure";
-        RestartSec = "60s";
       };
-      startLimitIntervalSec = 3600;
-      startLimitBurst = 30;
-      path = with pkgs; [ sqlite coreutils util-linux openssl ];
+      path = with pkgs; [ curl jq sqlite coreutils util-linux openssl gzip netbird ];
       script = ''
-        set -eu
+        set -u
         SECRETS_DIR=${secretsDir}
         DB=${netbirdDataPath}/store.db
+        API="http://127.0.0.1:${toString netbirdMgmtPort}"
+        HOSTH="Host: netbird.${domain}"
+        MGMT_URL="https://netbird.${domain}"
+        SUBNET="${cfg.network.lan-subnet}"
+        LAN_IP="${lan-address}"
+        PAT_FILE="$SECRETS_DIR/netbird-api-pat"
         KEY_FILE="$SECRETS_DIR/setup-key"
-        KEY_NAME="homefree-router"
+        SENTINEL="${netbirdDataPath}/.netbird-provisioned"
+        ALPHABET=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 
-        ## Wait for management to have created the DB + first account
-        ## (happens on the very first user login, then persists).
-        ## Single-account-mode means we always converge on exactly one
-        ## account row.
-        deadline=$(( $(date +%s) + 60 ))
-        while [ ! -s "$DB" ] \
-              || [ -z "$(sqlite3 "$DB" 'SELECT id FROM accounts LIMIT 1;' 2>/dev/null)" ]; do
-          [ $(date +%s) -ge $deadline ] && \
-            { echo "netbird-mint-setup-key: no account row after 60s — has a user logged in?" >&2; exit 1; }
-          sleep 2
+        log()    { echo "netbird-provision: $*"; }
+        ## Never fail a boot/timer cycle: log and exit 0, leaving the
+        ## sentinel unwritten so the timer retries on the next tick.
+        giveup() { log "$*"; exit 0; }
+        sq()     { sqlite3 -cmd '.timeout 8000' "$DB" "$@"; }
+
+        ## 1. management API readiness (unauthenticated /api/users -> 401
+        ##    once the listener is up; 5xx/000 while the backend is warming)
+        ready=
+        for _ in $(seq 1 30); do
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "$HOSTH" "$API/api/users" 2>/dev/null || echo 000)
+          case "$code" in 401|200) ready=1; break;; *) sleep 2;; esac
         done
-        ACCT_ID=$(sqlite3 "$DB" 'SELECT id FROM accounts LIMIT 1;')
+        [ -n "$ready" ] || giveup "management API not ready yet — will retry"
 
-        ## If a key with our name already exists, reuse the plaintext
-        ## from disk (the DB doesn't store plaintext — only its hash).
-        EXISTING=$(sqlite3 "$DB" \
-          "SELECT id FROM setup_keys WHERE name='$KEY_NAME' AND revoked=0;")
-        if [ -n "$EXISTING" ] && [ -s "$KEY_FILE" ]; then
-          echo "netbird-mint-setup-key: existing key reused (id=$EXISTING)"
-          exit 0
-        fi
-        ## If a key exists but we lack the plaintext, the only recovery
-        ## is to revoke + re-mint. Revoke the orphan rows so the new
-        ## key wins; the on-disk file is the source of truth.
-        if [ -n "$EXISTING" ]; then
-          echo "netbird-mint-setup-key: orphan key (no plaintext on disk) — revoking and re-minting"
-          sqlite3 "$DB" "UPDATE setup_keys SET revoked=1 WHERE name='$KEY_NAME';"
-        fi
-
-        ## Plaintext follows the same shape as netbird's CLI-generated
-        ## keys: uppercase UUID. NetBird's hashed_key = base64(sha256).
-        PLAINTEXT=$(uuidgen | tr '[:lower:]' '[:upper:]')
-        HASHED=$(printf '%s' "$PLAINTEXT" | openssl dgst -sha256 -binary | openssl base64 -A)
-        ## HiddenKey(key, 4) = first 5 chars + 4 asterisks
-        PREFIX=$(printf '%s' "$PLAINTEXT" | cut -c1-5)
-        SECRET="$PREFIX****"
-        KEY_ID=$(uuidgen | tr -d '-' | cut -c1-20)
-        NOW=$(date -u +'%Y-%m-%dT%H:%M:%S.%NZ')
-
-        ## Reusable key, no expiry (NetBird interprets expires_at NULL
-        ## or far-future as non-expiring; we use a 100y horizon to be
-        ## safe across all version checks), unlimited usage.
-        EXPIRES="2099-12-31T23:59:59Z"
-        sqlite3 "$DB" <<SQL
-INSERT INTO setup_keys (
-  id, account_id, key, key_secret, name, type,
-  created_at, expires_at, updated_at, revoked, used_times,
-  auto_groups, usage_limit, ephemeral, allow_extra_dns_labels
-) VALUES (
-  '$KEY_ID', '$ACCT_ID', '$HASHED', '$SECRET', '$KEY_NAME', 'reusable',
-  '$NOW', '$EXPIRES', '$NOW', 0, 0,
-  '[]', 0, 0, 0
-);
+        ## 2. ensure the NetBird account exists — fabricate it if absent.
+        ##    NetBird only creates the account on an interactive SSO login, and
+        ##    no headless token is accepted, so we write it straight into
+        ##    store.db (mirroring newAccountWithId): the wide accounts row +
+        ##    owner user + All group + default All->All policy + an
+        ##    account_onboardings row with onboarding_flow_pending=0 (which
+        ##    suppresses the dashboard wizard). NAMED columns, not positional —
+        ##    the accounts column order changes across NetBird versions. Owner =
+        ##    the admin's Zitadel user id (written by zitadel-provision), so the
+        ##    admin is owner on first login; blank name/email are safe (NetBird
+        ##    skips encrypt/decrypt of "" and the IdP cache fills them in).
+        if [ -z "$(sq "SELECT id FROM accounts LIMIT 1;" 2>/dev/null || true)" ]; then
+          OWNER_ID_FILE="$SECRETS_DIR/owner-user-id"
+          [ -s "$OWNER_ID_FILE" ] \
+            || giveup "no account and no owner-user-id yet (zitadel-provision pending) — will retry"
+          FOWNER=$(cat "$OWNER_ID_FILE")
+          gid() { head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-20; }
+          ACCT=$(gid); NETID=$(gid); ALLG=$(gid); POL=$(gid)
+          NETR=$(( (RANDOM % 64) + 64 ))    # random /16 in 100.64.0.0/10
+          NOW=$(date -u +'%Y-%m-%d %H:%M:%S.%N+00:00')
+          ## Q expands to an empty SQL string at runtime; emitted as '$Q' so
+          ## the surrounding single-quotes are never adjacent in this Nix
+          ## indented-string block (adjacent ones would end the string early).
+          Q=""
+          sq <<SQL
+INSERT INTO accounts (id,created_by,created_at,domain,domain_category,is_domain_primary_account,network_identifier,network_net,network_net_v6,network_dns,network_serial,dns_settings_disabled_management_groups,settings_peer_login_expiration_enabled,settings_peer_login_expiration,settings_peer_inactivity_expiration_enabled,settings_peer_inactivity_expiration,settings_regular_users_view_blocked,settings_groups_propagation_enabled,settings_jwt_groups_enabled,settings_jwt_groups_claim_name,settings_jwt_allow_groups,settings_routing_peer_dns_resolution_enabled,settings_dns_domain,settings_network_range,settings_network_range_v6,settings_peer_expose_enabled,settings_peer_expose_groups,settings_extra_peer_approval_enabled,settings_extra_user_approval_required,settings_extra_integrated_validator,settings_extra_integrated_validator_groups,settings_lazy_connection_enabled,settings_auto_update_version,settings_auto_update_always,settings_ipv6_enabled_groups,settings_local_mfa_enabled) VALUES ('$ACCT','$FOWNER','$NOW','netbird.${domain}','private',1,'$NETID','{"IP":"100.$NETR.0.0","Mask":"//8AAA=="}',NULL,'$Q',0,'[]',1,86400000000000,0,600000000000,1,1,0,'$Q','[]',1,'$Q','"100.$NETR.0.0/16"','""',0,NULL,0,1,'$Q',NULL,0,'disabled',0,NULL,0);
+INSERT INTO users (id,account_id,role,is_service_user,non_deletable,service_user_name,auto_groups,blocked,pending_approval,created_at,issued,integration_ref_id,integration_ref_integration_type,name,email) VALUES ('$FOWNER','$ACCT','owner',0,0,'$Q','[]',0,0,'$NOW','api',0,'$Q','$Q','$Q');
+INSERT INTO "groups" (id,account_id,name,issued,resources,integration_ref_id,integration_ref_integration_type) VALUES ('$ALLG','$ACCT','All','api',NULL,0,'$Q');
+INSERT INTO policies (id,account_id,name,description,enabled,source_posture_checks) VALUES ('$POL','$ACCT','Default','This is a default rule that allows connections between all the resources',1,NULL);
+INSERT INTO policy_rules (id,policy_id,name,description,enabled,action,destinations,destination_resource,sources,source_resource,bidirectional,protocol,ports,port_ranges,authorized_groups,authorized_user) VALUES ('$POL','$POL','Default','This is a default rule that allows connections between all the resources',1,'accept','["$ALLG"]','{"ID":"","Type":""}','["$ALLG"]','{"ID":"","Type":""}',1,'all','[]','[]','{}','$Q');
+INSERT INTO account_onboardings (account_id,onboarding_flow_pending,signup_form_pending,created_at,updated_at) VALUES ('$ACCT',0,0,'$NOW','$NOW');
 SQL
+          log "fabricated NetBird account ($ACCT, owner $FOWNER, net 100.$NETR.0.0/16)"
+          ## Management cached "no account" at startup; restart so it loads the
+          ## fabricated account from store.db, then re-probe readiness.
+          ${pkgs.systemd}/bin/systemctl restart podman-netbird-management.service || true
+          ready=
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "$HOSTH" "$API/api/users" 2>/dev/null || echo 000)
+            case "$code" in 401|200) ready=1; break;; *) sleep 2;; esac
+          done
+          [ -n "$ready" ] || giveup "management not ready after fabrication restart — will retry"
+        fi
 
-        install -m 600 /dev/null "$KEY_FILE"
-        printf '%s' "$PLAINTEXT" > "$KEY_FILE"
-        echo "netbird-mint-setup-key: minted setup-key (id=$KEY_ID, name=$KEY_NAME)"
+        ## owner user id — now guaranteed present (fabricated or from a prior login)
+        OWNER=$(sq "SELECT id FROM users WHERE role='owner' AND is_service_user=0 LIMIT 1;" 2>/dev/null || true)
+        [ -n "$OWNER" ] || giveup "owner user not found after ensure-account — will retry"
+
+        ## 3. API PAT: reuse the on-disk one if it still validates, else
+        ##    mint a fresh one (insert a personal_access_tokens row for the
+        ##    owner, reproducing NetBird's own token + checksum exactly).
+        pat_ok() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$HOSTH" -H "Authorization: Token $1" "$API/api/users")" = 200 ]; }
+        PAT=
+        if [ -s "$PAT_FILE" ] && pat_ok "$(cat "$PAT_FILE")"; then
+          PAT=$(cat "$PAT_FILE"); log "reusing API PAT"
+        else
+          SECRET=$(tr -dc 0-9A-Za-z </dev/urandom | head -c30)
+          ## CRC32 (IEEE) of the secret via gzip's trailer (4 bytes, LE)
+          set -- $(printf '%s' "$SECRET" | gzip -c | tail -c8 | head -c4 | od -An -tu1)
+          CRC=$(( $1 + $2 * 256 + $3 * 65536 + $4 * 16777216 ))
+          ## base62-encode the checksum, then left-pad to 6 with '0'
+          ENC=; N=$CRC
+          [ "$N" -eq 0 ] && ENC=0
+          while [ "$N" -gt 0 ]; do
+            POS=$(( (N % 62) + 1 ))
+            ENC=$(printf '%s' "$ALPHABET" | cut -c"$POS")$ENC
+            N=$(( N / 62 ))
+          done
+          while [ "$(printf '%s' "$ENC" | wc -c)" -lt 6 ]; do ENC=0$ENC; done
+          PLAIN=nbp_$SECRET$ENC
+          HASH=$(printf '%s' "$PLAIN" | openssl dgst -sha256 -binary | openssl base64 -A)
+          PID=$(uuidgen | tr -d -); NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          sq "DELETE FROM personal_access_tokens WHERE name='homefree-provision';"
+          sq "INSERT INTO personal_access_tokens (id,user_id,name,hashed_token,expiration_date,created_by,created_at,last_used) VALUES ('$PID','$OWNER','homefree-provision','$HASH','2099-12-31T23:59:59Z','$OWNER','$NOW','$NOW');"
+          pat_ok "$PLAIN" || giveup "freshly minted PAT did not validate — will retry"
+          install -m 600 /dev/null "$PAT_FILE"; printf '%s' "$PLAIN" > "$PAT_FILE"
+          PAT=$PLAIN; log "minted API PAT"
+        fi
+        AUTH="Authorization: Token $PAT"
+
+        api() {
+          if [ "$#" -ge 3 ]; then
+            curl -s -X "$1" -H "$HOSTH" -H "$AUTH" -H 'Content-Type: application/json' -d "$3" "$API$2"
+          else
+            curl -s -X "$1" -H "$HOSTH" -H "$AUTH" "$API$2"
+          fi
+        }
+        ## first id of a named object in a JSON-array endpoint
+        find_id() { api GET "$1" | jq -r --arg n "$2" '.[] | select(.name==$n) | .id' 2>/dev/null | head -1; }
+
+        ## 4. groups: default "All" (find) + "Routing Peers" (ensure)
+        ALL_GID=$(find_id /api/groups All)
+        [ -n "$ALL_GID" ] || giveup "default 'All' group not present yet — will retry"
+        RP_GID=$(find_id /api/groups "Routing Peers")
+        if [ -z "$RP_GID" ]; then
+          RP_GID=$(api POST /api/groups '{"name":"Routing Peers"}' | jq -r '.id // empty')
+          log "created group 'Routing Peers'"
+        fi
+        [ -n "$RP_GID" ] || giveup "could not ensure 'Routing Peers' group — will retry"
+
+        ## 5. reusable setup-key (auto_groups -> Routing Peers). The plaintext
+        ##    is only returned at create, so re-mint if we lack the on-disk copy.
+        SK_ID=$(api GET /api/setup-keys | jq -r '.[] | select(.name=="homefree-router" and .revoked==false) | .id' 2>/dev/null | head -1)
+        if [ -n "$SK_ID" ] && [ -s "$KEY_FILE" ]; then
+          log "reusing setup-key homefree-router"
+        else
+          [ -n "$SK_ID" ] && api PUT "/api/setup-keys/$SK_ID" "{\"revoked\":true,\"auto_groups\":[\"$RP_GID\"]}" >/dev/null
+          SK_PLAIN=$(api POST /api/setup-keys "{\"name\":\"homefree-router\",\"type\":\"reusable\",\"expires_in\":31536000,\"auto_groups\":[\"$RP_GID\"],\"usage_limit\":0}" | jq -r '.key // empty')
+          [ -n "$SK_PLAIN" ] || giveup "setup-key creation returned no key — will retry"
+          install -m 600 /dev/null "$KEY_FILE"; printf '%s' "$SK_PLAIN" > "$KEY_FILE"
+          log "minted setup-key homefree-router"
+        fi
+
+        ## 6. network
+        NET_ID=$(find_id /api/networks "HomeFree LAN")
+        if [ -z "$NET_ID" ]; then
+          NET_ID=$(api POST /api/networks '{"name":"HomeFree LAN","description":"Auto-provisioned LAN remote-access network"}' | jq -r '.id // empty')
+          log "created network 'HomeFree LAN'"
+        fi
+        [ -n "$NET_ID" ] || giveup "could not ensure network — will retry"
+
+        ## 7. subnet resource (type is auto-derived from the CIDR address)
+        RES_ID=$(api GET "/api/networks/$NET_ID/resources" | jq -r '.[] | select(.name=="HomeFree LAN subnet") | .id' 2>/dev/null | head -1)
+        RES_TYPE=$(api GET "/api/networks/$NET_ID/resources" | jq -r '.[] | select(.name=="HomeFree LAN subnet") | .type' 2>/dev/null | head -1)
+        if [ -z "$RES_ID" ]; then
+          RES_JSON=$(api POST "/api/networks/$NET_ID/resources" "{\"name\":\"HomeFree LAN subnet\",\"description\":\"$SUBNET\",\"address\":\"$SUBNET\",\"enabled\":true,\"groups\":[\"$RP_GID\"]}")
+          RES_ID=$(printf '%s' "$RES_JSON" | jq -r '.id // empty')
+          RES_TYPE=$(printf '%s' "$RES_JSON" | jq -r '.type // empty')
+          log "created resource 'HomeFree LAN subnet'"
+        fi
+        [ -n "$RES_ID" ] || giveup "could not ensure resource — will retry"
+        [ -n "$RES_TYPE" ] || RES_TYPE=subnet
+
+        ## 8. router (peer_groups -> Routing Peers; this box auto-joins that
+        ##    group via the setup-key, so no peer-id lookup / DB race)
+        HAS_ROUTER=$(api GET "/api/networks/$NET_ID/routers" | jq -r --arg g "$RP_GID" '.[] | select(.peer_groups != null and (.peer_groups | index($g))) | .id' 2>/dev/null | head -1)
+        if [ -z "$HAS_ROUTER" ]; then
+          api POST "/api/networks/$NET_ID/routers" "{\"peer_groups\":[\"$RP_GID\"],\"metric\":9999,\"masquerade\":true,\"enabled\":true}" >/dev/null
+          log "created router (peer_groups=Routing Peers)"
+        fi
+
+        ## 9. access policy: All -> the subnet resource (every peer reaches LAN)
+        if [ -z "$(find_id /api/policies "HomeFree LAN access")" ]; then
+          api POST /api/policies "{\"name\":\"HomeFree LAN access\",\"description\":\"Allow all peers to reach the HomeFree LAN\",\"enabled\":true,\"rules\":[{\"name\":\"HomeFree LAN access\",\"enabled\":true,\"bidirectional\":true,\"protocol\":\"all\",\"action\":\"accept\",\"sources\":[\"$ALL_GID\"],\"destinationResource\":{\"id\":\"$RES_ID\",\"type\":\"$RES_TYPE\"}}]}" >/dev/null
+          log "created policy 'HomeFree LAN access'"
+        fi
+
+        ## 10. nameserver group: tunneled peers resolve via the LAN resolver
+        if [ -z "$(find_id /api/dns/nameservers "homefree-lan-dns")" ]; then
+          api POST /api/dns/nameservers "{\"name\":\"homefree-lan-dns\",\"description\":\"HomeFree LAN DNS resolver\",\"nameservers\":[{\"ip\":\"$LAN_IP\",\"ns_type\":\"udp\",\"port\":53}],\"enabled\":true,\"groups\":[\"$ALL_GID\"],\"primary\":true,\"domains\":[],\"search_domains_enabled\":false}" >/dev/null
+          log "created nameserver group 'homefree-lan-dns'"
+        fi
+
+        ## 11. connect this box as the routing peer (one-time; the netbird
+        ##     daemon persists the config and reconnects by itself after)
+        if [ ! -S /run/netbird/sock ]; then
+          for _ in $(seq 1 15); do [ -S /run/netbird/sock ] && break; sleep 1; done
+        fi
+        [ -S /run/netbird/sock ] || giveup "netbird daemon socket not up yet — will retry"
+        if netbird --daemon-addr unix:///run/netbird/sock status --json 2>/dev/null | jq -e '.managementState == "Connected"' >/dev/null 2>&1; then
+          log "router peer already connected"
+        else
+          netbird --daemon-addr unix:///run/netbird/sock up --management-url "$MGMT_URL" --setup-key "$(cat "$KEY_FILE")" || giveup "netbird up failed — will retry"
+          log "router peer connected"
+        fi
+
+        ## done — the sentinel makes ConditionPathExists skip future runs
+        : > "$SENTINEL"
+        log "provisioning complete"
       '';
+    };
+
+    ## Drive netbird-provision from a timer (not wantedBy multi-user.target)
+    ## so `nixos-rebuild switch` never blocks on, or fails because of,
+    ## pre-login provisioning. It retries every ~2 min until the sentinel is
+    ## written, so the operator's single SSO login converges automatically.
+    systemd.timers.netbird-provision = lib.mkIf deployClient {
+      description = "Retry NetBird remote-access provisioning until complete";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "90s";
+        OnActiveSec = "90s";
+        OnUnitActiveSec = "2min";
+        Unit = "netbird-provision.service";
+      };
     };
 
     ## ── NetBird client (router-as-peer) ────────────────────────────────
@@ -703,245 +873,6 @@ SQL
     services.netbird = lib.mkIf deployClient {
       enable = true;
     };
-
-    ## Autoconnect oneshot: once the daemon is running AND the
-    ## setup-key file exists AND the management backend is
-    ## reachable, run `netbird up` to register this host as a peer
-    ## and advertise the LAN subnet. Idempotent: reruns are no-ops
-    ## once the local config has the management URL + key recorded.
-    ##
-    ## We ordered after podman-netbird-management.service plus a
-    ## runtime readiness probe (the systemd `after=` only sequences
-    ## start-of-unit; the container reports "started" before its
-    ## HTTP listener is ready). Without the probe, `netbird up`
-    ## races the management container and gets a Caddy 502 in the
-    ## brief window before podman publishes the upstream socket.
-    systemd.services.netbird-autoconnect = lib.mkIf deployClient {
-      description = "Onboard the local netbird client into the tenant";
-      after = [
-        "netbird.service"
-        "netbird-mint-setup-key.service"
-        "podman-netbird-management.service"
-      ];
-      requires = [
-        "netbird.service"
-        "netbird-mint-setup-key.service"
-        "podman-netbird-management.service"
-      ];
-      wantedBy = [ "multi-user.target" ];
-      unitConfig.ConditionPathExists = [
-        "${secretsDir}/setup-key"
-      ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      path = with pkgs; [ netbird coreutils jq curl ];
-      script = ''
-        set -eu
-        SECRETS_DIR=${secretsDir}
-        MGMT_URL="https://netbird.${domain}"
-        KEY=$(cat "$SECRETS_DIR/setup-key")
-        ## Upstream NixOS module relocates the CLI socket from
-        ## /var/run/netbird.sock → /run/netbird/sock.
-        DAEMON_ADDR="unix:///run/netbird/sock"
-
-        deadline=$(( $(date +%s) + 30 ))
-        while [ ! -S /run/netbird/sock ]; do
-          [ $(date +%s) -ge $deadline ] && \
-            { echo "netbird-autoconnect: daemon socket never appeared" >&2; exit 1; }
-          sleep 1
-        done
-
-        ## Wait for the management HTTP backend to be ready. The
-        ## management container's systemd unit reports active as
-        ## soon as conmon is up, but the Go process inside takes
-        ## a few seconds to bind the listener and Caddy returns
-        ## 502 until then. We poll a cheap endpoint (the default
-        ## management API root, expected to return 404 once routes
-        ## are mounted — anything that isn't a 5xx/connection-
-        ## error means the backend is reachable).
-        ##
-        ## 60s budget — the container's prestart can be slow on a
-        ## cold boot. Cert verification via the system trust store
-        ## (Caddy's internal CA is mounted into other clients via
-        ## per-service plumbing; for this CLI probe we just trust
-        ## whatever the system trusts).
-        deadline=$(( $(date +%s) + 60 ))
-        while :; do
-          code=$(curl -sk -o /dev/null -w '%{http_code}' \
-            --max-time 3 "$MGMT_URL/" || echo 000)
-          case "$code" in
-            5*|000) ;;          ## not ready — 5xx or connect error
-            *) break ;;         ## any non-5xx response = listener up
-          esac
-          [ $(date +%s) -ge $deadline ] && \
-            { echo "netbird-autoconnect: management backend never became reachable (last HTTP $code)" >&2; exit 1; }
-          sleep 2
-        done
-
-        if netbird --daemon-addr "$DAEMON_ADDR" status --json 2>/dev/null \
-           | jq -e '.managementState == "Connected"' >/dev/null 2>&1; then
-          echo "netbird-autoconnect: already connected"
-          exit 0
-        fi
-
-        netbird --daemon-addr "$DAEMON_ADDR" up \
-          --management-url "$MGMT_URL" \
-          --setup-key "$KEY"
-        echo "netbird-autoconnect: onboarded"
-      '';
-    };
-
-    ## After our local peer has registered with management, ensure a
-    ## route exists routing the LAN subnet through this peer. Same
-    ## SQL-surgery pattern as setup-key minting: idempotent INSERT
-    ## guarded by a name lookup.
-    systemd.services.netbird-ensure-route = lib.mkIf deployClient {
-      description = "Ensure NetBird LAN subnet route exists for the router peer";
-      after = [ "netbird-autoconnect.service" ];
-      requires = [ "netbird-autoconnect.service" ];
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      path = with pkgs; [ sqlite coreutils nettools util-linux ];
-      script = ''
-        set -eu
-        DB=${netbirdDataPath}/store.db
-        SUBNET="${cfg.network.lan-subnet}"
-        ROUTE_NAME="homefree-lan"
-        HOSTNAME=$(hostname)
-
-        ## Wait up to 60s for our peer (registered by netbird up via
-        ## the setup key) to appear in the DB.
-        deadline=$(( $(date +%s) + 60 ))
-        PEER_ID=""
-        while [ -z "$PEER_ID" ]; do
-          PEER_ID=$(sqlite3 "$DB" \
-            "SELECT id FROM peers WHERE dns_label='$HOSTNAME' OR meta_hostname='$HOSTNAME' LIMIT 1;" \
-            2>/dev/null || true)
-          [ -n "$PEER_ID" ] && break
-          [ $(date +%s) -ge $deadline ] && \
-            { echo "netbird-ensure-route: peer for $HOSTNAME never registered" >&2; exit 1; }
-          sleep 3
-        done
-
-        ACCT_ID=$(sqlite3 "$DB" 'SELECT id FROM accounts LIMIT 1;')
-        ## "All" group is the default group every peer belongs to;
-        ## using it on the route makes the LAN reachable to all peers.
-        ALL_GROUP=$(sqlite3 "$DB" "SELECT id FROM groups WHERE name='All' AND account_id='$ACCT_ID';")
-        if [ -z "$ALL_GROUP" ]; then
-          echo "netbird-ensure-route: 'All' group not found" >&2
-          exit 1
-        fi
-
-        ## Idempotency: skip if a route for this peer+subnet+name exists.
-        EXISTING=$(sqlite3 "$DB" \
-          "SELECT id FROM routes WHERE peer='$PEER_ID' AND network='\"$SUBNET\"' AND net_id='$ROUTE_NAME';")
-        if [ -n "$EXISTING" ]; then
-          echo "netbird-ensure-route: existing route reused (id=$EXISTING)"
-          exit 0
-        fi
-
-        ROUTE_ID=$(uuidgen | tr -d '-' | cut -c1-20)
-        ## `network` and `groups` columns are stored as JSON-serialized
-        ## by NetBird (GORM `serializer:json`). We pass JSON-quoted
-        ## values so the row round-trips through NetBird's deserializer
-        ## correctly.
-        GROUPS_JSON="[\"$ALL_GROUP\"]"
-        NETWORK_JSON="\"$SUBNET\""
-
-        sqlite3 "$DB" <<SQL
-INSERT INTO routes (
-  id, account_id, network, domains, keep_route, net_id, description,
-  peer, peer_groups, network_type, masquerade, metric, enabled,
-  groups, access_control_groups, skip_auto_apply
-) VALUES (
-  '$ROUTE_ID', '$ACCT_ID', '$NETWORK_JSON', '[]', 0, '$ROUTE_NAME',
-  'HomeFree LAN subnet auto-route',
-  '$PEER_ID', '[]', 1, 1, 9999, 1,
-  '$GROUPS_JSON', '[]', 0
-);
-SQL
-        echo "netbird-ensure-route: route created (id=$ROUTE_ID, peer=$PEER_ID, network=$SUBNET)"
-
-        ## Force netbird-management to reload its in-memory account
-        ## cache so peers see the new route on their next sync. A
-        ## graceful container restart triggers a fresh load from
-        ## the SQLite store.
-        ${pkgs.systemd}/bin/systemctl --no-block restart podman-netbird-management.service || true
-      '';
-    };
-
-    ## After the route is in place, register a primary nameserver
-    ## group pointing at the LAN AdGuard resolver. Without this,
-    ## peers route LAN traffic through the tunnel but still resolve
-    ## DNS via their carrier's resolver, so `photos.<domain>` etc.
-    ## come back with the public WAN IP instead of the LAN address.
-    ##
-    ## Same SQL-bootstrap pattern as the route — INSERT a
-    ## name_server_groups row pointed at the "All" group, primary=1,
-    ## so the resolver is consulted for every DNS query.
-    ##
-    ## NameServerType enum: 1 = UDP (iota+1 in netbird's dns
-    ## package).  NameServers list is JSON-serialized — netbird's
-    ## GORM serializer marshals NSType as the int form.
-    systemd.services.netbird-ensure-nameserver = lib.mkIf deployClient {
-      description = "Ensure NetBird primary nameserver group exists for LAN resolution";
-      after = [ "netbird-ensure-route.service" ];
-      requires = [ "netbird-ensure-route.service" ];
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      path = with pkgs; [ sqlite coreutils util-linux ];
-      script = ''
-        set -eu
-        DB=${netbirdDataPath}/store.db
-        NS_NAME="homefree-lan-dns"
-        LAN_IP="${lan-address}"
-
-        ACCT_ID=$(sqlite3 "$DB" 'SELECT id FROM accounts LIMIT 1;')
-        ALL_GROUP=$(sqlite3 "$DB" "SELECT id FROM groups WHERE name='All' AND account_id='$ACCT_ID';")
-        if [ -z "$ALL_GROUP" ]; then
-          echo "netbird-ensure-nameserver: 'All' group not found" >&2
-          exit 1
-        fi
-
-        EXISTING=$(sqlite3 "$DB" \
-          "SELECT id FROM name_server_groups WHERE name='$NS_NAME' AND account_id='$ACCT_ID';")
-        if [ -n "$EXISTING" ]; then
-          echo "netbird-ensure-nameserver: existing group reused (id=$EXISTING)"
-          exit 0
-        fi
-
-        NS_ID=$(uuidgen | tr -d '-' | cut -c1-20)
-        ## NameServers JSON: [{"IP":"10.0.0.1","NSType":1,"Port":53}]
-        NS_LIST="[{\"IP\":\"$LAN_IP\",\"NSType\":1,\"Port\":53}]"
-        GROUPS_JSON="[\"$ALL_GROUP\"]"
-
-        ## `primary` is a SQL reserved keyword — quote with backticks
-        ## (matches the column definition in netbird's schema).
-        sqlite3 "$DB" <<SQL
-INSERT INTO name_server_groups (
-  id, account_id, name, description,
-  name_servers, groups, \`primary\`,
-  domains, enabled, search_domains_enabled
-) VALUES (
-  '$NS_ID', '$ACCT_ID', '$NS_NAME', 'HomeFree LAN DNS resolver',
-  '$NS_LIST', '$GROUPS_JSON', 1,
-  '[]', 1, 0
-);
-SQL
-        echo "netbird-ensure-nameserver: created (id=$NS_ID, ip=$LAN_IP:53)"
-
-        ${pkgs.systemd}/bin/systemctl --no-block restart podman-netbird-management.service || true
-      '';
-    };
-
 
     ## ── service-config (admin UI surface) ──────────────────────────────
     ## All five server containers are always listed (and rendered) when
@@ -1007,9 +938,13 @@ SQL
           };
         };
         backup = {
+          ## Only the stateful management dir is backed up. The signal
+          ## server is a stateless gRPC relay that persists nothing in
+          ## netbirdSignalDataPath (/var/lib/netbird-signal), so including
+          ## it tripped the backup guard's empty-source abort on every
+          ## run — a false positive, not a missing NAS mount.
           paths = [
             netbirdDataPath
-            netbirdSignalDataPath
           ];
         };
         options-metadata = [
@@ -1028,8 +963,8 @@ SQL
           {
             path = "client.enable";
             type = "bool";
-            default = false;
-            description = "Also run the NetBird client on this host (router as peer). Independent of server.";
+            default = true;
+            description = "Make this box the LAN routing peer and auto-provision remote network access (replaces the dashboard wizard). On by default with the server; set false to run the server only.";
           }
           ## All four secrets are now provisioned automatically by
           ## zitadel-provision.service. They no longer appear here as

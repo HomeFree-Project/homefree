@@ -1672,6 +1672,10 @@ async def refresh_all() -> Dict[str, Dict[str, Any]]:
     (rule 11 — tolerate format drift / removal silently)."""
     async with _refresh_lock:
         catalog = _merged_catalog()
+        # Previous cache is the last-known-good source: a single transient
+        # lookup blip must not blank a value that resolved fine before and
+        # freeze it in the once-daily cache (see the preservation block below).
+        prev = _read_cache()
         cache: Dict[str, Dict[str, Any]] = {}
         now = int(time.time())
         for entry in catalog:
@@ -1697,7 +1701,7 @@ async def refresh_all() -> Dict[str, Dict[str, Any]]:
             # and (for the image + GitHub strategies) the source-repo +
             # advisory resolution that _build_payload reuses for links.
             res = await _resolve_version(descriptor, parsed)
-            cache[key] = {
+            new_entry: Dict[str, Any] = {
                 "latest_tag": res.latest,
                 "note": res.note,
                 "last_checked": now,
@@ -1705,6 +1709,41 @@ async def refresh_all() -> Dict[str, Dict[str, Any]]:
                 "source_repo": res.source_repo,
                 "strategy": strategy,
             }
+            # Last-known-good preservation. A transient failure (the flaky
+            # ghcr label dance in _ghcr_source_repo, a throttled GitHub atom
+            # feed, a network blip) returns latest=None; writing that null
+            # would erase a value that resolved fine yesterday and leave the
+            # row "unknown" until the next daily refresh (often longer, since
+            # the same blip recurs). Instead keep the prior good value, mark
+            # it stale, and PRESERVE the old last_checked so the displayed
+            # timestamp honestly ages until a real lookup succeeds again.
+            #
+            # Guards:
+            #   * only when the prior entry actually had a latest_tag, and
+            #   * only when its strategy matches — so we never carry a value
+            #     across a strategy change (e.g. an app that just gained a
+            #     version-tracking descriptor: image -> github-releases).
+            # No time bound is applied: a removed app drops out of `catalog`
+            # (so its entry disappears naturally), and for a still-deployed
+            # app the aging last_checked + `stale` flag are the honest signal.
+            if res.latest is None:
+                old = prev.get(key) or {}
+                if (
+                    old.get("latest_tag") is not None
+                    and old.get("strategy") == strategy
+                ):
+                    new_entry.update(
+                        latest_tag=old["latest_tag"],
+                        source_repo=old.get("source_repo"),
+                        advisories=old.get("advisories") or [],
+                        last_checked=old.get("last_checked", now),
+                        stale=True,
+                        note=(
+                            f"last lookup failed ({res.note}); "
+                            "showing last known good"
+                        ),
+                    )
+            cache[key] = new_entry
         _write_cache(cache)
         return cache
 
@@ -1919,6 +1958,11 @@ def _build_payload() -> List[Dict[str, Any]]:
             "advisory_count": len(advisories),
             "advisory_max_severity": _max_severity(advisories),
             "advisories_url": advisories_url,
+            # True when refresh_all kept a previous good value because the
+            # latest lookup transiently failed (see the last-known-good block
+            # in refresh_all). `last_checked` then reflects the last SUCCESS,
+            # not now — the frontend can surface this to explain the age.
+            "stale": bool(cache_entry.get("stale")),
             # Set by _apply_pending_overlay() when the live source pin
             # differs from the deployed image (a staged-but-unbuilt bump).
             "pending": False,
@@ -1959,6 +2003,27 @@ def _build_payload() -> List[Dict[str, Any]]:
 # no ephemeral client state.
 
 
+def _pins_from_entries(entries: List[Dict[str, str]]) -> Dict[str, str]:
+    """'registry/repo' -> staged tag, but ONLY for repos pinned at a SINGLE
+    distinct tag across the whole checkout.
+
+    A base image pinned at DIVERGENT tags by different apps (library/redis:
+    immich/nextcloud `8.8.0` vs nomad `7-alpine`) has no single staged value,
+    and the rows are keyed by container name — so a repo-keyed comparison
+    can't attribute one app's pin to a given row. A naive last-wins map would
+    pick whichever app sorts last (nomad's `7-alpine`) and then flag EVERY
+    sibling redis row (immich-redis, nextcloud-redis) pending-rebuild forever
+    (a rebuild can't reconcile divergent pins). Dropping such ambiguous repos
+    here makes _apply_pending_overlay skip them (`pins.get()` -> None). Mirrors
+    the `len(apps) == 1` guard in _collapse_instance_rows."""
+    by_repo: Dict[str, set] = {}
+    for entry in entries:
+        p = _parse_image(entry.get("image") or "")
+        if p and p.get("repo") and p.get("tag"):
+            by_repo.setdefault(f"{p['registry']}/{p['repo']}", set()).add(p["tag"])
+    return {r: next(iter(t)) for r, t in by_repo.items() if len(t) == 1}
+
+
 def _live_source_pins() -> Dict[str, str]:
     """Map 'registry/repo' -> the tag pinned in the LIVE local-base
     checkout's source (apps/ + services/). Empty unless an enabled LOCAL
@@ -1967,9 +2032,10 @@ def _live_source_pins() -> Dict[str, str]:
 
     Keyed by repo (not the full image): a freshly-bumped pin has a new
     tag, and we want to detect exactly that the same repo now resolves to
-    a different tag than what's deployed. (Caveat: a base image shared by
-    two apps that are bumped divergently keys to last-wins; harmless — at
-    worst a sibling row shows amber a bit early and clears on rebuild.)"""
+    a different tag than what's deployed. Repos pinned at divergent tags by
+    several apps are dropped (see _pins_from_entries) — they can't be
+    attributed to a container-keyed row, so a last-wins value there would be
+    a permanent false pending."""
     try:
         from services.plugins import PluginsService
         base = PluginsService.get_base_override()
@@ -1983,12 +2049,8 @@ def _live_source_pins() -> Dict[str, str]:
             return {}
         from resolvers.app_source_index import scan_all_app_images
         root = Path(local)
-        pins: Dict[str, str] = {}
-        for entry in scan_all_app_images([root / "apps", root / "services"]):
-            p = _parse_image(entry["image"])
-            if p and p.get("repo") and p.get("tag"):
-                pins[f"{p['registry']}/{p['repo']}"] = p["tag"]
-        return pins
+        return _pins_from_entries(
+            scan_all_app_images([root / "apps", root / "services"]))
     except Exception as e:  # noqa: BLE001
         logger.warning("live source-pin scan failed: %s", e)
         return {}

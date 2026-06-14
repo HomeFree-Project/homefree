@@ -645,6 +645,21 @@ in
         type = "github";
         project = "immich-app/immich";
       };
+      ## immich publishes no comparable semver in its ghcr tag-list window
+      ## (page-capped at old v1.x + -cuda/-openvino flavours), so the default
+      ## image strategy can only resolve via the flaky ghcr-label -> GitHub
+      ## fallback (_ghcr_source_repo silently returns None on any transient
+      ## hiccup, then the bare ghcr path immich-app/immich-server 404s). Pin
+      ## the source repo directly: github-releases against immich-app/immich
+      ## (the ghcr image name is NOT the GitHub repo). channel defaults to
+      ## "stable", which drops the v3.0.0-rc.0 pre-release.
+      ## NOTE: descriptor aliasing matches the PRIMARY container's image, so
+      ## this covers immich-server only; immich-machine-learning relies on the
+      ## resolver's last-known-good hardening (refresh_all) instead.
+      version-tracking = {
+        strategy = "github-releases";
+        repo = "immich-app/immich";
+      };
       systemd-service-names = [
         "podman-immich-server"
         "podman-immich-machine-learning"

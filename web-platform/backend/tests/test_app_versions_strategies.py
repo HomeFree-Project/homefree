@@ -564,3 +564,125 @@ def test_build_payload_current_ahead_of_release_is_up_to_date(monkeypatch):
     assert row["status"] == "up-to-date"
     assert row["current"] == "0.28.0"
     assert row["latest"] == "v0.26.1"
+
+
+# ─── refresh_all last-known-good preservation ─────────────────────────
+#
+# A transient lookup failure (the flaky ghcr label dance, a throttled GitHub
+# atom feed, a network blip) returns latest=None; writing that null would
+# erase a value that resolved fine before and freeze the row "unknown" in the
+# once-daily cache. refresh_all keeps the prior good value, marks it stale,
+# and preserves the old last_checked.
+
+_IMMICH_CATALOG = [{
+    "key": "immich-server", "name": "immich-server",
+    "image": "ghcr.io/immich-app/immich-server:v2.7.5",
+    "enabled": True, "app": None,
+    "descriptor": {"strategy": "github-releases",
+                   "params": {"repo": "immich-app/immich"}},
+}]
+
+
+def _capture_write(monkeypatch):
+    """Capture what refresh_all writes via _write_cache (no disk I/O)."""
+    written: dict = {}
+    monkeypatch.setattr(av, "_write_cache", lambda data: written.update(data))
+    return written
+
+
+def test_refresh_preserves_last_known_good_on_transient_failure(monkeypatch):
+    prev = {"immich-server": {
+        "latest_tag": "v2.7.5", "note": None, "last_checked": 100,
+        "advisories": [{"id": "X"}], "source_repo": "immich-app/immich",
+        "strategy": "github-releases"}}
+
+    async def fail(descriptor, parsed):
+        return av.StrategyResult(latest=None, note="network error: ConnectError")
+
+    monkeypatch.setattr(av, "_merged_catalog", lambda: _IMMICH_CATALOG)
+    monkeypatch.setattr(av, "_read_cache", lambda: prev)
+    monkeypatch.setattr(av, "_resolve_version", fail)
+    written = _capture_write(monkeypatch)
+
+    run(av.refresh_all())
+    e = written["immich-server"]
+    assert e["latest_tag"] == "v2.7.5"            # prior good value kept
+    assert e["source_repo"] == "immich-app/immich"
+    assert e["advisories"] == [{"id": "X"}]
+    assert e["last_checked"] == 100               # old timestamp preserved
+    assert e["stale"] is True
+    assert "last known good" in e["note"]
+
+
+def test_refresh_does_not_preserve_across_strategy_change(monkeypatch):
+    # Prior good value came from a DIFFERENT strategy (the app just gained a
+    # descriptor: image -> github-releases). Don't carry it across.
+    prev = {"immich-server": {
+        "latest_tag": "v2.7.5", "note": None, "last_checked": 100,
+        "strategy": "image"}}
+
+    async def fail(descriptor, parsed):
+        return av.StrategyResult(latest=None, note="no comparable version tags")
+
+    monkeypatch.setattr(av, "_merged_catalog", lambda: _IMMICH_CATALOG)
+    monkeypatch.setattr(av, "_read_cache", lambda: prev)
+    monkeypatch.setattr(av, "_resolve_version", fail)
+    written = _capture_write(monkeypatch)
+
+    run(av.refresh_all())
+    e = written["immich-server"]
+    assert e["latest_tag"] is None
+    assert e.get("stale") is None
+
+
+def test_refresh_writes_fresh_value_on_success(monkeypatch):
+    prev = {"immich-server": {
+        "latest_tag": "v2.7.4", "note": None, "last_checked": 100,
+        "strategy": "github-releases"}}
+
+    async def ok(descriptor, parsed):
+        return av.StrategyResult(latest="v2.7.5", note=None,
+                                 source_repo="immich-app/immich")
+
+    monkeypatch.setattr(av, "_merged_catalog", lambda: _IMMICH_CATALOG)
+    monkeypatch.setattr(av, "_read_cache", lambda: prev)
+    monkeypatch.setattr(av, "_resolve_version", ok)
+    written = _capture_write(monkeypatch)
+
+    run(av.refresh_all())
+    e = written["immich-server"]
+    assert e["latest_tag"] == "v2.7.5"            # fresh value written verbatim
+    assert e.get("stale") is None
+    assert e["last_checked"] != 100               # fresh timestamp
+
+
+# ─── pending overlay: shared base image ambiguity ─────────────────────
+#
+# _live_source_pins keys staged pins by registry/repo. A base image pinned
+# at DIVERGENT tags by several apps (library/redis: immich/nextcloud 8.8.0 vs
+# nomad 7-alpine) has no single staged value, so a last-wins map would flag
+# every sibling redis row pending-rebuild forever. _pins_from_entries drops
+# such ambiguous repos; a single-app single-tag repo stays bumpable.
+
+def test_pins_from_entries_drops_divergent_shared_base():
+    entries = [
+        {"app": "immich", "image": "redis:8.8.0"},
+        {"app": "nextcloud", "image": "redis:8.8.0"},
+        {"app": "nomad", "image": "docker.io/library/redis:7-alpine"},
+        {"app": "immich", "image": "ghcr.io/immich-app/immich-server:v2.7.6"},
+    ]
+    pins = av._pins_from_entries(entries)
+    # redis is pinned at two distinct tags -> no single staged value -> dropped.
+    assert "docker.io/library/redis" not in pins
+    # a single-app, single-tag repo is kept so a genuine bump still shows pending.
+    assert pins["ghcr.io/immich-app/immich-server"] == "v2.7.6"
+
+
+def test_pins_from_entries_keeps_unanimous_shared_base():
+    # Same base image pinned by several apps at the SAME tag is unambiguous.
+    entries = [
+        {"app": "immich", "image": "redis:8.8.0"},
+        {"app": "nextcloud", "image": "redis:8.8.0"},
+    ]
+    pins = av._pins_from_entries(entries)
+    assert pins["docker.io/library/redis"] == "8.8.0"

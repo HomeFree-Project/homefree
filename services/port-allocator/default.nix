@@ -22,9 +22,13 @@
 ##     clear error.
 ##
 ##   Pass 2 — `port-request` is `null`.
-##     Each auto-requester gets the next free port from `AUTO_POOL`.
-##     Labels are sorted alphabetically so assignments are stable as
-##     long as the set of enabled apps and the pinned list don't move.
+##     An auto-requester whose label is in the `STABLE` map (below) gets
+##     its canonical fixed port REGARDLESS of which other apps are
+##     enabled — so enabling/disabling one app never reshuffles another's
+##     port (and never churns its container / Caddy upstream). Any
+##     auto-requester NOT in `STABLE` gets the next free port from
+##     `AUTO_POOL` (labels sorted alphabetically); all `STABLE` values
+##     are reserved out of that pool so a fallback never lands on one.
 ##
 ## ──────────────────────────────────────────────────────────────────
 ## Migration status: COMPLETE
@@ -61,6 +65,83 @@ let
   ## first-party HTTP-only apps flip to null); bump to `lib.range 9000
   ## 9199` if we ever cross ~80% utilisation.
   AUTO_POOL = lib.range 9000 9099;
+
+  ## ── Canonical fixed assignments ────────────────────────────────────
+  ## An auto-requester (`port-request = null`) whose label appears here
+  ## is pinned to this exact port no matter which other apps are enabled.
+  ## This is what makes a port STABLE across enable/disable: the old
+  ## positional fold handed slots out in alphabetical order, so inserting
+  ## one app (e.g. enabling netbird) bumped every alphabetically-later
+  ## auto app to the next slot — changing its podman publish port
+  ## (container restart) and its Caddy upstream (reload). With a fixed
+  ## map, each label owns its number independently.
+  ##
+  ## Scope + rules:
+  ##   * Only FIRST-PARTY (apps/*, services/*) apps with a FIXED label
+  ##     live here. Instance-named labels (external proxies, per-wiki
+  ##     `mediawiki_<n>`, per-server `minecraft_<n>`) and out-of-repo
+  ##     plugin flakes intentionally stay on the fallback path — pinning
+  ##     an instance identifier in shared code would violate the
+  ##     "no instance-specific values in shared code" rule.
+  ##   * Every value MUST be inside AUTO_POOL, unique, and must not
+  ##     collide with a Pass-1 pin (the Pass-2 byPort check throws if it
+  ##     does). All STABLE values are reserved out of the fallback pool
+  ##     unconditionally — even for a label that is currently disabled —
+  ##     so toggling a mapped app never frees a slot a fallback app could
+  ##     drift into.
+  ##   * Seeded from the reference deployment's allocation so existing
+  ##     boxes do not churn on first rebuild; a box with a different
+  ##     enabled set converges to these canonical numbers once, then is
+  ##     stable. Add a new first-party app's label here to canonicalise
+  ##     its port (otherwise it just draws the next free slot).
+  STABLE = {
+    adguard = 9000;
+    admin = 9001;
+    admin-api = 9002;
+    azuracast = 9005;
+    backup-canary = 9006;
+    baikal = 9007;
+    cryptpad = 9012;
+    forgejo = 9015;
+    freshrss = 9016;
+    frigate = 9017;
+    grocy = 9019;
+    headscale-headplane = 9020;
+    home = 9021;
+    homebox = 9022;
+    joplin = 9026;
+    landing-page = 9028;
+    lidarr = 9029;
+    linkwarden = 9030;
+    manual = 9031;
+    ## matrix is disabled on the reference box, so it had no current
+    ## port to seed from — give it the next free canonical slot above the
+    ## seeded range so enabling it later is also non-disruptive.
+    matrix = 9058;
+    netbird = 9038;
+    nextcloud = 9039;
+    nomad = 9040;
+    ntfy = 9041;
+    nzbget = 9042;
+    oauth2proxy = 9043;
+    odoo = 9044;
+    ollama = 9045;
+    opensprinkler = 9046;
+    opensprinkler-ui = 9047;
+    postgres-vectorchord = 9048;
+    radicle-httpd = 9049;
+    screeenly = 9051;
+    snipe-it = 9052;
+    trilium = 9053;
+    vaultwarden = 9054;
+    zitadel = 9055;
+    zitadel-provision = 9056;
+    zwave-js-ui = 9057;
+  };
+
+  ## All canonical ports, reserved out of the fallback pool regardless of
+  ## whether each mapped label is currently present.
+  stableReserved = lib.attrValues STABLE;
 
   ## Defensive: filter out the always-true default `enable = true` on
   ## service-config entries that an app declares but has gated to its
@@ -116,27 +197,48 @@ let
     in
       lib.foldl' step { byLabel = {}; byPort = {}; } pinnedRequests;
 
-  ## Pass 2 — assign auto requests from AUTO_POOL, skipping anything
-  ## a pin already claimed.
+  ## Pass 2 — assign auto requests. A label in STABLE takes its
+  ## canonical fixed port; everything else draws the next free slot from
+  ## AUTO_POOL with ALL canonical ports reserved out (so a fallback app
+  ## never lands on a number that belongs to a mapped app, present or
+  ## not). A pin already claimed anything in `acc.byPort`.
   autoAssignments =
     let
-      step = acc: r:
-        let
-          remaining = lib.subtractLists
-            (lib.attrValues acc.byLabel)
-            AUTO_POOL;
+      assign = acc: label: port:
+        let owner = acc.byPort.${toString port} or null;
         in
-          if remaining == [] then
+          if owner != null && owner != label then
             throw ''
-              homefree.ports: ran out of auto-pool ports while
-              assigning ${r.label}. Either expand the pool in
-              services/port-allocator/default.nix `AUTO_POOL` or pin
-              ${r.label} via `port-request`.
+              homefree.ports: ${label} wants port ${toString port} but it
+              is already taken by ${owner}. If ${label} is in the STABLE
+              map in services/port-allocator/default.nix, its canonical
+              port collides with a pinned `port-request` — change one.
             ''
           else {
-            byLabel = acc.byLabel // { ${r.label} = lib.head remaining; };
-            byPort  = acc.byPort  // { ${toString (lib.head remaining)} = r.label; };
+            byLabel = acc.byLabel // { ${label} = port; };
+            byPort  = acc.byPort  // { ${toString port} = label; };
           };
+      step = acc: r:
+        let
+          stablePort = STABLE.${r.label} or null;
+        in
+          if stablePort != null then
+            assign acc r.label stablePort
+          else
+            let
+              remaining = lib.subtractLists
+                (lib.attrValues acc.byLabel ++ stableReserved)
+                AUTO_POOL;
+            in
+              if remaining == [] then
+                throw ''
+                  homefree.ports: ran out of auto-pool ports while
+                  assigning ${r.label}. Either expand the pool in
+                  services/port-allocator/default.nix `AUTO_POOL` or pin
+                  ${r.label} via `port-request`.
+                ''
+              else
+                assign acc r.label (lib.head remaining);
     in
       lib.foldl' step pinnedAssignments effectiveAutoRequests;
 

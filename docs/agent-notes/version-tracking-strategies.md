@@ -72,8 +72,18 @@ in their own repo.
 - **No `release-tracking` shim.** The legacy `release-tracking {type,project}`
   field stays declared (rule 11) but is still inert — wiring it to
   `github-releases` would REGRESS nextcloud (image tag `33.0.5-apache` has no
-  same-shape match in `nextcloud/server`'s `vNN` releases). immich/nextcloud
-  resolve fine on the default `image` strategy; leave them there.
+  same-shape match in `nextcloud/server`'s `vNN` releases). nextcloud resolves
+  fine on the default `image` strategy; leave it there. **immich does NOT** —
+  its ghcr `tags/list?n=1000` window is page-capped at old `v1.x` + `-cuda`/
+  `-openvino` flavours (no comparable semver), so it can only resolve via the
+  ghcr→GitHub fallback, whose `_ghcr_source_repo` label dance is flaky and (when
+  it returns None) leaves only the bare ghcr path `immich-app/immich-server`,
+  which 404s on github (the real repo is `immich-app/immich`). So `apps/immich`
+  now declares `version-tracking = { strategy = "github-releases"; repo =
+  "immich-app/immich"; }`. Aliasing matches the PRIMARY container's image, so
+  this covers `immich-server` only; `immich-machine-learning` (different image)
+  stays on the default `image` strategy and is covered by the last-known-good
+  hardening below instead.
 
 ## Flavour-heavy Docker Hub repos (redis/postgres) — the name-filter
 
@@ -148,6 +158,21 @@ uses the filter.
   repo map) and outdated guarded rows show an amber "SSO guard" pill instead of a
   button the script would refuse. Deliberate path: read release notes →
   `scripts/upgrade-apps.py --include-zitadel` → rebuild.
+- **Last-known-good preservation in `refresh_all`**: lookups go through
+  upstream registries/GitHub that intermittently fail (the flaky
+  `_ghcr_source_repo` label dance, a throttled github.com atom feed under the
+  full ~60-entry sequential refresh, plain network blips). The refresh runs
+  only ONCE daily, so a single `latest=None` would blank a value that resolved
+  fine yesterday and freeze the row at `unknown` for ~24h (often longer — the
+  blip recurs). `refresh_all` reads the PREVIOUS cache and, when the fresh
+  lookup yields no `latest` but the prior entry had one **for the same
+  strategy**, keeps the prior `latest_tag`/`source_repo`/`advisories`, sets
+  `stale: true`, and PRESERVES the old `last_checked` (so the displayed
+  timestamp honestly ages). Strategy-match guard avoids carrying a value across
+  a descriptor change (image→github-releases). No time bound: a removed app
+  drops out of the catalog naturally; for a still-deployed app the aging
+  timestamp + `stale` is the honest signal, better than a perpetual `unknown`.
+  `_build_payload` passes `stale` through for the frontend.
 
 ## Residuals (genuinely unresolved, on purpose)
 

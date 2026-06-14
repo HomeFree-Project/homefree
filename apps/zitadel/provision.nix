@@ -1037,6 +1037,15 @@ EOF
             printf '%s' "$project_id" > "$secrets_dir/zitadel-project-id"
             chmod 644 "$secrets_dir/zitadel-project-id"
           fi
+          ## Hand the admin's Zitadel user id to netbird-provision so it can
+          ## fabricate the NetBird account with the admin as owner — NetBird
+          ## only creates the account on an interactive SSO login otherwise,
+          ## and no headless token it accepts can be minted (its `aud` must be
+          ## the netbird client_id). admin_id is resolved in step 3b above.
+          if [ -n "''${admin_id:-}" ]; then
+            printf '%s' "$admin_id" > "$secrets_dir/owner-user-id"
+            chmod 600 "$secrets_dir/owner-user-id"
+          fi
         fi
 
         ## (d) Service-specific extras

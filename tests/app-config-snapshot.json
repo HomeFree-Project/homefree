@@ -113,7 +113,7 @@
       "image": "ghcr.io/azuracast/azuracast:0.23.6",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9003:80",
+        "0.0.0.0:9005:80",
         "0.0.0.0:2033:2022"
       ],
       "user": null,
@@ -145,7 +145,7 @@
       "image": "ckulka/baikal:0.10.1-nginx",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9005:80"
+        "0.0.0.0:9007:80"
       ],
       "user": null,
       "volumes": [
@@ -175,7 +175,7 @@
       "image": "cryptpad/cryptpad:version-2026.5.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9006:9006",
+        "0.0.0.0:9012:9012",
         "0.0.0.0:3023:3023"
       ],
       "user": null,
@@ -216,7 +216,7 @@
         "FORGEJO__security__INTERNAL_TOKEN__FILE": "/run/secrets/forgejo/internal-token",
         "FORGEJO__security__SECRET_KEY__FILE": "/run/secrets/forgejo/secret-key",
         "FORGEJO__server__DOMAIN": "git.homefree.host",
-        "FORGEJO__server__HTTP_PORT": "9007",
+        "FORGEJO__server__HTTP_PORT": "9015",
         "FORGEJO__server__LANDING_PAGE": "explore",
         "FORGEJO__server__MINIMUM_KEY_SIZE_CHECK": "false",
         "FORGEJO__server__ROOT_URL": "https://git.homefree.host",
@@ -237,7 +237,7 @@
       "image": "codeberg.org/forgejo/forgejo:15.0.3",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9007:9007",
+        "0.0.0.0:9015:9015",
         "0.0.0.0:3022:3022"
       ],
       "user": null,
@@ -268,7 +268,7 @@
       "image": "freshrss/freshrss:1.29.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9008:80"
+        "0.0.0.0:9016:80"
       ],
       "user": null,
       "volumes": [
@@ -299,7 +299,7 @@
       "image": "ghcr.io/blakeblackshear/frigate:0.17.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9009:5000",
+        "0.0.0.0:9017:5000",
         "8554:8554",
         "8555:8555/tcp",
         "8555:8555/udp"
@@ -327,7 +327,7 @@
       "image": "lscr.io/linuxserver/grocy:4.6.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9010:80"
+        "0.0.0.0:9019:80"
       ],
       "user": null,
       "volumes": [
@@ -379,10 +379,10 @@
         "/var/lib/homebox-podman/sso.env"
       ],
       "extraOptions": [],
-      "image": "docker.io/sysadminsmedia/homebox:0.25.0",
+      "image": "docker.io/sysadminsmedia/homebox:0.26.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9013:7745"
+        "0.0.0.0:9022:7745"
       ],
       "user": "807:807",
       "volumes": [
@@ -541,7 +541,7 @@
       "image": "joplin/server:3.7.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9014:22300"
+        "0.0.0.0:9026:22300"
       ],
       "user": null,
       "volumes": [
@@ -565,7 +565,7 @@
       "image": "lscr.io/linuxserver/lidarr:3.1.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9016:8686"
+        "0.0.0.0:9029:8686"
       ],
       "user": null,
       "volumes": [
@@ -598,7 +598,7 @@
       "image": "ghcr.io/linkwarden/linkwarden:v2.14.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9017:3000"
+        "0.0.0.0:9030:3000"
       ],
       "user": null,
       "volumes": [
@@ -625,7 +625,7 @@
       "image": "matrixdotorg/synapse:v1.154.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9019:9019"
+        "0.0.0.0:9058:9058"
       ],
       "user": null,
       "volumes": [
@@ -731,7 +731,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/management:0.72.3",
+      "image": "netbirdio/management:0.72.4",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33073:80"
@@ -759,7 +759,7 @@
         "/var/lib/netbird/relay.env"
       ],
       "extraOptions": [],
-      "image": "netbirdio/relay:0.72.3",
+      "image": "netbirdio/relay:0.72.4",
       "imageFile": null,
       "ports": [
         "0.0.0.0:33080:33080"
@@ -781,7 +781,7 @@
       "environment": {},
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "netbirdio/signal:0.72.3",
+      "image": "netbirdio/signal:0.72.4",
       "imageFile": null,
       "ports": [
         "0.0.0.0:10000:80"
@@ -823,7 +823,7 @@
       "image": "nextcloud:33.0.5-apache",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9022:80"
+        "0.0.0.0:9039:80"
       ],
       "user": null,
       "volumes": [
@@ -933,7 +933,7 @@
       "image": "ghcr.io/crosstalk-solutions/project-nomad:1.32.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9023:8080"
+        "0.0.0.0:9040:8080"
       ],
       "user": null,
       "volumes": [
@@ -1009,7 +1009,7 @@
       "image": "lscr.io/linuxserver/nzbget:version-v26.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9024:6789"
+        "0.0.0.0:9042:6789"
       ],
       "user": null,
       "volumes": [
@@ -1131,7 +1131,7 @@
       "image": "odoo:19.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9026:8069"
+        "0.0.0.0:9044:8069"
       ],
       "user": null,
       "volumes": [
@@ -1164,7 +1164,7 @@
       "image": "ghcr.io/open-webui/open-webui:v0.9.6",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9027:8254"
+        "0.0.0.0:9045:8254"
       ],
       "user": null,
       "volumes": [
@@ -1231,7 +1231,7 @@
       "cmd": [
         "radicle-httpd",
         "--listen",
-        "0.0.0.0:9030"
+        "0.0.0.0:9049"
       ],
       "dependsOn": [
         "radicle-node"
@@ -1247,7 +1247,7 @@
       "image": "homefree/radicle:local",
       "imageFile": "/nix/store/radicle.tar.gz",
       "ports": [
-        "10.0.0.1:9030:9030"
+        "10.0.0.1:9049:9049"
       ],
       "user": null,
       "volumes": [
@@ -1308,7 +1308,7 @@
       "image": "hadogenes/screeenly@sha256:142211a830a1af83e796965ed5357788c21ffbd49c684704ab085c5a43bdba0f",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9031:80"
+        "0.0.0.0:9051:80"
       ],
       "user": null,
       "volumes": [
@@ -1333,7 +1333,7 @@
         "APP_FORCE_TLS": "false",
         "APP_LOCALE": "",
         "APP_LOCKED": "false",
-        "APP_PORT": "9032",
+        "APP_PORT": "9052",
         "APP_TIMEZONE": "Etc/UTC",
         "APP_TRUSTED_PROXIES": "192.168.1.1,10.0.0.1,172.16.0.0/12",
         "APP_URL": "https://snipeit.homefree.host",
@@ -1424,7 +1424,7 @@
       "image": "snipe/snipe-it:v8.6.1",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9032:80"
+        "0.0.0.0:9052:80"
       ],
       "user": null,
       "volumes": [
@@ -1450,7 +1450,7 @@
       "image": "triliumnext/notes:v0.95.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9033:8080"
+        "0.0.0.0:9053:8080"
       ],
       "user": null,
       "volumes": [
@@ -1525,7 +1525,7 @@
       "image": "vaultwarden/server:1.36.0",
       "imageFile": null,
       "ports": [
-        "0.0.0.0:9034:8080"
+        "0.0.0.0:9054:8080"
       ],
       "user": "801:801",
       "volumes": [
@@ -2109,7 +2109,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9003,
+        "port": 9005,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -2324,7 +2324,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9004,
+        "port": 9006,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -2444,7 +2444,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9005,
+        "port": 9007,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -2719,7 +2719,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9006,
+        "port": 9012,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -2867,7 +2867,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9007,
+        "port": 9015,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -3070,7 +3070,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9008,
+        "port": 9016,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -3162,7 +3162,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9009,
+        "port": 9017,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -3447,7 +3447,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9010,
+        "port": 9019,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -3644,7 +3644,7 @@
         "enable": true,
         "extra-csp-sources": [],
         "extra-http-hosts": [],
-        "extraCaddyConfig": "# Fake DERP latency check (headscale doesn't implement this endpoint)\nhandle /derp/latency-check {\n  respond 200\n}\n\n# Handle DERP relay connections (requires HTTP upgrade).\n#\n# The DERP server (embedded Tailscale code) sends a keepalive\n# frame every 60s ± 5s jitter to every connected client. Each\n# write to the client uses tcpWriteTimeout, which defaults to\n# 2 seconds (DefaultTCPWiteTimeout in derp_server.go — note\n# the upstream typo). If ANY single keepalive write can't be\n# flushed to the client within 2s — because Caddy was\n# buffering, the upstream pool decided the connection was\n# \"idle\" and pruned it, or backpressure stalled the write —\n# the DERP server force-closes the connection and the client\n# logs `derp.Recv: EOF`. That is the failure mode we see\n# every 1-30 min in tailscaled logs.\n#\n# The block below lays out every Caddy knob that touches\n# long-lived upgraded connections, set conservatively so\n# nothing on our side can introduce a 2s+ stall:\n#   transport http versions 1.1: DERP requires HTTP/1.1\n#     Upgrade; h2 negotiation would break it.\n#   read_timeout / write_timeout 0: no upstream timeouts.\n#     Caddy's default is \"until upstream closes\" but explicit\n#     is safer.\n#   keepalive 24h, dial_timeout 5s: keep the upstream socket\n#     alive across keepalives; only fail dialing if upstream\n#     is genuinely unreachable.\n#   flush_interval -1: do not coalesce writes from upstream;\n#     each keepalive flushes immediately. Caddy auto-detects\n#     Upgrade and does this anyway, but explicit makes it\n#     auditable.\n@derp {\n  path /derp /derp/*\n}\nhandle @derp {\n  reverse_proxy http://10.0.0.1:8087 {\n    transport http {\n      versions 1.1\n      read_timeout 0\n      write_timeout 0\n      dial_timeout 5s\n      keepalive 24h\n    }\n    flush_interval -1\n    header_up Connection {http.request.header.Connection}\n    header_up Upgrade {http.request.header.Upgrade}\n  }\n}\n\n# Handle Tailscale control protocol (requires HTTP upgrade).\n#\n# /ts2021 carries the long-lived noise control connection\n# used by tailscale ≥1.32 — clients hold it open and the\n# server long-polls map updates over it, with a NoOp\n# keepalive every ~60s as a liveness signal. Same shape as\n# /derp above: HTTP/1.1 Upgrade, no upstream timeouts,\n# immediate flush so the keepalive isn't buffered. Without\n# this transport block, Caddy defaults silently cut the\n# connection — observed as the phone's node cycling\n# \"node added\" / \"node online\" in headscale every few\n# seconds, even though data-plane wireguard packets keep\n# flowing. Tailscale Android surfaces the resulting\n# control-plane gap as \"DNS unavailable\" (it can't\n# validate its DNS config is current).\n@ts2021 {\n  path /ts2021\n}\nhandle @ts2021 {\n  reverse_proxy http://10.0.0.1:8087 {\n    transport http {\n      versions 1.1\n      read_timeout 0\n      write_timeout 0\n      dial_timeout 5s\n      keepalive 24h\n    }\n    flush_interval -1\n    header_up Connection {http.request.header.Connection}\n    header_up Upgrade {http.request.header.Upgrade}\n  }\n}\n\nhandle /admin* {\n  ## Headplane binds on 127.0.0.1:9011\n  ## (port comes from the central allocator so it can shift\n  ## between rebuilds — must not be hardcoded). Reach it via\n  ## loopback rather than 10.0.0.1 where it doesn't listen.\n  reverse_proxy http://127.0.0.1:9011\n}\n\n## Land users at the Headplane admin UI when they visit\n## https://vpn.<domain>/ in a browser. Headplane is hard-coded\n## to its /admin basename (see vite/react-router config in the\n## upstream package), so this is a cosmetic redirect rather than\n## a path remount. We match `/` exactly so headscale's other\n## endpoints (/key, /derp/*, /ts2021, /machine/*, etc.) still\n## reach the headscale daemon below.\n@root_only path /\nredir @root_only /admin/ 302\n",
+        "extraCaddyConfig": "# Fake DERP latency check (headscale doesn't implement this endpoint)\nhandle /derp/latency-check {\n  respond 200\n}\n\n# Handle DERP relay connections (requires HTTP upgrade).\n#\n# The DERP server (embedded Tailscale code) sends a keepalive\n# frame every 60s ± 5s jitter to every connected client. Each\n# write to the client uses tcpWriteTimeout, which defaults to\n# 2 seconds (DefaultTCPWiteTimeout in derp_server.go — note\n# the upstream typo). If ANY single keepalive write can't be\n# flushed to the client within 2s — because Caddy was\n# buffering, the upstream pool decided the connection was\n# \"idle\" and pruned it, or backpressure stalled the write —\n# the DERP server force-closes the connection and the client\n# logs `derp.Recv: EOF`. That is the failure mode we see\n# every 1-30 min in tailscaled logs.\n#\n# The block below lays out every Caddy knob that touches\n# long-lived upgraded connections, set conservatively so\n# nothing on our side can introduce a 2s+ stall:\n#   transport http versions 1.1: DERP requires HTTP/1.1\n#     Upgrade; h2 negotiation would break it.\n#   read_timeout / write_timeout 0: no upstream timeouts.\n#     Caddy's default is \"until upstream closes\" but explicit\n#     is safer.\n#   keepalive 24h, dial_timeout 5s: keep the upstream socket\n#     alive across keepalives; only fail dialing if upstream\n#     is genuinely unreachable.\n#   flush_interval -1: do not coalesce writes from upstream;\n#     each keepalive flushes immediately. Caddy auto-detects\n#     Upgrade and does this anyway, but explicit makes it\n#     auditable.\n@derp {\n  path /derp /derp/*\n}\nhandle @derp {\n  reverse_proxy http://10.0.0.1:8087 {\n    transport http {\n      versions 1.1\n      read_timeout 0\n      write_timeout 0\n      dial_timeout 5s\n      keepalive 24h\n    }\n    flush_interval -1\n    header_up Connection {http.request.header.Connection}\n    header_up Upgrade {http.request.header.Upgrade}\n  }\n}\n\n# Handle Tailscale control protocol (requires HTTP upgrade).\n#\n# /ts2021 carries the long-lived noise control connection\n# used by tailscale ≥1.32 — clients hold it open and the\n# server long-polls map updates over it, with a NoOp\n# keepalive every ~60s as a liveness signal. Same shape as\n# /derp above: HTTP/1.1 Upgrade, no upstream timeouts,\n# immediate flush so the keepalive isn't buffered. Without\n# this transport block, Caddy defaults silently cut the\n# connection — observed as the phone's node cycling\n# \"node added\" / \"node online\" in headscale every few\n# seconds, even though data-plane wireguard packets keep\n# flowing. Tailscale Android surfaces the resulting\n# control-plane gap as \"DNS unavailable\" (it can't\n# validate its DNS config is current).\n@ts2021 {\n  path /ts2021\n}\nhandle @ts2021 {\n  reverse_proxy http://10.0.0.1:8087 {\n    transport http {\n      versions 1.1\n      read_timeout 0\n      write_timeout 0\n      dial_timeout 5s\n      keepalive 24h\n    }\n    flush_interval -1\n    header_up Connection {http.request.header.Connection}\n    header_up Upgrade {http.request.header.Upgrade}\n  }\n}\n\nhandle /admin* {\n  ## Headplane binds on 127.0.0.1:9020\n  ## (port comes from the central allocator so it can shift\n  ## between rebuilds — must not be hardcoded). Reach it via\n  ## loopback rather than 10.0.0.1 where it doesn't listen.\n  reverse_proxy http://127.0.0.1:9020\n}\n\n## Land users at the Headplane admin UI when they visit\n## https://vpn.<domain>/ in a browser. Headplane is hard-coded\n## to its /admin basename (see vite/react-router config in the\n## upstream package), so this is a cosmetic redirect rather than\n## a path remount. We match `/` exactly so headscale's other\n## endpoints (/key, /derp/*, /ts2021, /machine/*, etc.) still\n## reach the headscale daemon below.\n@root_only path /\nredir @root_only /admin/ 302\n",
         "host": "10.0.0.1",
         "http-domains": [
           "homefree.lan",
@@ -4108,7 +4108,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9013,
+        "port": 9022,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -4263,8 +4263,8 @@
         "current-version": "",
         "regex": "",
         "registry": "",
-        "repo": "",
-        "strategy": "image",
+        "repo": "immich-app/immich",
+        "strategy": "github-releases",
         "tag-pattern": "",
         "tag-prefix": "",
         "update-command": null,
@@ -4484,7 +4484,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9014,
+        "port": 9026,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -4733,7 +4733,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9016,
+        "port": 9029,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -4854,7 +4854,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9017,
+        "port": 9030,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -5082,7 +5082,7 @@
         "enable": true,
         "extra-csp-sources": [],
         "extra-http-hosts": [],
-        "extraCaddyConfig": "# Matrix Synapse settings: respond to .well-known/matrix/server\n# for the homeserver's server_name so federating peers find\n# us. NOTE: homefree.host may differ from the box's primary\n# domain when migrating an existing homeserver (see the\n# serverName comment above).\nrespond /.well-known/matrix/server `{\"m.server\": \"matrix.homefree.host:443\"}`\nreverse_proxy /_matrix/* 10.0.0.1:9019\nreverse_proxy /_synapse/client/* 10.0.0.1:9019\nreverse_proxy /_synapse/admin/* 10.0.0.1:9019\n",
+        "extraCaddyConfig": "# Matrix Synapse settings: respond to .well-known/matrix/server\n# for the homeserver's server_name so federating peers find\n# us. NOTE: homefree.host may differ from the box's primary\n# domain when migrating an existing homeserver (see the\n# serverName comment above).\nrespond /.well-known/matrix/server `{\"m.server\": \"matrix.homefree.host:443\"}`\nreverse_proxy /_matrix/* 10.0.0.1:9058\nreverse_proxy /_synapse/client/* 10.0.0.1:9058\nreverse_proxy /_synapse/admin/* 10.0.0.1:9058\n",
         "host": "10.0.0.1",
         "http-domains": [
           "homefree.lan",
@@ -5093,7 +5093,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9019,
+        "port": 9058,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -5223,8 +5223,7 @@
       "backup": {
         "mysql-databases": [],
         "paths": [
-          "/var/lib/netbird",
-          "/var/lib/netbird-signal"
+          "/var/lib/netbird"
         ],
         "postgres-databases": []
       },
@@ -5275,8 +5274,8 @@
         },
         {
           "category": "basic",
-          "default": false,
-          "description": "Also run the NetBird client on this host (router as peer). Independent of server.",
+          "default": true,
+          "description": "Make this box the LAN routing peer and auto-provision remote network access (replaces the dashboard wizard). On by default with the server; set false to run the server only.",
           "enum-values": null,
           "nullable": false,
           "path": "client.enable",
@@ -5342,7 +5341,8 @@
         "podman-netbird-signal",
         "podman-netbird-relay",
         "podman-netbird-dashboard",
-        "podman-netbird-coturn"
+        "podman-netbird-coturn",
+        "netbird"
       ],
       "version-tracking": {
         "channel": "stable",
@@ -5453,7 +5453,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9022,
+        "port": 9039,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -5602,7 +5602,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9023,
+        "port": 9040,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6101,7 +6101,7 @@
         ],
         "inject-basic-auth-env": "NZBGET_BASIC_AUTH",
         "oauth2": true,
-        "port": 9024,
+        "port": 9042,
         "public": false,
         "require-admin-role": true,
         "rootDomain": false,
@@ -6286,7 +6286,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9026,
+        "port": 9044,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6407,7 +6407,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9027,
+        "port": 9045,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -6935,7 +6935,7 @@
         "enable": true,
         "extra-csp-sources": [],
         "extra-http-hosts": [],
-        "extraCaddyConfig": "## radicle-explorer talks to the JSON API at /api/*;\n## reverse-proxy those to radicle-httpd.\n@rad_api path /api/*\nhandle @rad_api {\n  reverse_proxy http://10.0.0.1:9030\n}\n\n## SPA fallback. radicle-explorer is a client-side-routed\n## SPA: URLs like /seeds/<host>/<rid> and /<rid>/tree/...\n## have no corresponding file in the static build — the\n## SPA's JS router resolves them after /index.html boots.\n## Without this rewrite, a browser reload on any deep\n## link 404s from Caddy's file_server.\n##\n## Matchers:\n##   not path /api/*  — leave API calls untouched. Caddy's\n##     directive ordering runs `rewrite` BEFORE `handle`,\n##     so without this guard /api/v1/foo would be rewritten\n##     to /index.html before the API handler ever saw it.\n##   not file         — only fire when no static file exists\n##     at the request path. /assets/<hash>.js, /favicon.ico,\n##     /index.html itself etc. are real files and continue\n##     to flow through to file_server normally. `file` uses\n##     the `root` set in the parent static-path block.\n@rad_spa {\n  not path /api/*\n  not file\n}\nrewrite @rad_spa /index.html\n",
+        "extraCaddyConfig": "## radicle-explorer talks to the JSON API at /api/*;\n## reverse-proxy those to radicle-httpd.\n@rad_api path /api/*\nhandle @rad_api {\n  reverse_proxy http://10.0.0.1:9049\n}\n\n## SPA fallback. radicle-explorer is a client-side-routed\n## SPA: URLs like /seeds/<host>/<rid> and /<rid>/tree/...\n## have no corresponding file in the static build — the\n## SPA's JS router resolves them after /index.html boots.\n## Without this rewrite, a browser reload on any deep\n## link 404s from Caddy's file_server.\n##\n## Matchers:\n##   not path /api/*  — leave API calls untouched. Caddy's\n##     directive ordering runs `rewrite` BEFORE `handle`,\n##     so without this guard /api/v1/foo would be rewritten\n##     to /index.html before the API handler ever saw it.\n##   not file         — only fire when no static file exists\n##     at the request path. /assets/<hash>.js, /favicon.ico,\n##     /index.html itself etc. are real files and continue\n##     to flow through to file_server normally. `file` uses\n##     the `root` set in the parent static-path block.\n@rad_spa {\n  not path /api/*\n  not file\n}\nrewrite @rad_spa /index.html\n",
         "host": null,
         "http-domains": [
           "homefree.lan",
@@ -7148,7 +7148,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9031,
+        "port": 9051,
         "public": false,
         "require-admin-role": true,
         "rootDomain": false,
@@ -7269,7 +7269,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9032,
+        "port": 9052,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -7362,7 +7362,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": true,
-        "port": 9033,
+        "port": 9053,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,
@@ -7574,7 +7574,7 @@
         ],
         "inject-basic-auth-env": null,
         "oauth2": false,
-        "port": 9034,
+        "port": 9054,
         "public": false,
         "require-admin-role": false,
         "rootDomain": false,

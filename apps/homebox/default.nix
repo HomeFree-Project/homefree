@@ -3,8 +3,12 @@ let
   containerDataPath = "/var/lib/homebox-podman";
   secretsDir = "/var/lib/homefree-secrets/homebox";
 
+  ## Anchor the generated API-key pepper into /etc/nixos/secrets so it
+  ## survives a restore (rotating it invalidates all issued API keys).
+  anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
+
   port = config.homefree.allocPort "homebox";
-  version = "0.25.0";
+  version = "0.26.1";
 
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";
@@ -128,8 +132,26 @@ in
       environmentFiles = [ ssoEnvFile ];
 
       ## Create the env file before the marker chown so it is owned by the
-      ## app uid (same as the hand-written module's ordering).
-      preStartInit = "install -m 600 /dev/null ${ssoEnvFile}";
+      ## app uid (same as the hand-written module's ordering), then
+      ## generate + anchor the mandatory API-key pepper (Homebox 0.26+
+      ## refuses to start without HBOX_AUTH_API_KEY_PEPPER >= 32 chars).
+      preStartInit = ''
+        install -m 600 /dev/null ${ssoEnvFile}
+
+        ${anchor.preamble}
+
+        ## api-key-pepper — Homebox hashes API keys with this pepper;
+        ## rotating it invalidates every issued key, so it must be
+        ## generated once and persisted (anchored). base64-of-48 is 64
+        ## chars (> the 32-char minimum); / + = are safe unquoted in an
+        ## env-file value (split on the first =).
+        ${anchor.anchorSecret {
+          service = "homebox";
+          key = "api-key-pepper";
+          dir = secretsDir;
+          generate = "${pkgs.openssl}/bin/openssl rand -base64 48";
+        }}
+      '';
 
       ## Synthesize Homebox's OIDC env file from the secrets zitadel-provision
       ## writes. Homebox v0.25+ has native OIDC (HBOX_OIDC_*). Empty file
@@ -137,6 +159,12 @@ in
       ## propagation from OIDC claims — all SSO users are equal; first to sign
       ## in becomes group owner, rest join as members.
       preStartFinal = ''
+        ## The API-key pepper is mandatory in every branch — Homebox 0.26+
+        ## panics on startup without it. preStartFinal rewrites sso.env,
+        ## so emit the pepper line in BOTH the OIDC and pre-provisioning
+        ## branches.
+        PEPPER=$(cat ${secretsDir}/api-key-pepper)
+
         if [ -s ${secretsDir}/oidc-client-id ] \
            && [ -s ${secretsDir}/oidc-client-secret ]; then
           CID=$(cat ${secretsDir}/oidc-client-id)
@@ -145,6 +173,7 @@ in
           ## HBOX_OIDC_AUTH_*). Callback path is hardcoded by Homebox to
           ## /api/v1/users/oidc-callback — registered in zitadel-provision.
           {
+            echo "HBOX_AUTH_API_KEY_PEPPER=$PEPPER"
             echo "HBOX_OIDC_ENABLED=true"
             echo "HBOX_OIDC_CLIENT_ID=$CID"
             echo "HBOX_OIDC_CLIENT_SECRET=$CSEC"
@@ -161,9 +190,9 @@ in
             echo "HBOX_OPTIONS_ALLOW_LOCAL_LOGIN=false"
           } > ${ssoEnvFile}
         else
-          ## Pre-provisioning: empty file so the container starts cleanly with
-          ## only local-login (HBOX_OIDC_ENABLED defaults false).
-          : > ${ssoEnvFile}
+          ## Pre-provisioning: only the mandatory pepper so the container
+          ## starts cleanly with local-login (HBOX_OIDC_ENABLED defaults false).
+          printf 'HBOX_AUTH_API_KEY_PEPPER=%s\n' "$PEPPER" > ${ssoEnvFile}
         fi
         chmod 600 ${ssoEnvFile}
       '';

@@ -232,6 +232,25 @@ separate deployments. It is *not* one machine's config.
     audit context and the catalog of which apps are non-root vs
     documented-skip.
 
+14. **Never hardcode an image version — pin it through a `${var}`
+    let-binding.** Every container `image = "...";` MUST take its tag
+    from a top-of-file `let` binding (`version = "1.2.3";` →
+    `image = "repo:${version}";`), and this applies to **sidecars too**
+    (redis/mysql/postgres etc. — use `version-redis = "...";` and
+    friends, the pattern in `apps/immich`/`apps/nextcloud`). A hardcoded
+    literal tag (`image = "redis:7-alpine";`) is **invisible to the app
+    updater**: the source-pin parser
+    (`web-platform/backend/resolvers/app_source_index.py`,
+    `parse_source_file`) only detects + rewrites tags that reference a
+    `${var}`, so a literal pin can't be one-click bumped and worse,
+    surfaces a **dead Update button that silently no-ops** on the App
+    Versions page. Floating tags (`:latest`, `:alpine`) and `:local`
+    builds are the only acceptable non-`${var}` image strings (they are
+    deliberately not version-pinned). When an upstream tag scheme can't
+    be tracked by default, add a `version-tracking` descriptor (see
+    below) rather than reaching for a literal.
+    → `docs/agent-notes/version-tracking-strategies.md`
+
 ## Version control
 
 This repo uses **jj (jujutsu)**, colocated with git — prefer it for
@@ -263,6 +282,19 @@ without being asked.
   `homefree.sso.clients` push (consumed by `apps/zitadel/provision.nix`),
   not a hardcoded entry in provision.nix.
   → `docs/agent-notes/sso-client-registry.md`
+- App/sidecar image versions are surfaced + upgraded by the **app updater**
+  (the admin "App Versions" / Source Code page). The backend resolver
+  (`web-platform/backend/resolvers/app_versions.py`) compares each pinned
+  tag against its upstream latest; the per-row / bulk **Update** runs
+  `scripts/upgrade-apps.py`, which rewrites the `${var}` tag binding in the
+  app's `default.nix` (both share the source-pin parser
+  `resolvers/app_source_index.py` — so the pin MUST be a `${var}` binding,
+  rule 14). The default detection is image-registry-derived; an app overrides
+  it (odd tag scheme, GitHub releases, beta channel, host app with no image,
+  a custom updater) with a `version-tracking` descriptor on its
+  `service-config` entry. Editing a pin (or descriptor) changes the snapshot
+  golden — regenerate it (next bullet).
+  → `docs/agent-notes/version-tracking-strategies.md`
 - Behaviour-preserving changes to apps / Caddy are gated by the **snapshot
   test net** (`nix flake check`); during a refactor the goldens are FROZEN,
   but any INTENDED output change (version bump, container/preStart/Caddy/SSO
@@ -502,6 +534,17 @@ Situational knowledge — read the linked note when working in that area:
   metadata alias); host apps come via `host-apps.json`; NO `release-tracking`
   shim (would regress nextcloud).
   → `docs/agent-notes/version-tracking-strategies.md`
+- **NetBird REST auto-provisioning** — remote-network-access is provisioned
+  fully headlessly (no SSO login, no wizard) via the NetBird REST API plus a
+  DB-level account fabrication: `/api/setup` is unusable (needs NetBird's
+  *embedded* IDP, not our external Zitadel) and no headless token is accepted
+  (a machine-user JWT's `aud` is never the netbird client_id), so when no
+  account exists the timer-driven provisioner FABRICATES it in `store.db`
+  (named-column INSERTs — the accounts column order changes across versions;
+  owner = the admin's Zitadel id; `onboarding_flow_pending=0` kills the
+  wizard) then restarts management; the API credential is a SQL-inserted PAT
+  whose CRC32 checksum must be byte-exact. Version-coupled — re-verify on bump.
+  → `docs/agent-notes/netbird-rest-provisioning.md`
 
 When you discover a new non-obvious, repeatable gotcha, add a note
 under `docs/agent-notes/` and link it here — keep the entry one line.

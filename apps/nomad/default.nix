@@ -72,6 +72,13 @@
 ## re-indexed from disk, but Command Center settings/history are lost.
 let
   version = "1.32.1";
+  ## Sidecar image pins MUST go through a let-binding (never a hardcoded
+  ## literal tag) so the App Versions page can detect + one-click bump them
+  ## — the source-pin parser only rewrites tags that reference a ${var}.
+  ## See AGENTS.md "App version pins + the updater". Values preserved as-is
+  ## (redis 7-alpine, mysql 8.0); the deployed images are byte-identical.
+  version-redis = "7-alpine";
+  version-mysql = "8.0";
   port = config.homefree.allocPort "nomad";
   domain = config.homefree.system.domain;
 
@@ -350,7 +357,7 @@ in
 
     ## ── MySQL ─────────────────────────────────────────────────────────
     homefree.containers.nomad-mysql = lib.mkIf enable {
-      image = "docker.io/library/mysql:8.0";
+      image = "docker.io/library/mysql:${version-mysql}";
 
       ## SKIPPED non-root: the official mysql entrypoint must start as root
       ## to initialize/chown the datadir and its /var/run/mysqld socket dir
@@ -414,7 +421,7 @@ in
 
     ## ── Redis ─────────────────────────────────────────────────────────
     homefree.containers.nomad-redis = lib.mkIf enable {
-      image = "docker.io/library/redis:7-alpine";
+      image = "docker.io/library/redis:${version-redis}";
 
       ## Single process, only writes /data — drops root cleanly.
       runAs = { mode = "rootless"; uid = nomadRedisUid; gid = nomadRedisGid; };
