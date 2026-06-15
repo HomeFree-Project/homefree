@@ -78,8 +78,6 @@
       "imageFile": null,
       "ports": [
         "0.0.0.0:9000:9000",
-        "10.0.0.1:53:53/tcp",
-        "10.0.0.1:53:53/udp",
         "127.0.0.1:53:53/tcp",
         "127.0.0.1:53:53/udp",
         "853:853/tcp",
@@ -349,7 +347,7 @@
         "--network=host",
         "--privileged"
       ],
-      "image": "ghcr.io/home-assistant/home-assistant:2026.6.2",
+      "image": "ghcr.io/home-assistant/home-assistant:2026.6.3",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -1337,7 +1335,7 @@
         "APP_TIMEZONE": "Etc/UTC",
         "APP_TRUSTED_PROXIES": "192.168.1.1,10.0.0.1,172.16.0.0/12",
         "APP_URL": "https://snipeit.homefree.host",
-        "APP_VERSION": "v8.6.1",
+        "APP_VERSION": "v8.6.2",
         "AWS_ACCESS_KEY_ID": "null",
         "AWS_DEFAULT_REGION": "null",
         "AWS_SECRET_ACCESS_KEY": "null",
@@ -1421,7 +1419,7 @@
         "/var/lib/snipeit/runtime.env"
       ],
       "extraOptions": [],
-      "image": "snipe/snipe-it:v8.6.1",
+      "image": "snipe/snipe-it:v8.6.2",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9052:80"
@@ -1743,7 +1741,7 @@
         "extra-csp-sources": [],
         "extra-http-hosts": [],
         "extraCaddyConfig": null,
-        "host": "10.0.0.1",
+        "host": "127.0.0.1",
         "http-domains": [
           "homefree.lan",
           "lan"

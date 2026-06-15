@@ -3,6 +3,35 @@ let
   lan-address = config.homefree.network.lan-address;
   lan-address-v6 = config.homefree.network.lan-address-v6;
   lan-subnet = config.homefree.network.lan-subnet;
+  ## Does lan-address actually land on a NIC? Only router mode
+  ## (profiles/router.nix) and the static-IP module (modules/lan-static-ip.nix)
+  ## assign it; in plain non-router mode the box leases its address via DHCP and
+  ## lan-address is on no interface. unbound must then NOT try to bind it (that
+  ## would fail startup) and the dns-ready gate must wait on the leased address
+  ## instead. Mirrors the gate in services/caddy and apps/adguard. unbound still
+  ## binds loopback in both modes, which is the AdGuard->unbound upstream path.
+  lan-address-assigned = config.homefree.network.router.enable || config.homefree.network.static.enable;
+
+  ## dns-ready's first wait. The router/static branch is the VERBATIM original
+  ## text so the wait-for-dns unit hash is byte-identical on existing router
+  ## boxes; the DHCP branch waits for a default route instead (no fixed
+  ## lan-address to wait for). Kept relative-indented (0/2) to match the parent
+  ## ''-string's post-dedent layout.
+  lanReadyWait =
+    if lan-address-assigned
+    then ''
+      # Wait for LAN interface to have IP assigned (required for Caddy to bind)
+      until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet ${lan-address}/"; do
+        ${pkgs.coreutils}/bin/sleep 1
+      done''
+    else ''
+      # Non-router DHCP mode: the box leases its own address, so there is no
+      # fixed lan-address to wait for. Wait for a default route instead (the
+      # lease completed and the upstream gateway is set), which is what the
+      # external-recursion probes below actually need.
+      until ${pkgs.iproute2}/bin/ip route show default | ${pkgs.gnugrep}/bin/grep -q .; do
+        ${pkgs.coreutils}/bin/sleep 1
+      done'';
   adlist = homefree-inputs.adblock-unbound.packages.${pkgs.system};
   ## DNS/ingress consumer: read the generic ingress-vhosts registry (label +
   ## reverse-proxy), NOT homefree.service-config directly — decoupled from the
@@ -178,10 +207,7 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${pkgs.writeShellScript "wait-for-dns" ''
-        # Wait for LAN interface to have IP assigned (required for Caddy to bind)
-        until ${pkgs.iproute2}/bin/ip addr show | ${pkgs.gnugrep}/bin/grep -q "inet ${lan-address}/"; do
-          ${pkgs.coreutils}/bin/sleep 1
-        done
+        ${lanReadyWait}
         # Wait for LOCAL DNS (our own zone resolves via unbound/adguard).
         # Unbounded: the local resolver is on-box and must come up.
         until ${pkgs.dnsutils}/bin/dig +short ${config.homefree.system.domain} >/dev/null 2>&1; do
@@ -336,12 +362,16 @@ in
         ## Set in services/adguardhome.nix
         ## if adguard is disabled, this is set to 53 to make it the default DNS
         # port = 53530;
-        interface = [
-          "127.0.0.1"
-          "::1"
-          "${lan-address}"
-          "100.64.0.2"       # headscale
-        ];
+        ## Only bind lan-address when something actually assigns it (router or
+        ## static mode). In non-router DHCP mode it's on no interface; AdGuard
+        ## fronts :53 for LAN clients and reaches unbound over loopback, so
+        ## loopback-only binding here is sufficient. The assigned branch keeps
+        ## the exact original list (order included) so unbound.conf is byte-for-
+        ## byte unchanged on router-on boxes.
+        interface =
+          if lan-address-assigned
+          then [ "127.0.0.1" "::1" "${lan-address}" "100.64.0.2" ]
+          else [ "127.0.0.1" "::1" "100.64.0.2" ];
         access-control = [
           "127.0.0.1/24 allow"
           "::1 allow"

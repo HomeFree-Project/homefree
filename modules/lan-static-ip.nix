@@ -84,5 +84,18 @@ in
        + "; the box is left on DHCP.")
     ++ lib.optional (active && s.gateway == "")
       ("homefree.network.static has no gateway set (network.static-ip-gateway); "
-       + "the box will have no default route and cannot reach the internet.");
+       + "the box will have no default route and cannot reach the internet.")
+    ## Informational (not a problem): non-router mode with static off is a
+    ## fully supported configuration — the box leases its address from the
+    ## upstream router via DHCP and HomeFree binds its services (Caddy, AdGuard,
+    ## unbound) to all interfaces rather than a fixed lan-address. The only
+    ## caveat is that the address can change; this note exists so the DHCP path
+    ## is a deliberate, visible choice and a future regression that re-breaks it
+    ## is easy to spot.
+    ++ lib.optional (!net.router.enable && !s.enable)
+      ("homefree.network.static is off in non-router mode: the box takes its "
+       + "address from your upstream router via DHCP and binds services to all "
+       + "interfaces. For a stable address (recommended when forwarding ports "
+       + "to this box) enable homefree.network.static and set network.lan-address"
+       + " / lan-subnet / static-ip-gateway.");
 }

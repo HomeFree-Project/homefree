@@ -5,9 +5,54 @@ let
   containerDataPath = "/var/lib/adguardhome-podman";
   port = config.homefree.allocPort "adguard";
 
+  ## Does lan-address actually land on a NIC? Only router mode
+  ## (profiles/router.nix) and the static-IP module (modules/lan-static-ip.nix)
+  ## assign it. In plain non-router mode the box leases its address via DHCP and
+  ## lan-address is on NO interface, so binding services to it fails. Mirrors the
+  ## gate in services/caddy and services/unbound.
+  lan-address-assigned = config.homefree.network.router.enable || config.homefree.network.static.enable;
+
+  ## DNS listener (:53). We CANNOT fall back to 0.0.0.0 here: port 53 is already
+  ## held by systemd-resolved (127.0.0.53/.54) and podman's aardvark-dns
+  ## (10.88.0.1), so a 0.0.0.0:53 bind dies with "address already in use" and
+  ## the container crash-loops — taking LAN DNS and the dns-ready gate (which
+  ## fronts every app) down with it. Router/static mode dodges those by binding
+  ## the known lan-address; in DHCP mode the box's LAN IP isn't known at eval
+  ## time, so the YAML carries an @@ADGUARD_LAN_IP@@ placeholder that preStart
+  ## resolves to the leased address (src of the default route) at runtime, bound
+  ## alongside 127.0.0.1. unbound always binds loopback, so the AdGuard->unbound
+  ## upstream link uses a concrete self address (lan-address or 127.0.0.1).
+  dns-bind-hosts =
+    if lan-address-assigned
+    then [ "${config.homefree.network.lan-address}" "127.0.0.1" "${config.homefree.network.lan-address-v6}" ]
+    else [ "127.0.0.1" "@@ADGUARD_LAN_IP@@" ];
+  ## DNS port-publish list (cosmetic under --network=host, which discards -p, but
+  ## kept in parallel with bind_hosts). 0.0.0.0 would be the same conflict, so
+  ## in DHCP mode publish loopback only.
+  dns-publish-ports =
+    if lan-address-assigned
+    then [
+      "${config.homefree.network.lan-address}:53:53/tcp"
+      "${config.homefree.network.lan-address}:53:53/udp"
+      "127.0.0.1:53:53/tcp"
+      "127.0.0.1:53:53/udp"
+    ]
+    else [
+      "127.0.0.1:53:53/tcp"
+      "127.0.0.1:53:53/udp"
+    ];
+
+  ## Web UI (the allocated port, NOT 53 — uncontended, so 0.0.0.0 is fine and
+  ## keeps emergency LAN-direct access working). Caddy fronts it and must reach
+  ## it over a live address: lan-address in router/static mode, loopback in DHCP
+  ## mode (lan-address is dead there).
+  listen-address = if lan-address-assigned then config.homefree.network.lan-address else "0.0.0.0";
+  caddy-upstream-host = if lan-address-assigned then config.homefree.network.lan-address else "127.0.0.1";
+  unbound-upstream-host = if lan-address-assigned then config.homefree.network.lan-address else "127.0.0.1";
+
   settings = {
     http = {
-      address = "${config.homefree.network.lan-address}:${toString port}";
+      address = "${listen-address}:${toString port}";
       session_ttl = "720h";
     };
     ## AdGuard requires a non-empty `users:` block — an empty list
@@ -36,7 +81,7 @@ let
       ## See that file for rationale (Tailscale-IP isn't known at Nix
       ## eval time; --bind-dynamic + --interface=tailscale0 binds at
       ## runtime to whatever IP tailscaled assigns).
-      bind_hosts = [ "${config.homefree.network.lan-address}" "127.0.0.1" "${config.homefree.network.lan-address-v6}" ];
+      bind_hosts = dns-bind-hosts;
       port = 53;
       anonymize_client_ip = false;
       ratelimit = 0;
@@ -46,7 +91,7 @@ let
       refuse_any = true;
       upstream_dns = [
         # "127.0.0.1:53530"
-        "${config.homefree.network.lan-address}:53530"
+        "${unbound-upstream-host}:53530"
         # "https://dns10.quad9.net/dns-query"
       ];
       bootstrap_dns = [
@@ -307,7 +352,24 @@ in
         ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
         ${pkgs.gnused}/bin/sed \
           "s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
-          ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml
+          ${config-yaml} > ${containerDataPath}/conf/AdGuardHome.yaml${lib.optionalString (!lan-address-assigned) ''
+
+        ## Non-router DHCP mode only: the DNS listener carries an
+        ## @@ADGUARD_LAN_IP@@ placeholder because the box's leased LAN IP isn't
+        ## known at eval time. Resolve it in a second pass — the src of the
+        ## default route is the leased address and never the podman bridge
+        ## (10.88.0.1). If there's no lease yet, drop the placeholder line so
+        ## AdGuard still starts on 127.0.0.1 instead of failing to parse a
+        ## literal "@@...@@". This whole block is ABSENT in router/static mode,
+        ## so their prestart script (and its unit hash) is byte-for-byte unchanged.
+        ADGUARD_LAN_IP=$(${pkgs.iproute2}/bin/ip -4 route get 1.1.1.1 2>/dev/null \
+          | ${pkgs.gnugrep}/bin/grep -oP 'src \K[0-9.]+' \
+          | ${pkgs.coreutils}/bin/head -1 || true)
+        if [ -n "$ADGUARD_LAN_IP" ]; then
+          ${pkgs.gnused}/bin/sed -i "s|@@ADGUARD_LAN_IP@@|$ADGUARD_LAN_IP|g" ${containerDataPath}/conf/AdGuardHome.yaml
+        else
+          ${pkgs.gnused}/bin/sed -i "/@@ADGUARD_LAN_IP@@/d" ${containerDataPath}/conf/AdGuardHome.yaml
+        fi''}
         chmod 600 ${containerDataPath}/conf/AdGuardHome.yaml
 
         ## After (re)generating the AdGuard admin password, refresh
@@ -354,14 +416,13 @@ in
       ports = [
         ## Web UI
         "0.0.0.0:${toString port}:${toString port}"
-
-        ## Standard DNS
-        ## Must specify interfaces, otherwise it conflicts with podman
-        "${config.homefree.network.lan-address}:53:53/tcp"
-        "${config.homefree.network.lan-address}:53:53/udp"
-        "127.0.0.1:53:53/tcp"
-        "127.0.0.1:53:53/udp"
-
+      ]
+      ## Standard DNS
+      ## Must specify interfaces, otherwise it conflicts with podman.
+      ## (See dns-publish-ports — never 0.0.0.0, which collides with
+      ## systemd-resolved / aardvark-dns on :53.)
+      ++ dns-publish-ports
+      ++ [
         ## DNS-over-TLS
         "853:853/tcp"
 
@@ -497,7 +558,7 @@ in
         subdomains = [ "adguard" ];
         http-domains = [ "homefree.lan" config.homefree.system.localDomain ];
         https-domains = [ config.homefree.system.domain ];
-        host = config.homefree.network.lan-address;
+        host = caddy-upstream-host;
         port = port;
         public = config.homefree.service-options.adguard.public;
         ## AdGuard Home has no native OIDC support, so we gate it

@@ -148,7 +148,6 @@ http://adguard.homefree.lan, http://adguard.lan, https://adguard.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/adguard.homefree.host/adguard.homefree.host.crt"]})
 	redir @http_redirect_https https://adguard.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -212,7 +211,7 @@ http://adguard.homefree.lan, http://adguard.lan, https://adguard.homefree.host {
 	}
 	redir @upstream_logout https://auth.homefree.host/oauth2/sign_out?rd=https%3A%2F%2Fsso.homefree.host%2Foidc%2Fv1%2Fend_session%3Fclient_id%3D{env.OAUTH2_PROXY_CLIENT_ID}%26post_logout_redirect_uri%3Dhttps%253A%252F%252F{host}%252F 302
 	handle {
-		reverse_proxy http://10.0.0.1:9000 {
+		reverse_proxy http://127.0.0.1:9000 {
 			header_up Host {host}
 			header_up X-Real-IP {remote}
 			# header_up X-Forwarded-For {remote}
@@ -276,7 +275,6 @@ http://admin.homefree.lan, http://admin.lan, https://admin.homefree.host, http:/
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/admin.homefree.host/admin.homefree.host.crt"]})
 	redir @http_redirect_https https://admin.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (static-served path). Every request inside
 	## this site goes through oauth2-proxy validation via
 	## forward_auth.
@@ -556,7 +554,6 @@ http://auth.homefree.lan, http://auth.lan, https://auth.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/auth.homefree.host/auth.homefree.host.crt"]})
 	redir @http_redirect_https https://auth.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		import oauth2_proxy_reverse_proxy
 	}
@@ -636,7 +633,6 @@ http://azuracast.homefree.lan, http://azuracast.lan, https://azuracast.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/azuracast.homefree.host/azuracast.homefree.host.crt"]})
 	redir @http_redirect_https https://azuracast.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9005 {
 		}
@@ -717,7 +713,6 @@ http://baikal.homefree.lan, http://baikal.lan, https://baikal.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/baikal.homefree.host/baikal.homefree.host.crt"]})
 	redir @http_redirect_https https://baikal.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -839,7 +834,6 @@ http://canary.homefree.lan, http://canary.lan, https://canary.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/canary.homefree.host/canary.homefree.host.crt"]})
 	redir @http_redirect_https https://canary.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9006 {
 		}
@@ -920,7 +914,6 @@ http://cockpit.homefree.lan, http://cockpit.lan, https://cockpit.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/cockpit.homefree.host/cockpit.homefree.host.crt"]})
 	redir @http_redirect_https https://cockpit.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -1035,7 +1028,6 @@ http://cyberchef.homefree.lan, http://cyberchef.lan, https://cyberchef.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/cyberchef.homefree.host/cyberchef.homefree.host.crt"]})
 	redir @http_redirect_https https://cyberchef.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -1145,7 +1137,6 @@ http://docs.homefree.lan, http://docs.lan, http://docs-sandbox.homefree.lan, htt
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/docs.homefree.host/docs.homefree.host.crt"]})
 	redir @http_redirect_https https://docs.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9012 {
 		}
@@ -1226,7 +1217,6 @@ http://flatnotes.homefree.lan, http://flatnotes.lan, https://flatnotes.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/flatnotes.homefree.host/flatnotes.homefree.host.crt"]})
 	redir @http_redirect_https https://flatnotes.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -1336,7 +1326,6 @@ http://freshrss.homefree.lan, http://freshrss.lan, https://freshrss.homefree.hos
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/freshrss.homefree.host/freshrss.homefree.host.crt"]})
 	redir @http_redirect_https https://freshrss.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9016 {
 		}
@@ -1417,7 +1406,6 @@ http://git.homefree.lan, http://git.lan, http://forgejo.homefree.lan, http://for
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/git.homefree.host/git.homefree.host.crt"]})
 	redir @http_redirect_https https://git.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9015 {
 		}
@@ -1515,7 +1503,6 @@ http://grocy.homefree.lan, http://grocy.lan, https://grocy.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/grocy.homefree.host/grocy.homefree.host.crt"]})
 	redir @http_redirect_https https://grocy.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9019 {
 		}
@@ -1562,7 +1549,6 @@ http://home.homefree.lan, http://home.lan, https://home.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/home.homefree.host/home.homefree.host.crt"]})
 	redir @http_redirect_https https://home.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (static-served path). Every request inside
 	## this site goes through oauth2-proxy validation via
 	## forward_auth.
@@ -1824,7 +1810,6 @@ http://homeassistant.homefree.lan, http://homeassistant.lan, http://ha.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/homeassistant.homefree.host/homeassistant.homefree.host.crt"]})
 	redir @http_redirect_https https://homeassistant.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:8123 {
 		}
@@ -1907,7 +1892,6 @@ http://homebox.homefree.lan, http://homebox.lan, https://homebox.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/homebox.homefree.host/homebox.homefree.host.crt"]})
 	redir @http_redirect_https https://homebox.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9022 {
 		}
@@ -1988,7 +1972,6 @@ http://joplin.homefree.lan, http://joplin.lan, https://joplin.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/joplin.homefree.host/joplin.homefree.host.crt"]})
 	redir @http_redirect_https https://joplin.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9026 {
 		}
@@ -2069,7 +2052,6 @@ http://kiwix.homefree.lan, http://kiwix.lan, https://kiwix.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kiwix.homefree.host/kiwix.homefree.host.crt"]})
 	redir @http_redirect_https https://kiwix.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -2179,7 +2161,6 @@ http://kolibri.homefree.lan, http://kolibri.lan, https://kolibri.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/kolibri.homefree.host/kolibri.homefree.host.crt"]})
 	redir @http_redirect_https https://kolibri.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -2289,7 +2270,6 @@ http://lidarr.homefree.lan, http://lidarr.lan, https://lidarr.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/lidarr.homefree.host/lidarr.homefree.host.crt"]})
 	redir @http_redirect_https https://lidarr.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9029 {
 		}
@@ -2370,7 +2350,6 @@ http://links.homefree.lan, http://links.lan, http://linkwarden.homefree.lan, htt
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/links.homefree.host/links.homefree.host.crt"]})
 	redir @http_redirect_https https://links.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9030 {
 		}
@@ -2625,7 +2604,6 @@ http://matrix.homefree.lan, http://matrix.lan, https://matrix.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/matrix.homefree.host/matrix.homefree.host.crt"]})
 	redir @http_redirect_https https://matrix.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9058 {
 		}
@@ -2715,7 +2693,6 @@ http://media.homefree.lan, http://media.lan, http://video.homefree.lan, http://v
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/media.homefree.host/media.homefree.host.crt"]})
 	redir @http_redirect_https https://media.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:8096 {
 		}
@@ -2796,7 +2773,6 @@ http://netbird.homefree.lan, http://netbird.lan, https://netbird.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/netbird.homefree.host/netbird.homefree.host.crt"]})
 	redir @http_redirect_https https://netbird.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:33000 {
 		}
@@ -2889,7 +2865,6 @@ http://nextcloud.homefree.lan, http://nextcloud.lan, https://nextcloud.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nextcloud.homefree.host/nextcloud.homefree.host.crt"]})
 	redir @http_redirect_https https://nextcloud.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9039 {
 		}
@@ -3038,7 +3013,6 @@ http://nomad.homefree.lan, http://nomad.lan, https://nomad.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nomad.homefree.host/nomad.homefree.host.crt"]})
 	redir @http_redirect_https https://nomad.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -3148,7 +3122,6 @@ http://notes.homefree.lan, http://notes.lan, http://trilium.homefree.lan, http:/
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/notes.homefree.host/notes.homefree.host.crt"]})
 	redir @http_redirect_https https://notes.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -3258,7 +3231,6 @@ http://nvr.homefree.lan, http://nvr.lan, http://frigate.homefree.lan, http://fri
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nvr.homefree.host/nvr.homefree.host.crt"]})
 	redir @http_redirect_https https://nvr.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -3400,7 +3372,6 @@ http://nzbget.homefree.lan, http://nzbget.lan, https://nzbget.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/nzbget.homefree.host/nzbget.homefree.host.crt"]})
 	redir @http_redirect_https https://nzbget.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -3530,7 +3501,6 @@ http://odoo.homefree.lan, http://odoo.lan, http://erp.homefree.lan, http://erp.l
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/odoo.homefree.host/odoo.homefree.host.crt"]})
 	redir @http_redirect_https https://odoo.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9044 {
 		}
@@ -3611,7 +3581,6 @@ http://ollama.homefree.lan, http://ollama.lan, https://ollama.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/ollama.homefree.host/ollama.homefree.host.crt"]})
 	redir @http_redirect_https https://ollama.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9045 {
 		}
@@ -3658,7 +3627,6 @@ http://opensprinkler-ui.homefree.lan, http://opensprinkler-ui.lan, https://opens
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/opensprinkler-ui.homefree.host/opensprinkler-ui.homefree.host.crt"]})
 	redir @http_redirect_https https://opensprinkler-ui.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 
 	root * /nix/store/opensprinkler-ui-root
 
@@ -3840,7 +3808,6 @@ http://photos.homefree.lan, http://photos.lan, http://immich.homefree.lan, http:
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/photos.homefree.host/photos.homefree.host.crt"]})
 	redir @http_redirect_https https://photos.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:2283 {
 		}
@@ -3921,7 +3888,6 @@ http://radicale.homefree.lan, http://radicale.lan, http://dav.homefree.lan, http
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/radicale.homefree.host/radicale.homefree.host.crt"]})
 	redir @http_redirect_https https://radicale.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:5232 {
 		}
@@ -3968,7 +3934,6 @@ http://radicle.homefree.lan, http://radicle.lan, http://rad.homefree.lan, http:/
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/radicle.homefree.host/radicle.homefree.host.crt"]})
 	redir @http_redirect_https https://radicle.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 
 	root * /nix/store/radicle-explorer-0.25.0
 
@@ -4162,7 +4127,6 @@ http://screeenly.homefree.lan, http://screeenly.lan, https://screeenly.homefree.
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/screeenly.homefree.host/screeenly.homefree.host.crt"]})
 	redir @http_redirect_https https://screeenly.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -4277,7 +4241,6 @@ http://snipeit.homefree.lan, http://snipeit.lan, https://snipeit.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/snipeit.homefree.host/snipeit.homefree.host.crt"]})
 	redir @http_redirect_https https://snipeit.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9052 {
 		}
@@ -4358,7 +4321,6 @@ http://sso.homefree.lan, http://sso.lan, https://sso.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/sso.homefree.host/sso.homefree.host.crt"]})
 	redir @http_redirect_https https://sso.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:3241 {
 		}
@@ -4442,7 +4404,6 @@ http://unifi.homefree.lan, http://unifi.lan, https://unifi.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/unifi.homefree.host/unifi.homefree.host.crt"]})
 	redir @http_redirect_https https://unifi.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy https://10.0.0.1:11443 {
 			transport http {
@@ -4527,7 +4488,6 @@ http://vaultwarden.homefree.lan, http://vaultwarden.lan, https://vaultwarden.hom
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/vaultwarden.homefree.host/vaultwarden.homefree.host.crt"]})
 	redir @http_redirect_https https://vaultwarden.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	handle {
 		reverse_proxy http://10.0.0.1:9054 {
 		}
@@ -4790,7 +4750,6 @@ http://webdav.homefree.lan, http://webdav.lan, https://webdav.homefree.host {
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/webdav.homefree.host/webdav.homefree.host.crt"]})
 	redir @http_redirect_https https://webdav.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of
@@ -5113,7 +5072,6 @@ http://zwave.homefree.lan, http://zwave.lan, http://zwavejs.homefree.lan, http:/
 	## cover any ACME CA directory name (LE prod/staging, ZeroSSL).
 	@http_redirect_https expression {http.request.scheme} == "http" && file({"root": "/", "try_files": ["/var/lib/homefree-secrets/.setup-complete"]}) && file({"root": "/", "try_files": ["/var/lib/caddy/.local/share/caddy/certificates/*/zwave.homefree.host/zwave.homefree.host.crt"]})
 	redir @http_redirect_https https://zwave.homefree.host{uri} 301
-	bind 10.0.0.1 fd01::1
 	## SSO gate (reverse-proxy site). Request-time matchers peek
 	## at the sentinel + cert: pre-provisioning the gate is
 	## skipped, so the rendered config is correct from day one of

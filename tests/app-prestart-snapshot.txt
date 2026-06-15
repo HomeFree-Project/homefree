@@ -102,6 +102,14 @@ ESCAPED_HASH=$(printf '%s' "$HASH" | sed -e 's/[&|]/\\&/g')
 /nix/store/gnused-4.9/bin/sed \
 "s|@@ADGUARD_PASSWORD_HASH@@|$ESCAPED_HASH|" \
 /nix/store/AdGuardHome.yaml > /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
+ADGUARD_LAN_IP=$(/nix/store/iproute2-7.0.0/bin/ip -4 route get 1.1.1.1 2>/dev/null \
+| /nix/store/gnugrep-3.12/bin/grep -oP 'src \K[0-9.]+' \
+| /nix/store/coreutils-9.11/bin/head -1 || true)
+if [ -n "$ADGUARD_LAN_IP" ]; then
+/nix/store/gnused-4.9/bin/sed -i "s|@@ADGUARD_LAN_IP@@|$ADGUARD_LAN_IP|g" /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
+else
+/nix/store/gnused-4.9/bin/sed -i "/@@ADGUARD_LAN_IP@@/d" /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
+fi
 chmod 600 /var/lib/adguardhome-podman/conf/AdGuardHome.yaml
 systemctl restart --no-block caddy-adguard-basic-auth.service \
 2>/dev/null || true

@@ -2,6 +2,15 @@
 let
   lan-address = config.homefree.network.lan-address;
   lan-address-v6 = config.homefree.network.lan-address-v6;
+  ## Is lan-address actually pinned to a NIC? Only the router profile
+  ## (profiles/router.nix) and the static-IP module (modules/lan-static-ip.nix)
+  ## put it on an interface. In plain non-router mode the box leases its
+  ## address via DHCP and lan-address is on NO interface — so a private-vhost
+  ## `bind ${lan-address}` would fail and take Caddy (and the admin UI) down.
+  ## When it's unassigned we skip the bind and let Caddy listen on all
+  ## interfaces (same as dev mode), so the admin UI stays reachable on the
+  ## leased address.
+  lan-address-assigned = config.homefree.network.router.enable || config.homefree.network.static.enable;
   ## Ingress consumer: the caddy generator reads its vhosts from the generic
   ## homefree.internal.ingress-vhosts registry (label + reverse-proxy), NOT
   ## homefree.service-config directly — so it is decoupled from the
@@ -761,7 +770,7 @@ in
           ## Inert (empty string) until then, so a fresh box stays reachable
           ## over plain HTTP on the LAN. See certRedirectConfig above.
           + certRedirectConfig
-          + (if reverse-proxy-config.public == false && !config.homefree.development then ''
+          + (if reverse-proxy-config.public == false && !config.homefree.development && lan-address-assigned then ''
             bind ${lan-address} ${lan-address-v6}
           '' else "")
           + (if reverse-proxy-config.subdir != null then ''
