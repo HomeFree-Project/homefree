@@ -377,7 +377,7 @@
         "/var/lib/homebox-podman/sso.env"
       ],
       "extraOptions": [],
-      "image": "docker.io/sysadminsmedia/homebox:0.26.1",
+      "image": "docker.io/sysadminsmedia/homebox:0.26.2",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9022:7745"
@@ -980,7 +980,7 @@
       "extraOptions": [
         "--network=project-nomad_default"
       ],
-      "image": "docker.io/library/redis:7-alpine",
+      "image": "docker.io/library/redis:8.8.0-alpine",
       "imageFile": null,
       "ports": [],
       "user": "813:813",

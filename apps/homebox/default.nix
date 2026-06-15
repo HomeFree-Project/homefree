@@ -8,7 +8,7 @@ let
   anchor = import ../../lib/secrets-anchor.nix { inherit lib pkgs; };
 
   port = config.homefree.allocPort "homebox";
-  version = "0.26.1";
+  version = "0.26.2";
 
   domain = config.homefree.system.domain;
   ssoEnvFile = "${containerDataPath}/sso.env";

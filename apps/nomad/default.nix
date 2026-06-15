@@ -10,7 +10,7 @@
 ##   - nomad        — the Command Center admin/portal UI (port 8080 inside)
 ##   - nomad-mysql  — MySQL 8.0 (Command Center state: service catalog,
 ##                    install status, settings, RAG chats)
-##   - nomad-redis  — Redis 7 (queue/cache)
+##   - nomad-redis  — Redis 8 (queue/cache)
 ##
 ## The Command Center manages CONTENT services (Kiwix, Kolibri, Qdrant,
 ## Ollama, ProtoMaps, CyberChef, FlatNotes) by talking to the host's
@@ -75,9 +75,8 @@ let
   ## Sidecar image pins MUST go through a let-binding (never a hardcoded
   ## literal tag) so the App Versions page can detect + one-click bump them
   ## — the source-pin parser only rewrites tags that reference a ${var}.
-  ## See AGENTS.md "App version pins + the updater". Values preserved as-is
-  ## (redis 7-alpine, mysql 8.0); the deployed images are byte-identical.
-  version-redis = "7-alpine";
+  ## See AGENTS.md "App version pins + the updater".
+  version-redis = "8.8.0-alpine";
   version-mysql = "8.0";
   port = config.homefree.allocPort "nomad";
   domain = config.homefree.system.domain;
