@@ -474,6 +474,9 @@ in
         FORGEJO__migrations__ALLOW_LOCALNETWORKS = "true";
         FORGEJO__migrations__SKIP_TLS_VERIFY = "true";
 
+        ## app.ini mirror config — enable push mirrors (e.g. homefree/homefree → GitHub)
+        FORGEJO__mirror__ENABLED = "true";
+
         ## app.ini actions config
         FORGEJO__actions__ENABLED = "true";
         FORGEJO__actions__DEFAULT_ACTIONS_URL = "github";
