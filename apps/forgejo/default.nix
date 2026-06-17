@@ -174,8 +174,8 @@ let
     ## path that fails with "can not delete the last admin user".
     ##
     ## Trade-off: role membership in Zitadel doesn't propagate to
-    ## Forgejo admin status. See TODO.md "Zitadel→Forgejo role
-    ## sync" for the path to re-enable this via Zitadel Actions.
+    ## Forgejo admin status. See issue #95 (Zitadel→Forgejo role
+    ## sync via Zitadel Actions) for the path to re-enable this.
     if [ -n "$EXISTING_ID" ]; then
       echo "forgejo postStart: updating existing Zitadel auth source (id=$EXISTING_ID)" >&2
       if ${pkgs.podman}/bin/podman exec --user git forgejo \

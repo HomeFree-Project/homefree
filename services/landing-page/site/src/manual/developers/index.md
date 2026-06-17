@@ -57,5 +57,5 @@ For APIs and DAV endpoints that can't do OIDC (mobile sync clients, CalDAV), app
 ## Next
 
 - **[Advanced installation](/developers/advanced-installation/)** — build from source / deploy from a workstation Nix install.
-- `TODO.md` in the repo root — current bug list and incoming feature work.
+- [Issue tracker](https://git.homefree.host/homefree/homefree/issues) — current bug list and incoming feature work.
 - `#homefree:homefree.host` on Matrix for questions.
