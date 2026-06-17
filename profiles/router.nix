@@ -246,7 +246,7 @@ let
   ## Some ISPs (AT&T BGW in passthrough, some Spectrum gateways) delegate a /64 via
   ## DHCPv6-PD with preferred-lifetime 0: a permanently-DEPRECATED prefix that still
   ## routes fine but that LAN clients refuse to use as a source, so global IPv6
-  ## silently dies while the ULA (fd01::/64) keeps working. This oneshot pins a
+  ## silently dies while the LAN ULA (lan-address-v6's /64) keeps working. This oneshot pins a
   ## preferred <prefix>::1 on any delegated global /64 that currently has no usable
   ## address, so dnsmasq's constructor RA advertises the prefix as usable again.
   ##

@@ -418,7 +418,20 @@
 
       lan-address-v6 = lib.mkOption {
         type = lib.types.str;
-        default = "fd01::1";
+        ## Per-instance ULA, derived from system.domain so two HomeFree boxes
+        ## NEVER share an address. The old fixed `fd01::1` was identical on
+        ## every instance: a device on box A's LAN + box B's mesh VPN saw A's
+        ## `fd01::1` on-link, so IPv6 traffic for B's services (AAAA = the same
+        ## ULA) landed on A's Caddy, which has no cert for B's host ->
+        ## TLSV1_ALERT_INTERNAL_ERROR (ERR_SSL_PROTOCOL_ERROR in IPv6-first
+        ## browsers; IPv4 was unaffected because the v4 subnets differ). RFC
+        ## 4193 wants the 40-bit ULA global-ID random per site; a stable hash
+        ## of the domain gives that while staying deterministic. Operators can
+        ## still override (e.g. to advertise it as a NetBird IPv6 subnet).
+        default =
+          let h = builtins.substring 0 10
+                    (builtins.hashString "sha256" config.homefree.system.domain);
+          in "fd${builtins.substring 0 2 h}:${builtins.substring 2 4 h}:${builtins.substring 6 4 h}::1";
         description = ''
           Inside (LAN) ULA IPv6 address of the router. Used for the IPv6
           half of split-horizon: LAN-only vhosts (reverse-proxy.public ==
@@ -426,6 +439,11 @@
           those non-public names, so IPv6-preferring clients on the box's
           resolver get a working LAN path instead of NODATA. Must match the
           ULA assigned to the LAN interface in profiles/router.nix.
+
+          Defaults to a per-instance ULA derived from `system.domain` (a
+          stable RFC-4193 global-ID) so distinct HomeFree instances never
+          collide on the same ULA — required when a client is simultaneously
+          on one instance's LAN and another instance's mesh VPN.
         '';
       };
 
