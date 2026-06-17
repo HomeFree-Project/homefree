@@ -44,10 +44,15 @@ the account directly in `store.db`** when none exists, mirroring NetBird's
 
 Runs from a TIMER (`netbird-provision.timer`, not `wantedBy multi-user.target`)
 so `nixos-rebuild` never blocks/fails on it; exits 0 on any not-ready condition
-and retries. A `.netbird-provisioned` sentinel in `/var/lib/netbird` (next to
-`store.db`, so a DB wipe re-provisions) + `ConditionPathExists` makes it a no-op
-once done. The version-coupling (account schema) must be re-verified on every
-NetBird image bump — same posture as the PAT/REST coupling below.
+and retries. A versioned `.netbird-provisioned-vN` sentinel in `/var/lib/netbird`
+(next to `store.db`, so a DB wipe re-provisions) + `ConditionPathExists` makes it
+a no-op once done. **Bump the version suffix when the provisioning logic changes**
+(it's currently `-v2`): the new `ConditionPathExists` no longer matches the old
+sentinel, so every already-provisioned box re-runs the idempotent script once to
+converge to the new desired state (`nixos-rebuild` restarts the changed unit,
+which runs it immediately; the timer is the backup path). The version-coupling
+(account schema) must be re-verified on every NetBird image bump — same posture
+as the PAT/REST coupling below.
 
 ## REST credential = a SQL-inserted PAT, reproducing NetBird's token exactly
 
@@ -82,9 +87,33 @@ Group `Routing Peers`; reusable setup-key `homefree-router`
 auto-derived: a `/24` → `subnet`); router with `peer_groups`→Routing Peers
 (the box auto-joins that group via the setup-key, so no peer-id lookup);
 policy `HomeFree LAN access` (source `All` group → `destinationResource`
-{id,type}); LAN nameserver group. The legacy `POST /api/routes` table is
+{id,type}); **split-DNS nameserver group** `homefree-lan-dns`. The legacy `POST /api/routes` table is
 *not* used — the dashboard wizard checks the Networks model, so writing only
 legacy routes left the wizard nagging.
+
+## DNS: split-DNS match-domains, NOT a catch-all (do not revert)
+
+The nameserver group is `primary:false` with `domains` = this box's own public
+domains (`system.domain` ++ `system.additionalDomains`, via
+`splitDnsMatchDomains`) and `search_domains_enabled:true`. A peer therefore
+forwards **only those suffixes** to this box's LAN resolver; all other names
+(including *other* HomeFree boxes' domains and public sites) use the peer's own
+resolver.
+
+It must not be a catch-all (`primary:true, domains:[]`): a catch-all hijacks
+*every* DNS query the moment the VPN connects. With two instances (e.g.
+`homefree.host` on 10.0.0.0/24 and `slacktopia.org` on 10.1.0.0/24), a phone on
+box A's LAN connected to box B's VPN would resolve `admin.<A-domain>` via B's
+resolver, which has no split-horizon for A and returns A's **public WAN IP** →
+the request leaves over the WAN and hits B/A's `*:443` catch-all → cert/SSL
+errors or a `421`. Match-domains scope each box to the domains its resolver is
+authoritative for, so the two coexist. The local domain (`.lan`) is excluded on
+purpose — it's identical across boxes and LAN-only; remote peers reach internal
+services via the public domain, which split-horizon maps to the LAN IP.
+
+Step 10 **converges** (PUT) an existing `homefree-lan-dns` group rather than
+create-or-skip, so boxes provisioned under the old catch-all (v1) are corrected
+in place once the `-v2` sentinel forces the re-run.
 
 ## Version coupling
 

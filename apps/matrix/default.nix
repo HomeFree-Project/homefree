@@ -3,7 +3,7 @@ let
   ## Synapse v1.152.x — the oldest tag still on Docker Hub (Hub
   ## reaps older minors). Live runs v1.130.0 on NixOS-native; the
   ## live DB will auto-migrate forward on first start under v1.152.
-  version = "v1.154.0";
+  version = "v1.155.0";
   image = "matrixdotorg/synapse";
 
   containerDataPath = "/var/lib/matrix-synapse-podman";

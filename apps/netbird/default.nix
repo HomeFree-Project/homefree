@@ -71,6 +71,18 @@ let
   domain = cfg.system.domain;
   zitadelDomain = "sso.${domain}";
 
+  ## Split-DNS match domains for the NetBird nameserver group: the public
+  ## domains THIS box's resolver is authoritative for (the same split-horizon
+  ## `zones` set in services/unbound). Tunneled peers send ONLY these suffixes
+  ## to the box's LAN resolver; every other name stays on the peer's own
+  ## resolver. Generic — derived from config, never hardcoded. The local
+  ## domain (.lan) is intentionally excluded: it's LAN-only and identical
+  ## across boxes, so matching it would re-introduce the cross-instance
+  ## collision; remote peers reach internal services via the public domain,
+  ## which split-horizon already maps to the LAN IP.
+  splitDnsMatchDomains = lib.unique ([ cfg.system.domain ] ++ cfg.system.additionalDomains);
+  splitDnsMatchDomainsJson = builtins.toJSON splitDnsMatchDomains;
+
   ## Image tags. Pin all of these together — NetBird ships breaking
   ## changes in the management.json schema across minor versions, so
   ## bumping these should be a deliberate, coordinated update.
@@ -627,8 +639,10 @@ in
     ## store.db (mirroring newAccountWithId) — no SSO login, no wizard, ever.
     ## Runs from a TIMER (never at `nixos-rebuild switch`) so it can't block or
     ## fail a rebuild; exits 0 on any not-ready condition and retries; a
-    ## `.netbird-provisioned` sentinel + ConditionPathExists make it a no-op
-    ## once complete.
+    ## versioned `.netbird-provisioned-vN` sentinel + ConditionPathExists make
+    ## it a no-op once complete. Bumping the version (when the provisioning
+    ## logic changes) drops the old sentinel match so every box re-runs the
+    ## (idempotent) script exactly once to converge to the new desired state.
     ##
     ## Reset/restore: the sentinel lives in netbirdDataPath next to
     ## store.db, so wiping the DB (the documented "reset NetBird" step) also
@@ -643,8 +657,12 @@ in
       after = [ "podman-netbird-management.service" "netbird.service" ];
       wants = [ "podman-netbird-management.service" "netbird.service" ];
       ## Skip once fully provisioned (sentinel written); the timer keeps
-      ## firing but this becomes a cheap no-op.
-      unitConfig.ConditionPathExists = "!${netbirdDataPath}/.netbird-provisioned";
+      ## firing but this becomes a cheap no-op. The version suffix is bumped
+      ## whenever the provisioning logic changes so already-provisioned boxes
+      ## re-run the idempotent script once (here: v1's catch-all DNS group ->
+      ## v2's split-DNS group). nixos-rebuild restarts this changed unit, which
+      ## re-evaluates the condition and runs immediately; the timer is backup.
+      unitConfig.ConditionPathExists = "!${netbirdDataPath}/.netbird-provisioned-v2";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -661,7 +679,7 @@ in
         LAN_IP="${lan-address}"
         PAT_FILE="$SECRETS_DIR/netbird-api-pat"
         KEY_FILE="$SECRETS_DIR/setup-key"
-        SENTINEL="${netbirdDataPath}/.netbird-provisioned"
+        SENTINEL="${netbirdDataPath}/.netbird-provisioned-v2"
         ALPHABET=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 
         log()    { echo "netbird-provision: $*"; }
@@ -826,10 +844,36 @@ SQL
           log "created policy 'HomeFree LAN access'"
         fi
 
-        ## 10. nameserver group: tunneled peers resolve via the LAN resolver
-        if [ -z "$(find_id /api/dns/nameservers "homefree-lan-dns")" ]; then
-          api POST /api/dns/nameservers "{\"name\":\"homefree-lan-dns\",\"description\":\"HomeFree LAN DNS resolver\",\"nameservers\":[{\"ip\":\"$LAN_IP\",\"ns_type\":\"udp\",\"port\":53}],\"enabled\":true,\"groups\":[\"$ALL_GID\"],\"primary\":true,\"domains\":[],\"search_domains_enabled\":false}" >/dev/null
-          log "created nameserver group 'homefree-lan-dns'"
+        ## 10. nameserver group (SPLIT-DNS, not catch-all): tunneled peers send
+        ##     ONLY this box's own domains (${splitDnsMatchDomainsJson}) to its
+        ##     LAN resolver; every other name — other HomeFree boxes' domains,
+        ##     public sites — stays on the peer's own resolver.
+        ##
+        ##     A catch-all group (primary:true, domains:[]) hijacks ALL DNS the
+        ##     instant a peer connects, so a phone on box A's LAN + box B's VPN
+        ##     resolves A's own names via B's resolver and gets B's WAN IP
+        ##     (cert/SSL errors). primary:false + match-domains scopes each box
+        ##     to the domains its resolver is actually authoritative for.
+        ##
+        ##     Converge (PUT existing), don't create-or-skip: boxes provisioned
+        ##     under v1 already have the old catch-all group and must be fixed
+        ##     in place. jq builds the body so the Nix-rendered domain array
+        ##     and the runtime ids/IP are escaped correctly.
+        NS_BODY=$(jq -cn \
+          --arg ip "$LAN_IP" --arg gid "$ALL_GID" \
+          --argjson domains '${splitDnsMatchDomainsJson}' \
+          '{name:"homefree-lan-dns",
+            description:"HomeFree split-DNS resolver (this instance domains only)",
+            nameservers:[{ip:$ip,ns_type:"udp",port:53}],
+            enabled:true,groups:[$gid],
+            primary:false,domains:$domains,search_domains_enabled:true}')
+        NS_ID=$(find_id /api/dns/nameservers "homefree-lan-dns")
+        if [ -z "$NS_ID" ]; then
+          api POST /api/dns/nameservers "$NS_BODY" >/dev/null \
+            && log "created split-DNS nameserver group 'homefree-lan-dns'"
+        else
+          api PUT "/api/dns/nameservers/$NS_ID" "$NS_BODY" >/dev/null \
+            && log "converged split-DNS nameserver group 'homefree-lan-dns' to match-domains"
         fi
 
         ## 11. connect this box as the routing peer (one-time; the netbird

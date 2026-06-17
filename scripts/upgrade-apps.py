@@ -209,12 +209,29 @@ def rewrite_binding(path: Path, line_idx: int, binding: str, new_value: str) -> 
         return False
     lines[line_idx] = m.group(1) + new_value + m.group(2)
 
+    # Preserve the existing file's ownership + mode across the atomic replace
+    # below. tempfile.mkstemp creates the temp 0600 and owned by THIS process
+    # — and the admin-api runs this updater as root — so a plain os.replace
+    # would leave every bumped file root:root 0600. That silently breaks a
+    # developer's mutagen sync: its agent scans the checkout as the repo owner
+    # and gets EACCES on a root-owned 0600 file, so the file drops out of sync
+    # and a later rebuild quietly uses stale source. Capture the original
+    # metadata and restore it onto the temp before swapping in.
+    st = os.stat(path)
+
     fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             f.write("\n".join(lines))
             f.flush()
             os.fsync(f.fileno())
+        # Restore mode first (always permitted), then owner (root-only, or a
+        # no-op when a non-root manual run already owns the temp == repo owner).
+        os.chmod(tmp_path, st.st_mode & 0o7777)
+        try:
+            os.chown(tmp_path, st.st_uid, st.st_gid)
+        except (PermissionError, OSError):
+            pass
         os.replace(tmp_path, path)
     except Exception:
         try:

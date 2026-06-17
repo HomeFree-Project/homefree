@@ -550,11 +550,22 @@ in
           else if edgeCfg.provider == "bunny" then bunnyTrustedProxies
           else [];
         allTrustedProxies = providerBuiltins ++ edgeCfg.trustedProxies;
-      in lib.optionalString
-        (edgeCfg.enable && allTrustedProxies != [])
+      in
+        ## Global `servers` options. `protocols h1 h2` disables HTTP/3
+        ## (QUIC) on every listener. QUIC is UDP and its datagrams don't
+        ## survive the MTU of HomeFree's mesh-VPN tunnels (NetBird /
+        ## headscale, ~1280): Chromium — which prefers QUIC — fails to load
+        ## services over the VPN, while HTTP/2-over-TCP works (segment size
+        ## is clamped to the path). That is exactly the "loads in Firefox
+        ## (TCP), SSL error in Brave (QUIC)" split seen over the mesh. QUIC
+        ## is also dropped inbound on WAN (profiles/router.nix opens only
+        ## tcp 80/443 — no udp 443), so its only working path is the direct
+        ## LAN, where HTTP/2 is just as fast. Forcing h1/h2 everywhere buys
+        ## reliable remote access at no real cost. `trusted_proxies` (opt-in
+        ## edge/CDN fronting) shares this same block when configured.
         ''
           servers {
-            trusted_proxies static ${lib.concatStringsSep " " allTrustedProxies}
+            protocols h1 h2${lib.optionalString (edgeCfg.enable && allTrustedProxies != []) "\n    trusted_proxies static ${lib.concatStringsSep " " allTrustedProxies}"}
           }
         '')
     + lib.optionalString (config.homefree.dns.remote.cert-management.dns-01.provider != null && !config.homefree.development) ''

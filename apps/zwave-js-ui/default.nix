@@ -26,7 +26,7 @@ let
   };
 
   ## Image pinned to a known-good tag. Update on review.
-  version = "11.19.1";
+  version = "11.20.0";
 
   containerDataPath = "/var/lib/zwave-js-ui";
   seedDir = "/var/lib/homefree-secrets/zwave-js-ui/seed";

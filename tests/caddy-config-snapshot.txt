@@ -7,6 +7,9 @@
 	## always built in (see overlays/caddy-with-plugins.nix);
 	## individual sites enable the directive when they want it.
 	order rate_limit before basicauth
+	servers {
+		protocols h1 h2
+	}
 
 	log {
 		level ERROR

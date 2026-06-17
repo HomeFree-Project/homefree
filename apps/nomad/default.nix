@@ -77,7 +77,7 @@ let
   ## — the source-pin parser only rewrites tags that reference a ${var}.
   ## See AGENTS.md "App version pins + the updater".
   version-redis = "8.8.0-alpine";
-  version-mysql = "8.0";
+  version-mysql = "8.4.10";
   port = config.homefree.allocPort "nomad";
   domain = config.homefree.system.domain;
 
