@@ -204,6 +204,7 @@
         "FORGEJO__migrations__ALLOWED_DOMAINS": "*",
         "FORGEJO__migrations__ALLOW_LOCALNETWORKS": "true",
         "FORGEJO__migrations__SKIP_TLS_VERIFY": "true",
+        "FORGEJO__mirror__ENABLED": "true",
         "FORGEJO__oauth2_client__ACCOUNT_LINKING": "auto",
         "FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION": "true",
         "FORGEJO__oauth2_client__OPENID_CONNECT_SCOPES": "openid profile email",
@@ -620,7 +621,7 @@
       },
       "environmentFiles": [],
       "extraOptions": [],
-      "image": "matrixdotorg/synapse:v1.154.0",
+      "image": "matrixdotorg/synapse:v1.155.0",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9058:9058"
@@ -647,7 +648,7 @@
         "/var/lib/linkwarden-podman/meili.env"
       ],
       "extraOptions": [],
-      "image": "getmeili/meilisearch:v1.46.1",
+      "image": "getmeili/meilisearch:v1.47.0",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -958,7 +959,7 @@
       "extraOptions": [
         "--network=project-nomad_default"
       ],
-      "image": "docker.io/library/mysql:8.0",
+      "image": "docker.io/library/mysql:8.4.10",
       "imageFile": null,
       "ports": [],
       "user": null,
@@ -1335,7 +1336,7 @@
         "APP_TIMEZONE": "Etc/UTC",
         "APP_TRUSTED_PROXIES": "192.168.1.1,10.0.0.1,172.16.0.0/12",
         "APP_URL": "https://snipeit.homefree.host",
-        "APP_VERSION": "v8.6.2",
+        "APP_VERSION": "v8.6.3",
         "AWS_ACCESS_KEY_ID": "null",
         "AWS_DEFAULT_REGION": "null",
         "AWS_SECRET_ACCESS_KEY": "null",
@@ -1419,7 +1420,7 @@
         "/var/lib/snipeit/runtime.env"
       ],
       "extraOptions": [],
-      "image": "snipe/snipe-it:v8.6.2",
+      "image": "snipe/snipe-it:v8.6.3",
       "imageFile": null,
       "ports": [
         "0.0.0.0:9052:80"
@@ -1660,7 +1661,7 @@
       "extraOptions": [
         "--network=host"
       ],
-      "image": "zwavejs/zwave-js-ui:11.19.1",
+      "image": "zwavejs/zwave-js-ui:11.20.0",
       "imageFile": null,
       "ports": [],
       "user": null,
