@@ -47,6 +47,17 @@ const UNINDICATED_CONFIG_PATHS = new Set([
   'system.hashedPassword',
 ]);
 
+// Maps a backend flake/build-input "owner" tag (from /api/config/dirty's
+// flakeOwners) to the nav module that owns it, so an un-applied flake change
+// dots the right item: a remote HomeFree re-pin → Updates, the alternate
+// HomeFree repository → Source Code (app-versions), a plugin/custom flake →
+// Plugins. Replaces the old behavior that blamed every flake change on Plugins.
+const FLAKE_OWNER_MODULE = {
+  'homefree-base': 'updates',
+  'homefree-alt': 'app-versions',
+  'plugins': 'plugins',
+};
+
 class AdminApp extends LitElement {
   static properties = {
     serverConfig: { type: Object },    // Actual deployed/server state
@@ -85,6 +96,7 @@ class AdminApp extends LitElement {
     saveError: { type: String },           // First error message from a failed save, if any
     hasUnappliedChanges: { type: Boolean }, // Whether there are unapplied changes on disk
     dirtyReason: { type: String },          // Why the config is dirty (drives the Apply note)
+    flakeOwners: { state: true },           // Backend tags for which surface owns an un-applied flake change
     drift: { type: Object },                 // /etc/nixos divergence (advisory, Build & Logs notice)
     undeployedPaths: { state: true },       // Set of dotted config paths not yet deployed
     appliedConfig: { state: true },          // Last-DEPLOYED config — baseline for per-row list highlight
@@ -876,6 +888,7 @@ class AdminApp extends LitElement {
     // Apply / dirty state
     this.hasUnappliedChanges = false;
     this.dirtyReason = '';
+    this.flakeOwners = [];
     this.drift = null;
     // Paths (dotted) whose on-disk value differs from the last DEPLOYED
     // (built) config — from /api/config/dirty. Union'd with local unsaved
@@ -2401,6 +2414,7 @@ class AdminApp extends LitElement {
       // unconditional requestUpdate that would churn focused inputs every 5s.
       this.hasUnappliedChanges = !!result.dirty;
       this.dirtyReason = result.reason || '';
+      this.flakeOwners = result.flakeOwners || [];
       this.drift = result.drift || null;
       this.deployedChangedPaths = new Set(result.changedPaths || []);
       this.recomputeUndeployedPaths();
@@ -2580,11 +2594,22 @@ class AdminApp extends LitElement {
       const id = this.pathOwnerModuleId(p);
       if (id) ids.add(id);
     }
-    // Flake-source / build-input divergence isn't a config path; attribute it
-    // to the Plugins page (which owns the registered flakes list).
-    if (this.dirtyReason === 'flake source changed' ||
-        this.dirtyReason === 'build inputs changed' ||
-        this.dirtyReason === 'local code changed') {
+    // Flake-source / build-input divergence isn't a config path. The backend
+    // attributes each change to the surface that owns it (homefree-base →
+    // Updates, homefree-alt → Source Code, plugins → Plugins); map those to nav
+    // module ids so the dot lands on the right item.
+    const owners = this.flakeOwners || [];
+    for (const o of owners) {
+      const id = FLAKE_OWNER_MODULE[o];
+      if (id) ids.add(id);
+    }
+    // Back-compat: an older backend that doesn't send flakeOwners yet still
+    // reports one of the flake reasons — fall back to the previous Plugins-only
+    // behavior so the brief frontend-ahead-of-backend window doesn't drop the dot.
+    if (!owners.length &&
+        (this.dirtyReason === 'flake source changed' ||
+         this.dirtyReason === 'build inputs changed' ||
+         this.dirtyReason === 'local code changed')) {
       ids.add('plugins');
     }
     return ids;
@@ -2602,13 +2627,30 @@ class AdminApp extends LitElement {
       const id = this.pathOwnerModuleId(p);
       items.push({ page: id ? titleOf(id) : 'Configuration', detail: p });
     }
+    // Flake / build-input divergence isn't a config path — attribute each
+    // change to its owning page (same mapping as the nav dots) so this list and
+    // the dots agree.
+    const owners = this.flakeOwners || [];
+    const OWNER_DETAIL = {
+      'homefree-base': 'System update pending',
+      'homefree-alt': 'Alternate HomeFree repository changed',
+      'plugins': this._dirtyReasonLabel(),
+    };
+    for (const o of owners) {
+      const id = FLAKE_OWNER_MODULE[o];
+      if (id) items.push({ page: titleOf(id), detail: OWNER_DETAIL[o] || 'Undeployed changes' });
+    }
     const r = this.dirtyReason;
-    if (r === 'flake source changed' || r === 'build inputs changed'
-        || r === 'local code changed') {
-      items.push({ page: titleOf('plugins'), detail: this._dirtyReasonLabel() });
-    } else if (r === 'system update pending') {
-      items.push({ page: titleOf('updates'), detail: 'System update pending' });
-    } else if (r === 'last rebuild failed') {
+    // Back-compat fallback when an older backend hasn't sent flakeOwners yet.
+    if (!owners.length) {
+      if (r === 'flake source changed' || r === 'build inputs changed'
+          || r === 'local code changed') {
+        items.push({ page: titleOf('plugins'), detail: this._dirtyReasonLabel() });
+      } else if (r === 'system update pending') {
+        items.push({ page: titleOf('updates'), detail: 'System update pending' });
+      }
+    }
+    if (r === 'last rebuild failed') {
       items.push({ page: 'Build & Logs', detail: 'Last rebuild failed — retry' });
     }
     return items;

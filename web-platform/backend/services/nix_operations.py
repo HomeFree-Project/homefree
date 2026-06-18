@@ -1466,6 +1466,127 @@ class NixOperations:
             return None
 
     @staticmethod
+    def _alt_base_dir() -> Optional[str]:
+        """
+        Realpath of the enabled LOCAL alternate-HomeFree-base checkout, or None
+        when no local alternate base is active. Lets build_input_owners tell a
+        Source-Code-page change (the alternate repo) apart from a Plugins-page
+        change (a local plugin flake) when a local working-tree input is dirty.
+        Lazy-imports PluginsService to avoid an import cycle.
+        """
+        try:
+            from services.plugins import PluginsService
+            override = PluginsService.get_base_override()
+            if not override.get("enabled"):
+                return None
+            if (override.get("type") or "local") != "local":
+                return None
+            local_url = (override.get("localUrl") or "").strip()
+            prefix = "git+file://"
+            if local_url.startswith(prefix):
+                local_url = local_url[len(prefix):]
+            if not local_url:
+                return None
+            return os.path.realpath(local_url)
+        except Exception as e:
+            logger.warning(f"Could not resolve alternate-base dir: {e}")
+            return None
+
+    @staticmethod
+    def build_input_owners() -> List[str]:
+        """
+        Attribute each un-applied flake / build-input change to the admin-UI
+        surface that owns it, so the frontend can dot the right nav item instead
+        of always blaming Plugins. Returns an order-stable, de-duplicated subset
+        of {"homefree-base", "homefree-alt", "plugins"} (empty when nothing
+        diverged or no applied snapshot exists yet).
+
+          * homefree-base — the remote HomeFree flake was re-pinned (Updates
+            page "Update to latest"): current base rev != applied-flake-rev.
+          * homefree-alt  — the alternate HomeFree repository changed (Source
+            Code page): its local working tree was edited, OR flake.nix's managed
+            regions moved without custom-flakes.nix (the alt-base enable/disable
+            splice touches only flake.nix).
+          * plugins       — a registered plugin / custom flake changed: custom-
+            flakes.nix moved, a non-base flake.lock node was re-locked, or a
+            local plugin working tree (not the alt repo) was edited.
+
+        Heuristic limitation: a single flake.lock-only bump that re-pinned BOTH
+        homefree-base AND a plugin in one un-applied batch is attributed to
+        homefree-base only (we don't node-diff flake.lock). Single-action flows
+        — the real usage — are exact.
+        """
+        owners: List[str] = []
+
+        def _add(tag: str):
+            if tag not in owners:
+                owners.append(tag)
+
+        # homefree-base remote bump (Updates page): current rev vs the rev
+        # snapshotted at the last successful apply.
+        try:
+            from services.system_updates import SystemUpdates
+            cur = SystemUpdates.get_current()
+            applied_rev_path = SystemUpdates.APPLIED_FLAKE_REV_FILE
+            if cur and cur.get("rev") and applied_rev_path.exists():
+                applied_rev = applied_rev_path.read_text().strip()
+                if applied_rev and applied_rev != cur["rev"]:
+                    _add("homefree-base")
+        except Exception as e:
+            logger.warning(f"Could not check homefree-base rev for owners: {e}")
+
+        try:
+            if not NixOperations.APPLIED_BUILD_INPUTS_FILE.exists():
+                return owners
+            applied = json.loads(NixOperations.APPLIED_BUILD_INPUTS_FILE.read_text())
+            current = NixOperations._build_inputs_manifest()
+
+            # Local working-tree inputs: split the alternate HomeFree base
+            # (Source Code) from local plugin flakes (Plugins). Only when the
+            # applied snapshot already carries a local baseline (mirrors
+            # build_inputs_dirty so a pre-feature box doesn't flash dirty).
+            if "local-inputs" in applied:
+                applied_local = applied.get("local-inputs") or {}
+                current_local = current.get("local-inputs") or {}
+                alt_dir = NixOperations._alt_base_dir()
+                changed_dirs = {
+                    d for d, fp in current_local.items()
+                    if applied_local.get(d) != fp
+                }
+                changed_dirs |= {d for d in applied_local if d not in current_local}
+                for d in changed_dirs:
+                    try:
+                        is_alt = bool(alt_dir) and os.path.realpath(d) == alt_dir
+                    except Exception:
+                        is_alt = False
+                    _add("homefree-alt" if is_alt else "plugins")
+
+            # Flake source / lock files.
+            changed_files = {
+                n for n in NixOperations.BUILD_INPUT_FILES
+                if applied.get(n) != current.get(n)
+            }
+            if "custom-flakes.nix" in changed_files:
+                _add("plugins")
+            if "flake.nix" in changed_files:
+                # The alternate-base enable/disable splice rewrites flake.nix's
+                # managed regions WITHOUT touching custom-flakes.nix; a plugin
+                # register/remove rewrites BOTH. So flake.nix-without-custom-
+                # flakes.nix is the alternate base, otherwise it's a plugin.
+                if "custom-flakes.nix" not in changed_files:
+                    _add("homefree-alt")
+                else:
+                    _add("plugins")
+            if "flake.lock" in changed_files and "homefree-base" not in owners:
+                # A lock-only bump not explained by the homefree-base re-pin is a
+                # plugin remote-flake re-lock.
+                _add("plugins")
+        except Exception as e:
+            logger.warning(f"Could not compute build-input owners: {e}")
+
+        return owners
+
+    @staticmethod
     def compute_changed_paths(current: Any, applied: Any) -> List[str]:
         """
         Dotted leaf paths where `current` differs from `applied`. Objects

@@ -3722,8 +3722,16 @@ async def get_config_dirty():
         from services import instance_layout
         drift = instance_layout.detect_drift()
 
+        # Per-source attribution of un-applied flake/build-input divergence,
+        # populated once the applied snapshot is known (below). Late-bound into
+        # _resp so every response carries it, letting the frontend dot the
+        # owning nav item (Updates / Source Code / Plugins) instead of always
+        # Plugins.
+        flake_owners = []
+
         def _resp(payload):
             payload["drift"] = drift
+            payload["flakeOwners"] = flake_owners
             return JSONResponse(content=payload)
 
         config_path = Path("/etc/nixos/homefree-config.json")
@@ -3751,6 +3759,12 @@ async def get_config_dirty():
         except json.JSONDecodeError:
             # Corrupt applied marker — treat as not-yet-applied so Apply works.
             return _resp({"dirty": True, "reason": "no applied marker", "changedPaths": []})
+
+        # Now that an applied baseline exists, attribute any un-applied
+        # flake/build-input divergence to its owning admin-UI surface. Computed
+        # independently of `reason` so it is also correct on the `differs`
+        # early-return below (a config change AND a flake change at once).
+        flake_owners = NixOperations.build_input_owners()
 
         # Compare SEMANTICALLY (parsed), not as raw text. A no-op round-trip —
         # adding then removing a list row, a key reorder, or a re-serialization
