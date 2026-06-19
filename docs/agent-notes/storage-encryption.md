@@ -94,6 +94,25 @@ invalidates EVERY TPM slot — system disk AND every data pool — simultaneousl
 The recovery passphrase fallback always works; the admin types it once per
 locked container at the boot prompt.
 
+**This self-heals automatically — system disk AND data pools.** The
+`homefree-tpm2-enroll` service (`services/system-disk-encryption`) is a
+per-boot reconciler. For each TPM2-managed container it records the PCR-7
+value it last enrolled against under `/var/lib/homefree/tpm2-pcr7.d/<dev>`
+(per-device, not one global marker — so a pool that was detached when the
+firmware changed still heals the next time it is present). When the current
+PCR 7 differs from a container's recorded value, or the container is missing
+its TPM2 slot, it wipes the stale slot and re-enrolls against the *current*
+PCR 7, authorized by the recovery-passphrase file on the now-unlocked root.
+
+Containers are discovered two ways: the system root/swap via disko's
+`disk-d<N>-root|swap` partlabels, and every data pool via its `tpm2-pcrs`
+line in `/etc/crypttab` (data-pool reconcile runs only when the recovery
+passphrase is the authorizer, since pool slots are bound to it). Net effect:
+a firmware update costs the admin at most ONE system-disk boot-passphrase
+prompt; data-pool late-unlock may fail once (`nofail`, so boot continues and
+the UI stays reachable), and by the next reboot every container is back to
+unattended TPM2 unlock with no manual `systemd-cryptenroll`.
+
 The UI warns when the user opts into encryption while Secure Boot enrollment
 is still pending (`/var/lib/homefree/secureboot-status` reads
 `setup-mode-unavailable`) — enroll SB first, or accept re-locking every
