@@ -386,23 +386,45 @@ in
           2>/dev/null || true
         systemctl reload --no-block caddy.service 2>/dev/null || true
 
-        ## There is no DNS running yet at port 53, so start a temporary
-        ## proxy service (managed by systemd) so that podman pull works
+        ## Pull the image ONLY when it isn't already present locally.
+        ##
+        ## AdGuard IS the box's LAN resolver, so making its startup depend on
+        ## a working DNS lookup is a circular dependency: on a cold boot the
+        ## WAN path (default route / upstream DoT reachability) often isn't
+        ## usable yet even after network-online.target fires, so unbound can't
+        ## resolve registry-1.docker.io and an unconditional `podman pull`
+        ## dies with "no such host". That fails the unit and crash-loops it,
+        ## leaving the whole LAN without DNS until the retries happen to land
+        ## after the network settles (or someone restarts it by hand).
+        ##
+        ## The image only needs to be fetched on the FIRST boot or after a
+        ## version bump (the pinned, immutable tag changes, so `image exists`
+        ## returns false and we pull the new one). On every ordinary reboot
+        ## the image is already cached, so we skip the pull entirely and
+        ## AdGuard comes up immediately with NO dependency on DNS/WAN. The
+        ## ExecStart `podman run` uses pull policy "missing", so it never
+        ## reaches the registry when the image is present either.
+        ##
+        ## When we DO need to fetch (image absent), there is no DNS at :53
+        ## yet, so stand up the temporary dns-proxy for the pull. If the pull
+        ## fails here (genuinely cold network on a first boot), the unit fails
+        ## and systemd retries — the intended behaviour for that case.
+        if ! ${pkgs.podman}/bin/podman image exists ${image}; then
+          # Start the DNS proxy service (systemd manages its lifecycle)
+          systemctl start adguardhome-dns-proxy.service
 
-        # Start the DNS proxy service (systemd manages its lifecycle)
-        systemctl start adguardhome-dns-proxy.service
+          # Ensure the proxy is stopped even if the script fails
+          trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
 
-        # Ensure the proxy is stopped even if the script fails
-        trap "systemctl stop adguardhome-dns-proxy.service 2>/dev/null || true" EXIT
+          # Give the proxy a moment to start listening
+          sleep 1
 
-        # Give the proxy a moment to start listening
-        sleep 1
+          # Pull the container image (DNS now available via proxy)
+          ${pkgs.podman}/bin/podman pull ${image}
 
-        # Pull the container image (DNS now available via proxy)
-        ${pkgs.podman}/bin/podman pull ${image}
-
-        # Stop the proxy service (AdGuard Home will take over port 53)
-        systemctl stop adguardhome-dns-proxy.service
+          # Stop the proxy service (AdGuard Home will take over port 53)
+          systemctl stop adguardhome-dns-proxy.service
+        fi
       '';
 
       extraOptions = [
