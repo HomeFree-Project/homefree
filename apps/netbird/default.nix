@@ -213,6 +213,41 @@ let
       -e "s|@@ZITADEL_DOMAIN@@|${zitadelDomain}|g" \
       ${./management.json.tmpl} \
       > ${netbirdDataPath}/management.json
+
+    ## Readiness gate: do not let the management container start until OIDC
+    ## discovery is actually reachable. sso.${domain} is NOT a local unbound
+    ## override — it resolves by recursion/hairpin back to our own public IP,
+    ## and at early boot unbound can SERVFAIL it for a few seconds while it
+    ## primes the DNSSEC trust anchor (Go reports "server misbehaving"). The
+    ## stock dns-ready gate only proves *general* recursion (cloudflare/google/
+    ## debian), so it happily lets us start into that window; the container
+    ## then fails OIDC discovery, and ~5 quick retries trip systemd's
+    ## start-limit and the unit dies for good even though DNS recovers seconds
+    ## later (the exact crash this gate fixes).
+    ##
+    ## Probe the discovery endpoint with the CA bundle synthesised above, so a
+    ## pass proves DNS + Caddy + Zitadel + cert-trust all work — i.e. the very
+    ## first thing the container does will succeed. Bounded (~60s) then fall
+    ## through: a genuinely-down SSO must still let the unit fail/retry (the
+    ## start-limit is relaxed in the unit override below) rather than hang here
+    ## forever. The curl sits inside `if`, so `set -e` never fires on a miss
+    ## and this gate never burns the restart counter.
+    _disc="https://${zitadelDomain}/.well-known/openid-configuration"
+    _ok=0
+    for _i in $(seq 1 30); do
+      if ${pkgs.curl}/bin/curl -sfo /dev/null --max-time 3 \
+           --cacert ${netbirdDataPath}/ca-bundle.crt "$_disc"; then
+        _ok=1
+        break
+      fi
+      sleep 2
+    done
+    if [ "$_ok" = 1 ]; then
+      echo "netbird-management: OIDC discovery reachable, starting container." >&2
+    else
+      echo "netbird-management: OIDC discovery still failing after ~60s;" \
+           "starting anyway (SSO may be down)." >&2
+    fi
   '';
 
   ## Synthesise /var/lib/netbird/dashboard.env from on-disk secrets
@@ -566,6 +601,19 @@ in
     ## lands the secrets.
     systemd.services.podman-netbird-management = lib.mkIf enabled {
       after = [ "podman-zitadel.service" ];
+
+      ## Never permanently give up on a transient boot-time failure. The
+      ## oci-containers backend defaults to StartLimitBurst=5 /
+      ## StartLimitIntervalSec=60, so ~5 quick failures brick the unit until
+      ## a manual `systemctl reset-failed`. That is exactly how a few seconds
+      ## of boot DNS flakiness on sso.${domain} turned into a dead service.
+      ## The OIDC-discovery gate in managementJsonPreStart should prevent the
+      ## crash-loop outright; disabling the start-limit is belt-and-braces so
+      ## that even if the gate falls through (SSO down >60s) the unit keeps
+      ## retrying — Restart=on-failure stays in force — and self-heals once
+      ## SSO comes up, instead of needing a human.
+      startLimitIntervalSec = 0;
+
       ## Unit is silently skipped (ConditionResult=no) until all four
       ## Zitadel-provided secrets land on disk. zitadel-provision
       ## `try-restart`s us once they do — no crash-loop, no restart

@@ -89,10 +89,45 @@ def _parse_devices_json(stdout: str) -> List[Dict[str, Any]]:
     return devices if isinstance(devices, list) else []
 
 
+# libfwupd's FwupdUpdateState enum. fwupd's `--json` output serialises
+# this as the raw integer (e.g. `"UpdateState": 2`), NOT the string name
+# — feeding the int straight into `.lower()` is what raised
+# `'int' object has no attribute 'lower'` on the Hardware page for any
+# box that had firmware history. Map the integer back to the canonical
+# name so the string comparison below works regardless of fwupd's
+# serialisation. (1 == pending, 4 == needs-reboot: the "applied, reboot
+# to activate" states.)
+_UPDATE_STATE_NAMES = {
+    0: "unknown",
+    1: "pending",
+    2: "success",
+    3: "failed",
+    4: "needs-reboot",
+    5: "failed-transient",
+}
+
+
+def _update_state(value: Any) -> str:
+    """Normalise fwupd's UpdateState to a lowercase canonical name.
+
+    Accepts the integer enum (what `fwupdmgr --json` actually emits) or a
+    string (older fwupd / defensive). Anything else — None, unexpected
+    type, out-of-range int — normalises to "" so the caller's membership
+    test is simply False."""
+    if isinstance(value, bool):  # bool is an int subclass; never a state
+        return ""
+    if isinstance(value, int):
+        return _UPDATE_STATE_NAMES.get(value, "")
+    if isinstance(value, str):
+        return value.lower()
+    return ""
+
+
 def _has_pending_activation(history_stdout: str) -> bool:
     """Inspect `fwupdmgr get-history --json` for releases that have been
-    installed but not yet activated. UpdateState == 'pending' (libfwupd
-    enum 4) is the canonical 'reboot to finish installing' signal.
+    installed but not yet activated. UpdateState 'pending' (enum 1) or
+    'needs-reboot' (enum 4) is the canonical 'reboot to finish
+    installing' signal.
 
     fwupd emits `{"Error":{"Message":"No history"}}` on a clean system;
     we treat that as 'nothing pending'.
@@ -110,14 +145,13 @@ def _has_pending_activation(history_stdout: str) -> bool:
         # History entries embed releases; an entry with UpdateState
         # 'pending' or 'needs-reboot' has been applied but is awaiting
         # the reboot that activates it.
-        state = (d.get("UpdateState") or "").lower()
-        if state in ("pending", "needs-reboot"):
+        if _update_state(d.get("UpdateState")) in ("pending", "needs-reboot"):
             return True
         # Some plugins report it via the embedded Release.
         for r in (d.get("Releases") or []):
             if (r.get("Flags") or []) and "blocked-version" in r.get("Flags", []):
                 continue
-            if (r.get("UpdateState") or "").lower() in ("pending", "needs-reboot"):
+            if _update_state(r.get("UpdateState")) in ("pending", "needs-reboot"):
                 return True
     return False
 
