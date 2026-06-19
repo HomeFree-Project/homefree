@@ -244,6 +244,19 @@ def _tag_shape(tag: str) -> Optional[Tuple[str, str]]:
     return (prefix, m.group(3))
 
 
+def _raw_tag_lead(tag: str) -> str:
+    """The LITERAL leading non-digit run of a tag ('' or 'v' for the two
+    variants that collapse to the same _tag_shape). _tag_shape normalises a
+    leading 'v' away, so a plain `0.73.0` and a `v0.73.0` — which many
+    upstreams (netbird, ...) publish for the SAME release — share a shape and
+    an identical semver tuple. When both appear in a listing, the tie-break in
+    _pick_latest must prefer the one whose literal marker matches the current
+    pin; otherwise it reports e.g. `v0.73.0` for a `0.72.4` pin, and the
+    one-click bumper then refuses `0.72.4 -> v0.73.0` as a tag-scheme change."""
+    m = re.match(r"[^\d]*", tag or "")
+    return m.group(0) if m else ""
+
+
 def _same_release(current: str, latest: str) -> bool:
     """Two tags refer to the same upstream release iff they share both
     a semver core (parsed via _semver_tuple) AND a shape (parsed via
@@ -323,7 +336,15 @@ def _pick_latest(tags: List[str], current_tag: str) -> Optional[str]:
         # leap — refuse.
         return None
 
-    candidate_st, candidate_t = max(same_shape_same_major)
+    # Highest semver wins; ties (a plain `X.Y.Z` and a `vX.Y.Z` for the same
+    # release — same shape, same tuple) break toward the tag whose literal
+    # marker matches the current pin, so the picked tag stays in the current
+    # scheme and a downstream one-click bump isn't refused as a scheme change.
+    cur_lead = _raw_tag_lead(current_tag)
+    candidate_st, candidate_t = max(
+        same_shape_same_major,
+        key=lambda it: (it[0], _raw_tag_lead(it[1]) == cur_lead),
+    )
     if candidate_st < current:
         # Best in-stream same-major candidate is OLDER than current.
         # The registry's recent tags don't include anything at or above

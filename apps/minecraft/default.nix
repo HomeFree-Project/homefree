@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "2026.5.0";
+  version = "2026.6.0";
 
   ## The DEFAULT image pin, on its own scanner-visible line: the version
   ## tracker / upgrade-apps.py parse literal `image = "...''${version}";`

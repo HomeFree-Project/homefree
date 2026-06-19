@@ -86,11 +86,11 @@ let
   ## Image tags. Pin all of these together — NetBird ships breaking
   ## changes in the management.json schema across minor versions, so
   ## bumping these should be a deliberate, coordinated update.
-  managementTag = "0.72.4";
-  signalTag = "0.72.4";
-  relayTag = "0.72.4";
+  managementTag = "0.73.0";
+  signalTag = "0.73.0";
+  relayTag = "0.73.0";
   dashboardTag = "v2.39.0";
-  coturnTag = "4.12.0";
+  coturnTag = "4.13.1";
 
   ## Port allocations. Headscale's embedded DERP claims 3478/udp for
   ## STUN, so NetBird's coturn moves to 3479/udp to dodge the conflict.

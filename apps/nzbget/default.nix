@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "version-v26.1";
+  version = "version-v26.2";
   port = config.homefree.allocPort "nzbget";
   containerDataPath = "/var/lib/nzbget";
   configPath = "${containerDataPath}/config";

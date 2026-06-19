@@ -1744,7 +1744,7 @@ class PluginsModule extends LitElement {
             <button class="btn primary btn-icon"
               @click=${() => this._openStore()}
               title="Browse the curated catalog at git.homefree.host/homefree-plugins"
-            >${actionIcon('developers')}<span>Plugin Store</span></button>
+            >${actionIcon('plugins')}<span>Plugin Store</span></button>
           </div>
         </div>
         ${this._renderList()}

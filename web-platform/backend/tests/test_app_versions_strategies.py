@@ -90,6 +90,20 @@ def test_tag_shape_v_prefix_normalised():
     assert av._tag_shape("4.6.0") != av._tag_shape("version-v4.6.0")
 
 
+def test_pick_latest_breaks_v_dup_tie_toward_current_scheme():
+    # netbird (and others) publish the SAME release under both `X.Y.Z` and
+    # `vX.Y.Z`. They share a _tag_shape and an identical semver tuple, so the
+    # tie-break must pick the variant matching the current pin's scheme —
+    # otherwise the resolver reports `v0.73.0` for a `0.72.4` pin and the
+    # one-click bumper refuses `0.72.4 -> v0.73.0` as a tag-scheme change.
+    dup = ["0.73.0", "v0.73.0", "latest", "0.72.4", "0.72.3"]
+    assert av._pick_latest(dup, "0.72.4") == "0.73.0"      # plain pin -> plain
+    assert av._pick_latest(dup, "v0.72.4") == "v0.73.0"    # v pin -> v
+    # When only the off-scheme variant is published, still surface it (best
+    # available); higher semver always wins over the tie-break.
+    assert av._pick_latest(["v0.73.0", "0.72.4"], "0.72.4") == "v0.73.0"
+
+
 def test_frigate_v_prefix_fallback_resolves():
     # image pin '0.17.1' (no v) vs GitHub releases 'v0.17.x' now compare.
     p = _parsed(repo="blakeblackshear/frigate", tag="0.17.1", registry="ghcr.io")

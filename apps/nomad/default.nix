@@ -588,5 +588,51 @@ in
         ''}";
       };
     };
+
+    ## ── nomad-content-autostart — restart spawned content after reboot ─
+    ## NOMAD spawns its content containers (nomad_kiwix_server,
+    ## nomad_kolibri, nomad_cyberchef, nomad_qdrant, ...) through the
+    ## podman socket, OUTSIDE Nix/systemd management, with
+    ## restart=unless-stopped. Two things then leave them DOWN after a
+    ## reboot, returning 502 on kiwix.<domain>/kolibri.<domain>:
+    ##   1. HomeFree's reboot wrapper (services/podman-shutdown-wrapper)
+    ##      runs `podman stop -a` before every wrapped reboot — stopping
+    ##      them cleanly (and an explicit stop disqualifies them from any
+    ##      unless-stopped auto-restart even where one exists).
+    ##   2. podman is daemonless: nothing restarts a stopped container at
+    ##      boot. The three Nix-managed units (nomad/-mysql/-redis) come
+    ##      back via their systemd units; the socket-spawned content
+    ##      containers have no unit. podman-restart.service is not enabled
+    ##      here, and even when it is it only starts restart=always — not
+    ##      unless-stopped.
+    ## So HomeFree owns this seam without trying to manage their lifecycle:
+    ## a boot-time oneshot that `podman start`s every existing nomad_*
+    ## container. The underscore prefix is upstream's content-service
+    ## naming and never matches the hyphenated Nix-managed nomad-* units.
+    ## Idempotent (start on a running container is a no-op) and it ALWAYS
+    ## exits 0, so a failure can never fail a switch (status 4). Mirrors
+    ## nomad-ui-links: after+partOf podman-nomad re-runs it whenever the
+    ## admin restarts; wantedBy multi-user.target runs it at boot. Empty
+    ## when no content is installed yet (no nomad_* containers exist).
+    systemd.services.nomad-content-autostart = lib.mkIf enable {
+      description = "Start NOMAD-spawned content containers left stopped by a reboot";
+      after = [ "nomad-network.service" "podman-nomad.service" ];
+      partOf = [ "podman-nomad.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.writeShellScript "nomad-content-autostart" ''
+          set -u
+          for c in $(${pkgs.podman}/bin/podman ps -a --filter 'name=^nomad_' --format '{{.Names}}'); do
+            if ${pkgs.podman}/bin/podman start "$c" >/dev/null 2>&1; then
+              echo "nomad-content-autostart: started $c"
+            else
+              echo "nomad-content-autostart: could not start $c (skipping)" >&2
+            fi
+          done
+          exit 0
+        ''}";
+      };
+    };
   };
 }
