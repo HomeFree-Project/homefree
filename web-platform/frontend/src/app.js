@@ -37,13 +37,25 @@ class HomeFreeApp extends LitElement {
       height: 100%;
     }
 
+    /* The "Detecting mode..." screen is a PRE-MODE state: /api/mode
+       hasn't resolved yet, so we don't know if this will become the
+       installer (light) or admin/user (dark). It must therefore use
+       the single neutral loading look the project already commits to
+       in index.html's pre-paint spinner (#0a0c0a bg, #34d399 emerald
+       spinner) — that makes the index.html -> app.js handoff seamless
+       instead of flashing purple.
+       This does NOT affect the installer: these styles are scoped to
+       the homefree-app shadow root and never wrap <installer-app>,
+       whose white theme lives in its own shadow DOM and only applies
+       AFTER mode is detected. Do not retheme this to match one surface
+       — pre-mode chrome belongs to neither. */
     .loading {
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      background: #0a0c0a;
+      color: #b6bcc4;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
 
@@ -51,12 +63,14 @@ class HomeFreeApp extends LitElement {
       text-align: center;
     }
 
+    /* Mirrors index.html's #app:empty::before so the two loading
+       phases look like one continuous spinner. */
     .spinner {
-      border: 4px solid rgba(255, 255, 255, 0.3);
-      border-top: 4px solid white;
+      border: 4px solid rgba(52, 211, 153, 0.15);
+      border-top: 4px solid #34d399;
       border-radius: 50%;
-      width: 40px;
-      height: 40px;
+      width: 48px;
+      height: 48px;
       animation: spin 1s linear infinite;
       margin: 0 auto 20px;
     }
@@ -66,13 +80,16 @@ class HomeFreeApp extends LitElement {
       100% { transform: rotate(360deg); }
     }
 
+    /* Error / access-denied are also pre-mode (detection failed or auth
+       was refused, so no surface ever mounted) — same dark neutral look
+       as .loading above, never the installer's light theme. */
     .error {
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      background: #0a0c0a;
+      color: #f5f7fa;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       padding: 20px;
     }
@@ -80,10 +97,10 @@ class HomeFreeApp extends LitElement {
     .error-content {
       text-align: center;
       max-width: 500px;
-      background: rgba(255, 255, 255, 0.1);
+      background: #11141a;
+      border: 1px solid #232831;
       padding: 40px;
       border-radius: 12px;
-      backdrop-filter: blur(10px);
     }
 
     .error-icon {
@@ -93,6 +110,7 @@ class HomeFreeApp extends LitElement {
 
     h2 {
       margin: 0 0 16px 0;
+      color: #f5f7fa;
     }
 
     p {
