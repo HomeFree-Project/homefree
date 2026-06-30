@@ -9,6 +9,11 @@ import {
 import { WORLD_LAND_PATH, WORLD_VIEWBOX } from './world-map-path.js';
 import { confirmDialog } from '../../shared/confirm-dialog.js';
 
+// Rows shown per page in the (client-side paged) "Currently banned" and
+// "Static block list" tables. Both lists arrive in full from the API, so
+// search + paging are pure client-side slices.
+const PAGE_SIZE = 10;
+
 /**
  * Network Traffic module (sidebar label; id/route/files remain
  * "abuse-blocking" — renaming those is churn with no user benefit).
@@ -46,6 +51,10 @@ class AbuseBlockingModule extends LitElement {
     newCidrComment: { type: String, state: true },
     cidrError: { type: String, state: true },
     mapTooltip: { type: Object, state: true },  // {bucket, x, y} | null
+    bannedSearch: { type: String, state: true },  // filter for the banned table
+    bannedPage: { type: Number, state: true },    // 0-based page of the banned table
+    cidrSearch: { type: String, state: true },    // filter for the static block list
+    cidrPage: { type: Number, state: true },      // 0-based page of the static block list
   };
 
   static styles = css`
@@ -403,6 +412,54 @@ class AbuseBlockingModule extends LitElement {
       from { background-position: 100% 0; }
       to   { background-position: 0 0; }
     }
+
+    /* Search box + pager for the long, client-side-paged control tables. */
+    .search-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .search-input {
+      flex: 1;
+      max-width: 320px;
+      padding: 6px 10px;
+      border: 1px solid var(--hf-border-2);
+      border-radius: 6px;
+      background: var(--hf-surface);
+      color: var(--hf-text);
+      font-size: 13px;
+    }
+    .search-input:focus {
+      outline: none;
+      border-color: var(--hf-accent);
+    }
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      justify-content: flex-end;
+    }
+    .pager-label {
+      font-size: 12px;
+      color: var(--hf-text-muted);
+    }
+
+    /* Pinned "pending removals" block under the static block list — the
+       queued deletes stay visible regardless of search term or page. */
+    .pending-removals {
+      margin-top: 16px;
+      border-top: 1px dashed var(--hf-border-2);
+      padding-top: 12px;
+    }
+    .pending-removals-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--hf-warn);
+      margin-bottom: 8px;
+    }
   `;
 
   constructor() {
@@ -423,6 +480,10 @@ class AbuseBlockingModule extends LitElement {
     this.newCidrComment = '';
     this.cidrError = null;
     this.mapTooltip = null;
+    this.bannedSearch = '';
+    this.bannedPage = 0;
+    this.cidrSearch = '';
+    this.cidrPage = 0;
     this._fastPoll = null;
     this._slowPoll = null;
   }
@@ -482,8 +543,12 @@ class AbuseBlockingModule extends LitElement {
       this.topTraffic = await getAbuseBlockingTopTrafficSources(
         3600, this.topFilter, 20, this.includeInternal,
       );
-      // Drop expansion state — the ranked IP list may have changed.
-      this.expandedUris = new Set();
+      // Keep expansion across refreshes so a URL you're reading doesn't
+      // snap shut every poll. Prune IPs no longer in the ranked list so
+      // the Set stays bounded; rows are matched by IP, so survivors stay
+      // open even if the ranking reorders.
+      const present = new Set((this.topTraffic?.sources || []).map(s => s.ip));
+      this.expandedUris = new Set([...this.expandedUris].filter(ip => present.has(ip)));
     } catch (err) {
       console.error('[abuse-blocking] top-traffic-sources refresh failed:', err);
     }
@@ -717,12 +782,32 @@ class AbuseBlockingModule extends LitElement {
         ${this.error ? html`<div class="error-box">${this.error}</div>` : ''}
         ${this._renderSummary()}
         ${this._renderJailStatus()}
-        ${/* Blocking controls grouped together: runtime bans (dynamic,
-             fail2ban-managed) directly above the static block list
-             (declarative config). Traffic observability follows. */ ''}
+        ${/* Observability first: the map + live traffic list sit directly
+             under the summary cards so they're visible without scrolling.
+             The long blocking-control tables (runtime bans, then the
+             static block list) follow — each is searchable and paged so
+             its length stays bounded. The summary cards already surface
+             the banned/static counts up top. */ ''}
+        ${this._renderTopTrafficSources()}
         ${this._renderBannedTable()}
         ${this._renderCidrEditor()}
-        ${this._renderTopTrafficSources()}
+      </div>
+    `;
+  }
+
+  // Shared Prev/Next pager for the client-side-paged control tables.
+  // Renders nothing when everything fits on one page.
+  _renderPager(page, totalItems, onPage) {
+    const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+    if (totalPages <= 1) return '';
+    const cur = Math.min(page, totalPages - 1);
+    return html`
+      <div class="pager">
+        <button class="action-button" ?disabled=${cur <= 0}
+                @click=${() => onPage(cur - 1)}>‹ Prev</button>
+        <span class="pager-label">Page ${cur + 1} of ${totalPages}</span>
+        <button class="action-button" ?disabled=${cur >= totalPages - 1}
+                @click=${() => onPage(cur + 1)}>Next ›</button>
       </div>
     `;
   }
@@ -839,46 +924,61 @@ class AbuseBlockingModule extends LitElement {
 
   _renderBannedTable() {
     const loading = this.banned == null;
-    const entries = this.banned?.entries || [];
+    const allEntries = this.banned?.entries || [];
+    const q = this.bannedSearch.trim().toLowerCase();
+    const filtered = q
+      ? allEntries.filter(e =>
+          (e.address || '').toLowerCase().includes(q) ||
+          (e.jail || '').toLowerCase().includes(q) ||
+          (e.source || '').toLowerCase().includes(q))
+      : allEntries;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const page = Math.min(this.bannedPage, totalPages - 1);
+    const pageEntries = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+    const header = html`
+      <tr>
+        <th>Address</th>
+        <th>Source</th>
+        <th>Jail</th>
+        <th>Remaining</th>
+        <th></th>
+      </tr>
+    `;
     return html`
       <h2>Currently banned</h2>
       <div class="panel">
         ${loading ? html`
           <div class="table-scroll">
           <table>
-            <thead>
-              <tr>
-                <th>Address</th>
-                <th>Source</th>
-                <th>Jail</th>
-                <th>Remaining</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${this._renderSkeletonRows(5, 3)}
-            </tbody>
+            <thead>${header}</thead>
+            <tbody>${this._renderSkeletonRows(5, 3)}</tbody>
           </table>
           </div>
-        ` : entries.length === 0 ? html`
+        ` : allEntries.length === 0 ? html`
           <div class="row-empty">No active bans.</div>
         ` : html`
-          <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Address</th>
-                <th>Source</th>
-                <th>Jail</th>
-                <th>Remaining</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${entries.map(e => this._renderBannedRow(e))}
-            </tbody>
-          </table>
+          <div class="search-bar">
+            <input
+              class="search-input"
+              type="text"
+              placeholder="Search address, jail, or source…"
+              .value=${this.bannedSearch}
+              @input=${e => { this.bannedSearch = e.target.value; this.bannedPage = 0; }}
+            />
           </div>
+          ${filtered.length === 0 ? html`
+            <div class="row-empty">No bans match your search.</div>
+          ` : html`
+            <div class="table-scroll">
+            <table>
+              <thead>${header}</thead>
+              <tbody>
+                ${pageEntries.map(e => this._renderBannedRow(e))}
+              </tbody>
+            </table>
+            </div>
+            ${this._renderPager(page, filtered.length, p => { this.bannedPage = p; })}
+          `}
         `}
       </div>
     `;
@@ -1210,6 +1310,16 @@ class AbuseBlockingModule extends LitElement {
   _renderCidrEditor() {
     const list = this._getCidrList();
     const activeCount = list.filter(e => e.enabled).length;
+    const removed = this._removedCidrs();
+    const q = this.cidrSearch.trim().toLowerCase();
+    const filtered = q
+      ? list.filter(e =>
+          (e.cidr || '').toLowerCase().includes(q) ||
+          (e.comment || '').toLowerCase().includes(q))
+      : list;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const page = Math.min(this.cidrPage, totalPages - 1);
+    const pageItems = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
     return html`
       <h2>Static block list</h2>
       <div class="panel">
@@ -1246,8 +1356,22 @@ class AbuseBlockingModule extends LitElement {
         </div>
         ${this.cidrError ? html`<div class="cidr-error">${this.cidrError}</div>` : ''}
 
+        ${list.length > 0 ? html`
+          <div class="search-bar">
+            <input
+              class="search-input"
+              type="text"
+              placeholder="Search CIDR or comment…"
+              .value=${this.cidrSearch}
+              @input=${e => { this.cidrSearch = e.target.value; this.cidrPage = 0; }}
+            />
+          </div>
+        ` : ''}
+
         ${list.length === 0 ? html`
           <div class="row-empty">No blocked ranges configured.</div>
+        ` : filtered.length === 0 ? html`
+          <div class="row-empty">No ranges match your search.</div>
         ` : html`
           <div class="table-scroll">
           <table>
@@ -1260,7 +1384,7 @@ class AbuseBlockingModule extends LitElement {
               </tr>
             </thead>
             <tbody>
-              ${list.map(e => html`
+              ${pageItems.map(e => html`
                 <tr style=${(e.enabled ? '' : 'opacity: 0.55;') + (this._cidrUndeployed(e) ? 'background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);' : '')}>
                   <td class="nowrap">
                     <input
@@ -1287,25 +1411,44 @@ class AbuseBlockingModule extends LitElement {
                   </td>
                 </tr>
               `)}
-              ${this._removedCidrs().map(e => html`
-                <tr title="Removed — Apply to deploy"
-                    style="background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);">
-                  <td class="nowrap"></td>
-                  <td class="mono nowrap" style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.cidr}</td>
-                  <td style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.comment || ''}</td>
-                  <td class="nowrap">
-                    <button class="action-button"
-                            title="Restore this range"
-                            @click=${() => this._emitCidrUpdate([...this._getCidrList(), e])}>
-                      ↩ Restore
-                    </button>
-                  </td>
-                </tr>
-              `)}
             </tbody>
           </table>
           </div>
+          ${this._renderPager(page, filtered.length, p => { this.cidrPage = p; })}
         `}
+
+        ${removed.length > 0 ? html`
+          <div class="pending-removals">
+            <div class="pending-removals-label">Pending removals — Apply to deploy</div>
+            <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th class="nowrap">CIDR</th>
+                  <th>Comment</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${removed.map(e => html`
+                  <tr title="Removed — Apply to deploy"
+                      style="background:var(--hf-warn-soft);box-shadow:inset 3px 0 0 0 var(--hf-warn);">
+                    <td class="mono nowrap" style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.cidr}</td>
+                    <td style="text-decoration:line-through;color:var(--hf-text-subtle);">${e.comment || ''}</td>
+                    <td class="nowrap">
+                      <button class="action-button"
+                              title="Restore this range"
+                              @click=${() => this._emitCidrUpdate([...this._getCidrList(), e])}>
+                        ↩ Restore
+                      </button>
+                    </td>
+                  </tr>
+                `)}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }
