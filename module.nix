@@ -3040,6 +3040,34 @@
               description = "Whether to verify certificate of upstream service";
             };
 
+            compress = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                When true, Caddy compresses this vhost's responses with
+                `encode zstd gzip` (clients that don't advertise zstd
+                fall back to gzip). Default is off.
+
+                Opt-in, not global, on purpose. Enable it for services
+                that serve a large COMPRESSIBLE payload over a slow link
+                — e.g. Vaultwarden, whose ~1.5 MB /api/sync (the
+                Bitwarden mobile full-vault pull) and ~2.7 MB web-vault
+                JS bundle otherwise truncate and retry forever on a
+                lossy remote tunnel. Compression roughly halves both.
+
+                Leave it OFF for:
+                  - headscale — `encode` must never wrap the long-lived
+                    /derp upgrade connection; buffering one DERP
+                    keepalive write past 2s force-closes the relay
+                    (`derp.Recv: EOF`).
+                  - media upstreams (Jellyfin/Immich/Frigate) — already-
+                    compressed bytes, so gzip is wasted CPU and latency.
+
+                Only affects the reverse_proxy (non-static) vhost branch;
+                static-file vhosts always compress.
+              '';
+            };
+
             disable-keepalive = lib.mkOption {
               type = lib.types.bool;
               default = false;

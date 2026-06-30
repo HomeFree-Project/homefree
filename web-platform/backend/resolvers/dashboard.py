@@ -20,6 +20,7 @@ Two layers:
 """
 
 import concurrent.futures
+import ipaddress
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import psutil
 
@@ -421,6 +422,14 @@ class DashboardResolver:
         Keyed by MAC so a device shows up once with both sets of facts.
         """
         lan_iface = net_cfg.get("lan-interface") or ""
+        guest_networks = net_cfg.get("guest-networks") or []
+        # Devices live on the main LAN trunk *or* on a guest/VLAN
+        # sub-interface (e.g. `iot`, `guest`). Scan the neighbour table
+        # across all of them so VLAN devices aren't reported offline.
+        lan_ifaces = {lan_iface} if lan_iface else set()
+        lan_ifaces |= {gn["id"] for gn in guest_networks if gn.get("id")}
+        # (network-id, ip_network) pairs for labelling each client's network.
+        guest_subnets = DashboardResolver._guest_subnets(guest_networks)
         by_mac: Dict[str, Dict[str, Any]] = {}
 
         # 1. DHCP leases
@@ -433,10 +442,12 @@ class DashboardResolver:
                 "lease_expiry": lease["expiry"],
                 "source": "dhcp",
                 "online": False,
+                "network": DashboardResolver._network_for_ip(
+                    lease["ip"], guest_subnets),
             }
 
         # 2. Neighbour table — marks who's reachable and adds unknowns
-        for nb in DashboardResolver._read_neighbours(lan_iface):
+        for nb in DashboardResolver._read_neighbours(lan_ifaces):
             mac = nb["mac"].lower()
             entry = by_mac.get(mac)
             reachable = nb["state"] in ("REACHABLE", "STALE", "DELAY", "PROBE")
@@ -444,6 +455,8 @@ class DashboardResolver:
                 entry["online"] = entry["online"] or reachable
                 if not entry.get("ip"):
                     entry["ip"] = nb["ip"]
+                    entry["network"] = DashboardResolver._network_for_ip(
+                        nb["ip"], guest_subnets)
             else:
                 by_mac[mac] = {
                     "mac": mac,
@@ -452,6 +465,8 @@ class DashboardResolver:
                     "lease_expiry": None,
                     "source": "neighbour",
                     "online": reachable,
+                    "network": DashboardResolver._network_for_ip(
+                        nb["ip"], guest_subnets),
                 }
 
         clients = list(by_mac.values())
@@ -492,24 +507,34 @@ class DashboardResolver:
         return leases
 
     @staticmethod
-    def _read_neighbours(lan_iface: str) -> List[Dict[str, Any]]:
-        """Kernel neighbour table via `ip neigh`, optionally LAN-scoped."""
+    def _read_neighbours(ifaces: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+        """Kernel neighbour table via `ip neigh`.
+
+        We can't pass `dev` to `ip neigh` because devices may be on the
+        main LAN trunk *or* on any guest/VLAN sub-interface; a single
+        `dev` filter would miss the others. Instead we read every
+        neighbour and keep only those whose interface is in `ifaces`
+        (the LAN trunk + VLAN sub-interfaces). `ifaces` empty/None →
+        keep all (e.g. when no LAN interface is configured).
+        """
         neighbours: List[Dict[str, Any]] = []
-        cmd = [IP_BIN, "-j", "neigh", "show"]
-        if lan_iface:
-            cmd += ["dev", lan_iface]
         try:
             raw = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=4,
+                [IP_BIN, "-j", "neigh", "show"],
+                capture_output=True, text=True, timeout=4,
             ).stdout
             for nb in json.loads(raw or "[]"):
                 mac = nb.get("lladdr")
                 ip = nb.get("dst")
+                dev = nb.get("dev")
                 if not mac or not ip:
+                    continue
+                if ifaces and dev not in ifaces:
                     continue
                 neighbours.append({
                     "mac": mac,
                     "ip": ip,
+                    "dev": dev,
                     "state": (nb.get("state") or ["UNKNOWN"])[0]
                     if isinstance(nb.get("state"), list)
                     else nb.get("state", "UNKNOWN"),
@@ -517,6 +542,38 @@ class DashboardResolver:
         except Exception as e:
             logger.warning(f"dashboard: failed to read neighbours: {e}")
         return neighbours
+
+    @staticmethod
+    def _guest_subnets(
+        guest_networks: List[Dict[str, Any]],
+    ) -> List[tuple]:
+        """(network-id, ip_network) pairs for labelling client networks."""
+        pairs: List[tuple] = []
+        for gn in guest_networks:
+            gid, subnet = gn.get("id"), gn.get("subnet")
+            if not gid or not subnet:
+                continue
+            try:
+                pairs.append((gid, ipaddress.ip_network(subnet, strict=False)))
+            except ValueError:
+                continue
+        return pairs
+
+    @staticmethod
+    def _network_for_ip(
+        ip: Optional[str], guest_subnets: List[tuple],
+    ) -> Optional[str]:
+        """Guest-network id whose subnet contains `ip`, else None (main LAN)."""
+        if not ip:
+            return None
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        for gid, net in guest_subnets:
+            if addr in net:
+                return gid
+        return None
 
     @staticmethod
     def _ip_sort_key(ip: Optional[str]):

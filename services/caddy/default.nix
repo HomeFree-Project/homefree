@@ -978,6 +978,28 @@ in
               header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
             '' else ""}
           '' else (
+          ## Compress reverse-proxied responses (gzip/zstd) when the
+          ## service opts in via reverse-proxy.compress. The static-file
+          ## branch above always compresses (`encode gzip`); the
+          ## reverse_proxy branch is OPT-IN on purpose:
+          ##
+          ##  - It must NEVER wrap headscale's /derp upgrade path —
+          ##    `encode` buffering a single DERP keepalive write past 2s
+          ##    force-closes the relay (the `derp.Recv: EOF` failure this
+          ##    repo already fought). headscale leaves compress = false.
+          ##  - Media upstreams (Jellyfin/Immich/Frigate) serve already-
+          ##    compressed bytes, where gzip is wasted CPU and latency.
+          ##
+          ## Services that serve a large COMPRESSIBLE payload over a slow
+          ## link opt in — e.g. Vaultwarden's ~1.5 MB /api/sync (the
+          ## Android client's full-vault pull) and its ~2.7 MB web-vault
+          ## JS bundle, both of which otherwise truncate and retry
+          ## forever on a lossy tunnel. `encode` is a top-level site
+          ## directive; Caddy's directive ordering wraps it around the
+          ## handle/route/reverse_proxy chain below. Clients that don't
+          ## advertise zstd fall back to gzip.
+          (lib.optionalString (reverse-proxy-config.compress or false) "encode zstd gzip\n")
+          +
           (if reverse-proxy-config.oauth2 == true && !config.homefree.development then ''
             ## SSO gate (reverse-proxy site). Request-time matchers peek
             ## at the sentinel + cert: pre-provisioning the gate is

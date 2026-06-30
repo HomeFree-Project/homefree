@@ -191,6 +191,13 @@ in
         host = config.homefree.network.lan-address;
         port = port;
         public = config.homefree.service-options.vaultwarden.public;
+        ## Compress responses. Vaultwarden's web-vault JS bundle (~2.7 MB)
+        ## and, more importantly, /api/sync (the Bitwarden mobile
+        ## full-vault pull, ~1.5 MB JSON) otherwise go out uncompressed
+        ## and truncate/retry forever over a slow remote tunnel. gzip
+        ## roughly halves both (encrypted vault data still compresses
+        ## ~2.2x; the bundle ~2.8x).
+        compress = true;
       };
       backup = {
         paths = [

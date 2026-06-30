@@ -860,6 +860,16 @@ class AdminApp extends LitElement {
     };
     this.statusPollInterval = null;
     this._pollRebuildActive = false;
+    // True from the click on Apply until a poll first observes the backend
+    // rebuild unit as running. During this window the apply round-trip is
+    // still in flight (sync/scaffold/refresh-inputs/systemd-run all run before
+    // the unit goes active), so /api/config/rebuild-status reports
+    // running:false. Without this guard the always-on status poll would clobber
+    // the optimistic spinner and flip the button back to clickable until the
+    // unit finally starts — visible only on slow links where the apply
+    // round-trip outlasts the 3s poll cadence.
+    this._awaitingRebuildStart = false;
+    this._awaitingRebuildStartAt = 0;
     this.toasts = [];
     this.statusFlashing = false;
     this.statusNeedsAttention = false;
@@ -1370,6 +1380,20 @@ class AdminApp extends LitElement {
     }
   }
 
+  // Are we still in the window between clicking Apply and the backend's
+  // rebuild unit actually going active? While true, a poll that reports
+  // running:false is stale (the build hasn't started yet) and must not clear
+  // the optimistic spinner. A backstop ages the guard out so a never-started
+  // build can't pin the spinner forever.
+  _isAwaitingRebuildStart() {
+    if (!this._awaitingRebuildStart) return false;
+    if (Date.now() - this._awaitingRebuildStartAt > 30000) {
+      this._awaitingRebuildStart = false;
+      return false;
+    }
+    return true;
+  }
+
   async checkRebuildStatus() {
     try {
       // include_history=1 returns the full log on this initial fetch, so a
@@ -1397,6 +1421,9 @@ class AdminApp extends LitElement {
 
       // If rebuild is running, restore state and start polling
       if (status.running) {
+        // Backend confirmed the unit is active — the optimistic-spinner
+        // window is over; subsequent not-running reads are real.
+        this._awaitingRebuildStart = false;
         this.systemHealth = 'building';
         this.rebuildStatus = {
           running: true,
@@ -1415,6 +1442,12 @@ class AdminApp extends LitElement {
           this._pollRebuildActive = true;
           this.pollRebuildStatus({ preserveLogs: true });
         }
+      } else if (this._isAwaitingRebuildStart()) {
+        // We just clicked Apply and the apply round-trip is still in flight,
+        // so the rebuild unit hasn't gone active yet. This running:false is
+        // stale — keep the optimistic spinner instead of flipping the button
+        // back to clickable. (Only observable on slow links.)
+        return;
       } else if (status.exit_code !== null && status.exit_code !== undefined) {
         // Build has finished - restore final state
         const success = status.exit_code === 0;
@@ -2707,6 +2740,14 @@ class AdminApp extends LitElement {
       message: 'Applying configuration…',
       lastUpdate: null
     };
+    // Guard the optimistic spinner until a poll sees the rebuild unit active.
+    // The apply round-trip below (sync/scaffold/refresh-inputs/systemd-run)
+    // can outlast the 3s background status poll on a slow link; without this,
+    // that poll reads the not-yet-started unit as running:false and flips the
+    // button back to clickable for a couple seconds. Cleared on every
+    // early-return/error path below and once a poll confirms running.
+    this._awaitingRebuildStart = true;
+    this._awaitingRebuildStartAt = Date.now();
     try {
       // Flush any pending save first so we apply the latest in-memory state
       if (this._saveTimer) {
@@ -2728,11 +2769,13 @@ class AdminApp extends LitElement {
       // config (the backend would reject it anyway).
       if (this._configParseError) {
         this.showToast('Fix the configuration file syntax error before applying.', 'error', 7000);
+        this._awaitingRebuildStart = false;
         this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
       if (this.saveStatus === 'error') {
         this.showToast('Could not save your changes to disk — not applying.', 'error', 7000);
+        this._awaitingRebuildStart = false;
         this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
@@ -2745,6 +2788,7 @@ class AdminApp extends LitElement {
       if (!validation.valid) {
         const firstError = validation.errors[0] || 'Validation failed';
         this.showToast(`Validation failed: ${firstError}`, 'error', 7000);
+        this._awaitingRebuildStart = false;
         this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
@@ -2762,6 +2806,7 @@ class AdminApp extends LitElement {
 
       if (!result.success) {
         this.showToast(`Failed to apply: ${result.message || 'Unknown error'}`, 'error', 7000);
+        this._awaitingRebuildStart = false;
         this.rebuildStatus = { running: false, message: '', lastUpdate: null };
         return;
       }
@@ -2780,11 +2825,16 @@ class AdminApp extends LitElement {
         lastUpdate: null
       };
 
+      // Mark the poll loop active so the always-on checkRebuildStatus() poll
+      // doesn't spawn a second, parallel pollRebuildStatus() once it observes
+      // the unit running.
+      this._pollRebuildActive = true;
       this.pollRebuildStatus();
 
     } catch (error) {
       console.error('Error applying changes:', error);
       this.showToast(`Error: ${error.message || 'Unknown error'}`, 'error', 7000);
+      this._awaitingRebuildStart = false;
       this.rebuildStatus = { running: false, message: '', lastUpdate: null };
     }
   }
@@ -2818,6 +2868,12 @@ class AdminApp extends LitElement {
 
         const status = await response.json();
 
+        // Backend confirmed the unit is active — the optimistic-spinner
+        // window is over.
+        if (status.running) {
+          this._awaitingRebuildStart = false;
+        }
+
         if (status.output) {
           // The backend returns the COMPLETE log every poll, so REPLACE
           // the buffer wholesale — never append. This is what makes the
@@ -2838,6 +2894,15 @@ class AdminApp extends LitElement {
         }
 
         if (!status.running) {
+          // The rebuild unit may not have gone active yet right after apply on
+          // a slow link. Don't declare completion (the previous build's
+          // exit_code would otherwise read as "completed successfully") — keep
+          // the spinner and re-poll until the unit actually starts.
+          if (this._isAwaitingRebuildStart()) {
+            setTimeout(checkStatus, 1000);
+            return;
+          }
+
           // Rebuild finished - mark polling as inactive
           this._pollRebuildActive = false;
 

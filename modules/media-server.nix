@@ -48,11 +48,24 @@ let
     in if n != null && n != "" then n else config.homefree.system.hostName;
 in
 {
+  # Register minidlna's HTTP/SOAP port with the HomeFree port allocator so
+  # it can never silently collide with a pinned app port. Its upstream
+  # default (8200) is the SAME fixed port NOMAD's FlatNotes content service
+  # hardcodes (apps/nomad/default.nix) — two servers fighting over 8200 left
+  # flatnotes.<domain> proxying into minidlna and returning HTTP 400. minidlna
+  # is the movable side: DLNA clients discover the HTTP port via SSDP, so it
+  # can live anywhere. Registered unconditionally (and STABLE-reserved) so the
+  # slot is held even while no folder opts into media serving.
+  homefree.internal.port-requests = [{ label = "minidlna"; port-request = null; }];
+
   services.minidlna = mkIf (mediaDirs != []) {
     enable = true;
     # LAN reachability is handled by the router firewall; never expose to WAN.
     openFirewall = false;
     settings = {
+      # Allocator-assigned, off the upstream default 8200 (which collides with
+      # NOMAD FlatNotes — see the port-requests note above).
+      port = config.homefree.allocPort "minidlna";
       media_dir = mediaDirs;
       friendly_name = friendlyName;
       # Pick up newly-copied files without a manual rescan (Synology behaviour:

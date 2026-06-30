@@ -30,6 +30,7 @@ class LanClientsModule extends LitElement {
     loading: { type: Boolean, state: true },
     error: { type: String, state: true },
     filter: { type: String, state: true },        // all | online | static
+    networkFilter: { type: String, state: true }, // all | main | <guest-network id>
     editMac: { type: String, state: true },       // MAC of the row being edited
     editForm: { type: Object, state: true },      // { hostname, ip, wanAccess }
     editError: { type: String, state: true },
@@ -84,6 +85,24 @@ class LanClientsModule extends LitElement {
       margin-bottom: 12px;
       align-items: center;
       flex-wrap: wrap;
+    }
+    /* Network/VLAN filter — sits in the toolbar, styled like .action-button. */
+    .net-filter {
+      margin-left: auto;
+      background: var(--hf-surface-2);
+      color: var(--hf-text);
+      border: 1px solid var(--hf-border-2);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .net-filter:focus {
+      outline: none;
+      border-color: var(--hf-accent);
+      box-shadow: 0 0 0 3px var(--hf-focus-ring);
     }
     /* Compact table-row button — matches the shared table-editor
        .btn-row (Edit / Delete): 5px 12px / 12px / radius 6px. */
@@ -362,6 +381,7 @@ class LanClientsModule extends LitElement {
     this.loading = true;
     this.error = '';
     this.filter = 'all';
+    this.networkFilter = 'all';
     this.editMac = null;
     this.editForm = null;
     this.editError = '';
@@ -429,6 +449,12 @@ class LanClientsModule extends LitElement {
     return gn ? gn.name : id;
   }
 
+  // The network a row belongs to: a reservation's configured network wins,
+  // else the network discovery placed it on (by subnet). null = Main LAN.
+  _rowNetworkId(row) {
+    return (row.static ? row.static.network : null) || row.network || null;
+  }
+
   /** Emit a config-change patch with the new static-ips list. */
   _emitStaticIps(list) {
     const newConfig = {
@@ -462,6 +488,7 @@ class LanClientsModule extends LitElement {
         ip: c.ip || null,
         leaseExpiry: c.lease_expiry,
         online: !!c.online,
+        network: c.network || null,
         discovered: true,
         static: null,
       });
@@ -485,6 +512,7 @@ class LanClientsModule extends LitElement {
           ip: s.ip || null,
           leaseExpiry: null,
           online: false,
+          network: null,
           discovered: false,
           static: s,
         });
@@ -745,7 +773,7 @@ class LanClientsModule extends LitElement {
     const noInternet = isStatic && row.static['wan-access'] === false;
     const undeployed = this._reservationUndeployed(row);
 
-    const networkId = isStatic ? (row.static.network || null) : null;
+    const networkId = this._rowNetworkId(row);
     const networkLabel = this._networkLabel(networkId);
 
     return html`
@@ -808,9 +836,23 @@ class LanClientsModule extends LitElement {
     const onlineCount = rows.filter(r => r.online).length;
     const staticCount = rows.filter(r => r.static).length;
 
+    const guestNetworks = this._guestNetworks();
+    // Per-network device counts for the filter dropdown labels.
+    const netCounts = rows.reduce((acc, r) => {
+      const key = this._rowNetworkId(r) || 'main';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
     let shown = rows;
     if (this.filter === 'online') shown = rows.filter(r => r.online);
     else if (this.filter === 'static') shown = rows.filter(r => r.static);
+    // Network filter is orthogonal — composes with the All/Online/Static filter.
+    if (this.networkFilter === 'main') {
+      shown = shown.filter(r => !this._rowNetworkId(r));
+    } else if (this.networkFilter !== 'all') {
+      shown = shown.filter(r => this._rowNetworkId(r) === this.networkFilter);
+    }
 
     return html`
       <div class="module-container">
@@ -852,6 +894,22 @@ class LanClientsModule extends LitElement {
           <button class="action-button" @click=${() => this._refresh()}>
             Refresh
           </button>
+          ${guestNetworks.length > 0 ? html`
+            <select class="net-filter"
+                    @change=${e => { this.networkFilter = e.target.value; }}>
+              <option value="all" ?selected=${this.networkFilter === 'all'}>
+                All networks
+              </option>
+              <option value="main" ?selected=${this.networkFilter === 'main'}>
+                Main LAN (${netCounts.main || 0})
+              </option>
+              ${guestNetworks.map(gn => html`
+                <option value=${gn.id} ?selected=${this.networkFilter === gn.id}>
+                  ${gn.name} (${netCounts[gn.id] || 0})
+                </option>
+              `)}
+            </select>
+          ` : ''}
         </div>
 
         <div class="panel">

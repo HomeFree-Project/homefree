@@ -118,6 +118,12 @@ let
     ## port to seed from — give it the next free canonical slot above the
     ## seeded range so enabling it later is also non-disruptive.
     matrix = 9058;
+    ## DLNA media server (modules/media-server.nix). Off the upstream
+    ## default 8200 — that port is hardcoded by NOMAD's FlatNotes content
+    ## service (apps/nomad/default.nix), and two servers on 8200 left
+    ## flatnotes.<domain> proxying into minidlna (HTTP 400). The HTTP port
+    ## is location-transparent for DLNA (clients discover it via SSDP).
+    minidlna = 9036;
     netbird = 9038;
     nextcloud = 9039;
     nomad = 9040;
