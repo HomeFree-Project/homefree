@@ -1,7 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   ## Update extension versions below when this is updated
-  version = "1.45.3";
+  version = "1.45.4";
 
   enabled-instances = builtins.filter (i: i.enable or true) config.homefree.service-options.mediawiki.instances;
 

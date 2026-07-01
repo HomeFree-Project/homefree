@@ -14,7 +14,7 @@ let
     };
   };
 
-  version = "3.7.3.0";
+  version = "3.7.5.0";
   containerDataPath = "/var/lib/radicale-podman";
   port = config.homefree.allocPort "radicale";
 

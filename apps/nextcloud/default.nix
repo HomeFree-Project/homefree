@@ -1,6 +1,6 @@
 { config, lib, pkgs, ... }:
 let
-  version = "33.0.5";
+  version = "33.0.6";
   version-redis = "8.8.0";
   version-appapi-harp = "v0.4.2";
   containerDataPath = "/var/lib/nextcloud-podman";
@@ -85,7 +85,6 @@ let
       'memcache.local' => '\\OC\\Memcache\\APCu',
       'memcache.distributed' => '\\OC\\Memcache\\Redis',
       'memcache.locking' => '\\OC\\Memcache\\Redis',
-      'oidc_login_auto_redirect' => true,
       'overwrite.cli.url' => 'https://${host}/',
       'overwritecondaddr' => '^10\\.0\\.0\\..*$',
       'overwritehost' => '${host}',
@@ -100,7 +99,6 @@ let
         'timeout' => 0.0,
       ),
       'skeletondirectory' => "",
-      'social_login_auto_redirect' => true,
       'trusted_domains' =>
       array (
         0 => 'localhost',
@@ -242,8 +240,34 @@ let
   '';
 
   postStart = ''
-    # Wait for container to be ready
-    sleep 10
+    ## Wait for the container's own entrypoint to finish before running occ.
+    ##
+    ## On a version bump the upstream Nextcloud image runs `occ upgrade` in
+    ## the foreground (before it exec's apache). systemd fires this
+    ## ExecStartPost as soon as podman reports the container started — i.e.
+    ## WHILE that upgrade is still running. Running occ here concurrently is
+    ## a race: `occ maintenance:repair` below flips the global `maintenance`
+    ## flag to true for the duration of its run, the entrypoint's Updater
+    ## then reads it as "admin already enabled maintenance" and, per
+    ## lib/private/Updater.php, refuses to clear it after a successful
+    ## upgrade — leaving Nextcloud stuck in maintenance mode ("Maintenance
+    ## mode is kept active"). Apache is exec'd only AFTER the entrypoint
+    ## upgrade fully completes (past its maintenance-mode decision), so a
+    ## 200 from status.php is a reliable "entrypoint done, safe to run occ"
+    ## signal. podman units run with TimeoutStartSec=infinity, so blocking
+    ## here cannot trip a start timeout.
+    ready=0
+    for i in $(seq 1 60); do
+      if ${pkgs.curl}/bin/curl -sf -o /dev/null http://127.0.0.1:${toString port}/status.php; then
+        ready=1
+        break
+      fi
+      sleep 5
+    done
+    if [ "$ready" -ne 1 ]; then
+      echo "nextcloud postStart: container HTTP endpoint never came up (upgrade in progress or failed); skipping post-start configuration." >&2
+      exit 0
+    fi
 
     # Check if Nextcloud is installed
     if ! ${pkgs.podman}/bin/podman exec nextcloud php occ status 2>/dev/null | grep -q "installed: true"; then
@@ -282,8 +306,18 @@ let
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable deck || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable logreader || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable news || true
-    ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable sociallogin || true
     ${pkgs.podman}/bin/podman exec nextcloud php occ app:enable tasks || true
+
+    ## Vestigial SSO app cleanup. SSO is handled entirely by user_oidc
+    ## (registered below). `sociallogin` was enabled by an earlier
+    ## iteration but is unused and fails to boot on every request
+    ## ("HMAC does not match" — its encrypted config can no longer be
+    ## decrypted), spamming the log. Actively disable it so pre-existing
+    ## boxes stop loading it; new boxes never enabled it. The matching
+    ## social_login_auto_redirect / oidc_login_auto_redirect keys (for
+    ## sociallogin / the never-installed oidc_login app) were dropped from
+    ## override.config.php above.
+    ${pkgs.podman}/bin/podman exec nextcloud php occ app:disable sociallogin || true
 
     ## Disable logreader app that causes issues
     ## ${pkgs.podman}/bin/podman exec nextcloud php occ app:disable logreader || true
@@ -334,12 +368,19 @@ let
       ## module declares.
       CID=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-id)
       CSEC=$(cat /var/lib/homefree-secrets/nextcloud/oidc-client-secret)
-      ## Zitadel emits project roles under the namespaced claim
-      ## `urn:zitadel:iam:org:project:roles`. user_oidc supports a
-      ## --mapping-groups flag pointing at the claim that lists the
-      ## user's groups. Combined with the `admin_group` config below,
-      ## Nextcloud grants the `admin` system group to any user whose
-      ## token includes `homefree-admin` in that claim.
+      ## Group mapping. Zitadel's native role claim
+      ## `urn:zitadel:iam:org:project:roles` is a MAP keyed by role name
+      ## ({"homefree-admin": {orgId: domain}}), which user_oidc's group
+      ## provisioning cannot parse — it reads the map VALUES expecting
+      ## {gid,...} objects, finds none, and provisions no groups (the
+      ## silent cause of empty groups + broken admin mapping). Instead we
+      ## point --mapping-groups at `homefree.groups`: a flat string array
+      ## ["homefree-admin", ...] synthesized by the homefreeFlattenGroups
+      ## Zitadel action (apps/zitadel/provision.nix, section 4d), which
+      ## user_oidc parses via its is_string() branch. Combined with the
+      ## `admin_groups` config below, Nextcloud grants the `admin` system
+      ## group to any user whose homefree.groups claim contains
+      ## `homefree-admin`.
       ${pkgs.podman}/bin/podman exec nextcloud php occ user_oidc:provider Zitadel \
         --clientid="$CID" \
         --clientsecret="$CSEC" \
@@ -348,7 +389,7 @@ let
         --mapping-display-name=name \
         --mapping-email=email \
         --mapping-uid=preferred_username \
-        --mapping-groups=urn:zitadel:iam:org:project:roles \
+        --mapping-groups=homefree.groups \
         --group-provisioning=1 \
         --unique-uid=0 \
         || echo "nextcloud postStart: user_oidc:provider registration failed (non-fatal)" >&2
@@ -379,6 +420,13 @@ let
         config:app:set --type=string --value=0 user_oidc allow_multiple_user_backends \
         || echo "nextcloud postStart: failed to set allow_multiple_user_backends (non-fatal)" >&2
     fi
+
+    ## Self-heal a stuck maintenance flag. The gate at the top already keeps
+    ## us from racing the entrypoint upgrade, but force maintenance mode off
+    ## at the end so a box that was ALREADY stuck (e.g. upgraded before this
+    ## fix landed) recovers on its next rebuild without manual occ commands.
+    ## No-op when maintenance is already off.
+    ${pkgs.podman}/bin/podman exec nextcloud php occ maintenance:mode --off || true
   '';
 
   userOptions = {

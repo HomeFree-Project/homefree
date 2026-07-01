@@ -744,6 +744,105 @@ let
       fi
 
 
+      ## ── 4d. Flatten project roles into a plain 'homefree.groups' claim ──
+      ##
+      ## Zitadel only emits project roles as the awkward *map* claim
+      ##   "urn:zitadel:iam:org:project:roles": { "homefree-admin": {orgId:domain} }
+      ## Consumers that expect a flat string array — notably Nextcloud's
+      ## user_oidc group provisioning — can't parse that shape (it reads the
+      ## map VALUES expecting {gid,...} objects, finds none, and provisions
+      ## no groups). This action collects the caller's granted role keys into
+      ## a flat array claim
+      ##   "homefree.groups": ["homefree-admin", ...]
+      ## wired onto the Complement-Token flow (flow type 2) for both the
+      ## userinfo (trigger 4) and access-token (trigger 5) creation steps, so
+      ## the flat claim rides along wherever a downstream reads it.
+      ##
+      ## This reproduces an action that previously existed ONLY in the live
+      ## Zitadel database (created out-of-band 2026-05-13, never codified) —
+      ## so a restore / fresh install no longer silently loses admin gating.
+      ##
+      ## allowedToFail=true is an intentional hardening over the hand-made
+      ## original (which had it unset ⇒ false): a bug in this script must
+      ## degrade to "no groups claim" (admin mapping off), never block token
+      ## issuance and lock every user out of every SSO service.
+      log "Ensuring 'homefreeFlattenGroups' action exists"
+      flatten_script=$(cat <<'ACTIONEOF'
+function homefreeFlattenGroups(ctx, api) {
+  var groups = [];
+  var grants = (ctx.v1 && ctx.v1.user && ctx.v1.user.grants) || null;
+  if (grants && grants.length) {
+    for (var i = 0; i < grants.length; i++) {
+      var roles = grants[i].roles || [];
+      for (var j = 0; j < roles.length; j++) {
+        if (groups.indexOf(roles[j]) === -1) groups.push(roles[j]);
+      }
+    }
+  }
+  api.v1.claims.setClaim("homefree.groups", groups);
+}
+ACTIONEOF
+)
+
+      ## Mutating call that tolerates Zitadel's "400 not changed / already"
+      ## no-op response — same pattern as the project/grant updates above.
+      zit_mutate() { # METHOD PATH BODY LABEL
+        local m="$1" p="$2" b="$3" label="$4" t code
+        t=$(mktemp)
+        code=$(curl -sS -o "$t" -w '%{http_code}' -X "$m" \
+          -H "Host: $SSO_HOST" \
+          -H "Authorization: Bearer $PAT" \
+          -H "Content-Type: application/json" \
+          --data-raw "$b" \
+          "$SSO_URL/$p" || echo "000")
+        case "$code" in
+          2*) log "$label" ;;
+          400)
+            if grep -qiE "not (been )?changed|already" "$t"; then
+              log "$label (no-op)"
+            else
+              warn "$label → 400: $(head -c 300 "$t")"
+            fi
+            ;;
+          *) warn "$label → $code: $(head -c 300 "$t")" ;;
+        esac
+        rm -f "$t"
+      }
+
+      action_body=$(jq -nc --arg script "$flatten_script" \
+        '{name:"homefreeFlattenGroups", script:$script, timeout:"10s", allowedToFail:true}')
+
+      action_search=$(zit_api POST management/v1/actions/_search "$(jq -nc \
+        '{queries:[{actionNameQuery:{name:"homefreeFlattenGroups",method:"TEXT_QUERY_METHOD_EQUALS"}}]}')") \
+        || { warn "action search failed"; action_search='{}'; }
+      action_id=$(printf '%s' "$action_search" | jq -r '.result[0].id // empty')
+
+      if [ -z "$action_id" ]; then
+        create_action=$(zit_api POST management/v1/actions "$action_body") \
+          || warn "action create failed"
+        action_id=$(printf '%s' "''${create_action:-}" | jq -r '.id // empty')
+        [ -n "$action_id" ] && log "Created action homefreeFlattenGroups ($action_id)"
+      else
+        ## Keep the script in sync with this file on every rebuild.
+        zit_mutate PUT "management/v1/actions/$action_id" "$action_body" \
+          "Action homefreeFlattenGroups up to date ($action_id)"
+      fi
+
+      ## Wire onto Complement-Token flow (type 2): userinfo (4) + access
+      ## token (5) triggers. SetTriggerActions REPLACES the trigger's list;
+      ## HomeFree owns this flow, so asserting exactly [action_id] is correct
+      ## and idempotent.
+      if [ -n "$action_id" ]; then
+        for trig in 4 5; do
+          zit_mutate POST "management/v1/flows/2/trigger/$trig" \
+            "$(jq -nc --arg id "$action_id" '{actionIds:[$id]}')" \
+            "Wired homefreeFlattenGroups to flow 2 trigger $trig"
+        done
+      else
+        warn "no action_id resolved — skipping flow wiring"
+      fi
+
+
       ## ── 5. Provision per-service OIDC apps ────────────────────────
       ## The services table is hardcoded below as one record per line.
       ## Field separator: "|"; array fields are joined with ";;".
